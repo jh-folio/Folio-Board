@@ -44,12 +44,24 @@ def test_an_aggregate_card_still_groups_by_report_date():
     """종합 카드에는 세션일이 하나로 정해지지 않는다."""
     assert BriefingArchiveIndex._row_key(
         {"sessionDate": "", "reportDate": "2026-08-11", "marketScope": "both"}
-    ) == ("2026-08-11", "both")
+    ) == ("2026-08-11", "both", "daily")
 
 
 def test_a_row_without_a_session_falls_back_to_the_report_date():
     """세션일을 못 읽는 옛 보고서도 목록에서 사라지면 안 된다."""
-    assert BriefingArchiveIndex._row_key(_item("", "2026-08-11", "kr")) == ("2026-08-11", "kr")
+    assert BriefingArchiveIndex._row_key(_item("", "2026-08-11", "kr")) == ("2026-08-11", "kr", "daily")
+
+
+def test_a_weekly_card_does_not_collide_with_the_daily_card():
+    """주간의 구간 끝은 그 시장의 세션일과 같은 날일 수 있다.
+
+    종류가 키에 없으면 둘 중 하나가 조용히 사라진다 — 일요일 주간과 그날 일간이
+    같은 카드로 뭉개진다.
+    """
+    daily = _item("2026-08-23", "2026-08-23", "kr")
+    weekly = {**_item("2026-08-23", "2026-08-23", "kr"), "kind": "weekly"}
+
+    assert BriefingArchiveIndex._row_key(daily) != BriefingArchiveIndex._row_key(weekly)
 
 
 @pytest.mark.parametrize(
@@ -133,6 +145,8 @@ def test_both_save_paths_use_the_session_key():
 
     for module in (builder, agent_service):
         source = inspect.getsource(module)
-        assert "session_key = _scope_session_date(" in source, module.__name__
-        assert "briefing_file_name(session_key, scope)" in source, module.__name__
-        assert "visual_sidecar_gzip_file_name(session_key, scope)" in source, module.__name__
+        # 주간은 발행일로 저장하므로 조건 분기가 붙었다. 두 경로가 **같은 식**을 쓰는지가
+        # 이 테스트의 요지다.
+        assert 'kind == "weekly" else (_scope_session_date(' in source, module.__name__
+        assert "briefing_file_name(session_key, scope, kind)" in source, module.__name__
+        assert "visual_sidecar_gzip_file_name(session_key, scope, kind)" in source, module.__name__

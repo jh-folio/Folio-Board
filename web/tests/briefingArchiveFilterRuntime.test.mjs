@@ -24,7 +24,9 @@ async function loadArchiveDateFilter() {
 }
 
 function readDetailRouteMatcher(source) {
-  const literal = source.match(/window\.location\.hash\.match\((\/.+\/)\)/)?.[1];
+  // 패턴이 여러 줄로 나뉘어도 잡는다. 한 줄만 보던 시절에는 줄바꿈 하나로 이 검사가
+  // 조용히 사라졌다.
+  const literal = source.match(/window\.location\.hash\.match\(\s*(\/[\s\S]+?\/)[,)]/)?.[1];
   assert.ok(literal, "briefing detail route pattern not found");
   return new RegExp(literal.slice(1, -1));
 }
@@ -44,6 +46,21 @@ test("briefing detail route reads every scope the app can write into the hash", 
   assert.ok("#/briefing/2026-08-14".match(pattern), "scope is optional");
   assert.equal("#/briefing/2026-08-14/bogus".match(pattern), null);
   assert.equal("#/briefing".match(pattern), null);
+});
+
+test("briefing detail route carries the kind so a weekly card does not open the daily report", async () => {
+  const pattern = readDetailRouteMatcher(await readRouteSource());
+
+  // 같은 날 일간과 주간이 나란히 저장된다. 종류가 해시에 없으면 주간 카드를 눌러도
+  // 그날 일간 브리핑이 열린다.
+  const weekly = "#/briefing/2026-08-23/us/weekly".match(pattern);
+  assert.ok(weekly, "weekly detail route must resolve");
+  assert.equal(weekly[3], "weekly");
+  const daily = "#/briefing/2026-08-23/us/daily".match(pattern);
+  assert.equal(daily[3], "daily");
+  // 종류 없는 옛 주소는 계속 열린다(일간으로 읽는다).
+  assert.equal("#/briefing/2026-08-23/us".match(pattern)[3], undefined);
+  assert.equal("#/briefing/2026-08-23/us/monthly".match(pattern), null);
 });
 
 test("archive period filter keeps reports whose session date is in range", async () => {

@@ -12,7 +12,9 @@ from pathlib import Path
 from features.common.generation_engine import engine_detail, engine_label
 from features.daily_briefing.schema import (
     AGGREGATE_SCOPES,
+    BRIEFING_KINDS,
     BRIEFING_TYPES,
+    DEFAULT_BRIEFING_KIND,
     SINGLE_MARKET_SCOPES,
     briefing_archive_items,
     briefing_market_metadata,
@@ -27,9 +29,15 @@ ROOT = Path(__file__).resolve().parents[2]
 BRIEFINGS_DIR = data_dir() / "briefings"
 # 사이드카(`.visuals.json`, `.link.json`)를 보고서로 읽지 않도록 시장 접미사를 고정한다.
 _MARKET_ALTERNATION = "|".join(SINGLE_MARKET_SCOPES)
-REPORT_FILE_RE = re.compile(rf"^\d{{4}}-\d{{2}}-\d{{2}}(?:\.(?:{_MARKET_ALTERNATION}))?\.json$")
+# 종류 접미사는 일간에만 없다. 새로 붙는 종류가 정규식에 없으면 그 파일은 아카이브에
+# 아예 나타나지 않는다 — 저장은 되는데 화면에는 없는 상태가 된다.
+_KIND_ALTERNATION = "|".join(sorted(BRIEFING_KINDS - {DEFAULT_BRIEFING_KIND}))
+REPORT_FILE_RE = re.compile(
+    rf"^\d{{4}}-\d{{2}}-\d{{2}}(?:\.(?:{_MARKET_ALTERNATION}))?(?:\.(?:{_KIND_ALTERNATION}))?\.json$"
+)
 SCOPED_REPORT_FILE_RE = re.compile(
-    rf"^(?P<date>\d{{4}}-\d{{2}}-\d{{2}})\.(?P<market>{_MARKET_ALTERNATION})\.json$"
+    rf"^(?P<date>\d{{4}}-\d{{2}}-\d{{2}})\.(?P<market>{_MARKET_ALTERNATION})"
+    rf"(?:\.(?P<kind>{_KIND_ALTERNATION}))?\.json$"
 )
 
 
@@ -118,24 +126,28 @@ class BriefingArchiveIndex:
     @staticmethod
     def _row_key(item):
         scope = item.get("marketScope", "")
+        # **종류가 키에 들어간다.** 일요일 주간 브리핑의 세션일은 그 주 마지막 날이라
+        # 같은 시장의 일간 카드와 겹칠 수 있고, 겹치면 둘 중 하나가 조용히 사라진다.
+        kind = item.get("kind") or DEFAULT_BRIEFING_KIND
         if scope in SINGLE_MARKET_SCOPES:
             # 정체성은 **세션**이다. 저장 키가 세션일로 넘어가는 동안 같은 세션이 옛
             # 발행일 파일과 새 세션 파일 양쪽에 있을 수 있고, `reportDate`로 묶으면
             # 같은 장이 카드 두 장으로 보인다.
-            return (item.get("sessionDate") or item.get("reportDate", ""), scope)
+            return (item.get("sessionDate") or item.get("reportDate", ""), scope, kind)
         # 종합 카드에는 세션일이 하나로 정해지지 않는다.
-        return (item.get("reportDate", ""), scope)
+        return (item.get("reportDate", ""), scope, kind)
 
     @staticmethod
     def _path_priority(path):
         return 1 if SCOPED_REPORT_FILE_RE.fullmatch(path.name) else 0
 
     def query(
-        self, *, q="", market_scope="all", briefing_type="all",
+        self, *, q="", market_scope="all", briefing_type="all", kind="all",
         date_from="", date_to="", offset=0, limit=20, force_refresh=False,
     ):
         market_scope = str(market_scope or "all").strip().lower()
         briefing_type = str(briefing_type or "all").strip().lower()
+        kind = str(kind or "all").strip().lower()
         # `all` here means "no market filter" for the archive query, which is a
         # different word from the `all` briefing scope — a filter named after a
         # scope would silently hide every single-market card. `aggregate`
@@ -146,6 +158,8 @@ class BriefingArchiveIndex:
             )
         if briefing_type not in {"all", *BRIEFING_TYPES}:
             raise ValueError("briefingType must be all, default, market_focused, or concise")
+        if kind not in {"all", *BRIEFING_KINDS}:
+            raise ValueError("kind must be all, daily, or weekly")
         start = _date(date_from, "dateFrom")
         end = _date(date_to, "dateTo")
         if start and end and start > end:
@@ -195,6 +209,8 @@ class BriefingArchiveIndex:
                 continue
             if briefing_type != "all" and item["briefingType"] != briefing_type:
                 continue
+            if kind != "all" and (item.get("kind") or DEFAULT_BRIEFING_KIND) != kind:
+                continue
             searchable_dates = [
                 value for value in (item.get("reportDate", ""), item.get("sessionDate", ""))
                 if value
@@ -226,13 +242,14 @@ _ARCHIVE_INDEX = BriefingArchiveIndex(BRIEFINGS_DIR)
 
 
 def query_briefing_archive(
-    *, q="", market_scope="all", briefing_type="all",
+    *, q="", market_scope="all", briefing_type="all", kind="all",
     date_from="", date_to="", offset=0, limit=20,
 ):
     return _ARCHIVE_INDEX.query(
         q=q,
         market_scope=market_scope,
         briefing_type=briefing_type,
+        kind=kind,
         date_from=date_from,
         date_to=date_to,
         offset=offset,

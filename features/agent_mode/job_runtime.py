@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from features.agent_mode import service as agent_service
 from features.common import jobs
-from features.common.canonical_identity import BRIEFING_MARKETS, ReportKind
+from features.common.canonical_identity import BRIEFING_KIND_SUFFIXES, BRIEFING_MARKETS, ReportKind
 from features.common.canonical_json import JsonValue
 from features.common.job_json_producer_types import (
     BriefingJobRequest,
@@ -94,6 +94,16 @@ def _identity(kind: ReportKind, report_id: str, path: str) -> tuple[str, str | N
         return report_id, None
     stem = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].removesuffix(".json")
     candidates = [value.rsplit(":", 1)[-1] for value in (stem, str(report_id or "")) if value]
+    # 종류 접미사를 먼저 벗긴다. 주간 파일(`2026-08-23.us.weekly`)에서 시장을 바로 찾으면
+    # 어느 시장으로도 끝나지 않아 접미사 전체가 report id로 남고 경로 해석이 거부한다.
+    trimmed = []
+    for value in candidates:
+        for kind_suffix in BRIEFING_KIND_SUFFIXES:
+            if value.endswith(f".{kind_suffix}"):
+                value = value[: -len(kind_suffix) - 1]
+                break
+        trimmed.append(value)
+    candidates = trimmed
     for value in candidates:
         for market in BRIEFING_MARKETS:
             if value.endswith(f".{market}"):
@@ -150,6 +160,7 @@ def commit_json_output(
                     reports=reports,
                     visuals=prepared["visuals"],
                     terminal_result=summary,
+                    kind=str(result.get("kind") or "daily"),
                 ),
             )
         case TaskType.COMPANY_ANALYSIS:

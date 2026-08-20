@@ -1,0 +1,362 @@
+"""주간 브리핑은 일간 옆에 나란히 산다.
+
+가장 큰 위험은 **저장 키 충돌**이었다. 일요일에 주간을 만들면 `_scope_session_date()`가
+그 시장의 직전 세션(대개 금요일)을 돌려주므로, 종류 접미사가 없으면 주간 보고서가
+`{금요일}.{시장}.json`으로 떨어져 그 주 금요일 일간 브리핑을 통째로 덮어쓴다.
+"""
+from __future__ import annotations
+
+import datetime as dt
+
+import pytest
+
+from features.daily_briefing.archive import (
+    REPORT_FILE_RE,
+    SCOPED_REPORT_FILE_RE,
+    BriefingArchiveIndex,
+)
+from features.daily_briefing.schema import (
+    BRIEFING_KINDS,
+    briefing_file_name,
+    briefing_market_metadata,
+    briefing_scope_view,
+    enrich_briefing_sections,
+    normalize_briefing_kind,
+    visual_sidecar_gzip_file_name,
+)
+from features.daily_briefing.weekly import weekly_title, weekly_window
+
+
+# ---------------------------------------------------------------- 창 계산
+
+
+@pytest.mark.parametrize(
+    ("published", "week_start", "preview_start"),
+    [
+        # 일요일 발행이면 지난주 창이 정확히 월~일이고 다음주는 바로 다음날부터다.
+        ("2026-08-23", "2026-08-17", "2026-08-24"),
+        # 금요일 발행도 "지난 7일"이라는 뜻은 그대로다. 다음주는 그 다음 월요일.
+        ("2026-08-21", "2026-08-15", "2026-08-24"),
+        # 월요일 발행은 **그 다음** 월요일이 다음주다. 오늘이 낀 주를 다음주라고
+        # 부르면 이미 지나간 이틀이 프리뷰에 들어간다.
+        ("2026-08-17", "2026-08-11", "2026-08-24"),
+    ],
+)
+def test_the_window_is_the_last_seven_days_and_the_week_ahead(published, week_start, preview_start):
+    window = weekly_window(published)
+
+    assert window.week_start == week_start
+    assert window.week_end == published
+    assert window.preview_start == preview_start
+    assert window.preview_end == (
+        dt.date.fromisoformat(preview_start) + dt.timedelta(days=6)
+    ).isoformat()
+
+
+def test_the_source_window_is_seven_calendar_days():
+    """세션 창이 아니라 달력 7일이다. 시장마다 창을 다르게 잡을 이유가 없다."""
+    dates = weekly_window("2026-08-23").source_dates
+
+    assert dates == [
+        "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20",
+        "2026-08-21", "2026-08-22", "2026-08-23",
+    ]
+
+
+def test_the_title_carries_the_span_not_a_session_state():
+    """`마감`/`장중`은 하루짜리 라벨이라 한 주를 덮는 글에 성립하지 않는다."""
+    title = weekly_title("us", weekly_window("2026-08-23"))
+
+    assert title == "US Market Briefing 주간 — 08.17~08.23"
+    assert "마감" not in title and "장중" not in title
+
+
+# ---------------------------------------------------------------- 저장 키
+
+
+def test_the_weekly_file_never_overwrites_the_daily_one():
+    """**이번 릴리즈에서 가장 위험했던 충돌.**
+
+    일요일 실행의 세션일은 금요일이다. 접미사가 없으면 그 주 금요일 일간 브리핑이
+    주간 보고서로 덮여 사라진다.
+    """
+    friday_daily = briefing_file_name("2026-08-21", "us")
+    sunday_weekly = briefing_file_name("2026-08-23", "us", "weekly")
+
+    assert friday_daily == "2026-08-21.us.json"
+    assert sunday_weekly == "2026-08-23.us.weekly.json"
+    # 같은 날짜여도 종류가 다르면 파일이 다르다.
+    assert briefing_file_name("2026-08-21", "us", "weekly") != friday_daily
+
+
+def test_the_daily_file_name_is_unchanged():
+    """기존 일간 저장 키가 바뀌면 이미 저장된 보고서가 화면에서 사라진다."""
+    assert briefing_file_name("2026-08-21", "kr") == "2026-08-21.kr.json"
+    assert visual_sidecar_gzip_file_name("2026-08-21", "kr") == "2026-08-21.kr.visuals.json.gz"
+
+
+def test_the_archive_scanner_sees_weekly_files():
+    """정규식에 없는 종류는 저장은 되는데 화면에는 없는 상태가 된다."""
+    assert REPORT_FILE_RE.fullmatch("2026-08-23.us.weekly.json")
+    assert SCOPED_REPORT_FILE_RE.fullmatch("2026-08-23.us.weekly.json")
+    # 사이드카는 계속 보고서로 읽히지 않는다.
+    assert not REPORT_FILE_RE.fullmatch("2026-08-23.us.weekly.visuals.json")
+
+
+def test_the_canonical_identity_knows_every_kind():
+    """`canonical_identity`가 모르는 종류는 커밋이 정체성 검증에서만 조용히 막힌다."""
+    from features.common.canonical_identity import BRIEFING_KIND_SUFFIXES
+
+    assert set(BRIEFING_KIND_SUFFIXES) == BRIEFING_KINDS - {"daily"}
+
+
+def test_the_canonical_path_check_pairs_the_suffix_with_the_kind():
+    """파일 이름이 주간이라고 말하는데 본문이 일간이면 보고서가 자기 종류를 잘못 말한다."""
+    from pathlib import Path
+
+    from features.common.canonical_identity import (
+        CanonicalIdentityError,
+        ReportKind,
+        validate_report_identity,
+    )
+
+    weekly_path = Path("data/briefings/2026-08-23.us.weekly.json")
+    validate_report_identity(
+        ReportKind.BRIEFING, weekly_path,
+        {"date": "2026-08-23", "marketScope": "us", "kind": "weekly"},
+    )
+    with pytest.raises(CanonicalIdentityError):
+        validate_report_identity(
+            ReportKind.BRIEFING, weekly_path,
+            {"date": "2026-08-23", "marketScope": "us", "kind": "daily"},
+        )
+    # 접미사 없는 일간 경로는 `kind`를 적지 않은 옛 보고서도 그대로 통과한다.
+    validate_report_identity(
+        ReportKind.BRIEFING, Path("data/briefings/2026-08-21.us.json"),
+        {"date": "2026-08-21", "marketScope": "us"},
+    )
+
+
+# ---------------------------------------------------------------- 메타·카드
+
+
+def _weekly_report(markdown="# US Market Briefing 주간 — 08.17~08.23\n\n본문"):
+    return {
+        "date": "2026-08-23",
+        "kind": "weekly",
+        "marketScope": "us",
+        "weekStart": "2026-08-17",
+        "weekEnd": "2026-08-23",
+        "previewStart": "2026-08-24",
+        "previewEnd": "2026-08-30",
+        "markdown": markdown,
+        "generatedAt": "2026-08-23T09:00:00+09:00",
+    }
+
+
+def test_weekly_metadata_does_not_resolve_a_session():
+    """세션 판정을 태우면 일요일 주간 보고서가 금요일 마감이라고 말하게 된다."""
+    metadata = briefing_market_metadata(_weekly_report(), "us", _weekly_report())
+
+    assert metadata["kind"] == "weekly"
+    assert metadata["title"] == "US Market Briefing 주간 — 08.17~08.23"
+    assert metadata["sessionMode"] == ""
+    # 날짜 필터가 걸리도록 구간 끝을 세션일 자리에 둔다.
+    assert metadata["sessionDate"] == "2026-08-23"
+    assert metadata["publicationDate"] == "2026-08-23"
+    assert "주간" in metadata["tags"]
+
+
+def test_the_weekly_view_does_not_rewrite_the_title_into_a_session_title():
+    """제목 정규화는 H1을 `{라벨} — {세션일} {마감}`으로 다시 쓰는 일이다."""
+    view = briefing_scope_view(_weekly_report(), "us")
+
+    assert view["markdown"].splitlines()[0] == "# US Market Briefing 주간 — 08.17~08.23"
+    assert view["title"] == "US Market Briefing 주간 — 08.17~08.23"
+    assert view["weekStart"] == "2026-08-17"
+
+
+def test_sections_carry_the_window_so_the_card_can_read_it():
+    sections = enrich_briefing_sections(
+        {"us": {"markdown": "# US Market Briefing 주간 — 08.17~08.23"}},
+        report_date="2026-08-23",
+        report_scope="us",
+        briefing_type="default",
+        generated_at="2026-08-23T09:00:00+09:00",
+        kind="weekly",
+        weekly_window={
+            "weekStart": "2026-08-17", "weekEnd": "2026-08-23",
+            "previewStart": "2026-08-24", "previewEnd": "2026-08-30",
+        },
+    )
+
+    assert sections["us"]["kind"] == "weekly"
+    assert sections["us"]["weekStart"] == "2026-08-17"
+    assert sections["us"]["title"] == "US Market Briefing 주간 — 08.17~08.23"
+    # 세션 모드는 주간 섹션에 붙지 않는다.
+    assert "sessionMode" not in sections["us"]
+
+
+def test_a_saved_report_without_a_kind_reads_as_daily():
+    """판올림 호환. 이미 저장된 보고서에는 이 필드가 없다."""
+    assert normalize_briefing_kind(None) == "daily"
+    assert normalize_briefing_kind("") == "daily"
+    assert normalize_briefing_kind("bogus") == "daily"
+    assert briefing_market_metadata({"date": "2026-08-21", "marketScope": "us"}, "us")["kind"] == "daily"
+
+
+def test_the_archive_filters_by_kind():
+    index = BriefingArchiveIndex("data/briefings")
+    daily = {"item": {
+        "marketScope": "us", "reportScope": "us", "briefingType": "default", "kind": "daily",
+        "reportDate": "2026-08-21", "sessionDate": "2026-08-20",
+    }, "searchText": ""}
+    weekly = {"item": {
+        "marketScope": "us", "reportScope": "us", "briefingType": "default", "kind": "weekly",
+        "reportDate": "2026-08-23", "sessionDate": "2026-08-23",
+    }, "searchText": ""}
+    from pathlib import Path
+
+    index._entries = {
+        Path("2026-08-21.us.json"): {"signature": (1, 1), "rows": [daily], "warning": ""},
+        Path("2026-08-23.us.weekly.json"): {"signature": (1, 1), "rows": [weekly], "warning": ""},
+    }
+    index._last_scan = float("inf")
+
+    every = index.query(kind="all")
+    only_weekly = index.query(kind="weekly")
+    only_daily = index.query(kind="daily")
+
+    assert every["total"] == 2
+    assert [row["kind"] for row in only_weekly["items"]] == ["weekly"]
+    assert [row["kind"] for row in only_daily["items"]] == ["daily"]
+    with pytest.raises(ValueError):
+        index.query(kind="monthly")
+
+
+# ---------------------------------------------------------------- target
+
+
+def test_a_weekend_publication_is_not_rejected_as_a_non_session():
+    """일간 판정을 태우면 주말 발행이 `not_a_session`으로 막혀 주간을 만들 길이 없다."""
+    from features.daily_briefing.target import resolve_weekly_targets
+
+    now = dt.datetime(2026, 8, 23, 9, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    targets, errors = resolve_weekly_targets(["us", "kr"], publication_date="2026-08-23", now=now)
+
+    assert errors == []
+    assert [target.market for target in targets] == ["us", "kr"]
+    assert targets[0].artifact_id == "2026-08-23.us.weekly"
+    assert targets[0].week_start == "2026-08-17"
+
+
+def test_a_future_week_cannot_be_summarized():
+    from features.daily_briefing.target import resolve_weekly_targets
+
+    now = dt.datetime(2026, 8, 23, 9, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    targets, errors = resolve_weekly_targets(["us"], publication_date="2026-08-30", now=now)
+
+    assert targets == []
+    assert [error.reason for error in errors] == ["week_not_available"]
+
+
+# ---------------------------------------------------------------- 계약
+
+
+def test_the_weekly_output_contract_does_not_demand_session_titles():
+    from features.agent_mode.briefing_contract import briefing_output_contract
+
+    contract = briefing_output_contract(
+        "us", "default", markets=["us"], kind="weekly",
+        expected_titles={"us": "US Market Briefing 주간 — 08.17~08.23"},
+    )
+
+    assert contract["kind"] == "weekly"
+    assert contract["titleDatePattern"] == "주간 — MM.DD~MM.DD"
+    # 주간에는 `주도한 기업 ①/②`가 없다. 켜 두면 무엇을 써도 통과할 수 없다.
+    assert contract["requireLeadingCompanyNames"] is False
+    assert "0. 지난주 미국장 한 줄 요약" in contract["requiredSections"]
+    assert "0. 오늘의 미국장 성격" not in contract["requiredSections"]
+
+
+def test_the_daily_output_contract_is_unchanged():
+    from features.agent_mode.briefing_contract import briefing_output_contract
+
+    contract = briefing_output_contract("both", "default")
+
+    assert contract["kind"] == "daily"
+    assert contract["titleDatePattern"] == "YYYY.MM.DD 마감|장중"
+    assert contract["requireLeadingCompanyNames"] is True
+    assert "0. 오늘의 미국장 성격" in contract["requiredSections"]
+
+
+def test_the_weekly_contract_checks_the_span_title_and_section_zero():
+    from features.agent_mode.briefing_contract import (
+        briefing_contract_violations,
+        briefing_output_contract,
+    )
+
+    contract = briefing_output_contract("us", "default", markets=["us"], kind="weekly")
+    daily_title = "# US Market Briefing — 2026.08.21 마감\n\n## 0. 오늘의 미국장 성격\n"
+
+    violations = briefing_contract_violations(daily_title, contract)
+
+    assert any("주간" in violation for violation in violations)
+
+
+def test_every_weekly_prompt_satisfies_its_own_contract():
+    """주간 프롬프트에 일간 검사를 태우면 성립하지 않는 규칙을 요구하게 된다."""
+    from features.daily_briefing.contracts import prompt_contract_errors
+    from features.daily_briefing.service import BRIEFING_PROMPT_WEEKLY_PATHS
+
+    for market, path in BRIEFING_PROMPT_WEEKLY_PATHS.items():
+        text = path.read_text(encoding="utf-8")
+        assert prompt_contract_errors(text) == [], market
+
+
+def test_weekly_prompts_are_a_separate_file_set():
+    from features.daily_briefing.service import briefing_prompt_paths
+
+    daily = briefing_prompt_paths(["us"], "daily")
+    weekly = briefing_prompt_paths(["us"], "weekly")
+
+    assert daily != weekly
+    assert weekly[0].name == "prompt_weekly_us.md"
+
+
+# ---------------------------------------------------------------- 경계
+
+
+def test_the_weekly_briefing_does_not_write_back_to_market_memory():
+    """일간이 이미 그 주에 같은 이슈를 넣었다. 다시 넣으면 근거 카운트가 부푼다."""
+    import inspect
+
+    from features.agent_mode import service as agent_service
+    from features.daily_briefing import builder
+
+    assert 'if kind != "weekly" and market_scope in AGGREGATE_SCOPES:' in inspect.getsource(
+        builder.build_briefing
+    )
+    assert 'if persist and kind != "weekly" and market_scope == "both":' in inspect.getsource(
+        agent_service.write_briefing_from_markdown
+    )
+
+
+def test_the_scheduler_can_run_a_daily_and_a_weekly_schedule_on_the_same_day():
+    """일요일 아침이 정확히 그 경우다. 종류가 억제 키에 없으면 뒤가 조용히 스킵된다."""
+    import inspect
+
+    from features.automation import service
+
+    source = inspect.getsource(service.run_due_automations)
+
+    assert 'key = (str(schedule.get("kind") or "daily"), *markets)' in source
+
+
+def test_a_saved_schedule_without_a_kind_stays_daily():
+    from features.automation.schema import normalize_schedule
+
+    assert normalize_schedule({"id": "a", "enabled": True})["kind"] == "daily"
+    assert normalize_schedule({"id": "a", "kind": "weekly"})["kind"] == "weekly"
+    # 모르는 값은 고장이므로 기본값으로 되돌린다.
+    assert normalize_schedule({"id": "a", "kind": "monthly"})["kind"] == "daily"

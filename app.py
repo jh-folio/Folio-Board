@@ -313,6 +313,7 @@ def build_briefing(
     market_scope="both",
     briefing_type="default",
     markets=None,
+    kind="daily",
 ):
     return build_daily_briefing(
         date=date,
@@ -324,6 +325,7 @@ def build_briefing(
         market_scope=market_scope,
         briefing_type=briefing_type,
         markets=markets,
+        kind=kind,
     )
 
 
@@ -534,6 +536,7 @@ def api_briefing_archive_index(
     q: str = "",
     marketScope: str = "all",
     briefingType: str = "all",
+    kind: str = "all",
     dateFrom: str = "",
     dateTo: str = "",
     offset: int = 0,
@@ -544,6 +547,7 @@ def api_briefing_archive_index(
             q=q,
             market_scope=marketScope,
             briefing_type=briefingType,
+            kind=kind,
             date_from=dateFrom,
             date_to=dateTo,
             offset=offset,
@@ -572,10 +576,19 @@ def api_create_briefing(body: dict | None = Body(default=None)):
     # 세션일이며, 성립하지 않는 요청은 여기서 거부한다 — 08-10 08:02에 08-10 한국장을
     # 요청하면 아직 열리지도 않은 장이고, 그것을 금요일 종가로 메운 것이 지난 사고였다.
     from features.common.market_calendar import publication_date_groups
-    from features.daily_briefing.target import resolve_targets
+    from features.daily_briefing.target import resolve_targets, resolve_weekly_targets
 
     requested_date = str(body.get("date") or "").strip()
-    targets, target_errors = resolve_targets(requested_markets, session_date=requested_date)
+    briefing_kind = str(body.get("kind") or "daily").strip().lower()
+    briefing_kind = briefing_kind if briefing_kind in {"daily", "weekly"} else "daily"
+    if briefing_kind == "weekly":
+        # 주간은 세션 판정을 태우지 않는다. 주말 발행이 정상인 산출물을 "그날은 거래일이
+        # 아니다"로 막으면 주간 브리핑을 손으로 만들 길이 아예 없다.
+        targets, target_errors = resolve_weekly_targets(
+            requested_markets, publication_date=requested_date
+        )
+    else:
+        targets, target_errors = resolve_targets(requested_markets, session_date=requested_date)
     accepted = [target.market for target in targets]
     if not accepted:
         raise HTTPException(
@@ -596,10 +609,15 @@ def api_create_briefing(body: dict | None = Body(default=None)):
     # 옮긴다) 여기서 세션일을 앵커로 바꾸면 내용이 조용히 달라진다 — 특히 주말 생성은
     # 직전 세션으로 앵커가 내려가 off-session 뉴스 창을 잃는다. target은 지금은 판정과
     # 거부만 소유하고, 앵커 계산은 기존 경로를 그대로 쓴다.
-    date_groups = (
-        publication_date_groups(requested_date, accepted)
-        if requested_date else [(kst_date(), accepted)]
-    )
+    if briefing_kind == "weekly":
+        # 주간의 발행일은 하나다. 시장마다 세션 마감 시각이 달라 갈리는 것은 일간 얘기이고,
+        # 주간 창은 달력 7일이라 네 시장이 같은 발행일을 쓴다.
+        date_groups = [(targets[0].publication_date, accepted)]
+    else:
+        date_groups = (
+            publication_date_groups(requested_date, accepted)
+            if requested_date else [(kst_date(), accepted)]
+        )
     if generation_mode == "llm_cli":
         jobs = [
             submit_agent_task("briefing", {
@@ -609,6 +627,7 @@ def api_create_briefing(body: dict | None = Body(default=None)):
                 "market_scope": market_selection_scope(markets),
                 "markets": markets,
                 "briefing_type": body.get("briefingType", "default"),
+                "kind": briefing_kind,
             }, adapter=body.get("agentAdapter", ""))
             for date, markets in date_groups
         ]
@@ -636,6 +655,7 @@ def api_create_briefing(body: dict | None = Body(default=None)):
             market_scope=market_selection_scope(markets),
             markets=markets,
             briefing_type=body.get("briefingType", "default"),
+            kind=briefing_kind,
         )
         for date, markets in date_groups
     ]
@@ -654,9 +674,9 @@ def api_create_briefing(body: dict | None = Body(default=None)):
 
 
 @fastapi_app.get("/api/briefings/{date}")
-def api_get_briefing(date: str, includePersonal: bool = False, marketScope: str = "both"):
+def api_get_briefing(date: str, includePersonal: bool = False, marketScope: str = "both", kind: str = "daily"):
     try:
-        briefing = resolve_briefing(date, marketScope)
+        briefing = resolve_briefing(date, marketScope, kind)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid briefing identifier or market scope") from exc
     if not briefing:
@@ -670,9 +690,9 @@ def api_get_briefing(date: str, includePersonal: bool = False, marketScope: str 
 
 
 @fastapi_app.delete("/api/briefings/{date}")
-def api_delete_briefing(date: str, market: str = ""):
+def api_delete_briefing(date: str, market: str = "", kind: str = "daily"):
     try:
-        result = delete_briefing(date, market=market or None)
+        result = delete_briefing(date, market=market or None, kind=kind)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid briefing identifier or market scope") from exc
     if not result["deleted"]:

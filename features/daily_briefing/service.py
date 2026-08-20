@@ -23,13 +23,26 @@ from features.daily_briefing.schema import (
     briefing_link_file_name,
     briefing_scope_view,
     briefing_type_instruction,
+    DEFAULT_BRIEFING_KIND,
     market_keys_for_briefing_scope,
     normalize_briefing_markdown_titles,
     normalize_market_selection,
+    normalize_briefing_kind,
     normalize_briefing_type,
     normalize_market_scope,
     visual_sidecar_file_name,
     visual_sidecar_gzip_file_name,
+)
+from features.daily_briefing.limits import (
+    WEEKLY,
+    CONTEXT_DOC_FLOOR,
+    DIVERSE_SELECTION_LIMIT,
+    ISSUE_COVERAGE_LIMIT,
+    MINIMUM_PUBLISHERS,
+    PER_PUBLISHER_CAP,
+    SOURCE_REF_LIMIT,
+    context_doc_limit,
+    source_ref_limit,
 )
 from features.daily_briefing.selection import (
     briefing_doc_excerpt,
@@ -60,6 +73,10 @@ BRIEFING_PROMPT_US_PATH = FEATURES_DIR / "daily_briefing" / "prompt_us.md"
 BRIEFING_PROMPT_KR_PATH = FEATURES_DIR / "daily_briefing" / "prompt_kr.md"
 BRIEFING_PROMPT_EUROPE_PATH = FEATURES_DIR / "daily_briefing" / "prompt_europe.md"
 BRIEFING_PROMPT_JP_PATH = FEATURES_DIR / "daily_briefing" / "prompt_jp.md"
+BRIEFING_PROMPT_WEEKLY_PATHS = {
+    key: FEATURES_DIR / "daily_briefing" / f"prompt_weekly_{key}.md"
+    for key in ("us", "kr", "europe", "jp")
+}
 BRIEFING_PROMPT_PATHS = {
     "us": BRIEFING_PROMPT_US_PATH,
     "kr": BRIEFING_PROMPT_KR_PATH,
@@ -72,14 +89,16 @@ MARKET_LABELS = {"us": "미국장", "kr": "한국장", "europe": "유럽장", "j
 _LEGACY_CHECKPOINT_HEADING = "내일 확인할 체크포인트"
 
 
-def briefing_checkpoint_headings(scopes=None):
+def briefing_checkpoint_headings(scopes=None, kind=DEFAULT_BRIEFING_KIND):
     """체크포인트 섹션 제목을 시장 라벨에서 파생한다.
 
     손으로 나열하면 시장이 늘 때 새 시장만 조용히 0건이 된다 — 실제로 유럽·일본은
     본문에 섹션이 멀쩡히 있는데도 저장 JSON의 `checkpoints`가 매번 비었고 없는
-    데이터 갭까지 붙었다.
+    데이터 갭까지 붙었다. 주간도 같은 이유로 여기서 파생한다(`다음주 ... 확인할 것`).
     """
     keys = [str(scope).lower() for scope in (scopes if scopes is not None else MARKET_LABELS)]
+    if normalize_briefing_kind(kind) == WEEKLY:
+        return [f"다음주 {MARKET_LABELS[key]} 확인할 것" for key in keys if key in MARKET_LABELS]
     return [
         *(f"다음 {MARKET_LABELS[key]} 체크포인트" for key in keys if key in MARKET_LABELS),
         _LEGACY_CHECKPOINT_HEADING,
@@ -146,21 +165,26 @@ MARKET_MEMORY_DB_PATH = data_dir() / "market-memory.sqlite3"
 NEWS_INBOX_PREFIXES = ("research-inbox/articles/", "research-inbox/rss/")
 
 
-def briefing_prompt_paths(market_scope="both"):
+def briefing_prompt_paths(market_scope="both", kind="daily"):
     """Prompt files for a market set or a legacy scope name.
 
     A selection is a set of markets, so this accepts one directly; a scope
     string still resolves for saved settings and older callers.
+
+    주간은 **완전히 다른 프롬프트 파일**을 쓴다. 일간 프롬프트에 "이번엔 주간으로
+    써라"를 덧붙이는 방식은 두 지시가 충돌한다 — 일간 프롬프트는 세션 상태를 제목에
+    붙이라고, 오늘 하루를 하나의 이야기로 엮으라고 지시한다.
     """
-    return [BRIEFING_PROMPT_PATHS[key] for key in normalize_market_selection(market_scope)]
+    table = BRIEFING_PROMPT_WEEKLY_PATHS if str(kind or "daily").strip().lower() == "weekly" else BRIEFING_PROMPT_PATHS
+    return [table[key] for key in normalize_market_selection(market_scope)]
 
 
-def briefing_prompt_path_label(market_scope="both"):
-    return ";".join(str(path) for path in briefing_prompt_paths(market_scope))
+def briefing_prompt_path_label(market_scope="both", kind="daily"):
+    return ";".join(str(path) for path in briefing_prompt_paths(market_scope, kind))
 
 
-def read_briefing_prompt(market_scope="both"):
-    paths = briefing_prompt_paths(market_scope)
+def read_briefing_prompt(market_scope="both", kind="daily"):
+    paths = briefing_prompt_paths(market_scope, kind)
     chunks = []
     for path in paths:
         try:
@@ -223,7 +247,7 @@ def _escape_md_link_text(text):
     return text.replace("[", "").replace("]", "")
 
 
-def source_lines(docs, limit=8):
+def source_lines(docs, limit=SOURCE_REF_LIMIT):
     lines = []
     for d in docs[:limit]:
         title = d.get("title", "Untitled")
@@ -237,7 +261,7 @@ def source_lines(docs, limit=8):
     return "\n".join(lines)
 
 
-def briefing_sources_from_headlines(headlines, limit=14):
+def briefing_sources_from_headlines(headlines, limit=SOURCE_REF_LIMIT):
     rows = []
     seen = set()
     for headline in headlines or []:
@@ -255,7 +279,7 @@ def markdown_has_sources(markdown):
     return bool(re.search(r"(?im)^#{1,3}\s*(참고\s*자료|참고자료|sources\s+used|sources)\s*$", str(markdown or "")))
 
 
-def append_briefing_sources(markdown, sources, limit=14):
+def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT):
     markdown = str(markdown or "").strip()
     sources = source_refs(sources or [], limit=limit)
     if not markdown or markdown_has_sources(markdown) or not sources:
@@ -263,7 +287,7 @@ def append_briefing_sources(markdown, sources, limit=14):
     return f"{markdown}\n\n---\n\n## 참고자료\n\n{source_lines(sources, limit=limit)}"
 
 
-def source_refs(docs, limit=14):
+def source_refs(docs, limit=SOURCE_REF_LIMIT):
     rows = []
     seen = set()
     for d in docs:
@@ -335,7 +359,7 @@ def _reference_sort_key(doc, market_windows):
     return (_REF_TIER_RANK.get(doc.get("refTier", "support"), 0), score, doc.get("date", ""))
 
 
-def prioritized_source_refs(docs, market_windows, limit=14, issue_coverage=None):
+def prioritized_source_refs(docs, market_windows, limit=SOURCE_REF_LIMIT, issue_coverage=None):
     rows = []
     for d in docs or []:
         d["refTier"] = _source_priority_tier(d, market_windows)
@@ -343,12 +367,13 @@ def prioritized_source_refs(docs, market_windows, limit=14, issue_coverage=None)
     ranked = sorted(rows, key=lambda x: _reference_sort_key(x, market_windows), reverse=True)
     if issue_coverage:
         issue_docs, _ = select_diverse_documents(
-            issue_coverage, market_windows, limit=max(limit, 14), per_publisher=4, minimum_publishers=5,
+            issue_coverage, market_windows, limit=max(limit, DIVERSE_SELECTION_LIMIT),
+            per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
         )
         issue_keys = {_doc_key(doc) for doc in issue_docs}
         ranked = issue_docs + [doc for doc in ranked if _doc_key(doc) not in issue_keys]
     diverse, _ = diversify_ranked_documents(
-        ranked, limit=limit, per_publisher=4, minimum_publishers=5,
+        ranked, limit=limit, per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
     )
     return source_refs(diverse, limit=limit)
 
@@ -522,6 +547,66 @@ def korea_market_data_to_markdown(korea_market_data):
     return "\n".join(lines)
 
 
+def _weekly_context_header(
+    *,
+    weekly_window,
+    calendar_block,
+    expected_titles,
+    market_scope,
+    market_snapshot,
+    korea_market_data,
+    market_memory_context,
+    doc_count,
+):
+    """주간 컨텍스트의 머리말. **세션 지침이 없다.**
+
+    대신 구간을 못박고, 다음주 일정 표를 그대로 싣고, "표에 없는 일정을 만들지 말라"를
+    컨텍스트에서도 반복한다 — 프롬프트에만 적으면 부탁이고, 표와 나란히 있어야 제한이다.
+    """
+    from features.common.market_data.snapshot import snapshot_to_markdown
+
+    window = weekly_window or {}
+    return [
+        f"브리핑 종류(kind): weekly",
+        f"지난주 구간: {window.get('weekStart', '')} ~ {window.get('weekEnd', '')}",
+        f"발행일: {window.get('publicationDate', '')}",
+        f"다음주 구간: {window.get('previewStart', '')} ~ {window.get('previewEnd', '')}",
+        f"시장 범위(marketScope): {market_scope}",
+        *[
+            f"{scope.upper()} 주간 최종 제목(정확히 사용): # {title}"
+            for scope, title in (expected_titles or {}).items()
+        ],
+        "",
+        "## 주간 구간",
+        "아래 자료는 모두 지난주 구간에 발행된 것입니다. 다섯 세션을 차례로 요약하지 말고, 한 주를 관통한 이야기 두세 개를 골라 주 초와 주 말 사이에 무엇이 달라졌는지 쓰세요.",
+        "수치는 주간 변화(주초 대비 주말, 주간 등락률, 주간 고저)로 쓰고, 특정 하루의 값은 그 이야기의 전환점일 때만 인용하세요.",
+        "기사 발행일이 구간 안이라고 그 기사가 다루는 거래일까지 구간 안인 것은 아닙니다. 각 자료의 '시장기준일(추정)'을 따르세요.",
+        "세션 모드, 장중/마감 같은 하루 단위 라벨은 주간 본문에 쓰지 마세요.",
+        "",
+        market_memory_context,
+        "",
+        f"최신 자료 수: {doc_count}",
+        "",
+        "아래 자료만 근거로 사용하세요. 본문에 없는 숫자나 시장 수치는 추정하지 마세요.",
+        "",
+        "## 시장 가격 스냅샷",
+        snapshot_to_markdown(market_snapshot or {"ok": False, "error": "snapshot not available"}),
+        "",
+        "## 한국장 시장 수치",
+        korea_market_data_to_markdown(korea_market_data),
+        "- 위 수치는 스냅샷 시점의 값입니다. 주간 등락을 쓸 때는 자료에서 확인되는 주초·주말 값을 우선하고, 확인되지 않으면 추정하지 말고 생략하세요.",
+        "",
+        "## 다음주 시장 일정",
+        calendar_block or "- 등록된 다음주 일정이 없습니다.",
+        "**이 표에 있는 일정만 사용하세요.** 표에 없는 발표·실적·휴장을 기억으로 채우지 마세요. `확정도`가 `estimated`인 행은 예정치라는 사실을 문장에서 밝히세요.",
+        "",
+        "## 이슈 선별·출처 다양성 지침",
+        "기사 수가 많은 이슈를 중요하다고 간주하지 마세요. 아래 issueCoverage의 독립 매체 수, 출처 권위, 시장 반응, 재전송 제거 결과를 우선하세요.",
+        "재전송 기사와 같은 매체의 반복 기사는 독립 확인으로 세지 마세요.",
+        "강해진 이야기만 쓰지 마세요. 약해진 이야기와 반대 근거를 같은 비중으로 다루세요.",
+    ]
+
+
 def build_llm_context(
     date,
     source_date,
@@ -537,10 +622,15 @@ def build_llm_context(
     briefing_type="default",
     issue_coverage=None,
     session_modes=None,
+    kind=DEFAULT_BRIEFING_KIND,
+    weekly_window=None,
+    calendar_block="",
 ):
     market_windows = market_windows or briefing_market_windows(date)
     market_scope = normalize_market_scope(market_scope)
     briefing_type = normalize_briefing_type(briefing_type)
+    kind = normalize_briefing_kind(kind)
+    doc_limit = context_doc_limit(kind)
     docs = documents_for_scope(docs, market_scope)
     doc_keys = {_doc_key(doc) for doc in docs}
     groups = [
@@ -555,12 +645,27 @@ def build_llm_context(
     market_drivers = [driver for driver in market_drivers if driver.get("docs")]
     issue_coverage = list(issue_coverage or [])
     session_modes = session_modes or session_modes_from_windows(market_windows)
-    expected_titles = briefing_expected_titles(
-        date,
-        market_scope,
-        market_windows=market_windows,
-        session_modes=session_modes,
-    )
+    if kind == WEEKLY:
+        from features.daily_briefing.weekly import WeeklyWindow, weekly_title
+
+        window_obj = WeeklyWindow(
+            publication_date=str((weekly_window or {}).get("publicationDate") or date),
+            week_start=str((weekly_window or {}).get("weekStart") or date),
+            week_end=str((weekly_window or {}).get("weekEnd") or date),
+            preview_start=str((weekly_window or {}).get("previewStart") or ""),
+            preview_end=str((weekly_window or {}).get("previewEnd") or ""),
+        )
+        expected_titles = {
+            scope: weekly_title(scope, window_obj)
+            for scope in market_keys_for_briefing_scope(market_scope)
+        }
+    else:
+        expected_titles = briefing_expected_titles(
+            date,
+            market_scope,
+            market_windows=market_windows,
+            session_modes=session_modes,
+        )
 
     # 자료를 tier별로 선별한다.
     #   driver: 핵심 시장 동인 상위 자료 → 길게 제공
@@ -616,7 +721,8 @@ def build_llm_context(
             kr_current_keys.add(_doc_key(d))
     if issue_coverage:
         issue_docs, diversity_warnings = select_diverse_documents(
-            issue_coverage, market_windows, limit=18, per_publisher=4, minimum_publishers=5,
+            issue_coverage, market_windows, limit=DIVERSE_SELECTION_LIMIT,
+            per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
         )
         for d in issue_docs:
             _add(d, driver_keys)
@@ -629,17 +735,17 @@ def build_llm_context(
             _add(d, group_keys)
             if is_company_group:
                 company_group_keys.add(_doc_key(d))
-    if len(selected) < 18:
+    if len(selected) < CONTEXT_DOC_FLOOR:
         # 패딩은 단순 최신순이 아니라 브리핑 적합도(시장 반응 연결성 포함)가 높은
         # 자료부터 채운다 → broad keyword만 걸린 단발 기사가 채워지는 것을 막는다.
         ranked_rest = sorted(docs, key=lambda d: briefing_doc_score(d, market_windows), reverse=True)
         for d in ranked_rest:
-            if len(selected) >= 24:
+            if len(selected) >= doc_limit:
                 break
             _add(d, None)
 
     selected, cap_warnings = diversify_ranked_documents(
-        selected, limit=24, per_publisher=4, minimum_publishers=5,
+        selected, limit=doc_limit, per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
     )
     diversity_warnings.extend(warning for warning in cap_warnings if warning not in diversity_warnings)
 
@@ -653,108 +759,123 @@ def build_llm_context(
 
     from features.common.market_data.snapshot import snapshot_to_markdown
     market_memory_context = render_market_memory_context(MARKET_MEMORY_DB_PATH)
-    lines = [
-        f"브리핑 대상일: {date}",
-        f"사용 자료 날짜: {source_date}",
-        f"시장 범위(marketScope): {market_scope}",
-        f"브리핑 유형(briefingType): {briefing_type}",
-        f"미국장 세션 모드: {session_modes.get('us', '')}",
-        f"한국장 세션 모드: {session_modes.get('kr', '')}",
-        *[
-            f"{scope.upper()} 최종 제목(정확히 사용): # {title}"
-            for scope, title in expected_titles.items()
-        ],
-        "",
-        "## 브리핑 분석 모드",
-        f"analysisMode: {market_windows.get('analysisMode', '')}",
-        market_windows.get("sessionPriorityRule", ""),
-        f"- 주요 분석축(primary): {', '.join(market_windows.get('primarySessions', [])) or '없음'}",
-        f"- 보조 분석축(secondary/off_session_news): {', '.join(market_windows.get('secondarySessions', [])) or '없음'}",
-        (
-            f"- 주말/휴장 새 뉴스 구간: {market_windows.get('offSessionNewsWindow', {}).get('start', '')} ~ {market_windows.get('offSessionNewsWindow', {}).get('end', '')} "
-            "(이 구간 뉴스는 현재 가격 반응이 아니라 다음 거래일 반영 후보로 다루세요)"
-            if market_windows.get("weekendOrHolidayNewsMode")
-            else "- 주말/휴장 새 뉴스 구간: 해당 없음(평일 정규장 모드)"
-        ),
-        "아래 '기사/자료 원문 요약'의 각 자료에는 분석우선순위(primary/secondary/background/off_session_news)가 표시됩니다. primary 자료를 시장 흐름·핵심 변수의 중심 근거로 쓰고, background는 배경 맥락으로만, off_session_news는 다음 거래일 반영 후보로 쓰세요.",
-        (
-            "주말/휴장 모드에서는 2번 '시장을 움직인 핵심 변수'와 3~4번 '시장을 주도한 기업' 섹션을 off_session_news(주말/휴장 사이 새 뉴스) 중심으로 구성하세요. 최근 정규장 자료는 1번 시장 흐름에서 간결히 복기하는 배경으로 쓰고, 핵심 변수/기업 섹션에서 새 뉴스의 다음 거래일 반영 가능성과 확인 조건을 우선 다루세요."
-            if market_windows.get("weekendOrHolidayNewsMode")
-            else ""
-        ),
-        (
-            "중요: 위 주말/휴장·세션 구분은 분석 오류를 막기 위한 내부 지침입니다. 최종 본문에는 장이 열리지 않았다는 설명, 가격 반응으로 해석할 수 없다는 면책 문장, off_session_news 같은 운영 용어를 쓰지 마세요. 뉴스의 경제적 전달 경로를 바로 분석하고 필요한 조건만 체크포인트에 적으세요."
-            if market_windows.get("weekendOrHolidayNewsMode")
-            else "세션 관련 내부 라벨과 운영 지침은 최종 본문에 노출하지 마세요."
-        ),
-        (
-            f"weekday_kr_open 모드: '시장 흐름' 섹션에 반드시 한국 {market_windows.get('krCurrentSessionDate', '')} 개장 후/장중 흐름을 별도 문단으로 작성하세요. 한국 전일({market_windows.get('krPreviousSessionDate', '')}) 정규장은 배경 맥락으로만 쓰고 한국 당일 장중 문단을 대체하지 않습니다. 한국 당일 장중 직접 지수·수급 수치가 자료에 없으면 '확인되지 않는다'고 명시하되, 한국 당일 장중 자료에서 확인되는 뉴스 흐름은 따로 다루세요."
-            if market_windows.get("krSessionPhase") == "intraday"
-            else ""
-        ),
-        "",
-        "## 한미 시장 시차 기준",
-        market_windows.get("rule", ""),
-        ("휴장/주말 메모: " + " ".join(market_windows.get("closedNotes", []))) if market_windows.get("closedNotes") else "휴장/주말 메모: 특이사항 없음",
-        f"- 미국장 기준: {market_windows.get('usRegularSessionDate', '')} 정규장 마감 결과와 그 이후 확인된 미국 관련 뉴스",
-        (
-            f"- 한국장 기준: {market_windows.get('krPreviousSessionDate', '')} 정규장 결과 + {market_windows.get('krCurrentSessionDate', '')} 개장 후/장중 시황"
-            if market_windows.get("krSessionPhase") == "intraday"
-            else (
-                f"- 한국장 기준: {market_windows.get('krCurrentSessionDate', '')} 정규장 마감 결과"
-                if market_windows.get("krSessionPhase") == "closed"
-                else f"- 한국장 기준: {market_windows.get('krPreviousSessionDate', '')} 정규장 마감 결과. 당일 장중 시황으로 쓰지 마세요."
-            )
-        ),
-        "- 미국장 마감 이후 나온 뉴스는 한국장에 이미 반영됐다고 단정하지 말고, 한국 당일 장중 자료가 있는 경우에만 반영 여부를 언급하세요.",
-        "- 한국 당일 장중 자료는 전일 종가 결과와 구분해서 '개장 후/장중 흐름'으로 표현하세요.",
-        "",
-        market_memory_context,
-        "",
-        f"최신 자료 수: {len(docs)}",
-        "",
-        "아래 자료만 근거로 사용하세요. 본문에 없는 숫자나 시장 수치는 추정하지 마세요.",
-        "자료에 지수/금리/환율/수급 숫자가 부족하면 그 한계를 명시하고, 기사에서 확인되는 시장 반응 중심으로 분석하세요.",
-        "",
-        "## 시장 가격 스냅샷",
-        snapshot_to_markdown(market_snapshot or {"ok": False, "error": "snapshot not available"}),
-        snapshot_staleness_note(market_snapshot, market_windows),
-        "",
-        "## 한국장 시장 수치",
-        korea_market_data_to_markdown(korea_market_data),
-        "",
-        "## 시장 수치 사용 지침",
-        "'시장 흐름' 섹션을 쓸 때는 위 시장 가격 스냅샷, 한국장 시장 수치, 입력 자료에서 확인되는 핵심 수치를 반드시 먼저 확인하세요.",
-        "- **정규장 마감 결과 수치는 로컬 기사를 1순위로 확인하세요.** 미국장·한국장의 마감 지수·등락률은 로컬 기사(예: '뉴욕증시 브리핑', 증시 마감 시황 기사)에 그 거래일 기준으로 명시되는 경우가 많습니다. 이 마감 수치를 우선 근거로 쓰고, 시장 가격 스냅샷은 보조·교차검증용으로만 쓰세요. 스냅샷은 당일 EOD 일봉이 늦게 반영돼 기준일이 정규장 기준일보다 하루 이전일 수 있습니다(위 '기준일' 열과 날짜 주의 문구 확인).",
-        "- 수치가 있으면: 미국 주요 지수와 핵심 ETF/자산가격(Dow, S&P500, Nasdaq, Russell, 반도체지수, QQQ/SPY/RSP, VIX, 10년물 금리, TLT, DXY, WTI, 금)으로 미국장 성격을, KOSPI·KOSDAQ·원달러 환율·외국인/기관/개인 수급으로 한국장 성격을 설명하세요.",
-        "- 한국 D 장중/마감 흐름을 설명할 때 가능한 한 '한국장은 KOSPI가 전일 대비 X%, KOSDAQ이 Y%로 마감했다. 장 초반에는 ...였지만, 장 후반에는 ...로 회복했다.' 형식을 따르세요.",
-        "- 한국장 수치 블록에 KOSPI/KOSDAQ 종가 등락률이 없으면 '입력 자료에서 한국장 종가 등락률은 확인되지 않는다'고 명시하고 수치를 추정하지 마세요.",
-        "- 수치는 단순 나열하지 말고, 장의 강도와 성격을 해석하는 근거로 사용하세요(핵심 수치 → 장의 성격 → 미국·한국 연결/차별화 순).",
-        "- 수치를 인용할 때는 그 수치가 어느 거래일 기준인지 명확히 하세요. 스냅샷 기준일과 정규장 기준일이 다르면 로컬 기사 수치를 우선하고, 스냅샷 숫자는 그 기준일을 밝혀서만 쓰세요.",
-        f"- **미국장 결과 수치는 '시장기준일'이 미국 정규장 기준일({market_windows.get('usRegularSessionDate', '')})과 같은 자료만 사용하세요.** 아래 '기사/자료 원문 요약'의 각 자료에는 시장기준일이 표시됩니다. 시장기준일이 다른 자료(예: 발행일은 같아도 실제로는 전 거래일을 다룬 뉴욕증시 마감 기사)의 지수·등락률을 현재 미국장 결과처럼 쓰지 마세요.",
-        f"- 시장 가격 스냅샷 수치는 스냅샷 미국 주가 기준일이 미국 정규장 기준일({market_windows.get('usRegularSessionDate', '')})과 같을 때만 해당 미국장 결과로 쓰세요.",
-        f"- 위 두 가지가 모두 없으면 '입력 자료에서 해당 미국장({market_windows.get('usRegularSessionDate', '')}) 직접 수치는 확인되지 않는다'고 명시하세요.",
-        "- 수치가 없으면: 입력 자료에서 직접 수치는 확인되지 않는다고 명시하고, 확인되지 않는 수치는 추정하지 마세요.",
-        "",
-        "## 미국장 거래일 혼동 방지 (중요)",
-        "한국 언론의 뉴욕증시 마감/브리핑 기사는 발행일과 실제 미국 정규장 기준일이 하루 다를 수 있습니다.",
-        "- 예: 한국시간 2026-06-09 오전 발행 뉴욕증시 브리핑은 보통 미국 2026-06-08 정규장 마감 기사입니다.",
-        f"- 이번 브리핑에서 미국 {market_windows.get('usRegularSessionDate', '')} 정규장 결과를 설명할 때는 시장기준일이 {market_windows.get('usRegularSessionDate', '')}인 자료만 현재 미국장 결과로 사용하세요.",
-        "- 기사 발행일만 보고 미국장 거래일을 단정하지 마세요. 아래 '기사/자료 원문 요약'에 표시된 '시장기준일(추정)'을 따르세요.",
-        "",
-        "## 시장 범위 출력 지침",
-        _scope_output_instruction(market_scope),
-        "최종 Markdown은 위 `최종 제목(정확히 사용)`에 지정된 시장별 제목을 그대로 쓰고, 다음 줄은 바로 `## 0. 오늘의 ... 성격`으로 시작하세요. 제목의 날짜는 시장 세션일이며 `마감`/`장중` 상태를 생략하지 마세요. 제목과 0번 섹션 사이에 브리핑 대상, 시장 범위, 세션 모드, 자료 선별 방식, 날짜 해석 설명, blockquote를 넣지 마세요.",
-        f"- 브리핑 유형 지침: {briefing_type_instruction(briefing_type)}",
-        "각 주요 섹션은 '한 줄 결론 + 가운뎃점 3~4개 + 기존 줄글 해설' 순서로 쓰고, 요약이 줄글을 대체하지 않게 하세요.",
-        "장중 모드는 종가처럼 단정하지 말고 '현재까지/장중 기준'으로, 휴장·off-session 모드는 다음 거래일 반영 후보로 표현하세요.",
-        "",
-        "## 이슈 선별·출처 다양성 지침",
-        "기사 수가 많은 이슈를 중요하다고 간주하지 마세요. 아래 issueCoverage의 독립 매체 수, 출처 권위, 시장 반응, 재전송 제거 결과를 우선하세요.",
-        "미국장은 Reuters·WSJ·Financial Times·Bloomberg 등 해외 핵심 매체와 미국 가격 반응을 우선하고, 국내 매체의 미국장 보도는 보조자료로 사용하세요.",
-        "한국장은 국내 수급·환율·업종 자료를 중심으로 하되 해외 핵심 매체가 독립 보도한 한국 이슈는 국제적 중요도 신호로 반영하세요.",
-        "재전송 기사와 같은 매체의 반복 기사는 독립 확인으로 세지 마세요.",
-    ]
+    if kind == WEEKLY:
+        # 주간은 세션 지침을 태우지 않는다. 아래 일간 블록은 절반이 "오늘 어느 세션을
+        # 다루는가"에 대한 지시라, 한 주를 덮는 글에 그대로 넣으면 모델이 마지막 하루를
+        # 브리핑하게 된다. 대신 구간·주간 관점·다음주 일정을 준다.
+        lines = _weekly_context_header(
+            weekly_window=weekly_window,
+            calendar_block=calendar_block,
+            expected_titles=expected_titles,
+            market_scope=market_scope,
+            market_snapshot=market_snapshot,
+            korea_market_data=korea_market_data,
+            market_memory_context=market_memory_context,
+            doc_count=len(docs),
+        )
+    else:
+        lines = [
+            f"브리핑 대상일: {date}",
+            f"사용 자료 날짜: {source_date}",
+            f"시장 범위(marketScope): {market_scope}",
+            f"브리핑 유형(briefingType): {briefing_type}",
+            f"미국장 세션 모드: {session_modes.get('us', '')}",
+            f"한국장 세션 모드: {session_modes.get('kr', '')}",
+            *[
+                f"{scope.upper()} 최종 제목(정확히 사용): # {title}"
+                for scope, title in expected_titles.items()
+            ],
+            "",
+            "## 브리핑 분석 모드",
+            f"analysisMode: {market_windows.get('analysisMode', '')}",
+            market_windows.get("sessionPriorityRule", ""),
+            f"- 주요 분석축(primary): {', '.join(market_windows.get('primarySessions', [])) or '없음'}",
+            f"- 보조 분석축(secondary/off_session_news): {', '.join(market_windows.get('secondarySessions', [])) or '없음'}",
+            (
+                f"- 주말/휴장 새 뉴스 구간: {market_windows.get('offSessionNewsWindow', {}).get('start', '')} ~ {market_windows.get('offSessionNewsWindow', {}).get('end', '')} "
+                "(이 구간 뉴스는 현재 가격 반응이 아니라 다음 거래일 반영 후보로 다루세요)"
+                if market_windows.get("weekendOrHolidayNewsMode")
+                else "- 주말/휴장 새 뉴스 구간: 해당 없음(평일 정규장 모드)"
+            ),
+            "아래 '기사/자료 원문 요약'의 각 자료에는 분석우선순위(primary/secondary/background/off_session_news)가 표시됩니다. primary 자료를 시장 흐름·핵심 변수의 중심 근거로 쓰고, background는 배경 맥락으로만, off_session_news는 다음 거래일 반영 후보로 쓰세요.",
+            (
+                "주말/휴장 모드에서는 2번 '시장을 움직인 핵심 변수'와 3~4번 '시장을 주도한 기업' 섹션을 off_session_news(주말/휴장 사이 새 뉴스) 중심으로 구성하세요. 최근 정규장 자료는 1번 시장 흐름에서 간결히 복기하는 배경으로 쓰고, 핵심 변수/기업 섹션에서 새 뉴스의 다음 거래일 반영 가능성과 확인 조건을 우선 다루세요."
+                if market_windows.get("weekendOrHolidayNewsMode")
+                else ""
+            ),
+            (
+                "중요: 위 주말/휴장·세션 구분은 분석 오류를 막기 위한 내부 지침입니다. 최종 본문에는 장이 열리지 않았다는 설명, 가격 반응으로 해석할 수 없다는 면책 문장, off_session_news 같은 운영 용어를 쓰지 마세요. 뉴스의 경제적 전달 경로를 바로 분석하고 필요한 조건만 체크포인트에 적으세요."
+                if market_windows.get("weekendOrHolidayNewsMode")
+                else "세션 관련 내부 라벨과 운영 지침은 최종 본문에 노출하지 마세요."
+            ),
+            (
+                f"weekday_kr_open 모드: '시장 흐름' 섹션에 반드시 한국 {market_windows.get('krCurrentSessionDate', '')} 개장 후/장중 흐름을 별도 문단으로 작성하세요. 한국 전일({market_windows.get('krPreviousSessionDate', '')}) 정규장은 배경 맥락으로만 쓰고 한국 당일 장중 문단을 대체하지 않습니다. 한국 당일 장중 직접 지수·수급 수치가 자료에 없으면 '확인되지 않는다'고 명시하되, 한국 당일 장중 자료에서 확인되는 뉴스 흐름은 따로 다루세요."
+                if market_windows.get("krSessionPhase") == "intraday"
+                else ""
+            ),
+            "",
+            "## 한미 시장 시차 기준",
+            market_windows.get("rule", ""),
+            ("휴장/주말 메모: " + " ".join(market_windows.get("closedNotes", []))) if market_windows.get("closedNotes") else "휴장/주말 메모: 특이사항 없음",
+            f"- 미국장 기준: {market_windows.get('usRegularSessionDate', '')} 정규장 마감 결과와 그 이후 확인된 미국 관련 뉴스",
+            (
+                f"- 한국장 기준: {market_windows.get('krPreviousSessionDate', '')} 정규장 결과 + {market_windows.get('krCurrentSessionDate', '')} 개장 후/장중 시황"
+                if market_windows.get("krSessionPhase") == "intraday"
+                else (
+                    f"- 한국장 기준: {market_windows.get('krCurrentSessionDate', '')} 정규장 마감 결과"
+                    if market_windows.get("krSessionPhase") == "closed"
+                    else f"- 한국장 기준: {market_windows.get('krPreviousSessionDate', '')} 정규장 마감 결과. 당일 장중 시황으로 쓰지 마세요."
+                )
+            ),
+            "- 미국장 마감 이후 나온 뉴스는 한국장에 이미 반영됐다고 단정하지 말고, 한국 당일 장중 자료가 있는 경우에만 반영 여부를 언급하세요.",
+            "- 한국 당일 장중 자료는 전일 종가 결과와 구분해서 '개장 후/장중 흐름'으로 표현하세요.",
+            "",
+            market_memory_context,
+            "",
+            f"최신 자료 수: {len(docs)}",
+            "",
+            "아래 자료만 근거로 사용하세요. 본문에 없는 숫자나 시장 수치는 추정하지 마세요.",
+            "자료에 지수/금리/환율/수급 숫자가 부족하면 그 한계를 명시하고, 기사에서 확인되는 시장 반응 중심으로 분석하세요.",
+            "",
+            "## 시장 가격 스냅샷",
+            snapshot_to_markdown(market_snapshot or {"ok": False, "error": "snapshot not available"}),
+            snapshot_staleness_note(market_snapshot, market_windows),
+            "",
+            "## 한국장 시장 수치",
+            korea_market_data_to_markdown(korea_market_data),
+            "",
+            "## 시장 수치 사용 지침",
+            "'시장 흐름' 섹션을 쓸 때는 위 시장 가격 스냅샷, 한국장 시장 수치, 입력 자료에서 확인되는 핵심 수치를 반드시 먼저 확인하세요.",
+            "- **정규장 마감 결과 수치는 로컬 기사를 1순위로 확인하세요.** 미국장·한국장의 마감 지수·등락률은 로컬 기사(예: '뉴욕증시 브리핑', 증시 마감 시황 기사)에 그 거래일 기준으로 명시되는 경우가 많습니다. 이 마감 수치를 우선 근거로 쓰고, 시장 가격 스냅샷은 보조·교차검증용으로만 쓰세요. 스냅샷은 당일 EOD 일봉이 늦게 반영돼 기준일이 정규장 기준일보다 하루 이전일 수 있습니다(위 '기준일' 열과 날짜 주의 문구 확인).",
+            "- 수치가 있으면: 미국 주요 지수와 핵심 ETF/자산가격(Dow, S&P500, Nasdaq, Russell, 반도체지수, QQQ/SPY/RSP, VIX, 10년물 금리, TLT, DXY, WTI, 금)으로 미국장 성격을, KOSPI·KOSDAQ·원달러 환율·외국인/기관/개인 수급으로 한국장 성격을 설명하세요.",
+            "- 한국 D 장중/마감 흐름을 설명할 때 가능한 한 '한국장은 KOSPI가 전일 대비 X%, KOSDAQ이 Y%로 마감했다. 장 초반에는 ...였지만, 장 후반에는 ...로 회복했다.' 형식을 따르세요.",
+            "- 한국장 수치 블록에 KOSPI/KOSDAQ 종가 등락률이 없으면 '입력 자료에서 한국장 종가 등락률은 확인되지 않는다'고 명시하고 수치를 추정하지 마세요.",
+            "- 수치는 단순 나열하지 말고, 장의 강도와 성격을 해석하는 근거로 사용하세요(핵심 수치 → 장의 성격 → 미국·한국 연결/차별화 순).",
+            "- 수치를 인용할 때는 그 수치가 어느 거래일 기준인지 명확히 하세요. 스냅샷 기준일과 정규장 기준일이 다르면 로컬 기사 수치를 우선하고, 스냅샷 숫자는 그 기준일을 밝혀서만 쓰세요.",
+            f"- **미국장 결과 수치는 '시장기준일'이 미국 정규장 기준일({market_windows.get('usRegularSessionDate', '')})과 같은 자료만 사용하세요.** 아래 '기사/자료 원문 요약'의 각 자료에는 시장기준일이 표시됩니다. 시장기준일이 다른 자료(예: 발행일은 같아도 실제로는 전 거래일을 다룬 뉴욕증시 마감 기사)의 지수·등락률을 현재 미국장 결과처럼 쓰지 마세요.",
+            f"- 시장 가격 스냅샷 수치는 스냅샷 미국 주가 기준일이 미국 정규장 기준일({market_windows.get('usRegularSessionDate', '')})과 같을 때만 해당 미국장 결과로 쓰세요.",
+            f"- 위 두 가지가 모두 없으면 '입력 자료에서 해당 미국장({market_windows.get('usRegularSessionDate', '')}) 직접 수치는 확인되지 않는다'고 명시하세요.",
+            "- 수치가 없으면: 입력 자료에서 직접 수치는 확인되지 않는다고 명시하고, 확인되지 않는 수치는 추정하지 마세요.",
+            "",
+            "## 미국장 거래일 혼동 방지 (중요)",
+            "한국 언론의 뉴욕증시 마감/브리핑 기사는 발행일과 실제 미국 정규장 기준일이 하루 다를 수 있습니다.",
+            "- 예: 한국시간 2026-06-09 오전 발행 뉴욕증시 브리핑은 보통 미국 2026-06-08 정규장 마감 기사입니다.",
+            f"- 이번 브리핑에서 미국 {market_windows.get('usRegularSessionDate', '')} 정규장 결과를 설명할 때는 시장기준일이 {market_windows.get('usRegularSessionDate', '')}인 자료만 현재 미국장 결과로 사용하세요.",
+            "- 기사 발행일만 보고 미국장 거래일을 단정하지 마세요. 아래 '기사/자료 원문 요약'에 표시된 '시장기준일(추정)'을 따르세요.",
+            "",
+            "## 시장 범위 출력 지침",
+            _scope_output_instruction(market_scope),
+            "최종 Markdown은 위 `최종 제목(정확히 사용)`에 지정된 시장별 제목을 그대로 쓰고, 다음 줄은 바로 `## 0. 오늘의 ... 성격`으로 시작하세요. 제목의 날짜는 시장 세션일이며 `마감`/`장중` 상태를 생략하지 마세요. 제목과 0번 섹션 사이에 브리핑 대상, 시장 범위, 세션 모드, 자료 선별 방식, 날짜 해석 설명, blockquote를 넣지 마세요.",
+            f"- 브리핑 유형 지침: {briefing_type_instruction(briefing_type)}",
+            "각 주요 섹션은 '한 줄 결론 + 가운뎃점 3~4개 + 기존 줄글 해설' 순서로 쓰고, 요약이 줄글을 대체하지 않게 하세요.",
+            "장중 모드는 종가처럼 단정하지 말고 '현재까지/장중 기준'으로, 휴장·off-session 모드는 다음 거래일 반영 후보로 표현하세요.",
+            "",
+            "## 이슈 선별·출처 다양성 지침",
+            "기사 수가 많은 이슈를 중요하다고 간주하지 마세요. 아래 issueCoverage의 독립 매체 수, 출처 권위, 시장 반응, 재전송 제거 결과를 우선하세요.",
+            "미국장은 Reuters·WSJ·Financial Times·Bloomberg 등 해외 핵심 매체와 미국 가격 반응을 우선하고, 국내 매체의 미국장 보도는 보조자료로 사용하세요.",
+            "한국장은 국내 수급·환율·업종 자료를 중심으로 하되 해외 핵심 매체가 독립 보도한 한국 이슈는 국제적 중요도 신호로 반영하세요.",
+            "재전송 기사와 같은 매체의 반복 기사는 독립 확인으로 세지 마세요.",
+        ]
     if diversity_warnings:
         lines.append("출처 다양성 경고: " + " / ".join(diversity_warnings))
     if issue_coverage:
@@ -888,7 +1009,7 @@ def build_llm_context(
         d["refTier"] = _ref_tier(d)
     selected_for_refs = sorted(selected, key=lambda d: _reference_sort_key(d, market_windows), reverse=True)
     selected_for_refs, final_warnings = diversify_ranked_documents(
-        selected_for_refs, limit=24, per_publisher=4, minimum_publishers=5,
+        selected_for_refs, limit=doc_limit, per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
     )
     for warning in final_warnings:
         if warning not in diversity_warnings:
@@ -896,14 +1017,15 @@ def build_llm_context(
     return "\n".join(lines), selected_for_refs
 
 
-def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None):
+def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block=""):
     cfg = selected_llm_config()
+    kind = normalize_briefing_kind(kind)
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
         return None, "disabled"
     if not cfg["apiKey"]:
         return None, f"missing_{cfg['provider']}_api_key"
-    prompt = read_briefing_prompt(market_scope)
+    prompt = read_briefing_prompt(market_scope, kind)
     if not prompt:
         return None, "missing_prompt"
     context, used_docs = build_llm_context(
@@ -921,6 +1043,9 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
         briefing_type=briefing_type,
         issue_coverage=issue_coverage,
         session_modes=session_modes,
+        kind=kind,
+        weekly_window=weekly_window,
+        calendar_block=calendar_block,
     )
     target_block = render_quality_target_context(
         "briefing",
@@ -959,13 +1084,16 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
         if not text:
             return None, "empty_response"
         text = reader_facing_briefing_markdown(strip_llm_citation_markers(text))
-        text = normalize_briefing_markdown_titles(
-            text,
-            date,
-            market_scope,
-            market_windows=market_windows,
-            session_modes=session_modes,
-        )
+        if kind != WEEKLY:
+            # 주간 제목은 세션 정규화를 태우지 않는다. 그 정규화가 H1을 세션일 제목으로
+            # 다시 쓰므로, 태우면 구간이 사라지고 계약 검사가 바로 걸린다.
+            text = normalize_briefing_markdown_titles(
+                text,
+                date,
+                market_scope,
+                market_windows=market_windows,
+                session_modes=session_modes,
+            )
         return {
             "markdown": text,
             "provider": cfg["provider"],
@@ -1182,7 +1310,7 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
             seen.add(key)
             source_docs.append(item)
 
-    for d in prioritized_source_refs(docs, market_windows, limit=14, issue_coverage=issue_coverage):
+    for d in prioritized_source_refs(docs, market_windows, limit=SOURCE_REF_LIMIT, issue_coverage=issue_coverage):
         _push(d)
 
     # 오늘의 시장 성격을 설명할 핵심 축 (기본 3개)
@@ -1327,7 +1455,7 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
 
 ## 참고자료
 
-{source_lines(source_docs)}
+{source_lines(source_docs, limit=SOURCE_REF_LIMIT)}
 
 ## Source & Data Notes
 
@@ -1587,14 +1715,28 @@ def _with_visual_compatibility(report):
     return _with_leading_company_visuals(_with_nasdaq_composite_index_visuals(report))
 
 
-def resolve_briefing(date, market_scope="both"):
+def resolve_briefing(date, market_scope="both", kind=DEFAULT_BRIEFING_KIND):
     """Load a market-scoped briefing, preferring new per-market files.
 
     Legacy `{date}.json` files remain readable and are scoped through
     `briefing_scope_view` when a per-market file is not present.
+
+    **주간은 일간으로 되돌아가지 않는다.** 같은 날 두 보고서가 나란히 있을 수 있으므로,
+    주간을 물었는데 일간을 돌려주면 화면이 다른 보고서를 열어 놓고 주간이라고 말한다.
     """
     date_text = _valid_briefing_date(date)
     scope = normalize_market_scope(market_scope)
+    kind = normalize_briefing_kind(kind)
+    if kind == WEEKLY:
+        if scope in SINGLE_MARKET_SCOPES:
+            scoped = _read_briefing_json(BRIEFINGS_DIR / briefing_file_name(date_text, scope, kind))
+            return briefing_scope_view(scoped, scope) if isinstance(scoped, dict) else None
+        scoped_reports = {
+            scope_key: _read_briefing_json(BRIEFINGS_DIR / briefing_file_name(date_text, scope_key, kind))
+            for scope_key in market_keys_for_briefing_scope(scope)
+        }
+        combined = _combine_market_reports(date_text, scoped_reports, scope)
+        return combined or None
     if scope in SINGLE_MARKET_SCOPES:
         scoped = _read_briefing_json(BRIEFINGS_DIR / briefing_file_name(date_text, scope))
         if isinstance(scoped, dict):
@@ -1673,7 +1815,7 @@ def resolve_briefing_by_session(session_date, market_scope):
     return None
 
 
-def delete_briefing(date, market=None):
+def delete_briefing(date, market=None, kind=DEFAULT_BRIEFING_KIND):
     """Delete a saved briefing report and its immutable visual sidecars.
 
     With new per-market storage, a market argument removes only that market's
@@ -1685,9 +1827,19 @@ def delete_briefing(date, market=None):
 
     date_text = _valid_briefing_date(date)
     market_text = str(market or "").strip().lower()
+    kind = normalize_briefing_kind(kind)
     if market_text and market_text not in SINGLE_MARKET_SCOPES:
         raise ValueError(f"market must be one of {', '.join(SINGLE_MARKET_SCOPES)}")
-    if market_text:
+    if kind == WEEKLY:
+        # 주간 삭제는 주간 파일만 지운다. 종류를 무시하면 그날 일간 브리핑까지 사라진다.
+        scopes = (market_text,) if market_text else SINGLE_MARKET_SCOPES
+        targets = tuple(
+            BRIEFINGS_DIR / name(date_text, scope, kind)
+            for scope in scopes
+            for name in (briefing_file_name, visual_sidecar_file_name, visual_sidecar_gzip_file_name)
+        )
+        primary_names = tuple(briefing_file_name(date_text, scope, kind) for scope in scopes)
+    elif market_text:
         targets = (
             BRIEFINGS_DIR / briefing_file_name(date_text, market_text),
             BRIEFINGS_DIR / visual_sidecar_file_name(date_text, market_text),

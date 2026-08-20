@@ -61,7 +61,7 @@ class JobJsonProducers:
         reports = {
             scope: decorate_candidate(
                 "briefing",
-                {**request.reports[scope], "date": request.date, "marketScope": scope},
+                {**request.reports[scope], "date": request.date, "marketScope": scope, "kind": request.kind},
                 data_dir=self.data_root,
                 generation_provenance=True,
             )
@@ -69,7 +69,7 @@ class JobJsonProducers:
         }
         decorated = BriefingJobRequest(
             date=request.date, scopes=request.scopes, reports=reports, visuals=request.visuals,
-            terminal_result=request.terminal_result,
+            terminal_result=request.terminal_result, kind=request.kind,
         )
         return self.workspace.stage(job, briefing_specs(self.data_root, decorated), terminal_result=request.terminal_result)
 

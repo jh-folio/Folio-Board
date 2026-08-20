@@ -428,6 +428,8 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
     date = kst_date()
     generation_mode = default_generation_mode()
     scope_label = market_selection_scope(markets)
+    kind = str(cfg.get("kind") or "daily").strip().lower()
+    kind = kind if kind in {"daily", "weekly"} else "daily"
     if generation_mode == "llm_cli":
         briefing = submit_agent_task("briefing", {
             "date": date,
@@ -436,6 +438,7 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             "market_scope": scope_label,
             "markets": markets,
             "briefing_type": cfg.get("briefingType", "default"),
+            "kind": kind,
         })
     else:
         briefing = build_briefing(
@@ -445,6 +448,7 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             quality_mode=cfg.get("qualityMode", "diagnose_only"),
             markets=markets,
             briefing_type=cfg.get("briefingType", "default"),
+            kind=kind,
         )
     return {
         "date": date,
@@ -452,6 +456,7 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
         "scheduleId": cfg.get("id", ""),
         "marketScope": scope_label,
         "markets": markets,
+        "kind": kind,
         "droppedMarkets": dropped,
         "prerequisites": prerequisites,
         "briefing": briefing,
@@ -589,18 +594,22 @@ def run_due_automations(now: dt.datetime | None = None) -> dict:
         executed.append(run_automation_once("marketMemory"))
     # 스케줄마다 독립된 job이다. 같은 날 같은 시장 집합을 두 번 만들지 않도록,
     # 이번 주기에 이미 돈 집합은 건너뛴다(시각이 가까운 스케줄 둘이 같은 시장을 볼 때).
+    #
+    # **종류가 키에 들어간다.** 같은 시장의 일간 예약과 주간 예약이 한 주기에 걸리면
+    # (일요일 아침이 정확히 그 경우다) 뒤에 오는 쪽이 조용히 스킵돼, 사용자는 주간
+    # 예약을 켜 두고도 아무것도 받지 못한다.
     now_at = now or dt.datetime.now().astimezone()
     produced: set[tuple[str, ...]] = set()
     for schedule in settings.get("briefingSchedules") or []:
         if not schedule_due(schedule, settings=settings, now=now_at, runs=runs):
             continue
         markets, _ = markets_in_scope(schedule.get("markets") or [])
-        key = tuple(markets)
-        if key and key in produced:
+        key = (str(schedule.get("kind") or "daily"), *markets)
+        if markets and key in produced:
             continue
         outcome = run_automation_once("briefing", schedule=schedule)
         executed.append(outcome)
-        if key and outcome.get("ok"):
+        if markets and outcome.get("ok"):
             produced.add(key)
     return {"ok": True, "executed": executed}
 

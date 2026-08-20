@@ -13,7 +13,7 @@ Your files and generated reports stay local by default. LLM/API integrations are
 ## What You Can Do
 
 - **Collect** — Pull public RSS and news from four markets (US, Korea, Europe, Japan) in their own languages, and drop your own articles, reports, and filings into `research-inbox/`. Search across everything you have collected.
-- **Read the day** — Generate daily briefings for any set of the four markets, each saved as its own report. The Dashboard shows what actually changed since the last one, the market calendar with released figures rather than just the schedule, and charts you choose.
+- **Read the day, and the week** — Generate daily briefings for any set of the four markets, each saved as its own report, or a weekly summary with next week's schedule. The Dashboard shows what actually changed since the last one, the market calendar with released figures rather than just the schedule, and charts you choose.
 - **Analyse a company** — Type a ticker, a company name, or a Korean or Japanese spelling. The screen shows which company it read before generating, offers a choice when several fit, and says so plainly when it recognises none.
 - **Answer a question** — Ask an investment question in Deep Research and approve the research plan before anything runs. The report keeps its sources, its gaps, its Smart Collection scope, and your own thinking as separate layers.
 - **Track what you follow** — Keep a Watchlist of companies, sectors, and themes, each with a chart and the news collected for it.
@@ -125,6 +125,8 @@ Track companies, sectors, and themes in a local Watchlist, then inspect the rela
 Create and read daily market briefings for the US, Korea, Europe, and Japan. Pick one market or several; each becomes its own report, and you can regenerate, export, or delete one without touching the others. Briefings use news/RSS-style inputs and stored market snapshots where available. If AI is configured, Folio OS can use it for richer writing; otherwise the briefing is written with built-in rules.
 
 Each market is read on its own session clock. A briefing filed on a Korean morning covers the US session that closed overnight and the Korean session of that same day, and it says which is which.
+
+You can also pick **weekly summary** instead of daily. A weekly briefing covers the seven days up to the date you choose and adds next week's schedule — indicators, central bank meetings, earnings, dividends, and market holidays — marking which entries are confirmed and which are still estimates. It is saved separately from that day's daily briefing, so neither replaces the other, and the archive filter tells them apart.
 
 ### RSS Feed
 

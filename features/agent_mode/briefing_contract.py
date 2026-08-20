@@ -33,6 +33,34 @@ def required_sections(market: str) -> tuple[str, ...]:
     )
 
 
+def weekly_required_sections(market: str) -> tuple[str, ...]:
+    """주간 골격. **일간과 겹치는 라벨을 쓰지 않는다.**
+
+    "오늘의 미국장 성격"을 주간에 그대로 쓰면 계약 검사가 통과하더라도 독자가 읽는
+    글이 하루짜리로 흐른다. 주간은 한 주 동안 무엇이 달라졌는지를 쓰는 글이라
+    섹션 이름부터 그 일을 지시한다.
+    """
+    label = MARKET_LABELS[market]
+    return (
+        TITLE_REQUIREMENTS[market],
+        f"0. 지난주 {label} 한 줄 요약",
+        f"1. 지난주 {label} 흐름",
+        f"2. 지난주 {label}을 움직인 핵심 변수",
+        f"3. 지난주 {label}을 주도한 기업·업종",
+        "4. 이야기의 변화",
+        f"5. 다음주 {label} 일정",
+        f"6. 다음주 {label} 확인할 것",
+        "이번 주 결론",
+    )
+
+
+def section_zero_label(market: str, kind: str = "daily") -> str:
+    label = MARKET_LABELS[market]
+    if str(kind or "daily").strip().lower() == "weekly":
+        return f"## 0. 지난주 {label} 한 줄 요약"
+    return f"## 0. 오늘의 {label} 성격"
+
+
 US_REQUIRED_SECTIONS = required_sections("us")
 KR_REQUIRED_SECTIONS = required_sections("kr")
 
@@ -43,6 +71,7 @@ def briefing_output_contract(
     *,
     expected_titles: dict | None = None,
     markets: "tuple[str, ...] | list[str] | None" = None,
+    kind: str = "daily",
 ) -> dict:
     """생성 결과가 지켜야 할 계약. **시장 목록이 곧 계약 대상이다.**
 
@@ -76,13 +105,39 @@ def briefing_output_contract(
         else:
             resolved = AGGREGATE_MARKETS["both"]
     markets = resolved
+    normalized_kind = str(kind or "daily").strip().lower()
+    if normalized_kind not in {"daily", "weekly"}:
+        normalized_kind = "daily"
     scope = scope if scope in {*SINGLE_MARKETS, *AGGREGATE_MARKETS} else "multi"
-    sections = [section for market in markets for section in required_sections(market)]
+    build_sections = weekly_required_sections if normalized_kind == "weekly" else required_sections
+    sections = [section for market in markets for section in build_sections(market)]
     market_count = len(markets)
     sections.append("Source & Data Notes")
+    if normalized_kind == "weekly":
+        return {
+            "format": "markdown",
+            "marketScope": scope,
+            "kind": "weekly",
+            "requiredMarketTitles": [TITLE_REQUIREMENTS[key] for key in markets],
+            "expectedTitles": {
+                key: value for key, value in (expected_titles or {}).items() if key in markets
+            },
+            "titleDatePattern": "주간 — MM.DD~MM.DD",
+            "requireImmediateSectionZeroAfterTitle": True,
+            # 주간에는 `주도한 기업 ①/②`가 없다. 기업과 업종을 한 섹션에서 다루므로
+            # 기업명 헤딩 검사를 켜 두면 무엇을 써도 통과할 수 없다.
+            "requireLeadingCompanyNames": False,
+            "requiredSections": sections,
+            "briefingType": normalized_type,
+            "minimumCharacters": (2500 if normalized_type == "concise" else 4000) * market_count,
+            "minimumOneLineConclusions": 7 * market_count,
+            "minimumMiddleDotBullets": 18 * market_count,
+            "retryOnViolation": 1,
+        }
     return {
         "format": "markdown",
         "marketScope": scope,
+        "kind": "daily",
         "requiredMarketTitles": [TITLE_REQUIREMENTS[key] for key in markets],
         # **만들 시장의 제목만 남긴다.** 프롬프트가 이 값을 전부 펼쳐 "H1은 정확히
         # 이것들이어야 한다"고 지시하므로, 여기 미국·유럽이 섞여 있으면 한국·일본
@@ -118,10 +173,16 @@ def _market_keys_from_contract(contract: dict) -> list[str]:
     return keys or ["us", "kr"]
 
 
-def _title_line_match(value: str, title: str, expected_title: str = ""):
+def _title_line_match(value: str, title: str, expected_title: str = "", kind: str = "daily"):
     if expected_title:
         return re.search(
             rf"^#\s+{re.escape(expected_title)}\s*$",
+            value,
+            re.MULTILINE,
+        )
+    if str(kind or "daily").strip().lower() == "weekly":
+        return re.search(
+            rf"^#\s+{re.escape(title)}\s+주간\s+[—-]\s+\d{{2}}\.\d{{2}}~\d{{2}}\.\d{{2}}\s*$",
             value,
             re.MULTILINE,
         )
@@ -174,13 +235,16 @@ def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
     if missing:
         violations.append(f"필수 제목 누락: {', '.join(missing)}")
 
+    kind = str(contract.get("kind") or "daily").strip().lower()
     for key in _market_keys_from_contract(contract):
         title = TITLE_REQUIREMENTS[key]
         expected_title = str((contract.get("expectedTitles") or {}).get(key) or "").strip()
-        match = _title_line_match(value, title, expected_title)
+        match = _title_line_match(value, title, expected_title, kind)
         if not match:
             if expected_title:
                 violations.append(f"시장별 제목 불일치: '# {expected_title}' 필요")
+            elif kind == "weekly":
+                violations.append(f"시장별 제목 구간 누락: '# {title} 주간 — MM.DD~MM.DD' 형식 필요")
             else:
                 violations.append(f"시장별 제목 날짜 누락: '# {title} — YYYY.MM.DD 마감|장중' 형식 필요")
             continue
@@ -191,7 +255,7 @@ def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
             # `0. 오늘의 일본장 성격`을 요구하므로 **계약이 자기 자신과 모순됐다.**
             # 18:00 한국·일본 예약은 무엇을 써도 통과할 수 없었고, 위반 → 재작성 →
             # 또 위반으로 CLI를 두 번 돌린 뒤 45분을 버리고 실패했다(실측).
-            expected = f"## 0. 오늘의 {MARKET_LABELS[key]} 성격"
+            expected = section_zero_label(key, kind)
             if not next_line.startswith(expected):
                 violations.append(f"제목 다음 프리앰블 금지: '# {title}' 다음은 바로 '{expected}'이어야 함")
 
