@@ -326,18 +326,55 @@ def _ref_text(doc):
     ])).lower()
 
 
-def _source_priority_tier(doc, market_windows, driver_keys=None, company_group_keys=None):
+# **시장 고유 티어는 그 시장 브리핑에서만 켜진다.**
+#
+# 예전에는 한국장 키워드 티어(`kr_current_flow`·`korea_market_data`)가 시장과 무관하게
+# 걸려서, 국내 매체의 코스피·수급 기사가 미국장 브리핑 참고자료 상단을 차지했다
+# (실측 2026-08-08~14 US 참고자료 24건 중 국내 매체가 14건 = 58%). 프롬프트는 같은
+# 자리에서 "국내 매체의 미국장 보도는 보조자료로 사용하세요"라고 말하는데, 정작 목록은
+# 그 반대로 정렬돼 있었다.
+#
+# 유럽·일본에는 대응하는 "그 시장 마감 기사" 판정기가 없다(`is_us_market_close_article`
+# 같은 것). 없는 것을 흉내 내는 대신 매체 적합도 밴드가 그 자리를 대신한다.
+_HOME_MARKET_TIERS = {
+    "us": frozenset({"us_close"}),
+    "kr": frozenset({"kr_current_flow", "korea_market_data"}),
+    "europe": frozenset(),
+    "jp": frozenset(),
+}
+
+
+def _tier_enabled(tier, market_scope):
+    """이 티어를 이 시장 브리핑에서 쓸 수 있는가.
+
+    범위를 모르거나 종합이면 예전처럼 전부 켠다 — 종합 본문은 시장을 모두 담으므로
+    어느 시장의 고유 자료도 상단에 올 수 있어야 한다.
+    """
+    scope = str(market_scope or "").strip().lower()
+    if scope not in _HOME_MARKET_TIERS:
+        return True
+    owned = {name for names in _HOME_MARKET_TIERS.values() for name in names}
+    return tier not in owned or tier in _HOME_MARKET_TIERS[scope]
+
+
+def _source_priority_tier(doc, market_windows, driver_keys=None, company_group_keys=None, market_scope=""):
     driver_keys = driver_keys or set()
     company_group_keys = company_group_keys or set()
     key = _doc_key(doc)
     text = _ref_text(doc)
     market_session = doc.get("marketSessionDate") or doc.get("date", "")
 
-    if market_session == market_windows.get("usRegularSessionDate") and is_us_market_close_article(doc):
+    if (
+        _tier_enabled("us_close", market_scope)
+        and market_session == market_windows.get("usRegularSessionDate")
+        and is_us_market_close_article(doc)
+    ):
         return "us_close"
-    if doc_market_bucket(doc, market_windows) == "KR 당일 개장/장중":
+    if _tier_enabled("kr_current_flow", market_scope) and doc_market_bucket(doc, market_windows) == "KR 당일 개장/장중":
         return "kr_current_flow"
-    if any(t in text for t in ("kospi", "kosdaq", "코스피", "코스닥", "원달러", "원·달러", "외국인", "기관", "개인", "수급", "거래대금")):
+    if _tier_enabled("korea_market_data", market_scope) and any(
+        t in text for t in ("kospi", "kosdaq", "코스피", "코스닥", "원달러", "원·달러", "외국인", "기관", "개인", "수급", "거래대금")
+    ):
         return "korea_market_data"
     if any(t in text for t in ("semiconductor", "chip", "hbm", "nvidia", "반도체", "엔비디아", "소부장", "전기전자")):
         return "semiconductor"
@@ -352,19 +389,44 @@ def _source_priority_tier(doc, market_windows, driver_keys=None, company_group_k
     return "support"
 
 
-def _reference_sort_key(doc, market_windows):
+def _publisher_fit_band(doc, market_scope):
+    """이 매체가 이 시장을 얼마나 다루는가. **같은 티어 안의 저울이다.**
+
+    거친 밴드 셋으로 둔다. 전문성 점수를 그대로 정렬 키에 넣으면 문서 점수를 덮어써서
+    매체 이름만으로 순서가 정해진다 — 브리핑 적합도(시장 반응 연결성 포함)가 여전히
+    주 정렬 기준이어야 한다. 범위를 모르거나 종합이면 저울을 걸지 않는다.
+    """
+    scope = str(market_scope or "").strip().lower()
+    if scope not in _HOME_MARKET_TIERS:
+        return 0
+    from features.daily_briefing.issue_selection import source_profile
+
+    expertise = float(source_profile(doc, scope).get("marketExpertise") or 0.0)
+    if expertise >= 7.5:
+        return 2
+    if expertise >= 5.0:
+        return 1
+    return 0
+
+
+def _reference_sort_key(doc, market_windows, market_scope=""):
     score = doc.get("briefingDocScore")
     if score is None:
         score = briefing_doc_score(doc, market_windows)
-    return (_REF_TIER_RANK.get(doc.get("refTier", "support"), 0), score, doc.get("date", ""))
+    return (
+        _REF_TIER_RANK.get(doc.get("refTier", "support"), 0),
+        _publisher_fit_band(doc, market_scope),
+        score,
+        doc.get("date", ""),
+    )
 
 
-def prioritized_source_refs(docs, market_windows, limit=SOURCE_REF_LIMIT, issue_coverage=None):
+def prioritized_source_refs(docs, market_windows, limit=SOURCE_REF_LIMIT, issue_coverage=None, market_scope=""):
     rows = []
     for d in docs or []:
-        d["refTier"] = _source_priority_tier(d, market_windows)
+        d["refTier"] = _source_priority_tier(d, market_windows, market_scope=market_scope)
         rows.append(d)
-    ranked = sorted(rows, key=lambda x: _reference_sort_key(x, market_windows), reverse=True)
+    ranked = sorted(rows, key=lambda x: _reference_sort_key(x, market_windows, market_scope), reverse=True)
     if issue_coverage:
         issue_docs, _ = select_diverse_documents(
             issue_coverage, market_windows, limit=max(limit, DIVERSE_SELECTION_LIMIT),
@@ -1003,11 +1065,13 @@ def build_llm_context(
     # 높은 자료를 우선해, driver 키워드만 스친 단발 기사가 상단에 올라오지 않게 한다.
     # (source_refs가 앞에서부터 N개를 취하므로 정렬 순서가 곧 참고자료 우선순위가 된다.)
     def _ref_tier(doc):
-        return _source_priority_tier(doc, market_windows, driver_keys, company_group_keys)
+        return _source_priority_tier(doc, market_windows, driver_keys, company_group_keys, market_scope)
 
     for d in selected:
         d["refTier"] = _ref_tier(d)
-    selected_for_refs = sorted(selected, key=lambda d: _reference_sort_key(d, market_windows), reverse=True)
+    selected_for_refs = sorted(
+        selected, key=lambda d: _reference_sort_key(d, market_windows, market_scope), reverse=True,
+    )
     selected_for_refs, final_warnings = diversify_ranked_documents(
         selected_for_refs, limit=doc_limit, per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
     )
@@ -1310,7 +1374,9 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
             seen.add(key)
             source_docs.append(item)
 
-    for d in prioritized_source_refs(docs, market_windows, limit=SOURCE_REF_LIMIT, issue_coverage=issue_coverage):
+    for d in prioritized_source_refs(
+        docs, market_windows, limit=SOURCE_REF_LIMIT, issue_coverage=issue_coverage, market_scope=market_scope,
+    ):
         _push(d)
 
     # 오늘의 시장 성격을 설명할 핵심 축 (기본 3개)

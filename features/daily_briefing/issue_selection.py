@@ -22,19 +22,47 @@ FOREIGN_CORE = frozenset({"Reuters", "WSJ", "Financial Times", "Bloomberg"})
 FOREIGN_SUPPORT = frozenset({"CNBC", "MarketWatch", "Barron's", "Dow Jones"})
 DOMESTIC_PUBLISHERS = frozenset({"연합인포맥스", "한국경제", "연합뉴스", "매일경제"})
 
+# 매체별 권위와 **시장별 전문성**. 네 시장 모두에 값을 준다 — 예전에는 `us`/`kr` 둘뿐이라
+# 유럽·일본 브리핑에서 `profile.get("europe")`가 없어 fallback(`sourceWeight`)으로 떨어졌고,
+# 매체 권위 점수가 사실상 무작동이었다. 유럽·일본 매체는 표에 아예 없었다.
+#
+# `region`은 **한국장 교차 확인 판정 전용**이다(`domestic_count`). 유럽·일본 매체에
+# `domestic`을 주면 KR 이슈가 아닌 곳에서 교차 확인 보너스가 붙으므로 `regional`로 둔다.
+# 교차 확인 판정을 유럽·일본까지 일반화하는 것은 이번 범위가 아니다.
 SOURCE_PROFILES = {
-    "Reuters": {"authority": 10.0, "region": "foreign", "us": 10.0, "kr": 7.0},
-    "WSJ": {"authority": 10.0, "region": "foreign", "us": 10.0, "kr": 6.5},
-    "Financial Times": {"authority": 10.0, "region": "foreign", "us": 9.5, "kr": 7.0},
-    "Bloomberg": {"authority": 10.0, "region": "foreign", "us": 9.5, "kr": 7.0},
-    "Dow Jones": {"authority": 9.0, "region": "foreign", "us": 9.0, "kr": 5.5},
-    "CNBC": {"authority": 8.0, "region": "foreign", "us": 8.0, "kr": 5.0},
-    "MarketWatch": {"authority": 7.0, "region": "foreign", "us": 7.0, "kr": 4.5},
-    "Barron's": {"authority": 8.0, "region": "foreign", "us": 8.0, "kr": 4.5},
-    "연합인포맥스": {"authority": 8.5, "region": "domestic", "us": 3.2, "kr": 10.0},
-    "연합뉴스": {"authority": 8.5, "region": "domestic", "us": 2.8, "kr": 8.5},
-    "한국경제": {"authority": 7.5, "region": "domestic", "us": 2.7, "kr": 8.0},
-    "매일경제": {"authority": 7.5, "region": "domestic", "us": 2.7, "kr": 8.0},
+    "Reuters": {"authority": 10.0, "region": "foreign", "us": 10.0, "kr": 7.0, "europe": 9.5, "jp": 8.5},
+    "WSJ": {"authority": 10.0, "region": "foreign", "us": 10.0, "kr": 6.5, "europe": 8.5, "jp": 7.5},
+    "Financial Times": {"authority": 10.0, "region": "foreign", "us": 9.5, "kr": 7.0, "europe": 10.0, "jp": 8.0},
+    "Bloomberg": {"authority": 10.0, "region": "foreign", "us": 9.5, "kr": 7.0, "europe": 9.0, "jp": 8.0},
+    "Dow Jones": {"authority": 9.0, "region": "foreign", "us": 9.0, "kr": 5.5, "europe": 7.0, "jp": 6.0},
+    "CNBC": {"authority": 8.0, "region": "foreign", "us": 8.0, "kr": 5.0, "europe": 6.0, "jp": 5.5},
+    "MarketWatch": {"authority": 7.0, "region": "foreign", "us": 7.0, "kr": 4.5, "europe": 5.0, "jp": 4.5},
+    "Barron's": {"authority": 8.0, "region": "foreign", "us": 8.0, "kr": 4.5, "europe": 5.0, "jp": 4.5},
+    # 재전송 집계 매체. `only_publishers`가 원 발행처로 다시 태그하지만 남는 행이 있어
+    # 자체 값을 준다 — 없으면 fallback이 원 매체와 같은 무게를 준다.
+    "Yahoo Finance": {"authority": 6.0, "region": "foreign", "us": 6.0, "kr": 3.5, "europe": 4.0, "jp": 3.5},
+    "연합인포맥스": {"authority": 8.5, "region": "domestic", "us": 3.2, "kr": 10.0, "europe": 2.5, "jp": 3.0},
+    "연합뉴스": {"authority": 8.5, "region": "domestic", "us": 2.8, "kr": 8.5, "europe": 2.3, "jp": 3.2},
+    "한국경제": {"authority": 7.5, "region": "domestic", "us": 2.7, "kr": 8.0, "europe": 2.2, "jp": 2.8},
+    "매일경제": {"authority": 7.5, "region": "domestic", "us": 2.7, "kr": 8.0, "europe": 2.2, "jp": 2.8},
+    # 유럽 — 현재 수집 중인 매체(config/rss_feeds.yaml)에서 실제로 들어오는 것만 적는다.
+    "Handelsblatt": {"authority": 8.5, "region": "regional", "us": 3.0, "kr": 2.0, "europe": 9.5, "jp": 2.5},
+    "Het Financieele Dagblad": {"authority": 8.0, "region": "regional", "us": 2.8, "kr": 1.8, "europe": 9.0, "jp": 2.0},
+    "manager magazin": {"authority": 7.0, "region": "regional", "us": 2.5, "kr": 1.8, "europe": 8.0, "jp": 2.0},
+    "La Tribune": {"authority": 7.0, "region": "regional", "us": 2.5, "kr": 1.8, "europe": 8.0, "jp": 2.0},
+    "Expansion": {"authority": 7.0, "region": "regional", "us": 2.5, "kr": 1.8, "europe": 8.0, "jp": 2.0},
+    "BFM Business": {"authority": 6.5, "region": "regional", "us": 2.3, "kr": 1.6, "europe": 7.5, "jp": 1.8},
+    "la Repubblica Economia": {"authority": 6.5, "region": "regional", "us": 2.3, "kr": 1.6, "europe": 7.5, "jp": 1.8},
+    "ANSA Economia": {"authority": 6.5, "region": "regional", "us": 2.3, "kr": 1.6, "europe": 7.5, "jp": 1.8},
+    "NU.nl Economie": {"authority": 6.0, "region": "regional", "us": 2.0, "kr": 1.5, "europe": 7.0, "jp": 1.6},
+    "Euronews Business": {"authority": 6.0, "region": "regional", "us": 2.5, "kr": 1.8, "europe": 7.0, "jp": 2.0},
+    # 영국 매체는 유럽 전문성과 함께 국제 보도 범위가 넓어 미국·일본 값도 낮지 않다.
+    "BBC": {"authority": 8.0, "region": "regional", "us": 5.0, "kr": 3.0, "europe": 8.0, "jp": 3.5},
+    "The Guardian": {"authority": 7.5, "region": "regional", "us": 4.5, "kr": 2.5, "europe": 8.0, "jp": 3.0},
+    # 일본
+    "日本経済新聞": {"authority": 9.0, "region": "regional", "us": 3.5, "kr": 3.5, "europe": 3.0, "jp": 10.0},
+    "NHK Business": {"authority": 8.0, "region": "regional", "us": 2.8, "kr": 2.8, "europe": 2.5, "jp": 9.0},
+    "Asahi Shimbun Business": {"authority": 7.0, "region": "regional", "us": 2.5, "kr": 2.5, "europe": 2.3, "jp": 8.0},
 }
 
 CONCEPT_ALIASES = {

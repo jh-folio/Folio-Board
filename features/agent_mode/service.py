@@ -354,7 +354,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         for driver in derive_market_drivers(target_docs, market_windows, limit=4):
             market_drivers.append({**driver, "market": target})
         target_sources = prioritized_source_refs(
-            target_docs, market_windows, limit=ref_limit, issue_coverage=target_issues,
+            target_docs, market_windows, limit=ref_limit, issue_coverage=target_issues, market_scope=target,
         ) or briefing_sources_from_headlines(
             _briefing_headlines(prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6)),
             limit=ref_limit,
@@ -445,7 +445,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     hint_block = render_prompt_hints(quality_preflight)
     if hint_block:
         context = "\n\n".join([context, hint_block])
-    sources = prioritized_source_refs(scoped_docs, market_windows, limit=ref_limit, issue_coverage=issue_coverage_raw) or briefing_sources_from_headlines(_briefing_headlines(groups), limit=ref_limit)
+    sources = prioritized_source_refs(
+        scoped_docs, market_windows, limit=ref_limit, issue_coverage=issue_coverage_raw, market_scope=market_scope,
+    ) or briefing_sources_from_headlines(_briefing_headlines(groups), limit=ref_limit)
     session_counts = session_doc_counts(scoped_docs, market_windows)
     draft = {
         "date": date,

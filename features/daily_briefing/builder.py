@@ -302,7 +302,9 @@ def _scope_result(
             "tokenUsage": llm_result.get("tokenUsage") or {},
         }
     else:
-        sources = prioritized_source_refs(scoped_docs, market_windows, limit=ref_limit, issue_coverage=issues)
+        sources = prioritized_source_refs(
+            scoped_docs, market_windows, limit=ref_limit, issue_coverage=issues, market_scope=scope,
+        )
         if not sources:
             sources = briefing_sources_from_headlines(headlines, limit=ref_limit)
         if kind == "weekly" and window is not None:

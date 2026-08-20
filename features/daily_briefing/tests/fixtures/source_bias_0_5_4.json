@@ -1,0 +1,48 @@
+{
+  "description": "0.5.4 measurement of the LLM-path reference list (usedDocs) per market, window 2026-08-08..2026-08-14. Aggregate publisher counts only; no article-level, URL, or local-path data.",
+  "window": ["2026-08-08", "2026-08-14"],
+  "referencesPerMarket": 24,
+  "before": {
+    "note": "market-blind reference tiers; SOURCE_PROFILES had no Europe/Japan entries",
+    "topFiveOrder": {
+      "us": ["Reuters", "\uc5f0\ud569\uc778\ud3ec\ub9e5\uc2a4", "\ud55c\uad6d\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c"],
+      "kr": ["\uc5f0\ud569\uc778\ud3ec\ub9e5\uc2a4", "\ub9e4\uc77c\uacbd\uc81c", "\ud55c\uad6d\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\uc5f0\ud569\uc778\ud3ec\ub9e5\uc2a4"],
+      "europe": ["\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\uc5f0\ud569\ub274\uc2a4"],
+      "jp": ["\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "CNBC"]
+    },
+    "publisherCount": {"us": 8, "kr": 6, "europe": 11, "jp": 10},
+    "topTwoShare": {"us": 0.375, "kr": 0.542, "europe": 0.333, "jp": 0.375}
+  },
+  "after": {
+    "note": "market-aware reference tiers + per-market publisher fit band + Europe/Japan profiles",
+    "topFiveOrder": {
+      "us": ["Reuters", "\uc5f0\ud569\uc778\ud3ec\ub9e5\uc2a4", "\ud55c\uad6d\uacbd\uc81c", "CNBC", "Reuters"],
+      "kr": ["\ub9e4\uc77c\uacbd\uc81c", "\ud55c\uad6d\uacbd\uc81c", "\ub9e4\uc77c\uacbd\uc81c", "\uc5f0\ud569\uc778\ud3ec\ub9e5\uc2a4", "\ud55c\uad6d\uacbd\uc81c"],
+      "europe": ["Financial Times", "The Guardian", "Reuters", "CNBC", "\ub9e4\uc77c\uacbd\uc81c"],
+      "jp": ["Financial Times", "Financial Times", "Financial Times", "Reuters", "CNBC"]
+    },
+    "publisherCount": {"us": 8, "kr": 6, "europe": 11, "jp": 10},
+    "topTwoShare": {"us": 0.375, "kr": 0.542, "europe": 0.333, "jp": 0.375}
+  },
+  "tierDemotions": {
+    "note": "documents that lost a foreign market's home tier once tiers became market-aware",
+    "us": 667,
+    "kr": 1,
+    "europe": 88,
+    "jp": 23
+  },
+  "bodyAvailability": {
+    "note": "share of stored evidence items with a retrieved article body, by publisher",
+    "CNBC": 1.0,
+    "\uc5f0\ud569\ub274\uc2a4": 0.999,
+    "\ud55c\uad6d\uacbd\uc81c": 1.0,
+    "\ub9e4\uc77c\uacbd\uc81c": 1.0,
+    "\uc5f0\ud569\uc778\ud3ec\ub9e5\uc2a4": 0.899,
+    "Handelsblatt": 0.99,
+    "Financial Times": 0.49,
+    "Reuters": 0.07,
+    "MarketWatch": 0.035,
+    "WSJ": 0.008,
+    "Bloomberg": 0.001
+  }
+}
