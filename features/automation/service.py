@@ -249,6 +249,32 @@ def market_memory_recently_run(*, now: dt.datetime | None = None, max_age_hours:
     return _elapsed(now, finished) < dt.timedelta(hours=max(1, int(max_age_hours or 12)))
 
 
+# 사전작업 스냅샷은 **전체 해석**이다. 예약이 고른 시장 집합과 무관하게 GLOBAL scope로
+# 만든다 — 화면의 시장 내러티브는 시장별 보고서가 아니라 하나의 해석이고, 그 안에서
+# `marketViews`로 미국장·한국장을 나눈다.
+PREREQUISITE_SNAPSHOT_SCOPE = "GLOBAL"
+
+
+def market_state_snapshot_recently_run(*, now: dt.datetime | None = None, max_age_hours: int = 12) -> bool:
+    """화면 스냅샷이 최근에 만들어졌는지 — **메모리 갱신 신선도와 따로 본다.**
+
+    예전에는 둘을 한 덩어리로 봤다. 규칙 갱신이 12시간 안에 돌았으면 스냅샷 갱신까지
+    통째로 건너뛰어서, 규칙 갱신은 신선한데 화면 해석만 며칠 전인 상태가 커버되지
+    않았다. 스냅샷은 자기 `as_of`로 신선도를 말할 수 있으므로 그것을 직접 읽는다.
+    """
+    from features.market_memory.snapshot import latest_market_state_snapshot_as_of
+
+    now = now or dt.datetime.now().astimezone()
+    try:
+        as_of = latest_market_state_snapshot_as_of(DATA_DIR / "market-memory.sqlite3")
+    except Exception:  # noqa: BLE001 - 못 읽으면 오래된 것으로 본다(다시 만드는 쪽이 안전하다)
+        return False
+    saved = _parse_iso(as_of or "")
+    if saved is None:
+        return False
+    return _elapsed(now, saved) < dt.timedelta(hours=max(1, int(max_age_hours or 12)))
+
+
 def _refresh_market_state_snapshot() -> dict:
     """화면용 시장 상태 스냅샷을 다시 만든다.
 
@@ -269,14 +295,30 @@ def _refresh_market_state_snapshot() -> dict:
             from features.agent_mode.bridge import run_market_memory_update_task
 
             result = run_market_memory_update_task({"date": kst_date()})
-        else:
-            from features.market_memory.service import run_llm_market_state_snapshot
+            snapshot_id = str((result or {}).get("snapshotId") or "")
+            return {"ok": True, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "snapshotId": snapshot_id}
+        # API(LLM) 모드도 버튼과 **같은** attempt/watermark 라이프사이클을 탄다. 바로
+        # 저장하면 attempt 기록이 없는 스냅샷이 남아 reconcile이 복구할 근거를 잃는다.
+        from features.market_memory.attempt_store import AttemptScope
+        from features.market_memory.http_runtime import create_market_state_service
+        from features.market_memory.http_service import ManualSnapshotCommand
 
-            result = run_llm_market_state_snapshot(kst_date())
-        snapshot_id = str((result or {}).get("snapshotId") or "")
-        return {"ok": True, "mode": mode, "snapshotId": snapshot_id}
+        service = create_market_state_service(DATA_DIR)
+        result = service.run_manual(
+            ManualSnapshotCommand(AttemptScope(PREREQUISITE_SNAPSHOT_SCOPE), kst_date())
+        )
+        snapshot = result.get("snapshot") if isinstance(result, dict) else None
+        snapshot_id = str((snapshot or {}).get("id") or "") if isinstance(snapshot, dict) else ""
+        attempt = result.get("attempt") if isinstance(result, dict) else None
+        return {
+            "ok": True,
+            "mode": mode,
+            "scope": PREREQUISITE_SNAPSHOT_SCOPE,
+            "snapshotId": snapshot_id,
+            "attemptId": str((attempt or {}).get("attemptId") or "") if isinstance(attempt, dict) else "",
+        }
     except Exception as exc:  # noqa: BLE001 - 브리핑을 막지 않는다
-        return {"ok": False, "mode": mode, "errorType": type(exc).__name__}
+        return {"ok": False, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "errorType": type(exc).__name__}
 
 
 def run_briefing_prerequisites(
@@ -289,12 +331,24 @@ def run_briefing_prerequisites(
     # `force`는 사용자가 직접 "지금 실행"을 누른 경우다. 신선도 때문에 건너뛰면
     # 눌러도 아무 일이 없는 버튼이 된다. 예약 경로는 계속 신선도를 본다.
     if not force and market_memory_recently_run(now=now, max_age_hours=memory_max_age_hours):
-        prerequisites["marketMemory"] = {
+        # 규칙 갱신은 건너뛰지만 **화면 스냅샷은 따로 본다.** 한 덩어리로 스킵하면
+        # 규칙 갱신이 신선한 날에도 시장 내러티브 탭은 며칠 전 해석 그대로 남는다.
+        skipped = {
             "ok": True,
             "skipped": True,
             "reason": "recent",
             "maxAgeHours": int(memory_max_age_hours or 12),
         }
+        if market_state_snapshot_recently_run(now=now, max_age_hours=memory_max_age_hours):
+            skipped["stateSnapshot"] = {
+                "ok": True,
+                "skipped": True,
+                "reason": "recent",
+                "maxAgeHours": int(memory_max_age_hours or 12),
+            }
+        else:
+            skipped["stateSnapshot"] = _refresh_market_state_snapshot()
+        prerequisites["marketMemory"] = skipped
     else:
         started = now_iso()
         try:

@@ -636,6 +636,46 @@ def current_market_state_snapshot(
             return None
 
 
+def latest_market_state_snapshot_as_of(
+    db_path: str | Path = MARKET_MEMORY_DB_PATH,
+) -> str | None:
+    """가장 최근 화면 스냅샷이 만들어진 시각.
+
+    payload를 열지 않고 `as_of` 열만 읽는다. 사전작업이 스냅샷 신선도를 메모리 갱신
+    신선도와 **따로** 보기 위한 값이라, 브리핑 앞에서 매번 도는 경로다.
+    """
+    path = Path(db_path)
+    if not path.is_file():
+        return None
+    try:
+        conn = connect(path)
+    except sqlite3.Error:
+        return None
+    try:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_state_snapshots'"
+        ).fetchone()
+        if not table:
+            return None
+        row = conn.execute(
+            """
+            SELECT as_of
+            FROM market_state_snapshots
+            WHERE status != 'archived'
+            ORDER BY as_of DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    text = str(row["as_of"] or "").strip()
+    return text or None
+
+
 def _compact_state(state: dict) -> dict:
     return {
         "id": state.get("id") or state.get("memoryId") or "",
