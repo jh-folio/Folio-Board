@@ -71,7 +71,7 @@ RSS 피드 탭의 `RSS 수집/가져오기`는 공개 RSS를 읽어 `research-in
 - paywall 판정은 "구독 후 이용", "subscribe to continue" 같은 게이트 문구 기준입니다. 한국 뉴스 페이지 공통 푸터의 "구독"/"로그인" 단어만으로는 유료벽으로 판정하지 않으며, 충분한 길이의 공개 본문이 추출되면 페이지 다른 곳의 구독 배너가 `full_text` 판정을 막지 않습니다.
 - `news.google.com` 리다이렉트 링크(Google News 검색 RSS)는 기사 HTML이 아니므로 페이지를 가져와 요약을 덮어쓰지 않고, RSS 요약을 유지한 `summary_only`로 저장합니다.
 - **본문 확보 여부는 피드 설정이 정하지 않습니다.** 위 규칙(aggregator 리다이렉트 · 유료벽 문구 · 추출 결과)이 수집 시점에 정합니다. 예전 `config/rss_feeds.yaml`의 `allow_full_text` 항목은 읽히기만 하고 소비자가 없었고, 실제와 어긋나 있었습니다 — 설정이 `false`인 CNBC는 실측 538건 전부 본문이 확보됐습니다. 0.5.4에서 설정과 코드 양쪽에서 제거했습니다. 없는 신호를 남겨 두면 다음 판단이 그것을 믿습니다.
-- 실측 본문 확보율(저장된 evidence 행 기준): CNBC·한국경제·매일경제 100%, 연합뉴스 99.9%, Handelsblatt 99%, 연합인포맥스 89.9%, Financial Times 49%, Reuters 7%, WSJ 0.8%, Bloomberg 0.1%. 낮은 쪽은 전부 유료벽 매체이며 우회하지 않습니다.
+- 실측 본문 확보 건수(저장된 evidence 행 기준): CNBC 538/538, 한국경제 932/932, 매일경제 828/828, 연합뉴스 1801/1803, Handelsblatt 1345/1359, 연합인포맥스 1322/1471, Financial Times 225/459, Reuters 127/1820, WSJ 8/1001, Bloomberg 3/2555. 낮은 쪽은 전부 유료벽 매체이며 우회하지 않습니다.
 
 브리핑의 한국장 출처 다양성을 위해 `config/rss_feeds.yaml`에는 연합뉴스 경제·산업/마켓과 매일경제 경제·증권의 공식 공개 RSS가 포함됩니다. 포털 aggregator는 사용하지 않으며, 같은 매체의 여러 feed는 브리핑 이슈 확산도에서 하나의 publisher vote로 정규화됩니다.
 CLI 기본 실행에서는 기사 전문을 Markdown에 저장하지 않습니다. 로컬/비공개 archive에 전문을 저장하려면 CLI에서 `--save-full-text`를 명시해야 하며, `--public-mode`에서는 전문 저장이 비활성화됩니다.

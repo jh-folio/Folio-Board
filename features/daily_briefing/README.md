@@ -72,9 +72,9 @@ LLM 입력과 표시 참고자료에는 같은 evidence lane·cluster dedupe·�
 실측(저장된 evidence 행 기준 본문 확보율):
 
 ```text
-CNBC 100%  ·  한국경제 100%  ·  매일경제 100%  ·  연합뉴스 99.9%  ·  연합인포맥스 89.9%
-Handelsblatt 99%  ·  Financial Times 49%
-Reuters 7%  ·  MarketWatch 3.5%  ·  WSJ 0.8%  ·  Bloomberg 0.1%
+CNBC 538/538  ·  한국경제 932/932  ·  매일경제 828/828  ·  연합뉴스 1801/1803  ·  연합인포맥스 1322/1471
+Handelsblatt 1345/1359  ·  Financial Times 225/459
+Reuters 127/1820  ·  MarketWatch 11/317  ·  WSJ 8/1001  ·  Bloomberg 3/2555
 ```
 
 본문이 없는 쪽은 전부 유료벽이 있는 매체다. 유료 본문 우회는 금지이므로(§6 원칙 4) **추가할 피드가 없다.** 같은 이유로 매체별 soft cap(4)도 조이지 않았다 — 미국장에서 본문이 있는 자료의 절반이 국내 매체라, 국내 매체를 더 줄이면 본문 있는 근거를 제목뿐인 근거로 바꾸는 거래가 된다.
