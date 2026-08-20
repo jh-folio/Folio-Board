@@ -419,13 +419,17 @@ export function BriefingRoute() {
   async function exportBriefing(target: "notion" | "obsidian") {
     const date = briefing?.date || detailRoute?.date || "";
     const scope = normalizedScope(briefing?.marketScope || detailRoute?.scope);
+    // **종류를 빼면 주간 보고서를 열어 두고 그날 일간을 내보낸다** — 주간의 저장 키는
+    // 발행일이라 같은 날 일간과 날짜가 겹친다. 일간이 없는 날이면 404가 된다.
+    const kind = normalizedKind(briefing?.kind || detailRoute?.kind);
     if (!date) return;
     setActionBusy(target);
     setActionStatus(target === "notion" ? "Notion에 내보내는 중..." : "Obsidian에 내보내는 중...");
     try {
+      const query = `marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`;
       const result = target === "notion"
-        ? await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-notion?marketScope=${encodeURIComponent(scope)}`, { marketScope: scope })
-        : await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-obsidian?marketScope=${encodeURIComponent(scope)}`, { marketScope: scope });
+        ? await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-notion?${query}`, { marketScope: scope, kind })
+        : await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-obsidian?${query}`, { marketScope: scope, kind });
       if (target === "notion") {
         setActionStatus(result.notionUrl ? `Notion 내보냄: ${result.title || result.notionUrl}` : "Notion에 내보냈습니다.");
       } else {
@@ -441,15 +445,20 @@ export function BriefingRoute() {
   async function generatePersonalOverlay() {
     const date = briefing?.date || detailRoute?.date || "";
     const scope = normalizedScope(briefing?.marketScope || detailRoute?.scope);
+    // 종류를 빼면 개인 해석이 그날 **일간** 보고서에 얹히고, 이어지는 재조회가 화면의
+    // 주간 보고서를 일간으로 바꿔치기한다.
+    const kind = normalizedKind(briefing?.kind || detailRoute?.kind);
     if (!date) return;
     setActionBusy("overlay");
     setActionStatus("개인 해석을 생성하는 중...");
     try {
-      const response = await postJson<OverlayResult | AgentJob>(`/api/briefings/${encodeURIComponent(date)}/personal-overlay?marketScope=${encodeURIComponent(scope)}`, {
+      const query = `marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`;
+      const response = await postJson<OverlayResult | AgentJob>(`/api/briefings/${encodeURIComponent(date)}/personal-overlay?${query}`, {
         marketScope: scope,
+        kind,
       });
       if (isAgentJob(response)) await pollAgentJob(response);
-      const updated = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&marketScope=${encodeURIComponent(scope)}`);
+      const updated = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&${query}`);
       setBriefing(updated);
       setActionStatus("개인 해석을 생성했습니다.");
     } catch (err) {

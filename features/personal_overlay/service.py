@@ -20,6 +20,7 @@ from features.common.utils import read_json
 from features.daily_briefing.schema import (
     SINGLE_MARKET_SCOPES,
     briefing_file_name,
+    normalize_briefing_kind,
     normalize_market_scope,
 )
 from features.llm_settings.client import (
@@ -214,17 +215,23 @@ def strip_overlay(report, include_personal: bool):
     return out
 
 
-def _briefing_overlay_path(date: str, market_scope: str = "both") -> Path:
+def _briefing_overlay_path(date: str, market_scope: str = "both", kind: str = "daily") -> Path:
+    """Overlay가 얹힐 Canonical 파일.
+
+    **종류를 받지 않으면 주간 보고서를 열어 둔 채 누른 `개인 해석 생성`이 그날 일간
+    보고서를 고친다.** 주간의 저장 키는 발행일이라 같은 날 일간과 날짜가 겹친다.
+    """
     scope = normalize_market_scope(market_scope)
+    kind = normalize_briefing_kind(kind)
     if scope in SINGLE_MARKET_SCOPES:
-        scoped = BRIEFINGS_DIR / briefing_file_name(date, scope)
+        scoped = BRIEFINGS_DIR / briefing_file_name(date, scope, kind)
         if scoped.exists():
             return scoped
-    return BRIEFINGS_DIR / briefing_file_name(date)
+    return BRIEFINGS_DIR / briefing_file_name(date, None, kind)
 
 
-def attach_overlay_to_briefing(date: str, *, market_scope="both", llm_override=None, web_search_override=None) -> dict:
-    path = _briefing_overlay_path(date, market_scope)
+def attach_overlay_to_briefing(date: str, *, market_scope="both", kind="daily", llm_override=None, web_search_override=None) -> dict:
+    path = _briefing_overlay_path(date, market_scope, kind)
     canonical = read_json(path, None)
     if not canonical:
         raise FileNotFoundError(f"Briefing not found: {date}")

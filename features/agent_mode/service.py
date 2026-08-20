@@ -274,6 +274,10 @@ class _NoWeeklyVisuals(Exception):
     """주간 보고서는 세션 시각자료를 만들지 않는다는 표시. 경고가 아니다."""
 
 
+class WeeklyWindowEmptyError(ValueError):
+    """주간 창에 자료가 하나도 없다. CLI를 부르기 전에 멈춘다."""
+
+
 def _write_pack(pack: dict, owner_job_id: str | None) -> Path:
     if owner_job_id is None:
         return A.write_pack(pack)
@@ -330,6 +334,16 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     docs = session_pool if week is not None else (session_pool or docs)
     if week is not None:
         source_date = f"{week.week_start}~{week.week_end}"
+        if not docs:
+            # **자료가 없으면 CLI를 부르지 않는다.** 주간은 창이 비어도 넓히지 않으므로
+            # 수집이 한 주 내내 꺼져 있었으면 여기가 0건이다. 그대로 pack을 만들면 CLI가
+            # 근거 없이 쓰고, 출력 계약의 최소 분량에 걸려 재작성 1회 뒤 실패한다 —
+            # 한 번에 수십 초가 걸리는 CLI를 두 번 돌리고 아무것도 남기지 못한다
+            # (2026-08-12에 같은 모양으로 45분을 버린 기록이 이 모듈에 남아 있다).
+            raise WeeklyWindowEmptyError(
+                f"{week.week_start}~{week.week_end} 구간에 수집된 자료가 없습니다. "
+                "RSS 수집 상태를 확인한 뒤 다시 만드세요."
+            )
     for doc in docs:
         doc["marketSessionDate"] = infer_market_session_date(doc, market_windows)
     scoped_docs = documents_for_scope(docs, market_scope)

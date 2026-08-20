@@ -12048,12 +12048,18 @@ function Ai() {
 		};
 	}, [r, W]);
 	async function ne(e) {
-		let t = a?.date || r?.date || "", n = mi(a?.marketScope || r?.scope);
+		let t = a?.date || r?.date || "", n = mi(a?.marketScope || r?.scope), i = hi(a?.kind || r?.kind);
 		if (t) {
 			_(e), h(e === "notion" ? "Notion에 내보내는 중..." : "Obsidian에 내보내는 중...");
 			try {
-				let r = e === "notion" ? await V(`/api/briefings/${encodeURIComponent(t)}/export-notion?marketScope=${encodeURIComponent(n)}`, { marketScope: n }) : await V(`/api/briefings/${encodeURIComponent(t)}/export-obsidian?marketScope=${encodeURIComponent(n)}`, { marketScope: n });
-				h(e === "notion" ? r.notionUrl ? `Notion 내보냄: ${r.title || r.notionUrl}` : "Notion에 내보냈습니다." : `Obsidian 내보냄: ${r.filename || t}`);
+				let r = `marketScope=${encodeURIComponent(n)}&kind=${encodeURIComponent(i)}`, a = e === "notion" ? await V(`/api/briefings/${encodeURIComponent(t)}/export-notion?${r}`, {
+					marketScope: n,
+					kind: i
+				}) : await V(`/api/briefings/${encodeURIComponent(t)}/export-obsidian?${r}`, {
+					marketScope: n,
+					kind: i
+				});
+				h(e === "notion" ? a.notionUrl ? `Notion 내보냄: ${a.title || a.notionUrl}` : "Notion에 내보냈습니다." : `Obsidian 내보냄: ${a.filename || t}`);
 			} catch (e) {
 				h(e instanceof Error ? e.message : "내보내기에 실패했습니다.");
 			} finally {
@@ -12062,14 +12068,17 @@ function Ai() {
 		}
 	}
 	async function re() {
-		let e = a?.date || r?.date || "", t = mi(a?.marketScope || r?.scope);
+		let e = a?.date || r?.date || "", t = mi(a?.marketScope || r?.scope), n = hi(a?.kind || r?.kind);
 		if (e) {
 			_("overlay"), h("개인 해석을 생성하는 중...");
 			try {
-				let n = await V(`/api/briefings/${encodeURIComponent(e)}/personal-overlay?marketScope=${encodeURIComponent(t)}`, { marketScope: t });
-				Ei(n) && await ki(n);
-				let r = await B(`/api/briefings/${encodeURIComponent(e)}?includePersonal=true&marketScope=${encodeURIComponent(t)}`);
-				o(r), h("개인 해석을 생성했습니다.");
+				let r = `marketScope=${encodeURIComponent(t)}&kind=${encodeURIComponent(n)}`, i = await V(`/api/briefings/${encodeURIComponent(e)}/personal-overlay?${r}`, {
+					marketScope: t,
+					kind: n
+				});
+				Ei(i) && await ki(i);
+				let a = await B(`/api/briefings/${encodeURIComponent(e)}?includePersonal=true&${r}`);
+				o(a), h("개인 해석을 생성했습니다.");
 			} catch (e) {
 				h(e instanceof Error ? e.message : "개인 해석 생성에 실패했습니다.");
 			} finally {

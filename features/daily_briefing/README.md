@@ -38,6 +38,9 @@ LLM 입력과 표시 참고자료에는 같은 evidence lane·cluster dedupe·�
 - **규칙 fallback은 사실만 싣는다.** `weekly.build_weekly_rules_markdown()`은 자료 건수·동인 목록·이슈 묶음·내러티브 상태·다음주 일정 표를 담고, 해석 문장이 비어 있다는 사실을 본문에 적는다. 한 주의 이야기를 엮는 일은 LLM 산출물이고, 규칙이 흉내 내면 근거 없는 문장이 남는다(§5 원칙 3·4).
 - **아카이브 카드가 갈린다.** dedup 키는 `(세션일, 시장, 종류)`다. 주간의 구간 끝은 그 시장의 세션일과 같은 날일 수 있어, 종류가 없으면 둘 중 하나가 조용히 사라진다. 화면 해시도 `#/briefing/{date}/{scope}/{kind}`로 종류를 싣는다 — 없으면 주간 카드를 눌러도 그날 일간 브리핑이 열린다.
 - **삭제도 종류를 본다.** `DELETE /api/briefings/{date}?kind=weekly`는 주간 파일만 지운다. 종류를 무시하면 주간 카드의 삭제가 그날 일간 브리핑을 지운다.
+- **보고서의 정체성에도 종류가 들어간다.** 변화 감지의 `artifactId`는 `{발행일}.{시장}.weekly`이고 `lineageId`는 `briefing:{시장}:weekly`다(`change_intelligence/adapters/briefing.py`). 둘 다 빠뜨리면 두 가지가 동시에 깨진다 — `change_event_index`의 PK가 `(artifact_kind, artifact_id)`라 평일에 낸 주간이 그날 일간의 변화 이벤트를 **덮어쓰고**, `select_report_baseline`이 계보만 보므로 주간이 직전 일간을 기준선으로 잡고 그다음 일간이 그 주간을 기준선으로 잡는다. 뒤엣것이 더 나쁘다 — 이미 있던 일간 Change Feed가 주간이 생긴 순간부터 조용히 망가진다.
+- **리더의 액션도 종류를 싣는다.** 개인 해석(`personal-overlay`)과 내보내기(`export-notion`/`export-obsidian`)는 `kind`를 받는다. 없으면 `resolve_briefing`·`_briefing_overlay_path`가 일간으로 떨어져, 주간을 열어 두고 누른 개인 해석이 **그날 일간 보고서를 고치고** 이어지는 재조회가 화면의 주간을 일간으로 바꿔치기한다. CLI 경로는 report id로 파일을 되짚으므로 `{발행일}.weekly` 형태로 종류를 id에 싣는다.
+- **자료가 없는 주는 CLI를 부르지 않는다.** 주간은 창이 비어도 넓히지 않으므로 수집이 한 주 내내 꺼져 있었으면 0건이 된다. 그대로 pack을 만들면 CLI가 근거 없이 쓰고 출력 계약의 최소 분량에 걸려 재작성 1회 뒤 실패한다 — 수십 초짜리 CLI를 두 번 돌리고 아무것도 남기지 못한다. `WeeklyWindowEmptyError`로 먼저 멈춘다. 규칙 경로는 그대로 진행해 "자료 0건"과 캘린더 표를 담은 보고서를 낸다(비용이 없고 정직한 산출물이다).
 
 ## 개수 상한은 한 곳에서 나온다 (0.5.4)
 
@@ -512,6 +515,8 @@ POST /api/briefings/{date}/export-notion
 ```
 
 `POST /api/briefings`는 `date`, `strictDate`, `webSearch`, `markets`, `briefingType`, `kind` 값을 받을 수 있습니다. `kind: "weekly"`면 `date`는 세션일이 아니라 **발행일**이고 세션 판정(`resolve_targets`) 대신 `resolve_weekly_targets`를 탑니다 — 주말 발행이 정상인 산출물을 "그날은 거래일이 아니다"로 막으면 주간을 손으로 만들 길이 아예 없습니다. 아직 오지 않은 날짜는 `week_not_available`로 거부합니다.
+
+`POST /api/briefings/{date}/personal-overlay`, `POST /api/briefings/{date}/export-notion`, `POST /api/briefings/{date}/export-obsidian`도 `kind`를 받습니다(기본 `daily`). 받지 않으면 주간 보고서를 열어 둔 상태의 액션이 그날 일간 보고서를 대상으로 동작합니다.
 
 `GET /api/briefings/{date}`는 `marketScope`와 `kind`를 받습니다. **주간을 물었는데 일간으로 되돌아가지 않습니다** — 같은 날 두 보고서가 나란히 있을 수 있어, 되돌아가면 화면이 다른 보고서를 열어 놓고 주간이라고 말합니다.
 

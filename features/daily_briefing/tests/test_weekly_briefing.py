@@ -360,3 +360,110 @@ def test_a_saved_schedule_without_a_kind_stays_daily():
     assert normalize_schedule({"id": "a", "kind": "weekly"})["kind"] == "weekly"
     # 모르는 값은 고장이므로 기본값으로 되돌린다.
     assert normalize_schedule({"id": "a", "kind": "monthly"})["kind"] == "daily"
+
+
+# ---------------------------------------------------------------- 정체성
+
+
+def test_the_change_event_id_does_not_collide_with_the_daily_report():
+    """`change_event_index`의 PK는 `(artifact_kind, artifact_id)`다.
+
+    주간의 `date`는 발행일이라 그날이 세션일인 일간과 값이 같다. 종류가 없으면 평일에
+    낸 주간이 그날 일간의 변화 이벤트를 덮어써서, Change Feed가 일간 자리에 주간
+    내용을 보여주고 잘못된 보고서를 연다.
+    """
+    from features.common.change_intelligence.adapters.briefing import _briefing_artifact_id
+
+    daily = {"date": "2026-08-20", "marketScope": "us"}
+    weekly = {"date": "2026-08-20", "marketScope": "us", "kind": "weekly"}
+
+    assert _briefing_artifact_id(daily, "us") == "2026-08-20.us"
+    assert _briefing_artifact_id(weekly, "us") == "2026-08-20.us.weekly"
+    # 이미 접미사가 붙은 id를 두 번 붙이지 않는다.
+    assert _briefing_artifact_id({**weekly, "id": "2026-08-20.us.weekly"}, "us") == "2026-08-20.us.weekly"
+
+
+def test_the_baseline_lineage_keeps_weekly_and_daily_apart():
+    """계보가 같으면 주간이 직전 일간을 기준선으로 잡고, 그다음 일간이 그 주간을 잡는다.
+
+    한 주의 동인 집합과 하루의 동인 집합을 비교한 결과가 Change Feed에 실린다 —
+    새 기능이 이미 있던 일간 Change Feed를 조용히 망가뜨리는 경로다.
+    """
+    from features.common.change_intelligence.adapters.briefing import build_briefing_basis
+
+    daily = build_briefing_basis({"date": "2026-08-20", "marketScope": "us", "generatedAt": "2026-08-20T09:00:00+09:00"})
+    weekly = build_briefing_basis({
+        "date": "2026-08-20", "marketScope": "us", "kind": "weekly",
+        "generatedAt": "2026-08-20T10:00:00+09:00",
+    })
+
+    assert daily["lineageId"] != weekly["lineageId"]
+    assert daily["artifactId"] != weekly["artifactId"]
+
+
+def test_the_baseline_selector_will_not_match_across_kinds():
+    from features.common.change_intelligence.baseline import _matches
+    from features.common.change_intelligence.adapters.briefing import build_briefing_basis
+
+    daily = build_briefing_basis({"date": "2026-08-19", "marketScope": "us", "generatedAt": "2026-08-19T09:00:00+09:00"})
+    weekly = build_briefing_basis({
+        "date": "2026-08-20", "marketScope": "us", "kind": "weekly",
+        "generatedAt": "2026-08-20T09:00:00+09:00",
+    })
+
+    assert _matches(weekly, daily) is False
+    # 같은 종류끼리는 계속 이어진다.
+    older_weekly = build_briefing_basis({
+        "date": "2026-08-13", "marketScope": "us", "kind": "weekly",
+        "generatedAt": "2026-08-13T09:00:00+09:00",
+    })
+    assert _matches(weekly, older_weekly) is True
+
+
+def test_the_overlay_lands_on_the_report_that_is_open(monkeypatch, tmp_path):
+    """주간을 열어 두고 누른 `개인 해석 생성`이 그날 일간 보고서를 고치면 안 된다."""
+    import features.personal_overlay.service as overlay_service
+
+    (tmp_path / "2026-08-20.us.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "2026-08-20.us.weekly.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(overlay_service, "BRIEFINGS_DIR", tmp_path)
+
+    daily = overlay_service._briefing_overlay_path("2026-08-20", "us", "daily")
+    weekly = overlay_service._briefing_overlay_path("2026-08-20", "us", "weekly")
+
+    assert daily.name == "2026-08-20.us.json"
+    assert weekly.name == "2026-08-20.us.weekly.json"
+
+
+def test_the_cli_overlay_id_round_trips_through_canonical_identity():
+    """CLI 경로는 report id로 파일을 되짚는다. 접미사가 없으면 일간을 연다."""
+    from features.common.canonical_identity import _briefing_identity
+
+    assert _briefing_identity("2026-08-20.weekly", "us") == ("2026-08-20", "us", "weekly")
+    assert _briefing_identity("2026-08-20", "us") == ("2026-08-20", "us", None)
+
+
+def test_reads_and_deletes_do_not_fall_back_across_kinds():
+    """주간을 물었는데 일간을 돌려주면 화면이 다른 보고서를 열어 놓고 주간이라 말한다."""
+    import inspect
+
+    from features.daily_briefing import service
+
+    source = inspect.getsource(service.resolve_briefing)
+
+    assert "if kind == WEEKLY:" in source
+    # 주간 분기는 legacy `{date}.json` fallback을 타지 않는다.
+    weekly_branch = source.split("if kind == WEEKLY:")[1].split("if scope in SINGLE_MARKET_SCOPES:")[0]
+    assert "briefing_file_name(date_text)" not in weekly_branch
+
+
+def test_an_empty_week_stops_before_the_cli_runs():
+    """주간은 창이 비어도 넓히지 않는다. 그대로 pack을 만들면 CLI를 두 번 돌리고 실패한다."""
+    import inspect
+
+    from features.agent_mode import service as agent_service
+
+    source = inspect.getsource(agent_service.prepare_briefing_pack)
+
+    assert "raise WeeklyWindowEmptyError(" in source
+    assert issubclass(agent_service.WeeklyWindowEmptyError, ValueError)

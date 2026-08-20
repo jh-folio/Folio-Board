@@ -179,6 +179,7 @@ from features.daily_briefing.archive import query_briefing_archive, refresh_brie
 from features.daily_briefing.schema import (
     briefing_scope_view,
     market_selection_scope,
+    normalize_briefing_kind,
     normalize_market_selection,
 )
 from features.daily_briefing.visuals import load_current_visuals, load_visual_sidecar
@@ -722,20 +723,26 @@ def api_get_briefing_current_visuals(date: str, market: str = "", snapshotId: st
 
 
 @fastapi_app.post("/api/briefings/{date}/personal-overlay")
-def api_briefing_personal_overlay(date: str, marketScope: str = "both", body: dict | None = Body(default=None)):
+def api_briefing_personal_overlay(date: str, marketScope: str = "both", kind: str = "daily", body: dict | None = Body(default=None)):
     body = body or {}
     requested_scope = body.get("marketScope") or marketScope
+    # **종류를 받지 않으면 주간 보고서의 개인 해석이 그날 일간 보고서에 얹힌다.**
+    # 주간의 저장 키는 발행일이라 같은 날 일간과 날짜가 겹친다.
+    requested_kind = normalize_briefing_kind(body.get("kind") or kind)
     generation_mode = request_generation_mode(body)
     if generation_mode == "llm_cli":
         return submit_agent_task("personal_overlay", {
             "report_kind": "briefing",
-            "report_id": date,
+            # CLI 경로는 report id로 파일을 되짚으므로 종류 접미사를 id에 실어 보낸다
+            # (`canonical_identity.BRIEFING_KIND_SUFFIXES`가 그 형태를 안다).
+            "report_id": date if requested_kind == "daily" else f"{date}.{requested_kind}",
             "market_scope": requested_scope,
         }, adapter=body.get("agentAdapter", ""))
     try:
         return attach_overlay_to_briefing(
             date,
             market_scope=requested_scope,
+            kind=requested_kind,
             llm_override=llm_override_for_mode(generation_mode),
             web_search_override=bool_override(body.get("webSearch")),
         )
@@ -895,11 +902,11 @@ def api_delete_analysis_report(report_id: str):
 
 
 @fastapi_app.post("/api/briefings/{date}/export-notion")
-def api_export_briefing_notion(date: str, marketScope: str = "both", body: dict | None = Body(default=None)):
+def api_export_briefing_notion(date: str, marketScope: str = "both", kind: str = "daily", body: dict | None = Body(default=None)):
     body = body or {}
     requested_scope = body.get("marketScope") or marketScope
     try:
-        briefing = resolve_briefing(date, requested_scope)
+        briefing = resolve_briefing(date, requested_scope, body.get("kind") or kind)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid briefing identifier or market scope") from exc
     if not briefing:
@@ -998,11 +1005,11 @@ def api_obsidian_workflow_validate():
 
 
 @fastapi_app.post("/api/briefings/{date}/export-obsidian")
-def api_export_briefing_obsidian(date: str, marketScope: str = "both", body: dict | None = Body(default=None)):
+def api_export_briefing_obsidian(date: str, marketScope: str = "both", kind: str = "daily", body: dict | None = Body(default=None)):
     body = body or {}
     requested_scope = body.get("marketScope") or marketScope
     try:
-        briefing = resolve_briefing(date, requested_scope)
+        briefing = resolve_briefing(date, requested_scope, body.get("kind") or kind)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid briefing identifier or market scope") from exc
     if not briefing:
