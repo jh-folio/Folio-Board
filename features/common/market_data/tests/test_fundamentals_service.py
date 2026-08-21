@@ -31,7 +31,7 @@ def test_fundamentals_keep_missing_fields_as_none(monkeypatch, tmp_path):
 
     payload = fundamentals_service.get_fundamentals(tmp_path, symbol="005930.ks", runtime=runtime)
 
-    assert runtime.calls == [("yfinance", "fundamentals", {"symbol": "005930.KS"})]
+    assert runtime.calls == [("yfinance", "fundamentals", {"symbol": "005930.KS", "schema": 2})]
     assert payload["marketCap"] == 2.5e12
     assert payload["trailingPE"] is None
     assert payload["currency"] == "KRW"
@@ -61,3 +61,41 @@ def test_download_coerces_non_numbers_to_none(monkeypatch):
     assert row["beta"] is None
     assert row["trailingPE"] == 12.5
     assert row["currency"] == ""
+
+
+def test_quarterly_earnings_align_series_by_quarter():
+    """세 계열을 분기 키로 정렬해 묶고, 없는 행은 그 계열만 빈다(6501.T의 매출처럼)."""
+
+    class _Frame:
+        empty = False
+        index = ["Total Revenue", "Operating Income", "Net Income"]
+        columns = ["2026-06-30", "2026-03-31"]
+
+        class _Loc:
+            _values = {
+                ("Total Revenue", "2026-06-30"): 119.8, ("Total Revenue", "2026-03-31"): 109.9,
+                ("Operating Income", "2026-06-30"): 40.8, ("Operating Income", "2026-03-31"): 39.7,
+                ("Net Income", "2026-06-30"): 112.2, ("Net Income", "2026-03-31"): 62.6,
+            }
+
+            def __getitem__(self, key):
+                return self._values[key]
+
+        loc = _Loc()
+
+    class _Ticker:
+        quarterly_income_stmt = _Frame()
+
+    rows = fundamentals_service._quarterly_earnings(_Ticker())
+
+    assert [row["quarter"] for row in rows] == ["2026-03-31", "2026-06-30"]
+    assert rows[-1] == {"quarter": "2026-06-30", "revenue": 119.8, "operatingIncome": 40.8, "netIncome": 112.2}
+
+
+def test_quarterly_earnings_survive_missing_statement():
+    class _Ticker:
+        @property
+        def quarterly_income_stmt(self):
+            raise RuntimeError("no statement")
+
+    assert fundamentals_service._quarterly_earnings(_Ticker()) == []

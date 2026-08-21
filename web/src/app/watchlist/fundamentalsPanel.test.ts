@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fractionPercentText, fundamentalsRows, percentValueText, rangeText, ratioText } from "./FundamentalsPanel";
+import { barScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText } from "./FundamentalsPanel";
 
 describe("지표 포맷", () => {
   it("결측은 —다 — provider가 실제로 비워 두는 칸이 있다(삼성전자의 PER)", () => {
@@ -27,5 +27,21 @@ describe("지표 포맷", () => {
     expect(rows.find((row) => row.label === "시가총액")?.value).toBe("2.5조");
     expect(rows.find((row) => row.label === "PER")?.value).toBe("—");
     expect(rows).toHaveLength(11);
+  });
+});
+
+describe("분기 이익 차트", () => {
+  it("축 라벨은 분기 종료월이다", () => {
+    expect(quarterAxisLabel("2026-06-30")).toBe("26.06");
+    expect(quarterAxisLabel(undefined)).toBe("");
+  });
+
+  it("적자 분기는 기준선 아래로 내려간다 — 0으로 접으면 이익 없음으로 읽힌다", () => {
+    const { max, min } = barScale([
+      { quarter: "2026-03-31", revenue: 100, operatingIncome: -12, netIncome: 5 },
+      { quarter: "2026-06-30", revenue: 120, operatingIncome: 40, netIncome: 112 },
+    ]);
+    expect(max).toBe(120);
+    expect(min).toBe(-12);
   });
 });

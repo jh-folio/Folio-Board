@@ -350,17 +350,18 @@ export function WatchlistRoute() {
             {/* 차트는 앱이 직접 그린다. TradingView iframe 세 장은 앱 토큰을 따르지 않았고,
                 종목 정보·펀더멘털 위젯은 아래 지표·실적 패널과 기업분석이 대신한다.
 
-                네 섹션(지표/차트/실적/뉴스)은 **같은 면(surface--group)과 같은 머리 문법**
-                (굵은 제목 좌 + 보조 컨트롤 우)을 쓴다. 예전에는 실적의 일부만 상자에 있고
-                차트·뉴스는 맨바닥이라 어떤 정보가 한 묶음인지 눈이 읽지 못했다. 간격은
-                grid gap 하나가 소유한다 — 자식 margin-top이 겹치면 리듬이 깨진다. */}
+                네 섹션(지표/차트/실적/뉴스)은 **같은 머리 문법**(굵은 제목 + 아래 헤어라인)을
+                쓰고 넉넉한 간격으로 나뉜다. 회색 상자로 감싸는 안도 시도했지만 면이 많아지니
+                오히려 항목이 서로 구분되지 않았다(2026-08-21 사용자 피드백) — 구분은 면이
+                아니라 구분선과 여백이 맡고, 면은 실적의 "다음 발표" 강조 상자 하나만 남긴다.
+                간격은 grid gap 하나가 소유한다 — 자식 margin-top이 겹치면 리듬이 깨진다. */}
             {detailTicker ? (
               <div className="watchlist-detail-grid">
-                <section className="surface--group watchlist-detail-section watchlist-detail-section--metrics">
+                <section className="watchlist-detail-section watchlist-detail-section--metrics">
                   <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
                   <FundamentalsPanel ticker={detailTicker} />
                 </section>
-                <section className="surface--group watchlist-detail-section watchlist-detail-section--chart">
+                <section className="watchlist-detail-section watchlist-detail-section--chart">
                   <MarketChartFigure
                     symbol={detailTicker}
                     label={detailCompanyName || detailTicker}
@@ -372,10 +373,10 @@ export function WatchlistRoute() {
                     showEvent={false}
                   />
                 </section>
-                <section className="surface--group watchlist-detail-section watchlist-detail-section--earnings">
+                <section className="watchlist-detail-section watchlist-detail-section--earnings">
                   <EarningsPanel ticker={detailTicker} />
                 </section>
-                <section className="surface--group watchlist-detail-section watchlist-detail-section--news">
+                <section className="watchlist-detail-section watchlist-detail-section--news">
                   {newsSection}
                 </section>
               </div>
@@ -383,7 +384,7 @@ export function WatchlistRoute() {
               <>
                 {/* 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다. */}
                 <p className="section-subtitle">이 항목은 종목 코드가 없어 차트와 실적을 표시하지 않습니다.</p>
-                <section className="surface--group watchlist-detail-section">{newsSection}</section>
+                <section className="watchlist-detail-section">{newsSection}</section>
               </>
             )}
             {detailTicker && (

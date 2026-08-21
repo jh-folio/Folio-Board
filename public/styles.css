@@ -16147,8 +16147,9 @@ select { min-height: 36px; padding: 0 12px; }
   gap: 8px;
   padding: 12px 14px;
   border-radius: var(--r-group);
-  /* 섹션이 group 면이 되면서 같은 색이면 상자가 사라진다 — panel 면으로 반전한다. */
-  background: var(--surface-panel);
+  /* 모달에서 유일한 강조 상자다 — 섹션들이 상자를 벗으면서(구분은 헤어라인과 여백이
+     맡는다) 이 하나만 면을 갖는다. */
+  background: var(--surface-group);
 }
 .watchlist-earnings-next__date {
   display: flex;
@@ -16219,12 +16220,13 @@ select { min-height: 36px; padding: 0 12px; }
 
 .watchlist-earnings-skeleton { min-height: 96px; }
 
-/* 상세 모달의 네 섹션(지표/차트/실적/뉴스). 면은 프리미티브(surface--group)가 소유하고
-   여기는 배치만 갖는다. 간격은 이 grid gap 하나다 — 자식 margin이 더해지면 섹션마다
-   간격이 18/36px로 갈려 무엇이 한 묶음인지 읽히지 않던 것이 이 화면의 원래 문제였다. */
+/* 상세 모달의 네 섹션(지표/차트/실적/뉴스). 구분은 면이 아니라 **구분선과 여백**이
+   맡는다 — 회색 상자로 감싸는 안은 면이 많아지니 오히려 항목이 서로 구분되지 않았다
+   (2026-08-21 사용자 피드백). 간격은 이 grid gap 하나다 — 자식 margin이 더해지면
+   섹션마다 간격이 갈려 무엇이 한 묶음인지 읽히지 않던 것이 이 화면의 원래 문제였다. */
 .watchlist-detail-grid {
   display: grid;
-  gap: 14px;
+  gap: 24px 28px;
   grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   grid-template-areas:
     "metrics metrics"
@@ -16243,31 +16245,72 @@ select { min-height: 36px; padding: 0 12px; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--folio-border);
 }
 .watchlist-detail-section__head h3 {
   margin: 0;
   font-size: var(--fs-sm);
   font-weight: var(--fw-bold);
 }
+/* 실적 패널의 머리도 같은 문법을 쓴다 — 섹션 머리가 제각각이던 것이 흩어짐의 한 원인이었다. */
+.watchlist-earnings-panel__head,
+.watchlist-earnings-panel > h3 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--folio-border);
+}
 
-.watchlist-fundamentals-grid {
+/* 지표: 좌측 행 목록(라벨 + 계산식 힌트 + 값), 우측 분기 이익 차트. */
+.watchlist-fundamentals {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-  gap: 10px 14px;
+  gap: 18px 28px;
+  grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+  align-items: start;
+}
+.watchlist-fundamentals-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  column-gap: 32px;
   margin: 0;
 }
-.watchlist-fundamentals-grid dt { color: var(--folio-ink-subtle); font-size: 12px; }
-.watchlist-fundamentals-grid dd {
-  margin: 2px 0 0;
+.watchlist-fundamentals-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--folio-border);
+}
+.watchlist-fundamentals-row dt { display: grid; gap: 1px; color: var(--folio-ink); font-size: 13px; font-weight: var(--fw-medium); }
+.watchlist-fundamentals-row dt small { color: var(--folio-ink-subtle); font-size: 11px; font-weight: var(--fw-normal); }
+.watchlist-fundamentals-row dd {
+  margin: 0;
   font-size: var(--fs-md);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .watchlist-fundamentals-skeleton { min-height: 76px; }
+
+/* 분기 이익 차트. 색은 데이터 계열용이다 — 매출은 중립 잉크, 이익 두 계열은 초록 농담. */
+.watchlist-quarterly { margin: 0; display: grid; gap: 8px; }
+.watchlist-quarterly svg { width: 100%; height: auto; }
+.watchlist-quarterly__baseline { stroke: var(--folio-border); stroke-width: 1; }
+.watchlist-quarterly__axis { fill: var(--folio-ink-subtle); font-size: 11px; }
+.watchlist-quarterly__bar--revenue { fill: color-mix(in srgb, var(--folio-ink) 42%, transparent); }
+.watchlist-quarterly__bar--operatingIncome { fill: var(--folio-green); }
+.watchlist-quarterly__bar--netIncome { fill: color-mix(in srgb, var(--folio-green) 45%, transparent); }
+.watchlist-quarterly__legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--folio-ink-muted); font-size: 12px; }
+.watchlist-quarterly__legend b { font-variant-numeric: tabular-nums; color: var(--folio-ink); }
+.watchlist-quarterly__dot { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; }
+.watchlist-quarterly__dot--revenue { background: color-mix(in srgb, var(--folio-ink) 42%, transparent); }
+.watchlist-quarterly__dot--operatingIncome { background: var(--folio-green); }
+.watchlist-quarterly__dot--netIncome { background: color-mix(in srgb, var(--folio-green) 45%, transparent); }
 
 /* 기본 그리드 정의보다 뒤에 있어야 이긴다 — 앞쪽 media 블록에 두면 같은 특이도에서
    뒤에 오는 기본 규칙이 덮어써 모바일에서 2컬럼이 그대로 남는다(실측). */
 @media (max-width: 820px) {
   .watchlist-detail-grid { grid-template-columns: 1fr; grid-template-areas: "metrics" "chart" "earnings" "news"; }
+  .watchlist-fundamentals { grid-template-columns: 1fr; }
 }
 .watchlist-detail-source { margin: 0; color: var(--folio-ink-subtle); font-size: 11px; }
 

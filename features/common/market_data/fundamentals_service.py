@@ -12,6 +12,7 @@ from pathlib import Path
 
 from features.common.data_reliability.fetch_runtime import FetchPolicy, ProviderFetchRuntime
 from features.common.market_data.chart_service import normalize_chart_request
+from features.common.market_data.earnings_service import _statement_row
 
 # `info`에서 그대로 옮기는 칸. 이름을 바꾸지 않는 이유는 provider 필드와 화면 사이에
 # 번역층이 하나 늘 때마다 결측 원인 추적이 한 단계 어려워지기 때문이다.
@@ -32,10 +33,35 @@ FUNDAMENTAL_FIELDS = (
 )
 
 
+# 분기 이익 차트에 싣는 계열. 이름은 yfinance 손익계산서 행 그대로다(실측: GOOGL 기준
+# "Total Revenue"/"Operating Income"/"Net Income" 세 행 모두 존재, 7개 분기).
+_QUARTER_SERIES = (
+    ("revenue", "Total Revenue"),
+    ("operatingIncome", "Operating Income"),
+    ("netIncome", "Net Income"),
+)
+QUARTER_LIMIT = 5
+
+
+def _quarterly_earnings(ticker) -> list[dict]:
+    """최근 분기들의 매출·영업이익·순이익. 행이 없으면 그 계열만 빈다(6501.T의 매출처럼)."""
+    try:
+        frame = ticker.quarterly_income_stmt
+    except Exception:  # noqa: BLE001 - 손익계산서가 없어도 지표 타일은 보여준다
+        return []
+    series = {key: _statement_row(frame, name) for key, name in _QUARTER_SERIES}
+    quarters = sorted({quarter for rows in series.values() for quarter in rows})[-QUARTER_LIMIT:]
+    return [
+        {"quarter": quarter, **{key: rows.get(quarter) for key, rows in series.items()}}
+        for quarter in quarters
+    ]
+
+
 def _download(symbol: str) -> dict:
     import yfinance as yf
 
-    info = yf.Ticker(symbol).info or {}
+    ticker = yf.Ticker(symbol)
+    info = ticker.info or {}
     out: dict[str, object] = {"symbol": symbol}
     for field in FUNDAMENTAL_FIELDS:
         value = info.get(field)
@@ -48,6 +74,7 @@ def _download(symbol: str) -> dict:
             out[field] = None
             continue
         out[field] = None if number != number else number
+    out["quarters"] = _quarterly_earnings(ticker)
     return out
 
 
@@ -57,8 +84,10 @@ def get_fundamentals(data_dir: Path, *, symbol: str, runtime: ProviderFetchRunti
     runtime = runtime or ProviderFetchRuntime(Path(data_dir) / "provider-cache" / "fundamentals", max_workers=2)
     # 지표는 분 단위로 바뀌는 값이 아니다. 1시간 TTL에 하루 stale-while-revalidate면
     # 모달을 여는 순간에는 캐시가 즉시 그려지고 갱신은 뒤에서 돈다(차트와 같은 정책).
+    # 캐시 키에 스키마 버전을 넣는다. 없으면 필드를 추가한 판올림 직후 TTL이 지날 때까지
+    # 옛 모양의 캐시가 그대로 내려와, 새 화면(분기 차트)이 조용히 비어 있게 된다(실측).
     result = runtime.fetch(
-        "yfinance", "fundamentals", {"symbol": symbol},
+        "yfinance", "fundamentals", {"symbol": symbol, "schema": 2},
         lambda: _download(symbol),
         policy=FetchPolicy(ttl_seconds=3600, timeout_seconds=20, stale_while_revalidate_seconds=86400),
         background_refresh=True,
@@ -66,6 +95,7 @@ def get_fundamentals(data_dir: Path, *, symbol: str, runtime: ProviderFetchRunti
     value = result.get("value") if isinstance(result.get("value"), dict) else {"symbol": symbol}
     return {
         **{field: None for field in FUNDAMENTAL_FIELDS},
+        "quarters": [],
         **value,
         "freshness": result.get("status"),
         "fetchedAt": result.get("fetchedAt") or "",
