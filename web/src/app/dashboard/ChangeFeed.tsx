@@ -8,7 +8,7 @@ import {
   type ChangedItem,
   type ChangeEvent,
 } from "../changeEvents";
-import { MARKET_CODE_LABELS } from "../../api";
+import { getJson, MARKET_CODE_LABELS } from "../../api";
 import { STORY_MARKETS, StoryShare, type StoryMarket } from "./StoryShare";
 
 export const CHANGE_STATUS_LABELS: Record<string, string> = {
@@ -36,7 +36,7 @@ export function changeEventRoute(event: ChangeEvent): string {
     if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       // Events written before the id carried a market only know their market from
       // the lineage; without this they all opened the combined view instead.
-      return `#/briefing/${date}/${briefingScope(id, event.lineageId)}`;
+      return `#/briefing/${date}/${briefingScope(id, event.lineageId)}/${briefingKind(id, event.lineageId)}`;
     }
     return "#/briefing";
   }
@@ -50,11 +50,31 @@ export function changeEventRoute(event: ChangeEvent): string {
 // 읽으면 유럽·일본 카드가 전부 통합 뷰를 열어 어느 브리핑이 바뀐 건지 사라진다.
 const BRIEFING_SCOPES = ["us", "kr", "europe", "jp"] as const;
 
+// 종류 접미사. 주간 변화 이벤트의 id는 `2026-08-23.us.weekly`이고 계보는
+// `briefing:us:weekly`다 — 이걸 모르면 시장 판정이 실패해 통합 뷰로 떨어지고,
+// 경로에 종류가 없어 같은 날 **일간** 보고서가 열린다.
+const BRIEFING_KINDS = ["weekly"] as const;
+
+function briefingKind(id: string, lineageId?: unknown): string {
+  const suffix = BRIEFING_KINDS.find((value) => id.endsWith(`.${value}`));
+  if (suffix) return suffix;
+  const fromLineage = new RegExp(`^briefing:[a-z]+:(${BRIEFING_KINDS.join("|")})$`)
+    .exec(String(lineageId || ""))?.[1];
+  return fromLineage || "daily";
+}
+
+/** 종류 접미사를 뗀 id. 시장은 그 앞에 붙는다. */
+function withoutKind(id: string): string {
+  const suffix = BRIEFING_KINDS.find((value) => id.endsWith(`.${value}`));
+  return suffix ? id.slice(0, -suffix.length - 1) : id;
+}
+
 function briefingScope(id: string, lineageId?: unknown): string {
-  const suffix = BRIEFING_SCOPES.find((scope) => id.endsWith(`.${scope}`));
+  const base = withoutKind(id);
+  const suffix = BRIEFING_SCOPES.find((scope) => base.endsWith(`.${scope}`));
   if (suffix) return suffix;
   // 시장이 id에 들어가기 전에 쓰인 이벤트는 lineage로만 시장을 안다.
-  const fromLineage = new RegExp(`^briefing:(${BRIEFING_SCOPES.join("|")})$`)
+  const fromLineage = new RegExp(`^briefing:(${BRIEFING_SCOPES.join("|")})(?::[a-z]+)?$`)
     .exec(String(lineageId || ""))?.[1];
   return fromLineage || "both";
 }
@@ -65,7 +85,7 @@ export function baselineRoute(event: ChangeEvent): string {
   const id = String(event.baselineRef?.id || "");
   const date = id.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
-  return `#/briefing/${date}/${briefingScope(id, event.lineageId)}`;
+  return `#/briefing/${date}/${briefingScope(id, event.lineageId)}/${briefingKind(id, event.lineageId)}`;
 }
 
 /** 카드 대표 항목: 의미 verdict가 강한 순 → 없으면 첫 변화 항목. */
@@ -149,19 +169,75 @@ function ChangeCard({ event }: { event: ChangeEvent }) {
   );
 }
 
+// 내용 변화로 세는 판정. 나머지는 "변화 없음"이거나 "아직 판정 못 함"이고, 그 둘은
+// 다른 말이다.
+const CONFIRMED_VERDICTS = new Set(["new_information", "reversal", "trend_development"]);
+// 판정이 **끝난** 결과. 보도량만 옮겨갔거나 새 정보가 없다는 것도 판정이다.
+const JUDGED_VERDICTS = new Set([...CONFIRMED_VERDICTS, "coverage_shift_only", "no_new_information"]);
+// 의미 비교는 브리핑 변화 단위에만 걸린다. 나머지 아티팩트는 verdict가 없는 것이
+// 정상이므로 미판정으로 세지 않는다.
+const SEMANTIC_ARTIFACT_KINDS = new Set(["briefing"]);
+
+/** 확인된 내용 변화와 **진짜** 미판정 건수.
+ *
+ * 예전에는 confirmed가 아닌 것을 전부 미판정으로 셌다. 그래서 `coverage_shift_only`나
+ * `no_new_information`처럼 **정상적으로 판정이 끝난** 날에도 "판정하지 못했다"고 말하고
+ * 이미 연결돼 있는 AI Agent를 연결하라고 안내했다.
+ */
+export function summarizeChangeEvents(events: ChangeEvent[]): {
+  confirmed: ChangeEvent[];
+  unjudged: number;
+} {
+  const confirmed: ChangeEvent[] = [];
+  let unjudged = 0;
+  for (const event of events) {
+    const verdict = String(primaryChangedItem(event)?.semanticVerdict || "");
+    if (CONFIRMED_VERDICTS.has(verdict)) {
+      confirmed.push(event);
+      continue;
+    }
+    if (JUDGED_VERDICTS.has(verdict)) continue;
+    if (!SEMANTIC_ARTIFACT_KINDS.has(String(event.artifactKind || ""))) continue;
+    unjudged += 1;
+  }
+  return { confirmed, unjudged };
+}
+
+/** 빈 목록에서 할 말. 판정이 끝났으면 그렇게 말하고, 안내는 진짜 미판정에만 붙인다.
+ *
+ * `agentReady`가 참이면 연결 안내를 쓰지 않는다 — 이미 연결한 사람에게 연결하라고
+ * 하면 되어 있는 일을 다시 하게 만든다. 남은 미판정은 이 릴리즈 이전에 만들어진
+ * 보고서이고, 다음 생성에서 함께 판정된다.
+ */
+export function emptyMessage(unjudged: number, agentReady: boolean): string {
+  if (unjudged <= 0) return "아직 확인된 내용 변화가 없습니다.";
+  return agentReady
+    ? `내용 변화를 아직 판정하지 못한 기록이 ${unjudged}건 있습니다. 다음 브리핑 생성에서 함께 판정합니다.`
+    : `내용 변화를 판정하지 못한 기록이 ${unjudged}건 있습니다. 설정에서 AI Agent를 연결하면 무엇이 달라졌는지 읽어 줍니다.`;
+}
+
+type AgentBridgeAdapters = { adapters?: Array<{ available?: boolean }> };
+
+/** 판정을 돌릴 엔진이 있는가. 설정 탭에서 바뀌면 같은 이벤트로 따라간다. */
+function useAgentReady(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const apply = (payload: AgentBridgeAdapters | null) => {
+      if (alive) setReady((payload?.adapters || []).some((row) => row.available));
+    };
+    getJson<AgentBridgeAdapters>("/api/agent-bridge/settings").then(apply).catch(() => apply(null));
+    const onUpdated = (event: Event) => apply((event as CustomEvent).detail as AgentBridgeAdapters);
+    window.addEventListener("folio:agent-settings-updated", onUpdated);
+    return () => { alive = false; window.removeEventListener("folio:agent-settings-updated", onUpdated); };
+  }, []);
+  return ready;
+}
+
 export function ChangeFeed({ events }: { events: ChangeEvent[] }) {
   const [storyMarket, setStoryMarket] = useState<StoryMarket>("us");
-  // 의미 판정이 끝난 변화만 보여준다. `내용 미평가`(LLM 없이 생성)와 보도량
-  // 이동만 있는 건은 "무엇이 달라졌다"를 아직 말할 수 없다. 접어서라도 두면
-  // 사용자는 열어보고 아무 판단도 얻지 못한다 — 화면에서 뺀다.
-  const confirmed = events.filter((event) => {
-    const verdict = String(primaryChangedItem(event)?.semanticVerdict || "");
-    return verdict === "new_information" || verdict === "reversal" || verdict === "trend_development";
-  });
-  // 의미 판정은 LLM이 한다. LLM 없이 생성한 설치에서는 모든 건이 `not_evaluated`라
-  // 위 필터가 전부를 걸러낸다. 그때 "변화가 없다"고 쓰면 판정을 못 한 것을 변화가
-  // 없었던 것으로 바꿔 말하게 된다 — 판정을 못 했다는 사실 자체를 보여준다.
-  const unjudged = events.length - confirmed.length;
+  const agentReady = useAgentReady();
+  const { confirmed, unjudged } = summarizeChangeEvents(events);
   return (
     <section className="cockpit-panel cockpit-change-feed" aria-labelledby="cockpit-change-title">
       <div className="cockpit-panel__head">
@@ -185,11 +261,7 @@ export function ChangeFeed({ events }: { events: ChangeEvent[] }) {
       {confirmed.length ? <ol>
         {confirmed.map((event) => <ChangeCard event={event} key={eventKey(event)} />)}
       </ol> : (
-        <p className="cockpit-empty">
-          {unjudged > 0
-            ? `내용 변화를 판정하지 못한 기록이 ${unjudged}건 있습니다. 설정에서 AI Agent를 연결하면 무엇이 달라졌는지 읽어 줍니다.`
-            : "아직 확인된 내용 변화가 없습니다."}
-        </p>
+        <p className="cockpit-empty">{emptyMessage(unjudged, agentReady)}</p>
       )}
 
     </section>

@@ -594,12 +594,24 @@ def _briefing_correction_prompt(base_prompt: str, violations: list[str], contrac
     ])
 
 
-def run_agent_prompt(prompt: str, *, adapter: str = "", model: str = "", timeout: int = 0, job_id: str = "") -> dict:
+def run_agent_prompt(
+    prompt: str, *, adapter: str = "", model: str = "", timeout: int = 0, job_id: str = "",
+    serialize: bool = True,
+) -> dict:
     """단일 프롬프트를 Agent CLI로 실행하고 텍스트 결과만 돌려준다(파일 쓰기 없음).
 
     Agent 채팅처럼 context pack/writeback이 필요 없는 read-only 호출용이다.
+
+    `serialize=False`는 **이미 `_RUN_SEMAPHORE`를 쥔 호출자 전용**이다. 그 세마포어는
+    `threading.Semaphore(1)`이라 재진입이 안 되고 acquire에 타임아웃도 없다 — 잡 스레드
+    안에서 다시 부르면 그 잡이 영원히 멈춘다. 브리핑 생성 잡의 커밋 단계에서 도는
+    의미 비교가 정확히 그 자리다(`run_agent_task`가 커밋까지 통째로 감싼다).
     """
     effective_timeout = timeout or max(30, int(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", 300)))
+    if not serialize:
+        selected = _select_adapter(adapter)
+        output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, model_override=model)
+        return {"output": output, "adapter": selected["id"]}
     with _RUN_SEMAPHORE:
         selected = _select_adapter(adapter)
         output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, model_override=model)
