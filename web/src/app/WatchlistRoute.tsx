@@ -293,9 +293,11 @@ export function WatchlistRoute() {
         <p className="section-subtitle">관련 뉴스를 불러오는 중입니다.</p>
       ) : newsRows.length ? (
         <div className="watchlist-detail-news-list">
+          {/* 카드가 아니라 행이다 — 모달의 다른 섹션과 같은 헤어라인 문법. 카드(compact-item)는
+              항목마다 테두리·큰 패딩·등장 애니메이션을 갖고 와서 뉴스 두 건이 화면 반을 먹었다. */}
           {newsRows.map((row, index) => (
-            <article className="compact-item" key={`${newsTitle(row)}-${index}`}>
-              <div className="meta">{sourceLabel(row)}</div>
+            <article className="watchlist-news-row" key={`${newsTitle(row)}-${index}`}>
+              <span className="watchlist-news-row__meta">{sourceLabel(row)}</span>
               <h4>
                 {row.url ? (
                   <a href={row.url} target="_blank" rel="noopener noreferrer">{newsTitle(row)}</a>

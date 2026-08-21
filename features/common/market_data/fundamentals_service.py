@@ -38,23 +38,38 @@ FUNDAMENTAL_FIELDS = (
 PROFILE_FIELDS = ("sector", "industry", "longBusinessSummary")
 
 
-# 분기 이익 차트에 싣는 계열. 이름은 yfinance 손익계산서 행 그대로다(실측: GOOGL 기준
-# "Total Revenue"/"Operating Income"/"Net Income" 세 행 모두 존재, 7개 분기).
-_QUARTER_SERIES = (
-    ("revenue", "Total Revenue"),
-    ("operatingIncome", "Operating Income"),
-    ("netIncome", "Net Income"),
+# 분기 차트에 싣는 계열 — 재무제표별로 한 묶음이다. 이름은 yfinance 행 그대로다
+# (실측: 미국·한국·일본 셋 다 일곱 행 모두 존재. 손익 5~7분기, 재무·현금흐름 5~6분기).
+_QUARTER_STATEMENTS = (
+    ("quarterly_income_stmt", (
+        ("revenue", "Total Revenue"),
+        ("operatingIncome", "Operating Income"),
+        ("netIncome", "Net Income"),
+    )),
+    ("quarterly_balance_sheet", (
+        ("totalAssets", "Total Assets"),
+        ("totalDebt", "Total Debt"),
+        ("stockholdersEquity", "Stockholders Equity"),
+    )),
+    ("quarterly_cashflow", (
+        ("operatingCashFlow", "Operating Cash Flow"),
+        ("freeCashFlow", "Free Cash Flow"),
+        ("capitalExpenditure", "Capital Expenditure"),
+    )),
 )
 QUARTER_LIMIT = 5
 
 
 def _quarterly_earnings(ticker) -> list[dict]:
-    """최근 분기들의 매출·영업이익·순이익. 행이 없으면 그 계열만 빈다(6501.T의 매출처럼)."""
-    try:
-        frame = ticker.quarterly_income_stmt
-    except Exception:  # noqa: BLE001 - 손익계산서가 없어도 지표 타일은 보여준다
-        return []
-    series = {key: _statement_row(frame, name) for key, name in _QUARTER_SERIES}
+    """최근 분기들의 손익·재무·현금흐름 계열. 행이 없으면 그 계열만 빈다(6501.T의 매출처럼)."""
+    series: dict[str, dict[str, float]] = {}
+    for attr, rows in _QUARTER_STATEMENTS:
+        try:
+            frame = getattr(ticker, attr)
+        except Exception:  # noqa: BLE001 - 재무제표 하나가 없어도 나머지는 보여준다
+            frame = None
+        for key, name in rows:
+            series[key] = _statement_row(frame, name)
     quarters = sorted({quarter for rows in series.values() for quarter in rows})[-QUARTER_LIMIT:]
     return [
         {"quarter": quarter, **{key: rows.get(quarter) for key, rows in series.items()}}
@@ -94,12 +109,18 @@ def get_fundamentals(data_dir: Path, *, symbol: str, runtime: ProviderFetchRunti
     # 캐시 키에 스키마 버전을 넣는다. 없으면 필드를 추가한 판올림 직후 TTL이 지날 때까지
     # 옛 모양의 캐시가 그대로 내려와, 새 화면(분기 차트)이 조용히 비어 있게 된다(실측).
     result = runtime.fetch(
-        "yfinance", "fundamentals", {"symbol": symbol, "schema": 3},
+        "yfinance", "fundamentals", {"symbol": symbol, "schema": 4},
         lambda: _download(symbol),
         policy=FetchPolicy(ttl_seconds=3600, timeout_seconds=20, stale_while_revalidate_seconds=86400),
         background_refresh=True,
     )
     value = result.get("value") if isinstance(result.get("value"), dict) else {"symbol": symbol}
+    summary = str(value.get("longBusinessSummary") or "")
+    if summary:
+        from features.common.market_data.summary_translation import translated_summary
+
+        # 캐시 갱신마다 다시 번역하지 않도록 provider 캐시 **밖**에서, 원문 해시로 1회만.
+        value = {**value, "longBusinessSummary": translated_summary(Path(data_dir), summary)}
     return {
         **{field: None for field in FUNDAMENTAL_FIELDS},
         **{field: "" for field in PROFILE_FIELDS},

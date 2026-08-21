@@ -40,8 +40,17 @@ describe("분기 이익 차트", () => {
     const { max, min } = barScale([
       { quarter: "2026-03-31", revenue: 100, operatingIncome: -12, netIncome: 5 },
       { quarter: "2026-06-30", revenue: 120, operatingIncome: 40, netIncome: 112 },
-    ]);
+    ], ["revenue", "operatingIncome", "netIncome"]);
     expect(max).toBe(120);
     expect(min).toBe(-12);
+  });
+
+  it("스케일은 고른 세트의 계열만 본다 — 재무 탭에서 매출이 축을 결정하면 안 된다", () => {
+    const rows = [
+      { quarter: "2026-03-31", revenue: 1000, totalDebt: 50, totalAssets: 200, stockholdersEquity: 120 },
+      { quarter: "2026-06-30", revenue: 1200, totalDebt: 60, totalAssets: 220, stockholdersEquity: 130 },
+    ];
+    const { max } = barScale(rows, ["totalAssets", "totalDebt", "stockholdersEquity"]);
+    expect(max).toBe(220);
   });
 });
