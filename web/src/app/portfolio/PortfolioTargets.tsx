@@ -26,7 +26,6 @@ export function PortfolioTargets({ revision, onChanged }: { revision: number; on
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState("");
   const [compareId, setCompareId] = useState("");
-  const [today] = useState(() => new Date().toISOString().slice(0, 10));
 
   const load = useCallback(async () => {
     try {
@@ -208,9 +207,8 @@ export function PortfolioTargets({ revision, onChanged }: { revision: number; on
         </div>
         <p className="portfolio-note">
           프리셋 2개 이상을 골라 같은 기간·같은 리밸런싱 조건으로 나란히 돌려 봅니다.
-          기간과 조건을 바꾸려면 <strong>백테스트</strong> 탭을 씁니다.
         </p>
-        <PresetCompare presets={presets} start="2020-01-01" end={today} rebalance="monthly" />
+        <PresetCompare presets={presets} />
       </div>
 
       {note && <p className="react-reader-status" role="status">{note}</p>}

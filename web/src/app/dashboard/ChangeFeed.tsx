@@ -177,6 +177,19 @@ const JUDGED_VERDICTS = new Set([...CONFIRMED_VERDICTS, "coverage_shift_only", "
 // 의미 비교는 브리핑 변화 단위에만 걸린다. 나머지 아티팩트는 verdict가 없는 것이
 // 정상이므로 미판정으로 세지 않는다.
 const SEMANTIC_ARTIFACT_KINDS = new Set(["briefing"]);
+// 판정 대상이 되는 변화 단위 종류(`change_intelligence/semantic.py::SEMANTIC_KINDS`).
+// 지표(`market_metric`)는 의미 판정을 하지 않으므로 verdict가 없는 것이 정상이다.
+const SEMANTIC_ITEM_KINDS = new Set(["market_driver", "issue_coverage"]);
+
+/** 이 이벤트에 **판정할 것이 있었는가.**
+ *
+ * `baseline_created`·`insufficient_basis`·`no_material_change`는 `changedItems`가
+ * 비어 있다. 그런 건을 미판정으로 세면 처음 만든 브리핑이나 정말로 안 바뀐 날에도
+ * "판정하지 못했다"고 말하게 된다 — 없애려던 그 문구가 그대로 돌아온다.
+ */
+function hasJudgeableItems(event: ChangeEvent): boolean {
+  return (event.changedItems || []).some((item) => SEMANTIC_ITEM_KINDS.has(String(item.kind || "")));
+}
 
 /** 확인된 내용 변화와 **진짜** 미판정 건수.
  *
@@ -198,6 +211,8 @@ export function summarizeChangeEvents(events: ChangeEvent[]): {
     }
     if (JUDGED_VERDICTS.has(verdict)) continue;
     if (!SEMANTIC_ARTIFACT_KINDS.has(String(event.artifactKind || ""))) continue;
+    // 판정할 단위가 없으면 미판정이 아니다 — 판정할 것이 없었을 뿐이다.
+    if (!hasJudgeableItems(event)) continue;
     unjudged += 1;
   }
   return { confirmed, unjudged };

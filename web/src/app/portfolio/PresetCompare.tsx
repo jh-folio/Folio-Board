@@ -70,16 +70,47 @@ export function bestIndex(
   return winners.length === 1 ? winners[0] : null;
 }
 
-/** 여러 계열을 한 좌표계에 겹친다. 축을 공유해야 비교가 성립한다. */
+/** 여러 계열을 한 좌표계에 겹친다. 축을 공유해야 비교가 성립한다.
+ *
+ * **x는 날짜에서 나온다.** 인덱스로 그리면 길이가 다른 계열이 각각 전체 폭에 늘어나,
+ * 3월에 시작한 계열의 첫 점이 1월에 시작한 계열의 첫 점과 같은 자리에 찍힌다 —
+ * 같은 가로 위치가 같은 날짜라고 읽히므로, 뒤처진 프리셋이 앞선 것처럼 보인다.
+ * 종목의 상장일이 다르면 계열 길이는 실제로 달라진다.
+ */
+export function seriesPath(
+  series: ReadonlyArray<{ date: string; value: number }>,
+  bounds: { minTime: number; maxTime: number; min: number; max: number },
+  width: number,
+  height: number,
+): string {
+  const timeSpan = bounds.maxTime - bounds.minTime || 1;
+  const valueSpan = bounds.max - bounds.min || 1;
+  return series
+    .map((point, index) => {
+      const time = new Date(point.date).getTime();
+      const x = ((Number.isFinite(time) ? time : bounds.minTime) - bounds.minTime) / timeSpan * width;
+      const y = height - ((point.value - bounds.min) / valueSpan) * height;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
 function OverlaySeries({ results }: { results: ReadonlyArray<BacktestResult> }) {
   const drawable = results.filter((row) => (row.series || []).length > 1);
   if (!drawable.length) return null;
   const width = 640;
   const height = 180;
-  const all = drawable.flatMap((row) => row.series.map((point) => point.value));
-  const min = Math.min(...all);
-  const max = Math.max(...all);
-  const span = max - min || 1;
+  const values = drawable.flatMap((row) => row.series.map((point) => point.value));
+  const times = drawable
+    .flatMap((row) => row.series.map((point) => new Date(point.date).getTime()))
+    .filter((time) => Number.isFinite(time));
+  if (!times.length) return null;
+  const bounds = {
+    minTime: Math.min(...times),
+    maxTime: Math.max(...times),
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
   return (
     <svg
       className="portfolio-sparkline portfolio-compare-chart"
@@ -93,27 +124,27 @@ function OverlaySeries({ results }: { results: ReadonlyArray<BacktestResult> }) 
           key={row.presetId || row.name || index}
           data-tone={SERIES_TONES[index % SERIES_TONES.length]}
           className="portfolio-compare-line"
-          d={row.series
-            .map((point, i) => {
-              const x = (i / (row.series.length - 1)) * width;
-              const y = height - ((point.value - min) / span) * height;
-              return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-            })
-            .join(" ")}
+          d={seriesPath(row.series, bounds, width, height)}
         />
       ))}
     </svg>
   );
 }
 
-export function PresetCompare({
-  presets, start, end, rebalance,
-}: {
-  presets: ReadonlyArray<Preset>;
-  start: string;
-  end: string;
-  rebalance: string;
-}) {
+const REBALANCE: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "none", label: "안 함" },
+  { id: "monthly", label: "매월" },
+  { id: "quarterly", label: "분기" },
+  { id: "yearly", label: "매년" },
+];
+
+export function PresetCompare({ presets }: { presets: ReadonlyArray<Preset> }) {
+  // **조건은 여기서 정한다.** 예전에는 값이 고정돼 있고 안내만 "백테스트 탭에서 바꾸라"고
+  // 했는데, 그 탭의 설정은 이 비교에 전혀 닿지 않는다 — 사용자가 기간을 바꿨다고 믿고
+  // 다른 기간의 답을 받게 된다.
+  const [start, setStart] = useState("2020-01-01");
+  const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const [rebalance, setRebalance] = useState("monthly");
   const [selected, setSelected] = useState<string[]>([]);
   const [result, setResult] = useState<BacktestComparison | null>(null);
   const [busy, setBusy] = useState("");
@@ -178,6 +209,31 @@ export function PresetCompare({
             <small>{preset.positions.length}종목</small>
           </label>
         ))}
+      </div>
+      <div className="portfolio-backtest-fields">
+        <label className="field">
+          <span>시작</span>
+          <input type="date" value={start} onChange={(event) => setStart(event.target.value)} />
+        </label>
+        <label className="field">
+          <span>종료</span>
+          <input type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
+        </label>
+        <div className="field">
+          <span id="compareRebalanceLabel">리밸런싱</span>
+          <div className="segment" role="group" aria-labelledby="compareRebalanceLabel">
+            {REBALANCE.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                aria-pressed={rebalance === item.id}
+                onClick={() => setRebalance(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="portfolio-compare-actions">
         <button

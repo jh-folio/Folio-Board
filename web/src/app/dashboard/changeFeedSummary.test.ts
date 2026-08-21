@@ -10,6 +10,11 @@ function event(verdict: string, artifactKind = "briefing"): ChangeEvent {
   };
 }
 
+/** `baseline_created`·`no_material_change`는 변화 단위가 비어 있다. */
+function emptyEvent(artifactKind = "briefing"): ChangeEvent {
+  return { artifactKind, artifactId: "2026-08-20.us", changedItems: [] };
+}
+
 describe("summarizeChangeEvents", () => {
   it("내용 변화로 세는 판정만 카드가 된다", () => {
     const { confirmed } = summarizeChangeEvents([
@@ -35,6 +40,24 @@ describe("summarizeChangeEvents", () => {
     const { unjudged } = summarizeChangeEvents([event("not_evaluated"), event("")]);
 
     expect(unjudged).toBe(2);
+  });
+
+  it("판정할 변화 단위가 없으면 미판정이 아니다", () => {
+    // 처음 만든 브리핑(`baseline_created`)과 정말로 안 바뀐 날(`no_material_change`)은
+    // `changedItems`가 비어 있다. 그걸 미판정으로 세면 없애려던 문구가 그대로 돌아온다.
+    const { confirmed, unjudged } = summarizeChangeEvents([emptyEvent(), emptyEvent()]);
+
+    expect(confirmed).toHaveLength(0);
+    expect(unjudged).toBe(0);
+  });
+
+  it("지표만 바뀐 건도 미판정이 아니다", () => {
+    // 의미 판정은 `market_driver`·`issue_coverage`에만 걸린다(SEMANTIC_KINDS).
+    const { unjudged } = summarizeChangeEvents([
+      { artifactKind: "briefing", changedItems: [{ id: "m1", kind: "market_metric" }] },
+    ]);
+
+    expect(unjudged).toBe(0);
   });
 
   it("의미 비교 대상이 아닌 아티팩트는 미판정으로 세지 않는다", () => {
