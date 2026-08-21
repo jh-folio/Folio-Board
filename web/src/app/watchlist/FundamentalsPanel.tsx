@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { getJson } from "../../api";
 import { changeRatio, compactAmount, percentText, toneOf } from "./EarningsPanel";
 
@@ -15,6 +14,9 @@ import { changeRatio, compactAmount, percentText, toneOf } from "./EarningsPanel
  * 이 구성의 출발점이다. 분기 차트(이익/재무/현금흐름 전환)와 분기별 값 표가
  * 표의 시각화 짝이고, hover 상자·판독 패널은 기업분석 차트와 같은 양식을 쓴다
  * (`analysis-chart-hover`/`analysis-chart-readout` 클래스 재사용).
+ *
+ * 회사 소개는 provider 원문(영문) 그대로다. LLM 번역을 붙였다가 뺐다 — 키가 있는
+ * 설치만 한국어가 되는 반쪽 기능은 없느니만 못하다(2026-08-22 사용자 결정).
  */
 
 export type FundamentalsQuarter = {
@@ -22,7 +24,9 @@ export type FundamentalsQuarter = {
   revenue?: number | null;
   operatingIncome?: number | null;
   netIncome?: number | null;
-  totalAssets?: number | null;
+  currentAssets?: number | null;
+  currentLiabilities?: number | null;
+  nonCurrentLiabilities?: number | null;
   totalDebt?: number | null;
   stockholdersEquity?: number | null;
   operatingCashFlow?: number | null;
@@ -117,11 +121,21 @@ export function fundamentalsRows(payload: FundamentalsPayload): Array<{ label: s
 }
 
 type SeriesKey = keyof Pick<FundamentalsQuarter,
-  "revenue" | "operatingIncome" | "netIncome" | "totalAssets" | "totalDebt" | "stockholdersEquity" | "operatingCashFlow" | "freeCashFlow" | "capitalExpenditure">;
+  "revenue" | "operatingIncome" | "netIncome" | "currentAssets" | "currentLiabilities" | "nonCurrentLiabilities" | "operatingCashFlow" | "freeCashFlow" | "capitalExpenditure">;
 
-type ChartSet = { key: string; label: string; series: Array<{ key: SeriesKey; label: string }> };
+type RatioDef = { key: string; label: string; of: (row: FundamentalsQuarter) => number | null };
+type ChartSet = { key: string; label: string; series: Array<{ key: SeriesKey; label: string }>; ratios?: RatioDef[] };
 
-/** 이익만으로는 반쪽이다 — 재무 구조(부채)와 현금 창출력이 같은 자리에서 전환된다. */
+/** `분자 ÷ 분모 × 100`. 분모가 0이거나 비면 계산하지 않는다. */
+export function balanceRatio(numerator: number | null | undefined, denominator: number | null | undefined): number | null {
+  if (numerator === null || numerator === undefined || !Number.isFinite(numerator)) return null;
+  if (denominator === null || denominator === undefined || !Number.isFinite(denominator) || denominator === 0) return null;
+  return (numerator / denominator) * 100;
+}
+
+/** 이익만으로는 반쪽이다 — 재무 구조와 현금 창출력이 같은 자리에서 전환된다.
+ *  재무 탭은 막대(유동성 구조)와 선(비율) 두 그림이다 — 금액과 %를 한 축에 섞으면
+ *  비율이 0에 붙어 사라진다(기업분석 차트와 같은 이유로 축을 분리한다). */
 export const CHART_SETS: ChartSet[] = [
   {
     key: "earnings", label: "이익",
@@ -134,9 +148,13 @@ export const CHART_SETS: ChartSet[] = [
   {
     key: "balance", label: "재무",
     series: [
-      { key: "totalAssets", label: "총자산" },
-      { key: "totalDebt", label: "총부채" },
-      { key: "stockholdersEquity", label: "자기자본" },
+      { key: "currentAssets", label: "유동자산" },
+      { key: "currentLiabilities", label: "유동부채" },
+      { key: "nonCurrentLiabilities", label: "비유동부채" },
+    ],
+    ratios: [
+      { key: "currentRatio", label: "유동비율", of: (row) => balanceRatio(row.currentAssets, row.currentLiabilities) },
+      { key: "debtRatio", label: "부채비율", of: (row) => balanceRatio(row.totalDebt, row.stockholdersEquity) },
     ],
   },
   {
@@ -149,8 +167,14 @@ export const CHART_SETS: ChartSet[] = [
   },
 ];
 
-// 기업분석 차트와 같은 계열 팔레트 — 두 화면의 차트가 같은 언어를 쓴다.
-const COLORS = ["var(--folio-chart-1)", "var(--folio-chart-2)", "var(--folio-chart-3)"];
+// 막대 팔레트 — 알록달록한 계열 팔레트 대신 중립 잉크 + 초록 농담(2026-08-22 사용자 결정).
+const BAR_COLORS = [
+  "color-mix(in srgb, var(--folio-ink) 42%, transparent)",
+  "var(--folio-green)",
+  "color-mix(in srgb, var(--folio-green) 45%, transparent)",
+];
+// 비율 선 — 유동비율은 높을수록, 부채비율은 낮을수록 안전하다. 의미색이 곧 데이터색이다.
+const RATIO_COLORS = ["var(--folio-gold)", "var(--folio-burgundy)"];
 
 /** 분기 키(2026-06-30)를 축 라벨로 — 레퍼런스와 같은 "26년 6월" 형태. */
 export function quarterAxisLabel(quarter: string | undefined): string {
@@ -181,6 +205,7 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
   const [anchor, setAnchor] = useState<number | null>(null);
   const chartSet = CHART_SETS.find((row) => row.key === setKey) || CHART_SETS[0];
   const keys = chartSet.series.map((row) => row.key);
+  const ratios = chartSet.ratios || [];
   const rows = (quarters || []).filter((row) => keys.some((key) => row[key] != null));
   // 세트마다 자료가 있는 분기가 다르다(손익 5분기 vs 재무 4분기) — 세트가 바뀌면
   // 남아 있던 인덱스가 밖을 가리킬 수 있어 마지막 분기로 되돌린다.
@@ -189,30 +214,50 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
   const scale = barScale(rows, keys);
   const span = scale.max - scale.min;
   const width = 560;
-  const plotHeight = 190;
+  const barBand = 170;
   const labelHeight = 24;
+  // 비율 선 밴드 — 금액 축과 섞지 않고 아래 별도 밴드에 그린다.
+  const ratioBand = ratios.length ? 78 : 0;
+  const ratioGap = ratios.length ? 16 : 0;
+  const height = barBand + labelHeight + ratioGap + ratioBand;
   const groupWidth = rows.length ? width / rows.length : width;
   const barWidth = Math.min(30, (groupWidth - 20) / chartSet.series.length);
-  const zeroY = span > 0 ? (scale.max / span) * plotHeight : plotHeight;
-  const yOf = (value: number) => ((scale.max - value) / span) * plotHeight;
+  const zeroY = span > 0 ? (scale.max / span) * barBand : barBand;
+  const yOf = (value: number) => ((scale.max - value) / span) * barBand;
   const previous = index - 1;
+
+  const ratioValues = ratios.map((ratio) => rows.map((row) => ratio.of(row)));
+  const ratioNumbers = ratioValues.flat().filter((value): value is number => value !== null && Number.isFinite(value));
+  const ratioMax = ratioNumbers.length ? Math.max(...ratioNumbers) : 0;
+  const ratioMin = ratioNumbers.length ? Math.min(...ratioNumbers, 0) : 0;
+  const ratioSpan = ratioMax - ratioMin;
+  const ratioTop = barBand + labelHeight + ratioGap;
+  const ratioYOf = (value: number) => ratioTop + (ratioSpan > 0 ? ((ratioMax - value) / ratioSpan) * ratioBand : ratioBand / 2);
+  const centreX = (rowIndex: number) => rowIndex * groupWidth + groupWidth / 2;
+  const linePoints = (values: Array<number | null>) => values
+    .map((value, rowIndex) => (value === null ? null : `${centreX(rowIndex).toFixed(1)},${ratioYOf(value).toFixed(1)}`))
+    .filter(Boolean)
+    .join(" ");
 
   const pickSet = (key: string) => {
     setSetKey(key);
     setActiveIndex(null);
     setAnchor(null);
   };
+  const segment = (
+    <div className="segment" role="group" aria-label="분기 차트 종류">
+      {CHART_SETS.map((row) => (
+        <button type="button" key={row.key} aria-pressed={row.key === setKey} onClick={() => pickSet(row.key)}>
+          {row.label}
+        </button>
+      ))}
+    </div>
+  );
 
   if (rows.length < 2 || span <= 0) {
     return (
       <figure className="watchlist-quarterly">
-        <div className="segment" role="group" aria-label="분기 차트 종류">
-          {CHART_SETS.map((row) => (
-            <button type="button" key={row.key} aria-pressed={row.key === setKey} onClick={() => pickSet(row.key)}>
-              {row.label}
-            </button>
-          ))}
-        </div>
+        {segment}
         <p className="section-subtitle">이 종목은 {chartSet.label} 분기 자료를 받지 못했습니다.</p>
       </figure>
     );
@@ -220,22 +265,16 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
 
   return (
     <figure className="watchlist-quarterly">
-      <div className="segment" role="group" aria-label="분기 차트 종류">
-        {CHART_SETS.map((row) => (
-          <button type="button" key={row.key} aria-pressed={row.key === setKey} onClick={() => pickSet(row.key)}>
-            {row.label}
-          </button>
-        ))}
-      </div>
+      {segment}
       <div className="watchlist-quarterly__plot" onMouseLeave={() => setAnchor(null)}>
         <svg
-          viewBox={`0 0 ${width} ${plotHeight + labelHeight}`}
+          viewBox={`0 0 ${width} ${height}`}
           role="img"
-          aria-label={`최근 ${rows.length}개 분기 ${chartSet.series.map((row) => row.label).join("·")}.`}
+          aria-label={`최근 ${rows.length}개 분기 ${[...chartSet.series, ...ratios].map((row) => row.label).join("·")}.`}
         >
           {/* 수평 그리드 — 막대 높이를 견줄 기준선이 없으면 상대 비교만 남는다. */}
           {[0.25, 0.5, 0.75].map((step) => (
-            <line key={step} x1={0} x2={width} y1={plotHeight * step} y2={plotHeight * step} className="watchlist-quarterly__grid" />
+            <line key={step} x1={0} x2={width} y1={barBand * step} y2={barBand * step} className="watchlist-quarterly__grid" />
           ))}
           <line x1={0} x2={width} y1={zeroY} y2={zeroY} className="watchlist-quarterly__baseline" />
           {rows.map((row, rowIndex) => {
@@ -246,40 +285,63 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
                   const value = row[series.key];
                   if (value === null || value === undefined || !Number.isFinite(value)) return null;
                   const top = Math.min(yOf(value), zeroY);
-                  const height = Math.max(2, Math.abs(yOf(value) - zeroY));
+                  const barHeight = Math.max(2, Math.abs(yOf(value) - zeroY));
                   return (
                     <rect
                       key={series.key}
                       className="watchlist-quarterly__bar"
-                      fill={COLORS[seriesIndex % COLORS.length]}
-                      opacity={rowIndex === index ? 1 : 0.72}
+                      fill={BAR_COLORS[seriesIndex % BAR_COLORS.length]}
+                      opacity={rowIndex === index ? 1 : 0.75}
                       x={groupLeft + seriesIndex * (barWidth + 5)}
                       y={top}
                       width={barWidth}
-                      height={height}
+                      height={barHeight}
                       rx={4}
                     />
                   );
                 })}
-                <text x={rowIndex * groupWidth + groupWidth / 2} y={plotHeight + 17} textAnchor="middle" className="watchlist-quarterly__axis">
+                <text x={centreX(rowIndex)} y={barBand + 17} textAnchor="middle" className="watchlist-quarterly__axis">
                   {quarterAxisLabel(row.quarter)}
                 </text>
-                {/* 기간 구간이 hover 대상이다 — 기업분석 차트와 같은 계약. */}
-                <rect
-                  className="watchlist-quarterly__hit"
-                  x={rowIndex * groupWidth}
-                  y={0}
-                  width={groupWidth}
-                  height={plotHeight + labelHeight}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`${quarterAxisLabel(row.quarter)} 수치 보기`}
-                  onMouseEnter={() => { setActiveIndex(rowIndex); setAnchor((rowIndex + 0.5) / rows.length); }}
-                  onFocus={() => { setActiveIndex(rowIndex); setAnchor((rowIndex + 0.5) / rows.length); }}
-                />
               </g>
             );
           })}
+          {ratios.map((ratio, ratioIndex) => (
+            <g key={ratio.key}>
+              <polyline
+                className="watchlist-quarterly__line"
+                points={linePoints(ratioValues[ratioIndex])}
+                stroke={RATIO_COLORS[ratioIndex % RATIO_COLORS.length]}
+              />
+              {ratioValues[ratioIndex].map((value, rowIndex) => (
+                value === null ? null : (
+                  <circle
+                    key={rowIndex}
+                    cx={centreX(rowIndex)}
+                    cy={ratioYOf(value)}
+                    r={rowIndex === index ? 4 : 2.5}
+                    fill={RATIO_COLORS[ratioIndex % RATIO_COLORS.length]}
+                  />
+                )
+              ))}
+            </g>
+          ))}
+          {/* 기간 구간이 hover 대상이다 — 기업분석 차트와 같은 계약. 막대·선 밴드를 함께 덮는다. */}
+          {rows.map((row, rowIndex) => (
+            <rect
+              key={`hit-${row.quarter || rowIndex}`}
+              className="watchlist-quarterly__hit"
+              x={rowIndex * groupWidth}
+              y={0}
+              width={groupWidth}
+              height={height}
+              tabIndex={0}
+              role="button"
+              aria-label={`${quarterAxisLabel(row.quarter)} 수치 보기`}
+              onMouseEnter={() => { setActiveIndex(rowIndex); setAnchor((rowIndex + 0.5) / rows.length); }}
+              onFocus={() => { setActiveIndex(rowIndex); setAnchor((rowIndex + 0.5) / rows.length); }}
+            />
+          ))}
         </svg>
         {anchor !== null && (
           <div
@@ -290,9 +352,16 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
             <b>{quarterAxisLabel(rows[index]?.quarter)}</b>
             {chartSet.series.map((series, seriesIndex) => (
               <p key={series.key}>
-                <span className="analysis-chart-swatch" style={{ background: COLORS[seriesIndex % COLORS.length] }} />
+                <span className="analysis-chart-swatch" style={{ background: BAR_COLORS[seriesIndex % BAR_COLORS.length] }} />
                 <span>{series.label}</span>
                 <em>{compactAmount(rows[index]?.[series.key], currency)}</em>
+              </p>
+            ))}
+            {ratios.map((ratio, ratioIndex) => (
+              <p key={ratio.key}>
+                <span className="analysis-chart-swatch" style={{ background: RATIO_COLORS[ratioIndex % RATIO_COLORS.length] }} />
+                <span>{ratio.label}</span>
+                <em>{percentValueText(ratioValues[ratioIndex][index])}</em>
               </p>
             ))}
           </div>
@@ -310,10 +379,26 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
           const ratio = changeRatio(value, before);
           return (
             <p className="analysis-chart-readout-row" key={series.key}>
-              <span className="analysis-chart-swatch" style={{ background: COLORS[seriesIndex % COLORS.length] }} />
+              <span className="analysis-chart-swatch" style={{ background: BAR_COLORS[seriesIndex % BAR_COLORS.length] }} />
               <span>{series.label}</span>
               <b>{compactAmount(value, currency)}</b>
               <em data-direction={toneOf(ratio)}>{ratio === null ? "—" : percentText(ratio)}</em>
+            </p>
+          );
+        })}
+        {ratios.map((ratio, ratioIndex) => {
+          const value = ratioValues[ratioIndex][index];
+          const before = previous >= 0 ? ratioValues[ratioIndex][previous] : null;
+          // 비율의 변화는 %p 차이가 정직하다 — 비율을 비율로 나누면 두 번 나눈 수가 된다.
+          const delta = value !== null && before !== null ? value - before : null;
+          return (
+            <p className="analysis-chart-readout-row" key={ratio.key}>
+              <span className="analysis-chart-swatch" style={{ background: RATIO_COLORS[ratioIndex % RATIO_COLORS.length] }} />
+              <span>{ratio.label}</span>
+              <b>{percentValueText(value)}</b>
+              <em data-direction={toneOf(delta === null ? null : delta / 100)}>
+                {delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%p`}
+              </em>
             </p>
           );
         })}
@@ -331,10 +416,19 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
             {chartSet.series.map((series, seriesIndex) => (
               <tr key={series.key}>
                 <th scope="row">
-                  <i className="watchlist-quarterly__dot" style={{ background: COLORS[seriesIndex % COLORS.length] }} aria-hidden="true" />
+                  <i className="watchlist-quarterly__dot" style={{ background: BAR_COLORS[seriesIndex % BAR_COLORS.length] }} aria-hidden="true" />
                   {series.label}
                 </th>
                 {rows.map((row) => <td key={row.quarter}>{compactAmount(row[series.key], currency)}</td>)}
+              </tr>
+            ))}
+            {ratios.map((ratio, ratioIndex) => (
+              <tr key={ratio.key}>
+                <th scope="row">
+                  <i className="watchlist-quarterly__dot" style={{ background: RATIO_COLORS[ratioIndex % RATIO_COLORS.length] }} aria-hidden="true" />
+                  {ratio.label}
+                </th>
+                {rows.map((row, rowIndex) => <td key={row.quarter}>{percentValueText(ratioValues[ratioIndex][rowIndex])}</td>)}
               </tr>
             ))}
           </tbody>
@@ -344,8 +438,7 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
   );
 }
 
-/** 회사 소개 + 섹터·산업. 소개는 LLM이 있으면 서버가 번역해 두고, 없으면 원문이다.
- *  세 줄로 접고 더보기로 편다. */
+/** 회사 소개 + 섹터·산업. 소개는 provider 원문(영문)이다. 세 줄로 접고 더보기로 편다. */
 function CompanyProfile({ payload }: { payload: FundamentalsPayload }) {
   const [expanded, setExpanded] = useState(false);
   const summary = String(payload.longBusinessSummary || "").trim();

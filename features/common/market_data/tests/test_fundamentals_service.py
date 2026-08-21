@@ -31,7 +31,7 @@ def test_fundamentals_keep_missing_fields_as_none(monkeypatch, tmp_path):
 
     payload = fundamentals_service.get_fundamentals(tmp_path, symbol="005930.ks", runtime=runtime)
 
-    assert runtime.calls == [("yfinance", "fundamentals", {"symbol": "005930.KS", "schema": 4})]
+    assert runtime.calls == [("yfinance", "fundamentals", {"symbol": "005930.KS", "schema": 5})]
     assert payload["marketCap"] == 2.5e12
     assert payload["trailingPE"] is None
     assert payload["currency"] == "KRW"
@@ -103,34 +103,3 @@ def test_quarterly_earnings_survive_missing_statement():
             raise RuntimeError("no statement")
 
     assert fundamentals_service._quarterly_earnings(_Ticker()) == []
-
-
-def test_summary_translation_caches_by_text_hash(monkeypatch, tmp_path):
-    """같은 원문은 한 번만 번역한다 — provider 캐시 주기에 묶으면 매일 다시 번역한다."""
-    from features.common.market_data import summary_translation as st
-
-    calls = []
-    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", lambda: {"enabled": True, "apiKey": "k"})
-    monkeypatch.setattr(
-        "features.llm_settings.client.request_llm_text",
-        lambda cfg, prompt, context, **kw: calls.append(context) or "램리서치는 반도체 장비 회사다.",
-    )
-
-    first = st.translated_summary(tmp_path, "Lam Research designs equipment.")
-    second = st.translated_summary(tmp_path, "Lam Research designs equipment.")
-
-    assert first == second == "램리서치는 반도체 장비 회사다."
-    assert len(calls) == 1
-
-
-def test_summary_translation_falls_back_to_original(monkeypatch, tmp_path):
-    from features.common.market_data import summary_translation as st
-
-    # 키 없음 → 원문
-    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", lambda: {"enabled": True, "apiKey": ""})
-    assert st.translated_summary(tmp_path, "Original text.") == "Original text."
-
-    # 모델이 한국어가 아닌 답을 내면 원문을 지킨다
-    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", lambda: {"enabled": True, "apiKey": "k"})
-    monkeypatch.setattr("features.llm_settings.client.request_llm_text", lambda *a, **kw: "I cannot translate this.")
-    assert st.translated_summary(tmp_path, "Original text.") == "Original text."

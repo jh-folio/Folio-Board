@@ -57,6 +57,12 @@ const BASIS_LABELS: Record<Basis, string> = {
   priorYear: "작년 동기간",
 };
 
+const BASIS_DELTA_LABELS: Record<Basis, string> = {
+  estimate: "예측치보다",
+  priorQuarter: "지난 분기보다",
+  priorYear: "작년 동기보다",
+};
+
 const COMPACT_UNITS: ReadonlyArray<{ limit: number; suffix: string }> = [
   { limit: 1e12, suffix: "조" },
   { limit: 1e8, suffix: "억" },
@@ -242,33 +248,30 @@ export function EarningsPanel({ ticker }: { ticker: string }) {
               ))}
             </div>
           </div>
+          {/* 값이 크고 증감이 그 바로 아래 색 문장으로 붙는다(레퍼런스 실적 카드 양식).
+              예전에는 증감이 작은 보조 줄이라 발표가 좋았는지 나빴는지 한눈에 안 읽혔다. */}
           <div className="watchlist-earnings-grid">
             <div className="watchlist-earnings-metric">
-              <span className="watchlist-earnings-metric__label">EPS</span>
+              <span className="section-kicker">EPS</span>
               <strong>{formatEps(latest.epsActual, currency)}</strong>
-              <span className="watchlist-earnings-metric__base">{epsBaseText(latest, basis, currency, compare)}</span>
               <span className="watchlist-earnings-metric__delta" data-tone={toneOf(epsRatio)}>
-                {percentText(epsRatio)}
+                {epsRatio === null ? "—" : `${BASIS_DELTA_LABELS[basis]} ${percentText(epsRatio)}`}
               </span>
+              <span className="watchlist-earnings-metric__base">{epsBaseText(latest, basis, currency, compare)}</span>
             </div>
             <div className="watchlist-earnings-metric">
-              <span className="watchlist-earnings-metric__label">매출</span>
+              <span className="section-kicker">매출</span>
               <strong>{compactAmount(latest.revenueActual, currency)}</strong>
+              <span className="watchlist-earnings-metric__delta" data-tone={toneOf(revenueRatio)}>
+                {revenueRatio === null ? "—" : `${BASIS_DELTA_LABELS[basis]} ${percentText(revenueRatio)}`}
+              </span>
               <span className="watchlist-earnings-metric__base">
                 {/* 지난 분기의 매출 컨센서스는 provider가 주지 않는다. 빈칸으로 두면
                     이 종목만 없는 것처럼 읽히므로 이유를 적는다. */}
                 {basis === "estimate" ? "매출 컨센서스 없음" : `${BASIS_LABELS[basis]} ${compactAmount(compare.revenue, currency)}`}
               </span>
-              <span className="watchlist-earnings-metric__delta" data-tone={toneOf(revenueRatio)}>
-                {basis === "estimate" ? "—" : percentText(revenueRatio)}
-              </span>
             </div>
           </div>
-          {latest.surprisePercent != null && (
-            <p className="section-subtitle">
-              EPS 서프라이즈 <b data-tone={toneOf(latest.surprisePercent)}>{percentText(latest.surprisePercent)}</b> · 예측치 기준
-            </p>
-          )}
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText } from "./FundamentalsPanel";
+import { balanceRatio, barScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText } from "./FundamentalsPanel";
 
 describe("지표 포맷", () => {
   it("결측은 —다 — provider가 실제로 비워 두는 칸이 있다(삼성전자의 PER)", () => {
@@ -47,10 +47,16 @@ describe("분기 이익 차트", () => {
 
   it("스케일은 고른 세트의 계열만 본다 — 재무 탭에서 매출이 축을 결정하면 안 된다", () => {
     const rows = [
-      { quarter: "2026-03-31", revenue: 1000, totalDebt: 50, totalAssets: 200, stockholdersEquity: 120 },
-      { quarter: "2026-06-30", revenue: 1200, totalDebt: 60, totalAssets: 220, stockholdersEquity: 130 },
+      { quarter: "2026-03-31", revenue: 1000, currentAssets: 200, currentLiabilities: 90, nonCurrentLiabilities: 60 },
+      { quarter: "2026-06-30", revenue: 1200, currentAssets: 220, currentLiabilities: 95, nonCurrentLiabilities: 62 },
     ];
-    const { max } = barScale(rows, ["totalAssets", "totalDebt", "stockholdersEquity"]);
+    const { max } = barScale(rows, ["currentAssets", "currentLiabilities", "nonCurrentLiabilities"]);
     expect(max).toBe(220);
+  });
+
+  it("비율은 분모가 0이거나 비면 계산하지 않는다", () => {
+    expect(balanceRatio(200, 90)).toBeCloseTo(222.2, 1);
+    expect(balanceRatio(200, 0)).toBeNull();
+    expect(balanceRatio(null, 90)).toBeNull();
   });
 });

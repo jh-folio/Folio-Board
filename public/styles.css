@@ -16232,7 +16232,7 @@ select { min-height: 36px; padding: 0 12px; }
 /* 방향색은 브리핑·차트와 같은 토큰을 쓴다. 화살표 없이 색만으로 알리지 않도록
    부호(+/-)를 항상 함께 적는다(WCAG 1.4.1). */
 .watchlist-earnings-panel [data-tone] { font-variant-numeric: tabular-nums; }
-.watchlist-earnings-metric__delta { font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+.watchlist-earnings-metric__delta { font-size: 14px; font-weight: var(--fw-bold); }
 .watchlist-earnings-panel [data-tone="up"] { color: var(--folio-green); }
 .watchlist-earnings-panel [data-tone="down"] { color: var(--folio-burgundy); }
 .watchlist-earnings-panel [data-tone="flat"] { color: var(--folio-ink-muted); }
@@ -16381,6 +16381,7 @@ select { min-height: 36px; padding: 0 12px; }
 .watchlist-quarterly__baseline { stroke: var(--folio-border); stroke-width: 1; }
 .watchlist-quarterly__axis { fill: var(--folio-ink-subtle); font-size: 11px; }
 .watchlist-quarterly__hit { fill: transparent; cursor: pointer; }
+.watchlist-quarterly__line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .watchlist-quarterly__hit:focus-visible { outline: 2px solid var(--folio-focus, var(--folio-ink)); }
 .watchlist-quarterly__dot { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; }
 

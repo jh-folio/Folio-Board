@@ -47,7 +47,11 @@ _QUARTER_STATEMENTS = (
         ("netIncome", "Net Income"),
     )),
     ("quarterly_balance_sheet", (
-        ("totalAssets", "Total Assets"),
+        # 막대는 유동성 구조(유동자산·유동부채·비유동부채), 선은 비율(유동비율·부채비율)이다.
+        # 부채비율의 분자·분모(총부채·자기자본)는 화면이 계산하도록 값으로 싣는다.
+        ("currentAssets", "Current Assets"),
+        ("currentLiabilities", "Current Liabilities"),
+        ("nonCurrentLiabilities", "Total Non Current Liabilities Net Minority Interest"),
         ("totalDebt", "Total Debt"),
         ("stockholdersEquity", "Stockholders Equity"),
     )),
@@ -109,18 +113,12 @@ def get_fundamentals(data_dir: Path, *, symbol: str, runtime: ProviderFetchRunti
     # 캐시 키에 스키마 버전을 넣는다. 없으면 필드를 추가한 판올림 직후 TTL이 지날 때까지
     # 옛 모양의 캐시가 그대로 내려와, 새 화면(분기 차트)이 조용히 비어 있게 된다(실측).
     result = runtime.fetch(
-        "yfinance", "fundamentals", {"symbol": symbol, "schema": 4},
+        "yfinance", "fundamentals", {"symbol": symbol, "schema": 5},
         lambda: _download(symbol),
         policy=FetchPolicy(ttl_seconds=3600, timeout_seconds=20, stale_while_revalidate_seconds=86400),
         background_refresh=True,
     )
     value = result.get("value") if isinstance(result.get("value"), dict) else {"symbol": symbol}
-    summary = str(value.get("longBusinessSummary") or "")
-    if summary:
-        from features.common.market_data.summary_translation import translated_summary
-
-        # 캐시 갱신마다 다시 번역하지 않도록 provider 캐시 **밖**에서, 원문 해시로 1회만.
-        value = {**value, "longBusinessSummary": translated_summary(Path(data_dir), summary)}
     return {
         **{field: None for field in FUNDAMENTAL_FIELDS},
         **{field: "" for field in PROFILE_FIELDS},

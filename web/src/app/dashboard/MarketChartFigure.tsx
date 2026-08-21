@@ -85,7 +85,7 @@ function nextEventLabel(event: CalendarEvent): string {
 }
 
 export function MarketChartFigure({
-  symbol, label, range, style, onRange, onStyle, showEvent = true,
+  symbol, label, range, style, onRange, onStyle, showEvent = true, showQuote = true,
 }: {
   symbol: string;
   label?: string;
@@ -94,6 +94,9 @@ export function MarketChartFigure({
   onRange: (value: string) => void;
   onStyle: (value: "candle" | "line") => void;
   showEvent?: boolean;
+  /** 워치리스트 상세는 머리가 현재가를 소유한다 — 여기서도 그리면 같은 종목에 두 가격이
+   *  보인다(머리는 info 시세, 차트는 일봉 종가 캐시라 신선도가 갈릴 수 있다). */
+  showQuote?: boolean;
 }) {
   const [payload, setPayload] = useState<ChartPayload | null>(null);
   const [nextEvent, setNextEvent] = useState<CalendarEvent | null>(null);
@@ -247,15 +250,19 @@ export function MarketChartFigure({
     <>
       <div className="chart-headline">
         <div className="chart-quote">
-          <span className="chart-quote__name">{label || symbol}</span>
-          <div className="chart-quote__value">
-            {lastClose != null ? <b>{lastClose.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> : null}
-            {changePct != null ? (
-              <span className={changePct > 0 ? "up" : changePct < 0 ? "down" : "flat"}>
-                {changePct > 0 ? "▲" : changePct < 0 ? "▼" : "—"} {changePct > 0 ? "+" : ""}{changePct.toFixed(1)}%
-              </span>
-            ) : null}
-          </div>
+          {showQuote && (
+            <>
+              <span className="chart-quote__name">{label || symbol}</span>
+              <div className="chart-quote__value">
+                {lastClose != null ? <b>{lastClose.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> : null}
+                {changePct != null ? (
+                  <span className={changePct > 0 ? "up" : changePct < 0 ? "down" : "flat"}>
+                    {changePct > 0 ? "▲" : changePct < 0 ? "▼" : "—"} {changePct > 0 ? "+" : ""}{changePct.toFixed(1)}%
+                  </span>
+                ) : null}
+              </div>
+            </>
+          )}
           <small>{freshnessLabel}{payload?.asOf ? ` · ${payload.asOf} 기준` : ""}</small>
         </div>
         <div className="cockpit-chart-controls">

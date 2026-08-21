@@ -388,8 +388,10 @@ export function WatchlistRoute() {
                     style={chartStyle}
                     onRange={setChartRange}
                     onStyle={setChartStyle}
-                    // 다음 일정은 옆 실적 패널이 더 자세히 말한다.
+                    // 다음 일정은 옆 실적 패널이, 현재가는 모달 머리가 말한다 — 같은 종목에
+                    // 두 가격이 보이면 캐시 신선도 차이가 모순처럼 읽힌다.
                     showEvent={false}
+                    showQuote={false}
                   />
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--earnings">
