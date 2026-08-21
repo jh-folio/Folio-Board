@@ -219,7 +219,7 @@ features/company_analysis/financial_quality_prompt.md
 | Smart Collections | `smart_collections` | Deep Research 안의 결정적 저장 필터·상태·snapshot 변화/recovery | metadata |
 | 포트폴리오 | `portfolio` | 보유 종목 직접 입력·revision 저장, 평가 요약·구성 분석·목표 비중·백테스트. 0.5.1에서 하위 탭 3개로 재연결. 스크린샷 가져오기는 0.5.0에서 뺐고 도크로 재설계 예정 | — |
 | 시장 내러티브 메모리 / Regime 추적 v2 | `market_memory` | 중기 내러티브 상태·taxonomy·momentum/confidence·thesis 연결 | source-grounded |
-| 워치리스트 | `watchlist_notes` | 워치리스트·상세 모달(기업 정보/차트/수집 뉴스/다음 실적 일정) | — |
+| 워치리스트 | `watchlist_notes` | 워치리스트·상세(기업 정보/네이티브 차트/실적/수집 뉴스) | — |
 | Native Investment Notes | `investment_notes` | Obsidian 없이 운용되는 Folio 로컬 투자 노트와 `native_note_index` | hypothesis 입력 |
 | LLM/설정/웹검색 | `llm_settings` | API Key·웹검색 보완 | — |
 | Notion 내보내기 | `notion_export` | 보고서 → Notion DB | — |
@@ -230,7 +230,7 @@ features/company_analysis/financial_quality_prompt.md
 | Quality Generation | `common/quality_generation` | 생성 품질 목표·자료 루트·preflight·evidence coverage·생성 후 평가·약한 섹션 LLM 개선·telemetry | source-grounded |
 | AI Agent Mode | `agent_mode` | Codex/Claude/Antigravity CLI용 context pack·Direct Bridge·기존 저장소 writeback + 도크 Agent 대화 스레드(`/api/agent/threads`)·수정 제안 diff 승인 writeback(`/api/agent/proposals/{id}`) | source-grounded + Personal Overlay |
 | 투자 리뷰 | `investment_review` | regime/thesis/portfolio/checkpoints/obsidian을 묶은 투자 리뷰 홈 | Personal Overlay |
-| 현재 시장 위젯 | `market_widgets` | TradingView 기반 대시보드 Current Market 위젯 설정·허용 카탈로그. 0.5에서 Legacy 모드를 삭제해 화면에서는 쓰지 않으며, 설정 파일은 집중 종목 fallback으로만 read-only로 읽는다 | — |
+| 현재 시장 위젯 | `market_widgets` | 예전 TradingView Current Market 위젯 설정. 0.5에서 Legacy 모드를, 0.5.4에서 마지막 소비자였던 워치리스트 상세 위젯과 브리지(`public/tradingview-widgets.js`)를 삭제했다. 설정 파일은 집중 종목 fallback으로만 read-only로 읽는다 | — |
 | Data Source Reliability | `common/data_reliability` | 공식자료 우선순위·provider status·한국 데이터 보강 경로·Thesis evidence 확장·공식자료 semantic cache/fetch runtime | source-grounded |
 | Fast-Origin Signals | `common/research_library/signals` | 기존 KR RSS(연합인포맥스·연합뉴스)의 빠른 게시 headline을 metadata-only lead로 수집·표시. 자격증명 없이 기본 동작하며 lead는 evidence count/source ledger 제외 | lead (evidence 이전 단계) |
 | Change Intelligence | `common/change_intelligence` | 보고서/스냅샷 커밋 시 artifact-native ChangeBasis 비교로 changeSummary 생성. 추가 LLM 호출 없음 | source-grounded 파생 metadata |
@@ -657,6 +657,15 @@ features/company_analysis/financial_quality_prompt.md
 - **동인 어휘표(`DRIVER_TERMS`)는 브리핑 동인 선정과 공유하므로 측정 없이 손대지 않는다.** 0.5.4에서 `금` 한 글자를 뺐다 — 한글 토큰은 단어 경계 없이 부분일치라 금리·금융·자금·세금을 전부 물었고, 실측으로 문서의 14.8%가 그 한 어휘만으로 원자재/유가에 들어와 있었다(실제 매칭은 금리 2,712건). 원자재/유가가 35.0% → 20.4%가 됐다. **한 글자 한글 어휘를 새로 넣지 않는다.** `크립토`를 새로 등재했다.
 - **의미 판정은 `llm`과 `agent` 두 모드에서 돈다**(0.5.4). Agent 산출물의 mode는 `agent`인데 예전에는 `llm`만 통과시켜 CLI 구성에서는 판정이 아예 돌지 않았고, `semantic.py`도 API 키만 봐서 이중으로 막혔다. 키가 없으면 Agent bridge로 같은 프롬프트를 보내되 **`serialize=False`로 부른다** — `_RUN_SEMAPHORE`는 재진입이 안 되고 브리핑 생성 잡이 커밋까지 그것을 쥐고 있어, 다시 잡으면 그 잡이 영원히 멈춘다.
 - **화면은 "정상 판정된 변화 없음"과 "아직 판정 못 함"을 가른다.** 예전에는 확정 판정이 아닌 것을 전부 미판정으로 세서, 판정이 멀쩡히 끝난 날에도 이미 연결된 Agent를 연결하라고 안내했다. 의미 비교는 브리핑 변화 단위에만 걸리므로 다른 아티팩트에 verdict가 없는 것은 정상이다.
+
+### 워치리스트 상세 (차트·실적)
+
+- 상세는 **회사 정보 → 네이티브 차트 → 실적 → 수집 뉴스** 순이다. **TradingView 임베드는 0.5.4에 전부 걷어냈다** — 이 모달이 브리지(`public/tradingview-widgets.js`)의 마지막 소비자였고, iframe 세 장은 앱 토큰을 따르지 않으며 종목 정보·펀더멘털 위젯은 제목줄·실적 패널·기업분석과 역할이 겹쳤다. Lightweight Charts의 `attributionLogo`와 `THIRD_PARTY_NOTICES.md`는 그대로 둔다.
+- 차트는 대시보드와 같은 `MarketChartFigure`다(그림 한 장만 갖고 종목 선택·설정 저장은 대시보드가 소유). 기간·유형은 이 화면 안에서만 살며 대시보드 설정을 건드리지 않는다. **트레이드오프**: 준실시간·지표를 잃고 yfinance 지연 시세를 쓰며 freshness 라벨로 지연을 밝힌다.
+- 실적은 `GET /api/market/earnings`(`features/common/market_data/earnings_service.py`)이며 **상세를 열 때만** 부른다 — 티커당 provider 호출이라 카드 그리드에 걸면 종목 수만큼 네트워크가 된다. 차트·실적 요청은 상세 응답을 기다리지 않고 함께 시작한다(카드 표가 이미 티커를 안다).
+- **다음 발표일과 컨센서스는 제3자 예정치다.** 확정 배지를 붙이지 않고 IR 재확인을 함께 적는다. 숫자는 yfinance라 기업분석의 SEC 숫자와 등급이 다르며(§6 절대 규칙 6) 패널이 출처를 적어 그 차이를 숨기지 않는다.
+- **지난 분기의 매출 컨센서스는 어느 종목에도 없다.** provider가 다음 분기 것만 주므로 매출 서프라이즈는 재현할 수 없다. 빈칸이 아니라 "매출 컨센서스 없음"이라고 적는다 — 빈칸은 이 종목만 없는 것처럼 읽힌다.
+- **작년 동기간은 인덱스로 세지 않는다.** `earnings_history`가 4분기만 주므로 4칸 뒤를 보면 가장 최근 분기의 작년 동기가 늘 비어 있다. 손익계산서는 더 뒤까지 주므로 연도만 빼고 종료월이 같은 키를 찾는다. 분기 이름도 **종료월**로 부른다 — 회계연도가 달력과 다른 회사(LRCX는 6월 결산)에서 번호를 뽑으면 틀린다.
 
 ### 입력 기업 판단 (Company Resolution)
 

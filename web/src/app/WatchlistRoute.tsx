@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCompanyResolution } from "./companyAnalysis/useCompanyResolution";
 import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
-import { useThemePreference } from "./themePreference";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
+import { EarningsPanel } from "./watchlist/EarningsPanel";
+import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
   ddayLabel,
   fetchNextEarnings,
@@ -77,7 +78,6 @@ function detailMeta(detail: WatchlistDetail | null) {
   return [
     company.ticker || "",
     company.market || "",
-    company.tradingViewSymbol || "",
     detail.newsCount ? `${detail.newsCount}개 뉴스` : "",
   ].filter(Boolean).join(" · ") || "확인된 심볼 정보가 없습니다.";
 }
@@ -132,19 +132,7 @@ function isWatchlistHash() {
   return window.location.hash.replace(/^#\/?/, "").split("/")[0] === "watchlist";
 }
 
-// TradingView 위젯 bridge. 대시보드 Legacy 보드가 갖고 있던 선언인데, 그 화면을
-// 0.5에서 삭제하면서 위젯을 계속 쓰는 이쪽으로 옮겼다.
-declare global {
-  interface Window {
-    FolioTradingViewWidgets?: {
-      renderWatchlistDetail?: (target: HTMLElement, detail: unknown) => void;
-      cleanup?: (root?: ParentNode) => void;
-    };
-  }
-}
-
 export function WatchlistRoute() {
-  const { resolved: resolvedTheme } = useThemePreference();
   const [items, setItems] = useState<string[]>([]);
   const [cards, setCards] = useState<WatchlistOverviewItem[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -155,10 +143,13 @@ export function WatchlistRoute() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-  const widgetsRef = useRef<HTMLDivElement | null>(null);
   // 티커별 다음 실적. 카드마다 부르지 않고 한 번에 묻는다 — 종목 20개짜리
   // 워치리스트가 20개의 요청을 만들면 목록이 그만큼 늦게 뜬다.
   const [earnings, setEarnings] = useState<Record<string, EarningsEvent>>({});
+  // 상세 차트의 기간·유형은 이 화면 안에서만 산다. 대시보드 차트 설정을 건드리면
+  // 종목 하나를 보려고 바꾼 값이 대시보드 기본값이 되어 버린다.
+  const [chartRange, setChartRange] = useState("3m");
+  const [chartStyle, setChartStyle] = useState<"candle" | "line">("line");
 
   const loadOverview = useCallback(async (nextItems: string[]) => {
     if (!nextItems.length) {
@@ -232,17 +223,6 @@ export function WatchlistRoute() {
     };
   }, [detailItem]);
 
-  useEffect(() => {
-    const target = widgetsRef.current;
-    if (!target || !detail || detailLoading) return undefined;
-    window.FolioTradingViewWidgets?.cleanup?.(target);
-    target.innerHTML = '<div class="tradingview-widget-unavailable">TradingView 위젯을 준비하는 중입니다.</div>';
-    window.FolioTradingViewWidgets?.renderWatchlistDetail?.(target, detail);
-    return () => {
-      window.FolioTradingViewWidgets?.cleanup?.(target);
-    };
-  }, [detail, detailLoading, resolvedTheme]);
-
   async function persistWatchlist(nextItems: string[], message?: string) {
     setSaving(true);
     setError("");
@@ -305,10 +285,12 @@ export function WatchlistRoute() {
 
   const newsRows = useMemo(() => sortNewsLatestFirst(detail?.news || []), [detail]);
   const selectedLabel = detailLabel(detail, detailItem);
-  // 상세의 실적은 카드 표에서 찾는다. 카드가 아는 티커와 상세가 아는 티커가 같다.
-  const detailEarnings = earningsFor(
-    cards.find((row) => (row.item || cardCompanyName(row)) === detailItem) || null,
-  ) || earnings[String(detail?.company?.ticker || "").toUpperCase()];
+  // 차트·실적은 **종목 코드**로 부른다. 카드 표가 목록 단계에서 이미 티커를 알고 있어,
+  // 상세 응답을 기다리지 않고 두 요청을 함께 시작할 수 있다(계획 §11 5-A-3 ②).
+  // 워치리스트에는 주제어도 들어 있으므로 코드가 없을 수 있다.
+  const detailCard = cards.find((row) => (row.item || cardCompanyName(row)) === detailItem) || null;
+  const detailTicker = String(detailCard?.ticker || detail?.company?.ticker || "").trim();
+  const detailCompanyName = detailCard ? cardCompanyName(detailCard) : detailLabel(detail, detailItem);
 
   function earningsFor(card: WatchlistOverviewItem | null): EarningsEvent | undefined {
     const ticker = String(card?.ticker || "").toUpperCase();
@@ -337,28 +319,27 @@ export function WatchlistRoute() {
               </div>
             </div>
             {error && <p className="react-dashboard-error">{error}</p>}
-            <div ref={widgetsRef} className="watchlist-detail-widgets">
-              <div className="tradingview-widget-unavailable">TradingView 위젯을 준비하는 중입니다.</div>
-            </div>
-            {/* 위젯과 뉴스 사이. 다음 실적은 종목을 보러 온 사람이 가장 먼저 찾는 일정이다. */}
-            {detailEarnings?.startsAt && (
-              <div className="watchlist-detail-earnings">
-                <h3>다음 실적 일정</h3>
-                <p className="watchlist-detail-earnings-line">
-                  <strong>{formatEarningsDate(detailEarnings.startsAt)}</strong>
-                  {ddayLabel(detailEarnings.startsAt) && (
-                    <span className="chip watchlist-earnings-chip" data-estimated={isEstimated(detailEarnings) ? "true" : undefined}>
-                      {ddayLabel(detailEarnings.startsAt)}
-                    </span>
-                  )}
-                  <span className="section-subtitle">
-                    {isEstimated(detailEarnings)
-                      // 확정 일정이 아니라는 사실을 숨기지 않는다. 회사 IR이 권위다.
-                      ? "제3자 예정치입니다. 회사 IR 공지로 다시 확인하세요."
-                      : "공식 일정입니다."}
-                  </span>
-                </p>
-              </div>
+            {/* 차트는 앱이 직접 그린다. TradingView iframe 세 장은 앱 토큰을 따르지 않았고,
+                종목 정보·펀더멘털 위젯은 위 제목줄과 아래 실적 패널·기업분석에 이미 있다. */}
+            {detailTicker ? (
+              <>
+                <div className="watchlist-detail-chart">
+                  <MarketChartFigure
+                    symbol={detailTicker}
+                    label={detailCompanyName || detailTicker}
+                    range={chartRange}
+                    style={chartStyle}
+                    onRange={setChartRange}
+                    onStyle={setChartStyle}
+                    // 다음 일정은 바로 아래 실적 패널이 더 자세히 말한다.
+                    showEvent={false}
+                  />
+                </div>
+                <EarningsPanel ticker={detailTicker} companyName={detailCompanyName} />
+              </>
+            ) : (
+              // 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다.
+              <p className="section-subtitle">이 항목은 종목 코드가 없어 차트와 실적을 표시하지 않습니다.</p>
             )}
             <div className="watchlist-detail-news">
               <h3>수집한 뉴스</h3>

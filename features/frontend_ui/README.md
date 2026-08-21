@@ -26,7 +26,7 @@
 
 Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우저 대화·모델·proposal·최근 작업 상태를 사용한다. 첫 실행 chooser, 각 Home의 전환 버튼, Settings > 화면에서 기본 Home을 선택한다. 명시한 보고서 딥링크는 이 선택으로 바뀌지 않는다. 두 Home에서는 전역 Agent Dock을 표시하지 않는다.
 
-`#/dashboard`는 React monitoring route지만 0.2 기본 사용자 nav에서는 숨긴다. `/api/dashboard`로 인덱스·최근 보고서 현황을, `/api/investment-review`로 투자 리뷰 요약·체크포인트·포트폴리오 영향을 읽고, `/api/market-widgets/settings`를 `FolioTradingViewWidgets.renderDashboardBoard()`에 넘겨 Current Market 위젯 보드를 렌더한다. 투자 리뷰 갱신은 `POST /api/investment-review/generate`를 사용한다. 위젯 추가/수정/초기화는 React route가 `/api/market-widgets/settings`에 저장한다.
+`#/dashboard`는 React monitoring route지만 0.2 기본 사용자 nav에서는 숨긴다. `/api/dashboard`로 인덱스·최근 보고서 현황을, `/api/investment-review`로 투자 리뷰 요약·체크포인트·포트폴리오 영향을 읽고, 투자 리뷰 갱신은 `POST /api/investment-review/generate`를 사용한다. Current Market 위젯 보드는 0.5에서 Legacy 모드와 함께 삭제됐고, 대시보드 차트는 `MarketChartFigure`(`/api/market/chart` + Lightweight Charts)가 그린다.
 
 `#/briefing`은 React 저장 브리핑 route다. 목록 화면은 공통 `RouteHero`와 브리핑 생성 설정 패널, 저장 브리핑 검색 패널을 사용한다. 검색 패널은 `/api/briefings/index`의 `q`, `marketScope`, `briefingType`, `dateFrom`, `dateTo` 파라미터를 직접 사용한다. `#/briefing/{date}/{us|kr|both}` detail hash에서는 `/api/briefings/{date}?includePersonal=true&marketScope=...`를 호출해 `ReportReaderShell` 안에서 Canonical markdown을 표시한다. 브리핑 detail action rail은 AI/노트/내보내기 그룹으로 분류하고, Personal Overlay 생성, Agent 문의, Notion/Obsidian export를 직접 처리한다. note slot은 Native Notes API(`/api/investment-notes`)에 `market_memo`를 저장하고 linked notes를 조회한다. 리더 본문(`ReportBody`)은 별도 파서를 두지 않고 `FolioBridge`의 `renderMarkdown()`·`splitReportTitle()`·`briefingSourcePanelHtml()`·`renderBriefingVisuals()`를 재사용해 표·링크·리스트·가격 차트·히트맵·소스패널 parity를 확보한다.
 
@@ -46,7 +46,7 @@ React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토�
 
 `#/deep-research`는 React Deep Research route이며 0.2 좌측 nav/Home 빠른 실행/command palette에 노출된다. `/api/topic-reports/plan`에서 승인 계획과 자료 preview를 받고, 승인된 envelope만 `POST /api/topic-reports` SharedJob으로 실행한다. `/api/topic-reports`로 저장 피드를 읽고 `/api/jobs/{id}`를 bounded polling한 뒤 저장 보고서를 다시 연다. 저장 카드 클릭은 `#/deep-research/{reportId}` detail hash로 공통 `ReportReaderShell` 기반 reader를 열고, route 안에서 삭제와 목록 복귀를 처리한다. 폼과 저장 피드는 `topicrpt-*`, `report-feed-*`, `input-panel`, `filter-btn` 클래스를 재사용해 기존 디자인 언어를 유지한다.
 
-`#/watchlist`는 React Watchlist route지만 0.2 기본 사용자 nav에서는 숨긴다. `/api/watchlist`로 저장 목록을 읽고 저장하며, `/api/watchlist/resolve`로 티커/회사명을 정규화하고, `/api/watchlist/overview`로 카드용 태그·뉴스 카운트를 읽는다. 카드 클릭은 `#/watchlist/{item}` detail hash로 상세 화면을 열고, `/api/watchlist/detail` 결과를 `FolioTradingViewWidgets.renderWatchlistDetail()`에 넘겨 TradingView 위젯 parity를 유지한다. 카드와 상세 화면은 `watchlist-*`, `compact-item`, `input-panel`, `filter-btn` 클래스를 재사용한다.
+`#/watchlist`는 React Watchlist route지만 0.2 기본 사용자 nav에서는 숨긴다. `/api/watchlist`로 저장 목록을 읽고 저장하며, `/api/watchlist/resolve`로 티커/회사명을 정규화하고, `/api/watchlist/overview`로 카드용 태그·뉴스 카운트를 읽는다. 카드 클릭은 `#/watchlist/{item}` detail hash로 상세 화면을 열고, `/api/watchlist/detail`로 회사 정보·뉴스를, `MarketChartFigure`로 시세 차트를, `EarningsPanel`(`/api/market/earnings`)로 실적을 함께 보여준다. 카드와 상세 화면은 `watchlist-*`, `compact-item`, `input-panel`, `filter-btn` 클래스를 재사용한다.
 
 `#/settings`는 React Settings route다. `/api/settings`, `/api/agent-bridge/settings`, `/api/obsidian/settings`, `/api/automation/settings`를 직접 소비하며, AI Agent/API/Notion/Obsidian/자동화 설정을 `settings-panel`, `input-panel`, `settings-grid`, `filter-btn` 클래스 위에 렌더한다. `화면` 패널은 기본 Home, Classic/Student 캐릭터, 선택 이름, 시스템 모션/움직임 줄이기만 제공한다. AI Agent 설정은 ON/OFF와 LLM CLI/API 모드 토글을 한 패널에서 관리한다. 모델 필드는 마지막으로 불러온 `modelChoices`를 select로 표시하며, 새로고침은 `/api/settings?refresh=true`와 `/api/agent-bridge/settings?refresh=true`로 model catalog를 강제 갱신한다.
 
@@ -110,7 +110,7 @@ public/react/folio-react.js
 
 - `renderMarkdown()`: 제목, 문단, 링크, 리스트, 표 렌더링. React report reader가 `FolioBridge`를 통해 호출한다.
 - `splitReportTitle()`: 보고서 본문의 선행 H1을 dark report hero(골드 kicker + 제목)로 올리고 본문에서 제거한다. 저장된 markdown은 바꾸지 않으며 표시 시점에만 전처리한다.
-- `FolioTradingViewWidgets`(`public/tradingview-widgets.js`): TradingView widget script를 허용 타입으로만 삽입한다. 대시보드 Current Market 보드와 워치리스트 상세 모달에서 사용하며, widget output은 저장하지 않는다.
+- `MarketChartFigure`(`web/src/app/dashboard/MarketChartFigure.tsx`): 네이티브 시장 차트 **그림 한 장**. 종목 선택·설정 저장·패널 제목은 이 안에 없다 — 대시보드는 그것들을 자기가 갖고, 워치리스트 상세는 종목이 이미 정해져 있어 필요가 없다. Lightweight Charts의 `attributionLogo`는 그대로 둔다(§6 절대 규칙).
 
 ## 보고서 hero / 색상
 
@@ -150,7 +150,6 @@ public/react/folio-react.js
 - RSS 뉴스 카드 제목은 22px/800이다. 품질 패널 제목과 대시보드 하단 카드·지표는 확대 전 20px 및 14/16/18/24/28/36px 계층을 유지한다.
 - 브리핑 차트 제목은 20px, 기간·라인/캔들 컨트롤은 15px, 가격은 최대 44.8px이다. 히트맵 종목 글자는 박스 크기에 비례하고, 섹터·산업 라벨은 종목 가독성을 해치지 않도록 6~8px 수준의 보조 라벨로 유지한다.
 - 첫 실행 안내 화면(`.welcome-*`)은 제목 27px(`--wz-title`)이다. 크롬 역할 스케일의 최대치(`--fs-title` 20)보다 큰 이유는 패널 제목이 아니라 화면의 유일한 제목이기 때문이다. 카드 폭은 최대 860px, 700px 이하에서 하단 버튼이 전폭으로 바뀐다. 배경은 뒤 화면 블러이며 상세는 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)의 "첫 실행 안내 화면"을 본다.
-- TradingView 위젯 카드는 고정 min-height를 사용해 외부 스크립트 로딩 전후 레이아웃 점프를 막는다. 대시보드 위젯 보드는 데스크톱 2열, 모바일 1열이다.
 
 - 히어로 영역은 브랜드와 상태 표시 중심으로 둡니다.
 - 실행 버튼은 각 기능 탭 안에 둡니다.
@@ -258,7 +257,7 @@ public/react/folio-react.js
 
 ## 다크 모드
 
-다크 대응쌍 규칙(토큰만 쓰기, 두 테마 쌍 정의, 표면 채도 222°, 세그먼트 대비 3:1, 토큰 정의 누락 검사)은 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §3 "다크 대응쌍 규칙"으로 옮겼다. TradingView 위젯의 테마 재렌더링만 아래 별도 섹션에 남긴다.
+다크 대응쌍 규칙(토큰만 쓰기, 두 테마 쌍 정의, 표면 채도 222°, 세그먼트 대비 3:1, 토큰 정의 누락 검사)은 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §3 "다크 대응쌍 규칙"이 기준이다.
 
 ## Pixel Office 보류 (0.3.0)
 
@@ -280,20 +279,20 @@ public/react/folio-react.js
   접근성 설정이라 남긴다.
 - 재개 조건은 `.planning/pixel-office-game-scene-upgrade/DEFERRED_CHECKPOINT.md`를 따른다.
 
-## TradingView 위젯과 테마
+## 네이티브 차트와 테마 (0.5.4)
 
-TradingView 임베드는 생성 시점의 config로 iframe을 만든다. 나중에 문서 테마만 바꿔서는
-이미 떠 있는 위젯 색이 바뀌지 않으므로, 테마가 바뀌면 **위젯을 다시 심어야 한다**.
+**TradingView 임베드는 0.5.4에 전부 걷어냈다.** 마지막 소비자였던 워치리스트 상세 모달이
+`MarketChartFigure`로 바뀌면서 `public/tradingview-widgets.js`, `index.html`의 로드,
+`.tv-widget-*`/`.tradingview-widget-*` CSS에 남은 소비자가 없어졌다. iframe은 생성 시점
+config로 색이 굳어 테마가 바뀔 때마다 다시 심어야 했고, 앱 토큰을 따르지 않았으며,
+cockpit의 "초기 payload에 외부 iframe 없음" 계약과도 어긋났다.
 
-- `public/tradingview-widgets.js`가 렌더한 대상(`renderDashboardBoard`,
-  `renderWatchlistDetail`)을 재생 가능한 형태로 기억했다가 `folio:theme-changed`와
-  시스템 `prefers-color-scheme` 변경에서 다시 그린다.
-- 해석된 테마는 `document.documentElement.dataset.theme`을 먼저 본다. `.dark` 클래스는
-  fallback이다.
-- `cleanup()`은 등록도 함께 지운다. 화면을 떠난 대상이 남아 있으면 테마가 바뀔 때마다
-  분리된 노드에 다시 그리려 한다.
-- **`isTransparent`는 쓰지 않는다.** 투명 모드에서는 위젯이 행·패널 표면을 아예 칠하지 않고
-  뒤에 있는 판에 기댄다(이벤트 위젯 기준 20개 요소가 배경 없음). 그래서 위젯 자체는 다크인데
-  화면에서는 다크가 안 먹은 것처럼 보인다. `isTransparent: false`로 두면 위젯이 자기 테마
-  배경을 직접 칠한다(다크 `#1f1f1f`, 라이트 `#f9f9f9`). `.tv-widget-body`에도 테마 배경을
-  깔아 로딩 중이나 실패 시 밝은 판이 새지 않게 한다.
+- 네이티브 차트는 `document.documentElement`의 `data-theme`/`class` 변화를
+  `MutationObserver`로 보고 계열 색만 다시 칠한다. 다시 심을 것이 없다.
+- **트레이드오프**: TradingView는 준실시간 시세와 지표를 줬고 네이티브는 yfinance 지연값이다.
+  워치리스트는 리서치 맥락이므로 freshness 라벨로 지연을 밝히는 기존 방식을 따른다.
+- 기간 토글의 첫 전환은 기간별 캐시 키라 네트워크를 탄다. 무대(`.cockpit-chart-stage`)가
+  고정 높이라 레이아웃이 튀지 않으며, 새 기간의 축에 옛 계열이 잠깐 그려지지 않도록
+  요청 시작 시 payload를 비운다.
+- `data/market-widget-settings.json`은 삭제·수정하지 않는다. 대시보드 집중 종목 fallback으로만
+  read-only로 읽으며 차트 위젯과 무관하다.

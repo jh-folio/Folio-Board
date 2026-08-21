@@ -5269,16 +5269,6 @@ button:disabled {
   gap: 8px;
 }
 
-.watchlist-detail-widgets {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-
-.watchlist-detail-stack .tv-widget-card {
-  grid-column: 1 / -1 !important;
-}
-
 .watchlist-detail-news {
   display: grid;
   gap: 10px;
@@ -7014,199 +7004,6 @@ button:disabled {
   width: auto;
 }
 
-.tv-widget-card {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  background: var(--card-bg);
-  box-shadow: var(--elev-1);
-}
-
-/* 위젯이 자기 배경을 칠하지 못하는 순간(로딩 중, 실패)에도 밝은 판이 새어나오지 않도록
-   본문 자리를 테마 색으로 채워 둔다. */
-.tv-widget-body {
-  background: var(--card-bg);
-}
-
-.tv-widget-card .tv-widget-card-head {
-  cursor: grab;
-  user-select: none;
-}
-
-.tv-widget-card .tv-widget-card-head:active {
-  cursor: grabbing;
-}
-
-.tv-widget-dragging {
-  opacity: 0.58;
-  outline: 2px solid var(--folio-purple);
-  outline-offset: -2px;
-}
-
-.tv-widget-resizing {
-  box-shadow: var(--elev-2);
-}
-
-.tv-widget-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 38px;
-  padding: 8px 11px;
-  border-bottom: 1px solid var(--border);
-  color: var(--ink);
-  font-size: var(--fs-xs);
-}
-
-.tv-widget-card-head span {
-  flex: none;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.tv-widget-menu-btn {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
-  margin-left: 4px;
-  place-items: center;
-  border: 0;
-  border-radius: var(--r-pill);
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  line-height: 1;
-}
-
-.tv-widget-menu-btn:hover,
-.tv-widget-menu-btn:focus-visible {
-  color: var(--ink);
-  background: var(--folio-surface-muted);
-  outline: none;
-}
-
-.market-widget-context-menu {
-  position: fixed;
-  z-index: 120;
-  min-width: 172px;
-  padding: 6px;
-  border: 1px solid var(--folio-border);
-  border-radius: var(--r-group);
-  background: var(--folio-surface);
-  box-shadow: var(--elev-overlay);
-}
-
-.market-widget-context-menu button {
-  display: block;
-  width: 100%;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: var(--r-control);
-  color: var(--ink);
-  background: transparent;
-  text-align: left;
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-
-.market-widget-context-menu button:hover,
-.market-widget-context-menu button:focus-visible {
-  background: var(--folio-surface-muted);
-  outline: none;
-}
-
-.market-widget-context-menu button[data-market-widget-action="delete"] {
-  color: var(--color-error-text);
-}
-
-.market-widget-context-menu button[data-market-widget-action="delete"]:hover,
-.market-widget-context-menu button[data-market-widget-action="delete"]:focus-visible {
-  background: var(--color-error-bg);
-}
-
-.tv-widget-body {
-  min-height: 0;
-}
-
-.tv-widget-resize-handle {
-  position: relative;
-  height: 16px;
-  cursor: nwse-resize;
-  background:
-    linear-gradient(90deg, transparent, var(--border), transparent) center / 72px 1px no-repeat,
-    var(--folio-surface-2);
-  border-top: 1px solid var(--border);
-}
-
-.tv-widget-resize-handle::after {
-  content: "";
-  position: absolute;
-  right: 8px;
-  bottom: 4px;
-  width: 14px;
-  height: 8px;
-  opacity: 0.58;
-  background:
-    linear-gradient(135deg, transparent 0 45%, var(--muted) 46% 54%, transparent 55%),
-    linear-gradient(135deg, transparent 0 62%, var(--muted) 63% 71%, transparent 72%);
-  pointer-events: none;
-}
-
-.tv-widget-resize-handle:hover,
-.tv-widget-resize-handle:focus-visible {
-  background:
-    linear-gradient(90deg, transparent, var(--folio-border-strong), transparent) center / 92px 1px no-repeat,
-    var(--folio-surface-muted);
-}
-
-.tv-widget-resize-handle:hover::after,
-.tv-widget-resize-handle:focus-visible::after {
-  opacity: 0.82;
-}
-
-.tv-widget-size-wide {
-  min-height: 520px;
-}
-
-.tv-widget-size-medium {
-  min-height: 360px;
-}
-
-.tv-widget-size-compact {
-  min-height: 88px;
-}
-
-.tradingview-widget-container,
-.tradingview-widget-container__widget {
-  width: 100%;
-  height: 100%;
-}
-
-.tradingview-widget-unavailable {
-  display: grid;
-  min-height: 128px;
-  place-items: center;
-  border: 1px dashed var(--border);
-  border-radius: var(--r-control);
-  background: var(--folio-surface-muted);
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  text-align: center;
-}
-
-.tv-widget-fallback {
-  grid-column: 1 / -1;
-}
-
 .search-dashboard {
   margin-top: 30px;
 }
@@ -7685,7 +7482,6 @@ button:disabled {
   .market-widget-actions { justify-content: stretch; }
   .market-widget-actions .btn { width: 100%; }
   .market-widget-board { grid-template-columns: repeat(12, minmax(0, 1fr)); }
-  .market-widget-board .tv-widget-card { grid-column: 1 / -1 !important; }
   .market-widget-editor-modal { padding: 14px; }
   .market-widget-editor-dialog { max-height: calc(100vh - 28px); padding: 18px; }
   .market-widget-editor-head { display: grid; }
@@ -7694,15 +7490,12 @@ button:disabled {
   .market-widget-symbol-row { grid-template-columns: 1fr; }
   .market-widget-editor-actions { justify-content: stretch; }
   .market-widget-editor-actions .btn { width: 100%; }
-  .tv-widget-size-wide,
-  .tv-widget-size-medium { min-height: 420px; }
   .watchlist-detail-modal { padding: 14px; }
   .watchlist-detail-dialog { max-height: calc(100vh - 28px); padding: 18px; }
   .watchlist-detail-inline .watchlist-detail-dialog { max-height: none; overflow: visible; }
   .watchlist-detail-head { display: grid; }
   .watchlist-detail-actions { justify-content: stretch; }
   .watchlist-detail-actions .btn { width: 100%; }
-  .watchlist-detail-widgets { grid-template-columns: 1fr; }
   .feed, .dashboard-grid, .section-head, .searchbar, .filter-grid, .brief-controls, .memory-states, .memory-report-grid, .analysis-chart-grid, .watchlist-grid, .watchlist-editor, .portfolio-form, .portfolio-summary, .portfolio-layout, .portfolio-analysis-grid, .portfolio-donut-grid, .portfolio-weight-body, .portfolio-comments, .portfolio-tools-grid, .portfolio-backtest-form, .backtest-metrics, .thesis-delta-grid, .regime-panel-grid { grid-template-columns: 1fr; }
   .portfolio-preset-toolbar { align-items: stretch; flex-direction: column; }
   .portfolio-preset-toolbar .section-subtitle { text-align: left; }
@@ -16108,8 +15901,6 @@ main.page {
    색만으로 상태를 알리지 않는다(WCAG 1.4.1). 모든 focus-visible에 실제 링을 준다. */
 
 .watchlist-card:focus-visible,
-.tv-widget-menu-btn:focus-visible,
-.market-widget-context-menu button:focus-visible,
 .quality-option select:focus-visible,
 .input-panel .quality-option select:focus-visible,
 .report-note-editor:focus-visible,
@@ -16337,20 +16128,108 @@ select { min-height: 36px; padding: 0 12px; }
   color: var(--folio-ink-muted);
 }
 
-.watchlist-detail-earnings { margin-top: 18px; }
-.watchlist-detail-earnings h3 {
-  margin: 0 0 8px;
+
+/* ============================================================
+   워치리스트 상세: 네이티브 차트와 실적 패널 (0.5.4)
+   차트 자체의 모양(`.chart-headline`/`.cockpit-chart-stage`)은 대시보드와 공유한다.
+   여기서는 배치만 갖는다 — 모양을 다시 선언하면 두 화면이 갈라진다.
+   ============================================================ */
+.watchlist-detail-chart { margin-top: 18px; }
+
+.watchlist-earnings-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.watchlist-earnings-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.watchlist-earnings-panel h3 {
+  margin: 0;
   font-size: var(--fs-sm);
   font-weight: var(--fw-bold);
 }
-.watchlist-detail-earnings-line {
+
+.watchlist-earnings-next {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-group);
+  background: var(--surface-group);
+}
+.watchlist-earnings-next__date {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.watchlist-earnings-next__date strong { font-size: var(--fs-md); }
+
+.watchlist-earnings-consensus {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   margin: 0;
 }
-.watchlist-detail-earnings-line strong { font-size: var(--fs-md); }
+.watchlist-earnings-consensus dt {
+  color: var(--folio-ink-subtle);
+  font-size: 12px;
+}
+.watchlist-earnings-consensus dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist-earnings-recent { display: grid; gap: 10px; }
+.watchlist-earnings-recent__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.watchlist-earnings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.watchlist-earnings-metric {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: var(--r-group);
+  background: var(--surface-group);
+}
+.watchlist-earnings-metric strong {
+  font-size: 22px;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+}
+.watchlist-earnings-metric__label {
+  color: var(--folio-ink-subtle);
+  font-size: 12px;
+}
+.watchlist-earnings-metric__base {
+  color: var(--folio-ink-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* 방향색은 브리핑·차트와 같은 토큰을 쓴다. 화살표 없이 색만으로 알리지 않도록
+   부호(+/-)를 항상 함께 적는다(WCAG 1.4.1). */
+.watchlist-earnings-panel [data-tone] { font-variant-numeric: tabular-nums; }
+.watchlist-earnings-metric__delta { font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+.watchlist-earnings-panel [data-tone="up"] { color: var(--folio-green); }
+.watchlist-earnings-panel [data-tone="down"] { color: var(--folio-burgundy); }
+.watchlist-earnings-panel [data-tone="flat"] { color: var(--folio-ink-muted); }
+
+.watchlist-earnings-skeleton { min-height: 96px; }
+.watchlist-earnings-source { margin: 0; }
 
 /* ============================================================
    프리셋 비교 백테스트 (0.5.4)
