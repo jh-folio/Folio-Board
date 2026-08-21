@@ -61,6 +61,21 @@ class CanonicalNotFoundError(Exception):
         return f"canonical report not found: {self.report_id}"
 
 
+def split_briefing_id(report_id: str) -> tuple[str, str | None, str]:
+    """브리핑 report id를 `(발행일, 시장, 종류)`로 가른다.
+
+    id에 실려 오는 형태가 넷이다 — `{날짜}`, `{날짜}.{시장}`, `{날짜}.weekly`,
+    `{날짜}.{시장}.weekly`. 호출부마다 접미사를 손으로 떼면 종류가 조용히 사라져
+    주간 요청이 그날 **일간** 파일을 가리킨다. 패턴을 소유한 이 모듈이 대신 가른다.
+    못 읽는 id는 날짜 자리에 원문을 그대로 돌려준다(호출부가 404로 끝낸다).
+    """
+    match = BRIEFING_ID_PATTERN.fullmatch(str(report_id or "").strip())
+    if match is None:
+        return str(report_id or ""), None, "daily"
+    date_text, market, kind_suffix = match.groups()
+    return date_text, market, kind_suffix or "daily"
+
+
 def _briefing_identity(report_id: str, market_scope: str | None) -> tuple[str, str | None, str | None]:
     normalized_scope = str(market_scope or "").strip().lower() or None
     markets = ", ".join(BRIEFING_MARKETS)

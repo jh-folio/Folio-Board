@@ -77,8 +77,8 @@ def _report_kind(value: str) -> ReportKind:
     raise ValueError("unsupported canonical report kind")
 
 
-def _identity(kind: ReportKind, report_id: str, path: str) -> tuple[str, str | None]:
-    """Split a briefing target into ``(date, market)``.
+def _identity(kind: ReportKind, report_id: str, path: str) -> tuple[str, str | None, str]:
+    """Split a briefing target into ``(date, market, kind)``.
 
     시장 접미사는 `canonical_identity.BRIEFING_MARKETS`에서 읽는다. 여기에 시장을 다시
     적어 두는 동안 유럽장·일본장 브리핑의 overlay·quality repair가 CLI 실행을 다 마친
@@ -89,28 +89,47 @@ def _identity(kind: ReportKind, report_id: str, path: str) -> tuple[str, str | N
 
     접미사가 없는 옛 브리핑(`2026-06-18.json`)은 scope 없이 돌려준다 — 하류
     `_briefing_identity`가 그 형태를 명시적으로 지원한다.
+
+    **종류는 벗기되 버리지 않고 돌려준다.** 시장을 찾으려면 접미사를 먼저 떼야 하는데,
+    떼고 잊으면 주간 대상이 일간 id가 되어 하류 `resolve_exact_report_path`가 그날
+    **일간 파일**을 연다 — 주간 품질 개선이 CLI를 다 돌린 뒤 커밋 단계에서 정체성
+    검증에 걸려 실패하거나, 최악에는 주간 본문이 일간 보고서를 덮어쓴다.
     """
     if kind is not ReportKind.BRIEFING:
-        return report_id, None
+        return report_id, None, ""
     stem = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].removesuffix(".json")
     candidates = [value.rsplit(":", 1)[-1] for value in (stem, str(report_id or "")) if value]
     # 종류 접미사를 먼저 벗긴다. 주간 파일(`2026-08-23.us.weekly`)에서 시장을 바로 찾으면
     # 어느 시장으로도 끝나지 않아 접미사 전체가 report id로 남고 경로 해석이 거부한다.
     trimmed = []
+    found_kind = ""
     for value in candidates:
         for kind_suffix in BRIEFING_KIND_SUFFIXES:
             if value.endswith(f".{kind_suffix}"):
                 value = value[: -len(kind_suffix) - 1]
+                found_kind = found_kind or kind_suffix
                 break
         trimmed.append(value)
     candidates = trimmed
     for value in candidates:
         for market in BRIEFING_MARKETS:
             if value.endswith(f".{market}"):
-                return value[: -len(market) - 1], market
+                return value[: -len(market) - 1], market, found_kind
     if not candidates:
         raise ValueError("briefing producer requires a report id or path")
-    return candidates[0], None
+    return candidates[0], None, found_kind
+
+
+def _briefing_target(date_text: str, scope: str | None, kind_suffix: str) -> tuple[str, str]:
+    """`(report id, artifact id)`. 종류는 report id에 싣고 시장은 따로 넘긴다.
+
+    `resolve_exact_report_path`는 `{날짜}[.{시장}][.{종류}]`를 읽으므로 report id에
+    종류만 실어 두면 시장과 합쳐 올바른 파일을 연다. artifact id는 저장 파일과 같은
+    순서(`{날짜}.{시장}.{종류}`)여야 change 이벤트와 이름이 어긋나지 않는다.
+    """
+    report_id = f"{date_text}.{kind_suffix}" if kind_suffix else date_text
+    artifact_id = ".".join(part for part in (date_text, scope or "", kind_suffix) if part)
+    return report_id, artifact_id
 
 
 def _json_summary(task_type: TaskType, pack: dict, candidate: dict) -> dict[str, str | int | bool | None]:
@@ -187,8 +206,9 @@ def commit_json_output(
             draft = pack.get("draftArtifact") or {}
             canonical = draft.get("canonical") or {}
             kind = _report_kind(str(internal.get("reportKind") or canonical.get("kind") or ""))
-            report_id, scope = _identity(kind, str(canonical.get("id") or ""), str(internal.get("reportPath") or ""))
-            summary = {"artifactId": f"{report_id}.{scope}" if scope else report_id, "reportId": report_id}
+            date_text, scope, kind_suffix = _identity(kind, str(canonical.get("id") or ""), str(internal.get("reportPath") or ""))
+            report_id, artifact_id = _briefing_target(date_text, scope, kind_suffix)
+            summary = {"artifactId": artifact_id, "reportId": report_id}
             bundle = producer.stage_overlay(
                 job,
                 OverlayJobRequest(kind, report_id, scope, result["personalOverlay"], summary),
@@ -197,12 +217,13 @@ def commit_json_output(
             candidate = agent_service.write_quality_repair_from_markdown(pack, markdown or "", persist=False)
             internal = pack.get("internal") or {}
             kind = _report_kind(str(internal.get("targetArtifactType") or ""))
-            report_id, scope = _identity(
+            date_text, scope, kind_suffix = _identity(
                 kind,
                 str(internal.get("targetArtifactId") or ""),
                 str(pack.get("saveTarget") or ""),
             )
-            summary = {"artifactId": f"{report_id}.{scope}" if scope else report_id, "reportId": report_id}
+            report_id, artifact_id = _briefing_target(date_text, scope, kind_suffix)
+            summary = {"artifactId": artifact_id, "reportId": report_id}
             bundle = producer.stage_quality_repair(
                 job,
                 QualityRepairJobRequest(kind, report_id, scope, candidate, summary),

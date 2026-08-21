@@ -136,8 +136,10 @@ from features.topic_report.topic_config import get_topic_config
 from features.topic_report.planner import apply_deep_research_plan, build_topic_plan
 from features.topic_report.service import save_topic_report
 from features.llm_settings.client import bok_api_key, fred_api_key
+from features.common.canonical_identity import split_briefing_id
 from features.personal_overlay import schema as overlay_schema
 from features.personal_overlay.service import (
+    _briefing_overlay_path,
     _build_context as overlay_build_context,
     _gather_hypotheses,
     read_prompt as read_overlay_prompt,
@@ -1081,10 +1083,15 @@ def write_topic_report_from_markdown(pack: dict, markdown: str, *, persist: bool
     return save_topic_report(report) if persist else report
 
 
-def _load_canonical_for_overlay(report_kind: str, report_id: str) -> tuple[dict, Path, str]:
+def _load_canonical_for_overlay(report_kind: str, report_id: str, market_scope: str = "both") -> tuple[dict, Path, str]:
     kind = str(report_kind or "").strip().lower()
     if kind == "briefing":
-        path = BRIEFINGS_DIR / f"{report_id}.json"
+        # 규칙 경로와 **같은 해석기**로 파일을 찾는다. 예전에는 여기서 report id에
+        # `.json`만 붙였는데, 주간 id(`{발행일}.weekly`)는 시장이 빠져 있어 저장된 적이
+        # 없는 이름이 된다 — 주간 보고서는 시장별로만 저장된다. 그래서 CLI 모드의 주간
+        # 개인 해석이 언제나 FileNotFoundError로 끝났다.
+        date_text, scope_from_id, kind_from_id = split_briefing_id(report_id)
+        path = _briefing_overlay_path(date_text, scope_from_id or market_scope, kind_from_id)
         canonical = read_json(path, None)
         return canonical, path, "briefing"
     if kind in {"analysis", "company_analysis"}:
@@ -1100,8 +1107,8 @@ def _load_canonical_for_overlay(report_kind: str, report_id: str) -> tuple[dict,
     raise ValueError("report_kind must be briefing, analysis, or topic_report")
 
 
-def prepare_personal_overlay_pack(report_kind: str, report_id: str, *, owner_job_id: str | None = None) -> tuple[dict, Path]:
-    canonical, path, kind = _load_canonical_for_overlay(report_kind, report_id)
+def prepare_personal_overlay_pack(report_kind: str, report_id: str, *, market_scope: str = "both", owner_job_id: str | None = None) -> tuple[dict, Path]:
+    canonical, path, kind = _load_canonical_for_overlay(report_kind, report_id, market_scope)
     if not canonical:
         raise FileNotFoundError(f"Report not found: {report_kind}/{report_id}")
     hypotheses = _gather_hypotheses(kind, canonical)
@@ -1545,7 +1552,13 @@ def prepare_pack(task_type: str, **kwargs) -> tuple[dict, Path]:
             owner_job_id=owner_job_id,
         )
     if task_type == "personal_overlay":
-        return prepare_personal_overlay_pack(kwargs.get("report_kind") or "", kwargs.get("report_id") or "", owner_job_id=owner_job_id)
+        return prepare_personal_overlay_pack(
+            kwargs.get("report_kind") or "",
+            kwargs.get("report_id") or "",
+            # 시장을 버리면 주간 보고서를 찾을 수 없다 — 저장 키에 시장이 들어 있다.
+            market_scope=kwargs.get("market_scope") or "both",
+            owner_job_id=owner_job_id,
+        )
     if task_type == "thesis_delta":
         return prepare_thesis_delta_pack(kwargs.get("ticker") or "", period=kwargs.get("period") or "90d", evidence_limit=kwargs.get("limit") or 12, owner_job_id=owner_job_id)
     if task_type == "market_memory_llm":

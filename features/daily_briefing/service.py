@@ -16,6 +16,7 @@ from features.daily_briefing.issue_selection import (
 )
 from features.daily_briefing.schema import (
     AGGREGATE_SCOPES,
+    BRIEFING_KINDS,
     MARKET_TITLE_LABELS,
     SINGLE_MARKET_SCOPES,
     briefing_expected_titles,
@@ -35,6 +36,7 @@ from features.daily_briefing.schema import (
 )
 from features.daily_briefing.limits import (
     WEEKLY,
+    is_weekly,
     CONTEXT_DOC_FLOOR,
     DIVERSE_SELECTION_LIMIT,
     ISSUE_COVERAGE_LIMIT,
@@ -175,7 +177,7 @@ def briefing_prompt_paths(market_scope="both", kind="daily"):
     써라"를 덧붙이는 방식은 두 지시가 충돌한다 — 일간 프롬프트는 세션 상태를 제목에
     붙이라고, 오늘 하루를 하나의 이야기로 엮으라고 지시한다.
     """
-    table = BRIEFING_PROMPT_WEEKLY_PATHS if str(kind or "daily").strip().lower() == "weekly" else BRIEFING_PROMPT_PATHS
+    table = BRIEFING_PROMPT_WEEKLY_PATHS if is_weekly(kind) else BRIEFING_PROMPT_PATHS
     return [table[key] for key in normalize_market_selection(market_scope)]
 
 
@@ -1564,15 +1566,24 @@ def extract_prev_checklist(markdown):
 BRIEFING_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # 시장 접미사는 계약에서 파생한다. 손으로 `us|kr`이라 적어 둔 동안 유럽·일본
 # 브리핑이 저장은 되면서 `GET /api/briefings`와 전일 체크포인트 조회에서만 빠졌다.
+# 종류 접미사도 계약에서 파생한다. 빠져 있는 동안 주간 보고서가 저장은 되면서
+# `GET /api/briefings`와 대시보드 payload(명령 팔레트·Agent 홈의 최근 보고서)에서만
+# 통째로 빠졌다 — 아카이브(`archive.py`)는 자기 정규식에 이미 넣어 두고 있었다.
+_BRIEFING_KIND_SUFFIXES = tuple(sorted(BRIEFING_KINDS - {DEFAULT_BRIEFING_KIND}))
 BRIEFING_REPORT_FILE_RE = re.compile(
+    rf"^\d{{4}}-\d{{2}}-\d{{2}}(?:\.(?:{'|'.join(SINGLE_MARKET_SCOPES)}))?"
+    rf"(?:\.(?:{'|'.join(_BRIEFING_KIND_SUFFIXES)}))?\.json$"
+)
+BRIEFING_DAILY_REPORT_FILE_RE = re.compile(
     rf"^\d{{4}}-\d{{2}}-\d{{2}}(?:\.(?:{'|'.join(SINGLE_MARKET_SCOPES)}))?\.json$"
 )
 
 
-def _briefing_report_paths():
+def _briefing_report_paths(pattern=None):
     BRIEFINGS_DIR.mkdir(parents=True, exist_ok=True)
+    matcher = pattern or BRIEFING_REPORT_FILE_RE
     return sorted(
-        (path for path in BRIEFINGS_DIR.iterdir() if BRIEFING_REPORT_FILE_RE.fullmatch(path.name)),
+        (path for path in BRIEFINGS_DIR.iterdir() if matcher.fullmatch(path.name)),
         reverse=True,
     )
 
@@ -1949,10 +1960,14 @@ def delete_briefing(date, market=None, kind=DEFAULT_BRIEFING_KIND):
 
 
 def load_prev_briefing(current_date):
-    """current_date 이전에 저장된 가장 최근 브리핑을 반환한다."""
+    """current_date 이전에 저장된 가장 최근 **일간** 브리핑을 반환한다.
+
+    주간은 세지 않는다. 전일 체크포인트를 잇는 자리라 한 주를 덮는 보고서를 물어오면
+    오늘의 세션 체크리스트가 지난주 확인 항목으로 바뀐다.
+    """
     import json
 
-    for path in _briefing_report_paths():
+    for path in _briefing_report_paths(BRIEFING_DAILY_REPORT_FILE_RE):
         if path.stem < current_date:
             try:
                 return json.loads(path.read_text(encoding="utf-8"))

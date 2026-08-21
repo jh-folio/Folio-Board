@@ -185,6 +185,10 @@ def apply_semantic_verdicts(summary: dict, evaluation: dict) -> dict:
     result["changedItems"] = items
     result["semanticEvaluation"] = {
         "status": (evaluation or {}).get("status") or "not_evaluated",
+        # **왜 판정하지 못했는지를 함께 남긴다.** 이유가 없으면 화면은 판정 엔진이 없어서인지
+        # 호출이 실패해서인지 구분할 수 없어 어댑터를 스스로 뒤지게 되고, 그 추측이 API 키만
+        # 쓰는 설치에서 "AI Agent를 연결하세요"를 되살렸다(엔진은 이미 연결돼 있다).
+        "reason": (evaluation or {}).get("reason"),
         "provider": (evaluation or {}).get("provider"),
         "model": (evaluation or {}).get("model"),
         # wall-clock을 쓰면 동일 재생성이 canonical no-op이 아니게 된다(comparator와 같은 이유).

@@ -186,6 +186,22 @@ function normalizedKind(value?: string): BriefingKind {
   return value === "weekly" ? "weekly" : "daily";
 }
 
+/** 생성 직후 **리더가 열 범위.** 합본이 아니라 시장 하나를 연다.
+ *
+ * 보고서는 시장별로만 저장되는데(`{발행일}.{시장}[.weekly].json`) 여러 시장을 함께
+ * 만들면 응답의 `marketScope`가 `multi`/`all` 같은 합본이라, 리더가 그 범위에 머문 채
+ * 누르는 `내 노트와 연결`·내보내기가 저장된 적 없는 합본 파일을 가리켜 실패했다.
+ * 주간에는 legacy 합본 파일조차 있을 수 없어 항상 실패한다.
+ * 시장 하나로 열면 그 시장 파일을 정확히 집고, 옛 일간 합본만 있는 보고서는
+ * 서버의 단일 시장 경로가 알아서 legacy 파일로 되돌아간다.
+ * 다른 시장은 아카이브 카드에서 연다 — 카드는 원래 시장별 한 장이다.
+ */
+function readerScope(responseScope: string | undefined, generated: readonly SingleMarket[]): MarketScope {
+  const scope = normalizedScope(responseScope);
+  if (SINGLE_MARKETS.includes(scope as SingleMarket)) return scope;
+  return generated[0] ?? scope;
+}
+
 // 해시를 쓰는 쪽(setBriefingHash)과 읽는 쪽이 같은 scope 집합을 써야 한다. `multi`가
 // 빠져 있어 미국+일본 같은 조합으로 생성하면 주소만 바뀌고 리더가 열리지 않았다 —
 // 서버는 `multi`를 정식 scope로 저장·조회한다(features/daily_briefing/schema.py::MARKET_SCOPES).
@@ -512,26 +528,26 @@ export function BriefingRoute() {
         const finished = await Promise.all(jobs.map(pollAgentJob));
         await loadArchive();
         const date = finished[0]?.result?.date || finished[0]?.result?.artifactId || "";
-        if (date) setBriefingHash(date, marketScope, briefingKind);
+        if (date) setBriefingHash(date, readerScope(marketScope, selectedMarkets), briefingKind);
         return;
       }
       if (isAgentJob(response)) {
         const done = await pollAgentJob(response);
         const date = done.result?.date || done.result?.artifactId || targetDate || "";
         await loadArchive();
-        if (date) setBriefingHash(date, marketScope, briefingKind);
+        if (date) setBriefingHash(date, readerScope(marketScope, selectedMarkets), briefingKind);
         return;
       }
       const reports = splitReports(response);
       if (reports) {
         await loadArchive();
         const first = reports[0];
-        if (first?.date) setBriefingHash(first.date, normalizedScope(first.marketScope || marketScope), briefingKind);
+        if (first?.date) setBriefingHash(first.date, readerScope(first.marketScope || marketScope, selectedMarkets), briefingKind);
         return;
       }
       const date = response.date || targetDate || "";
       await loadArchive();
-      if (date) setBriefingHash(date, normalizedScope(response.marketScope || marketScope), briefingKind);
+      if (date) setBriefingHash(date, readerScope(response.marketScope || marketScope, selectedMarkets), briefingKind);
     } catch (err) {
       setError(err instanceof Error ? err.message : "브리핑 생성에 실패했습니다.");
     } finally {

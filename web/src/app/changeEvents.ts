@@ -14,6 +14,8 @@ export type ChangeEvent = {
   reliability?: number;
   changedItems?: ChangedItem[];
   baselineRef?: { id?: string; committedAt?: string };
+  /** 서버가 남긴 의미 판정 결과. `reason`은 판정하지 못한 이유다. */
+  semanticEvaluation?: { status?: string; reason?: string | null; provider?: string; model?: string };
 };
 
 export type ChangedItem = {

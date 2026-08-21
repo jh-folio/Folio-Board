@@ -16,6 +16,14 @@
 """
 from __future__ import annotations
 
+# 종류 enum과 정규화의 **정의 자리는 `schema`다.** 여기서 다시 적으면 둘이 어긋난다.
+# `schema`는 feature import가 없는 잎 모듈이라 이 방향으로는 순환이 생기지 않는다.
+from features.daily_briefing.schema import (  # noqa: F401 - 파이프라인 공용 어휘로 다시 내보낸다
+    BRIEFING_KINDS,
+    DEFAULT_BRIEFING_KIND,
+    normalize_briefing_kind,
+)
+
 WEEKLY = "weekly"
 
 # 한 시장 브리핑이 프롬프트에 싣는 문서 수. 참고자료도 같은 값이다.
@@ -37,16 +45,23 @@ PER_PUBLISHER_CAP = 4
 MINIMUM_PUBLISHERS = 5
 
 
-def _is_weekly(kind) -> bool:
+def is_weekly(kind) -> bool:
+    """이 종류가 주간인가. **판정은 여기 하나가 한다.**
+
+    같은 비교가 계약 검사·프롬프트 선택·상한 계산에 흩어져 있었다. 정규화 규칙이
+    바뀌면(저장된 설정에서 `"Weekly "` 같은 값이 올라오면) 고친 자리만 주간으로 읽고
+    나머지는 일간으로 읽어, 주간 보고서가 일간 프롬프트로 만들어진 뒤 주간 계약에
+    걸려 거부되는 식으로 어긋난다.
+    """
     return str(kind or "").strip().lower() == WEEKLY
 
 
 def context_doc_limit(kind: str = "daily") -> int:
-    return WEEKLY_CONTEXT_DOC_LIMIT if _is_weekly(kind) else CONTEXT_DOC_LIMIT
+    return WEEKLY_CONTEXT_DOC_LIMIT if is_weekly(kind) else CONTEXT_DOC_LIMIT
 
 
 def source_ref_limit(kind: str = "daily") -> int:
-    return WEEKLY_SOURCE_REF_LIMIT if _is_weekly(kind) else SOURCE_REF_LIMIT
+    return WEEKLY_SOURCE_REF_LIMIT if is_weekly(kind) else SOURCE_REF_LIMIT
 
 
 def merged_source_limit(market_count: int, kind: str = "daily") -> int:

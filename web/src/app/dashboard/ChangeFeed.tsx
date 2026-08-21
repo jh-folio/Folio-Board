@@ -8,7 +8,7 @@ import {
   type ChangedItem,
   type ChangeEvent,
 } from "../changeEvents";
-import { getJson, MARKET_CODE_LABELS } from "../../api";
+import { MARKET_CODE_LABELS } from "../../api";
 import { STORY_MARKETS, StoryShare, type StoryMarket } from "./StoryShare";
 
 export const CHANGE_STATUS_LABELS: Record<string, string> = {
@@ -177,18 +177,34 @@ const JUDGED_VERDICTS = new Set([...CONFIRMED_VERDICTS, "coverage_shift_only", "
 // 의미 비교는 브리핑 변화 단위에만 걸린다. 나머지 아티팩트는 verdict가 없는 것이
 // 정상이므로 미판정으로 세지 않는다.
 const SEMANTIC_ARTIFACT_KINDS = new Set(["briefing"]);
-// 판정 대상이 되는 변화 단위 종류(`change_intelligence/semantic.py::SEMANTIC_KINDS`).
-// 지표(`market_metric`)는 의미 판정을 하지 않으므로 verdict가 없는 것이 정상이다.
-const SEMANTIC_ITEM_KINDS = new Set(["market_driver", "issue_coverage"]);
-
 /** 이 이벤트에 **판정할 것이 있었는가.**
  *
  * `baseline_created`·`insufficient_basis`·`no_material_change`는 `changedItems`가
  * 비어 있다. 그런 건을 미판정으로 세면 처음 만든 브리핑이나 정말로 안 바뀐 날에도
  * "판정하지 못했다"고 말하게 된다 — 없애려던 그 문구가 그대로 돌아온다.
+ *
+ * 자격은 **서버가 이미 표시해 둔 것**을 읽는다. 서버는 종류가 맞고 대표 기사 제목까지
+ * 있는 단위에만 `not_evaluated`를 붙인다(`semantic.py::apply_semantic_verdicts`).
+ * 화면이 종류만 보고 다시 판정하면, 제목이 없어 **영원히 판정될 수 없는** 옛 기록까지
+ * 미판정으로 세어 "다음 생성에서 함께 판정합니다"라는 지키지 못할 약속이 남는다.
  */
 function hasJudgeableItems(event: ChangeEvent): boolean {
-  return (event.changedItems || []).some((item) => SEMANTIC_ITEM_KINDS.has(String(item.kind || "")));
+  return (event.changedItems || []).some((item) => String(item.semanticVerdict || "") === "not_evaluated");
+}
+
+// 판정 엔진이 없어서 못 한 것인지(`semantic.py`의 사유), 호출이 실패했거나 아직 안 돈
+// 것인지를 가른다. 엔진 부재만 설정 안내를 받을 자격이 있다.
+const ENGINE_MISSING_REASONS = new Set(["llm_unavailable", "generation_rules_mode"]);
+
+/** 남은 미판정이 **판정 엔진이 없어서**인가.
+ *
+ * 예전에는 화면이 `/api/agent-bridge/settings`의 CLI 어댑터만 보고 판단했다. 그런데
+ * 판정은 LLM API 키를 먼저 쓰고 CLI는 그다음이라, 키만 넣고 CLI를 안 깐 설치에서는
+ * 엔진이 멀쩡한데도 "연결하세요"가 떴다 — 이번 릴리즈가 없애려던 바로 그 문구다.
+ * 이제 서버가 남긴 사유를 읽으므로 화면이 엔진 구성을 추측하지 않는다.
+ */
+export function engineMissing(events: ChangeEvent[]): boolean {
+  return events.some((event) => ENGINE_MISSING_REASONS.has(String(event.semanticEvaluation?.reason || "")));
 }
 
 /** 확인된 내용 변화와 **진짜** 미판정 건수.
@@ -220,39 +236,20 @@ export function summarizeChangeEvents(events: ChangeEvent[]): {
 
 /** 빈 목록에서 할 말. 판정이 끝났으면 그렇게 말하고, 안내는 진짜 미판정에만 붙인다.
  *
- * `agentReady`가 참이면 연결 안내를 쓰지 않는다 — 이미 연결한 사람에게 연결하라고
- * 하면 되어 있는 일을 다시 하게 만든다. 남은 미판정은 이 릴리즈 이전에 만들어진
- * 보고서이고, 다음 생성에서 함께 판정된다.
+ * 설정 안내는 **판정 엔진이 없다고 서버가 말한 경우에만** 붙인다. 이미 연결한 사람에게
+ * 연결하라고 하면 되어 있는 일을 다시 하게 만든다.
  */
-export function emptyMessage(unjudged: number, agentReady: boolean): string {
+export function emptyMessage(unjudged: number, missingEngine: boolean): string {
   if (unjudged <= 0) return "아직 확인된 내용 변화가 없습니다.";
-  return agentReady
-    ? `내용 변화를 아직 판정하지 못한 기록이 ${unjudged}건 있습니다. 다음 브리핑 생성에서 함께 판정합니다.`
-    : `내용 변화를 판정하지 못한 기록이 ${unjudged}건 있습니다. 설정에서 AI Agent를 연결하면 무엇이 달라졌는지 읽어 줍니다.`;
-}
-
-type AgentBridgeAdapters = { adapters?: Array<{ available?: boolean }> };
-
-/** 판정을 돌릴 엔진이 있는가. 설정 탭에서 바뀌면 같은 이벤트로 따라간다. */
-function useAgentReady(): boolean {
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    const apply = (payload: AgentBridgeAdapters | null) => {
-      if (alive) setReady((payload?.adapters || []).some((row) => row.available));
-    };
-    getJson<AgentBridgeAdapters>("/api/agent-bridge/settings").then(apply).catch(() => apply(null));
-    const onUpdated = (event: Event) => apply((event as CustomEvent).detail as AgentBridgeAdapters);
-    window.addEventListener("folio:agent-settings-updated", onUpdated);
-    return () => { alive = false; window.removeEventListener("folio:agent-settings-updated", onUpdated); };
-  }, []);
-  return ready;
+  return missingEngine
+    ? `내용 변화를 판정하지 못한 기록이 ${unjudged}건 있습니다. 설정에서 AI를 연결하면 무엇이 달라졌는지 읽어 줍니다.`
+    : `내용 변화를 아직 판정하지 못한 기록이 ${unjudged}건 있습니다. 다음 브리핑 생성에서 함께 판정합니다.`;
 }
 
 export function ChangeFeed({ events }: { events: ChangeEvent[] }) {
   const [storyMarket, setStoryMarket] = useState<StoryMarket>("us");
-  const agentReady = useAgentReady();
   const { confirmed, unjudged } = summarizeChangeEvents(events);
+  const missingEngine = engineMissing(events);
   return (
     <section className="cockpit-panel cockpit-change-feed" aria-labelledby="cockpit-change-title">
       <div className="cockpit-panel__head">
@@ -276,7 +273,7 @@ export function ChangeFeed({ events }: { events: ChangeEvent[] }) {
       {confirmed.length ? <ol>
         {confirmed.map((event) => <ChangeCard event={event} key={eventKey(event)} />)}
       </ol> : (
-        <p className="cockpit-empty">{emptyMessage(unjudged, agentReady)}</p>
+        <p className="cockpit-empty">{emptyMessage(unjudged, missingEngine)}</p>
       )}
 
     </section>

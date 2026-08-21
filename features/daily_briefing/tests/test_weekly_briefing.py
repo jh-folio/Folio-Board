@@ -467,3 +467,137 @@ def test_an_empty_week_stops_before_the_cli_runs():
 
     assert "raise WeeklyWindowEmptyError(" in source
     assert issubclass(agent_service.WeeklyWindowEmptyError, ValueError)
+
+
+def test_the_cli_overlay_opens_the_weekly_file_that_exists(monkeypatch, tmp_path):
+    """CLI 주간 개인 해석이 저장된 적 없는 이름을 열어 언제나 실패하던 것을 막는다.
+
+    주간 id는 `{발행일}.weekly`라 시장이 빠져 있는데, 주간 보고서는 시장별로만
+    저장된다(`{발행일}.{시장}.weekly.json`). 예전에는 로더가 id에 `.json`만 붙여
+    `{발행일}.weekly.json`을 열었고 그 파일은 만들어지는 경로가 없다.
+    """
+    import features.agent_mode.service as agent_service
+    import features.personal_overlay.service as overlay_service
+
+    (tmp_path / "2026-08-23.us.json").write_text('{"kind": "daily"}', encoding="utf-8")
+    (tmp_path / "2026-08-23.us.weekly.json").write_text('{"kind": "weekly"}', encoding="utf-8")
+    monkeypatch.setattr(overlay_service, "BRIEFINGS_DIR", tmp_path)
+
+    canonical, path, kind = agent_service._load_canonical_for_overlay("briefing", "2026-08-23.weekly", "us")
+
+    assert kind == "briefing"
+    assert path.name == "2026-08-23.us.weekly.json"
+    assert canonical == {"kind": "weekly"}
+
+    # 종류를 싣지 않은 요청은 그대로 일간을 연다.
+    daily, daily_path, _ = agent_service._load_canonical_for_overlay("briefing", "2026-08-23", "us")
+    assert daily_path.name == "2026-08-23.us.json"
+    assert daily == {"kind": "daily"}
+
+
+def test_the_aggregate_overlay_finds_the_only_market_that_generated(monkeypatch, tmp_path):
+    """합본 범위로 물어도 그 날짜에 시장 파일이 하나뿐이면 가리키는 대상이 하나다.
+
+    합본 이름(`{발행일}.weekly.json`)은 저장되는 경로가 없다. 예전에는 그 이름을
+    그대로 돌려줘 시장 파일이 멀쩡히 있는데도 404가 됐다.
+    """
+    import features.personal_overlay.service as overlay_service
+
+    (tmp_path / "2026-08-23.us.weekly.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(overlay_service, "BRIEFINGS_DIR", tmp_path)
+
+    assert overlay_service._briefing_overlay_path("2026-08-23", "multi", "weekly").name == "2026-08-23.us.weekly.json"
+
+    # 여러 시장이 함께 있으면 어느 쪽에 얹을지 정할 수 없다 — 예전 동작을 유지한다.
+    (tmp_path / "2026-08-23.kr.weekly.json").write_text("{}", encoding="utf-8")
+    assert overlay_service._briefing_overlay_path("2026-08-23", "multi", "weekly").name == "2026-08-23.weekly.json"
+
+
+def test_an_empty_week_never_reaches_the_model():
+    """자료 0건이면 LLM을 부르지 않는다 — 근거 없이 한 주의 흐름을 쓰게 된다.
+
+    CLI 경로는 `WeeklyWindowEmptyError`로 호출 전에 막고 규칙 경로는 "자료 0건"을
+    본문에 적는데, API 키 경로만 그 계약 밖에서 빈 컨텍스트로 프롬프트를 보냈다.
+    """
+    import inspect
+
+    from features.daily_briefing import builder
+
+    source = inspect.getsource(builder._scope_result)
+    gate = source.split("generate_llm_briefing(")[0]
+
+    assert 'if kind == "weekly" and not scoped_docs:' in gate
+    assert '"weekly_window_empty"' in gate
+
+
+def test_the_weekly_data_gap_reads_its_own_window():
+    """주간 자료가 0건인데 일간 세션 풀이 차 있으면 갭이 안 붙던 것을 막는다."""
+    import inspect
+
+    from features.daily_briefing import builder
+
+    source = inspect.getsource(builder.build_briefing)
+
+    assert "if not (weekly_pool if weekly_pool is not None else docs):" in source
+    # 주간 창은 시장과 무관하므로 한 번만 고른다.
+    assert source.count("weekly_documents(all_documents, week)") == 1
+
+
+def test_the_report_listing_sees_weekly_but_the_prev_checklist_does_not():
+    """주간이 목록 정규식에서 빠지면 저장은 되는데 화면에는 없다.
+
+    아카이브는 자기 정규식에 종류를 넣어 뒀지만 `GET /api/briefings`와 대시보드
+    payload(명령 팔레트·Agent 홈 최근 보고서)를 먹이는 이 정규식은 그대로였다.
+    반대로 전일 체크포인트 조회는 계속 일간만 봐야 한다 — 한 주를 덮는 보고서를
+    물어오면 오늘의 세션 체크리스트가 지난주 확인 항목으로 바뀐다.
+    """
+    from features.daily_briefing.service import (
+        BRIEFING_DAILY_REPORT_FILE_RE,
+        BRIEFING_REPORT_FILE_RE,
+    )
+
+    assert BRIEFING_REPORT_FILE_RE.fullmatch("2026-08-23.us.weekly.json")
+    assert BRIEFING_REPORT_FILE_RE.fullmatch("2026-08-23.us.json")
+    assert not BRIEFING_REPORT_FILE_RE.fullmatch("2026-08-23.us.visuals.json")
+
+    assert not BRIEFING_DAILY_REPORT_FILE_RE.fullmatch("2026-08-23.us.weekly.json")
+    assert BRIEFING_DAILY_REPORT_FILE_RE.fullmatch("2026-08-23.us.json")
+
+    import inspect
+
+    from features.daily_briefing import service
+
+    assert "BRIEFING_DAILY_REPORT_FILE_RE" in inspect.getsource(service.load_prev_briefing)
+
+
+def test_one_predicate_decides_what_is_weekly():
+    """종류 판정이 흩어져 있으면 정규화 규칙이 바뀔 때 절반만 따라온다.
+
+    같은 비교가 계약 검사·프롬프트 선택·상한 계산·예약·라우트에 일곱 벌 있었다.
+    주간을 일간 프롬프트로 만든 뒤 주간 계약으로 검사하는 식의 어긋남이 이 중복에서 나온다.
+    """
+    import inspect
+    from pathlib import Path
+
+    from features.daily_briefing.limits import BRIEFING_KINDS, is_weekly, normalize_briefing_kind
+    from features.daily_briefing.schema import BRIEFING_KINDS as SCHEMA_KINDS
+
+    assert is_weekly("weekly") is True
+    assert is_weekly(" WEEKLY ") is True
+    assert is_weekly("daily") is False
+    assert is_weekly(None) is False
+    # enum 정의는 schema 하나이며 limits는 그것을 다시 내보낼 뿐이다.
+    assert BRIEFING_KINDS is SCHEMA_KINDS
+    assert normalize_briefing_kind("weekly") == "weekly"
+    assert normalize_briefing_kind("nonsense") == "daily"
+
+    # 손으로 적은 비교가 런타임 코드에 남아 있지 않아야 한다.
+    root = Path(inspect.getfile(is_weekly)).parents[2]
+    offenders = []
+    for path in list(root.glob("features/**/*.py")) + [root / "app.py"]:
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if 'in {"daily", "weekly"}' in text or 'str(kind or "daily").strip().lower()' in text:
+            offenders.append(str(path.relative_to(root)))
+    assert offenders == []

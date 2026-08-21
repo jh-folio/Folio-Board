@@ -16,7 +16,7 @@ Folio OS 2계층 모델의 Personal Overlay 계층이다.
 ## 동작
 
 ```text
-attach_overlay_to_briefing(date) / attach_overlay_to_report(report_id)
+attach_overlay_to_briefing(date, market_scope, kind) / attach_overlay_to_report(report_id)
   → 저장된 Canonical 보고서 로드
   → Obsidian importer로 Vault 재스캔(노트를 만들면 어느 폴더든 즉시 반영) → list_hypotheses() 조회 (기업분석은 ticker 필터)
   → 노트 0개면 LLM 호출 없이 "연결할 노트 없음"(status=no_notes)으로 단락
@@ -27,11 +27,21 @@ attach_overlay_to_briefing(date) / attach_overlay_to_report(report_id)
 ## API
 
 ```text
-POST /api/briefings/{date}/personal-overlay              # body: {useLlm?, webSearch?}
+POST /api/briefings/{date}/personal-overlay              # ?marketScope=&kind=  body: {marketScope?, kind?, useLlm?, webSearch?}
 GET  /api/briefings/{date}?includePersonal=true          # 기본 응답은 overlay 제외
 POST /api/analysis-reports/{report_id}/personal-overlay
 GET  /api/analysis-reports/{report_id}?includePersonal=true
 ```
+
+**브리핑 요청에는 `kind`가 필요하다.** 주간의 저장 키는 발행일이라 같은 날 일간과 날짜가
+겹치고, 종류를 빼면 주간을 열어 두고 누른 개인 해석이 그날 **일간 보고서**를 고친다.
+CLI 경로는 report id에 종류를 실어 보낸다(`{발행일}.weekly`) — 파일은 시장별로만
+저장되므로 `market_scope`도 함께 넘겨야 한다. 시장을 빼면 저장된 적 없는 이름을 열어
+항상 실패한다.
+
+합본 범위(`multi`/`both`/`all`)로 물으면 옛 일간 합본 파일(`{날짜}.json`)을 찾고, 없으면
+그 날짜의 시장 파일이 **하나뿐일 때만** 그것을 쓴다. 여러 시장이 함께 있으면 어느 쪽에
+얹을지 정할 수 없어 404다 — 리더는 생성 직후 시장 하나로 열리므로 이 상태에 닿지 않는다.
 
 `includePersonal`이 false(기본)면 응답에서 `personalOverlay`를 제거한다 — 기본 보고서 응답이 개인 해석에 오염되지 않도록.
 

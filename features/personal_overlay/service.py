@@ -227,7 +227,22 @@ def _briefing_overlay_path(date: str, market_scope: str = "both", kind: str = "d
         scoped = BRIEFINGS_DIR / briefing_file_name(date, scope, kind)
         if scoped.exists():
             return scoped
-    return BRIEFINGS_DIR / briefing_file_name(date, None, kind)
+        return BRIEFINGS_DIR / briefing_file_name(date, None, kind)
+    aggregate = BRIEFINGS_DIR / briefing_file_name(date, None, kind)
+    if aggregate.exists():
+        return aggregate
+    # 합본 파일은 **옛 일간 보고서에만** 있다. 주간은 시장별로만 저장되므로 이 이름은
+    # 만들어지는 경로가 아예 없고, 새 일간도 시장별로 저장된다. 그 날짜에 시장 파일이
+    # 하나뿐이면 가리키는 대상이 하나로 정해지므로 그것을 쓴다 — 여러 시장이 함께 있으면
+    # 어느 쪽에 얹을지 정할 수 없어 예전처럼 없는 파일을 돌려주고 호출부가 404로 끝낸다.
+    scoped_files = [
+        path for path in (
+            BRIEFINGS_DIR / briefing_file_name(date, single, kind) for single in SINGLE_MARKET_SCOPES
+        ) if path.exists()
+    ]
+    if len(scoped_files) == 1:
+        return scoped_files[0]
+    return aggregate
 
 
 def attach_overlay_to_briefing(date: str, *, market_scope="both", kind="daily", llm_override=None, web_search_override=None) -> dict:

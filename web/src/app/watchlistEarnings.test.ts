@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysUntil, ddayLabel, isEstimated, nextEarningsByTicker } from "./watchlistEarnings";
+import { daysUntil, ddayLabel, fetchNextEarnings, isEstimated, nextEarningsByTicker } from "./watchlistEarnings";
 
 const NOW = new Date("2026-08-20T09:00:00+09:00");
 
@@ -85,5 +85,33 @@ describe("nextEarningsByTicker", () => {
 
     expect(table["005930"]).toBeDefined();
     expect(table["005930.KS"]).toBeDefined();
+  });
+});
+
+describe("fetchNextEarnings", () => {
+  it("경계를 날짜만으로 보낸다 — 시각을 실으면 당일 실적이 사전순 비교에서 빠진다", async () => {
+    // 서버는 `starts_at>=?`를 문자열 사전순으로 건다. 저장값은 거래소 오프셋이 붙은
+    // `2026-08-21T00:00:00-04:00`이라, UTC 시각 문자열을 보내면 `T0` 다음 자리에서
+    // `'0'` < `'3'`으로 저장값이 앞서 정렬되어 **오늘 실적이 통째로 걸러졌다.**
+    const calls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify({ events: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      await fetchNextEarnings(["AMD"], new Date("2026-08-21T03:15:00.000Z"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const query = new URL(calls[0], "http://localhost").searchParams;
+    const start = String(query.get("start"));
+    expect(start).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect("2026-08-21T00:00:00-04:00" >= start).toBe(true);
+    expect(String(query.get("end"))).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

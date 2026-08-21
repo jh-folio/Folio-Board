@@ -270,28 +270,35 @@ def _scope_result(
         calendar_block = render_calendar_preview(
             calendar_preview(MARKET_MEMORY_DB_PATH, scope, window), window,
         )
-    llm_result, llm_status = generate_llm_briefing(
-        date,
-        source_date,
-        scoped_docs,
-        groups,
-        market_drivers=drivers,
-        web_search_override=web_search_override,
-        llm_override=llm_override,
-        market_snapshot=market_snapshot,
-        korea_market_data=korea_market_data,
-        memories=memories,
-        market_windows=market_windows,
-        prev_checklist=prev_checklist,
-        quality_preflight=quality_preflight,
-        market_scope=scope,
-        briefing_type=briefing_type,
-        issue_coverage=issues,
-        session_modes=session_modes,
-        kind=kind,
-        weekly_window=window.to_dict() if window is not None else None,
-        calendar_block=calendar_block,
-    )
+    if kind == "weekly" and not scoped_docs:
+        # **자료가 0건이면 LLM을 부르지 않는다.** 주간은 창을 넓히지 않으므로 한 주 내내
+        # 수집이 없으면 그대로 0건이 된다. 그 상태로 프롬프트를 보내면 근거 없이 한 주의
+        # 흐름을 쓰게 되고 참고자료가 빈 보고서가 남는다 — CLI 경로는 `WeeklyWindowEmptyError`로
+        # 호출 전에 막고, 규칙 경로는 "자료 0건"을 본문에 적는다. 여기만 그 계약 밖에 있었다.
+        llm_result, llm_status = None, "weekly_window_empty"
+    else:
+        llm_result, llm_status = generate_llm_briefing(
+            date,
+            source_date,
+            scoped_docs,
+            groups,
+            market_drivers=drivers,
+            web_search_override=web_search_override,
+            llm_override=llm_override,
+            market_snapshot=market_snapshot,
+            korea_market_data=korea_market_data,
+            memories=memories,
+            market_windows=market_windows,
+            prev_checklist=prev_checklist,
+            quality_preflight=quality_preflight,
+            market_scope=scope,
+            briefing_type=briefing_type,
+            issue_coverage=issues,
+            session_modes=session_modes,
+            kind=kind,
+            weekly_window=window.to_dict() if window is not None else None,
+            calendar_block=calendar_block,
+        )
     if llm_result:
         sources = source_refs(llm_result.get("usedDocs", []), limit=ref_limit)
         markdown = append_briefing_sources(llm_result["markdown"], sources, limit=ref_limit)
@@ -508,9 +515,12 @@ def build_briefing(
     # 주간은 세션 창이 아니라 달력 7일이다. 시장마다 창을 다르게 잡을 이유가 없고,
     # 비어도 넓히지 않는다 — "지난주"라는 말이 거짓이 되면 안 된다.
     scope_docs = {}
+    # 주간 창은 시장과 무관하므로 한 번만 고른다. 시장마다 다시 고르면 같은 결과를
+    # 얻으려고 전체 문서를 시장 수만큼 훑는다.
+    weekly_pool = weekly_documents(all_documents, week) if week is not None else None
     for scope in requested_scopes:
-        if week is not None:
-            scope_docs[scope] = weekly_documents(all_documents, week)
+        if weekly_pool is not None:
+            scope_docs[scope] = weekly_pool
             continue
         selected = scope_session_documents(
             all_documents, scope, market_windows, today=today,
@@ -606,7 +616,9 @@ def build_briefing(
             gaps.append(f"{MARKET_LABELS.get(scope, scope)}: 체크포인트 섹션을 찾지 못했습니다.")
     if not checkpoints:
         gaps.append("브리핑에서 구조화 가능한 체크포인트 섹션을 찾지 못했습니다.")
-    if not docs:
+    # 주간은 자기 창의 자료 수를 본다. 일간 세션 풀을 보면 그 주에 한 건도 없어도
+    # 세션 풀이 차 있다는 이유로 "자료가 없습니다"가 붙지 않는다.
+    if not (weekly_pool if weekly_pool is not None else docs):
         gaps.append("브리핑 입력 뉴스 자료가 없습니다.")
     if not (market_snapshot or {}).get("ok"):
         gaps.append("미국/글로벌 시장 스냅샷을 불러오지 못했습니다.")

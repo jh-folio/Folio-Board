@@ -580,8 +580,7 @@ def api_create_briefing(body: dict | None = Body(default=None)):
     from features.daily_briefing.target import resolve_targets, resolve_weekly_targets
 
     requested_date = str(body.get("date") or "").strip()
-    briefing_kind = str(body.get("kind") or "daily").strip().lower()
-    briefing_kind = briefing_kind if briefing_kind in {"daily", "weekly"} else "daily"
+    briefing_kind = normalize_briefing_kind(body.get("kind"))
     if briefing_kind == "weekly":
         # 주간은 세션 판정을 태우지 않는다. 주말 발행이 정상인 산출물을 "그날은 거래일이
         # 아니다"로 막으면 주간 브리핑을 손으로 만들 길이 아예 없다.

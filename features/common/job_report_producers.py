@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import assert_never
 
-from features.common.canonical_identity import ReportKind, resolve_exact_report_path
+from features.common.canonical_identity import ReportKind, resolve_exact_report_path, split_briefing_id
 from features.common.canonical_report_types import WriteKind
 from features.common.job_json_producer_types import OverlayJobRequest, QualityRepairJobRequest, ReportJobRequest
 from features.common.job_json_schema import CanonicalArtifactSpec, JobArtifactValidationError
@@ -79,11 +79,23 @@ def _artifact_type(report_kind: ReportKind) -> str:
             assert_never(unreachable)
 
 
+def _spec_artifact_id(report_id: str, market_scope: str | None) -> str:
+    """저장 파일과 **같은 순서**의 artifact id(`{날짜}.{시장}.{종류}`).
+
+    `report_id.split(".")[0]`으로 날짜만 떼면 주간 접미사가 사라져, 같은 날 일간과
+    주간이 한 id를 공유한다. 시장이 없는 산출물(기업분석·테마)은 id를 그대로 쓴다.
+    """
+    if market_scope is None:
+        return report_id
+    date_text, _, kind_suffix = split_briefing_id(report_id)
+    return ".".join(part for part in (date_text, market_scope, kind_suffix if kind_suffix != "daily" else "") if part)
+
+
 def overlay_spec(data_root: Path, request: OverlayJobRequest) -> CanonicalArtifactSpec:
     path = resolve_exact_report_path(data_root, request.report_kind, request.report_id, request.market_scope)
     return CanonicalArtifactSpec(
         artifact_type=_artifact_type(request.report_kind),
-        artifact_id=request.report_id if request.market_scope is None else f"{request.report_id.split('.')[0]}.{request.market_scope}",
+        artifact_id=_spec_artifact_id(request.report_id, request.market_scope),
         report_kind=request.report_kind,
         exact_path=path,
         write_kind=WriteKind.OVERLAY,
@@ -106,7 +118,7 @@ def quality_repair_spec(data_root: Path, request: QualityRepairJobRequest) -> Ca
     candidate["quality"] = evaluate_artifact(artifact_kind, candidate)
     return CanonicalArtifactSpec(
         artifact_type=_artifact_type(request.report_kind),
-        artifact_id=request.report_id if request.market_scope is None else f"{request.report_id.split('.')[0]}.{request.market_scope}",
+        artifact_id=_spec_artifact_id(request.report_id, request.market_scope),
         report_kind=request.report_kind,
         exact_path=path,
         write_kind=WriteKind.CANONICAL,

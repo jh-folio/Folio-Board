@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 
+# 종류 판정과 허용 집합은 브리핑 계약이 소유한다. `limits`는 의존이 없는 잎 모듈이라
+# 여기서 불러도 순환이 생기지 않는다.
+from features.daily_briefing.limits import BRIEFING_KINDS, is_weekly, normalize_briefing_kind
+
 
 # 시장별 제목과 섹션 라벨. 네 시장이 같은 골격을 쓰므로 섹션은 라벨 하나로 만든다.
 MARKET_LABELS = {"us": "미국장", "kr": "한국장", "europe": "유럽장", "jp": "일본장"}
@@ -56,7 +60,7 @@ def weekly_required_sections(market: str) -> tuple[str, ...]:
 
 def section_zero_label(market: str, kind: str = "daily") -> str:
     label = MARKET_LABELS[market]
-    if str(kind or "daily").strip().lower() == "weekly":
+    if is_weekly(kind):
         return f"## 0. 지난주 {label} 한 줄 요약"
     return f"## 0. 오늘의 {label} 성격"
 
@@ -105,8 +109,8 @@ def briefing_output_contract(
         else:
             resolved = AGGREGATE_MARKETS["both"]
     markets = resolved
-    normalized_kind = str(kind or "daily").strip().lower()
-    if normalized_kind not in {"daily", "weekly"}:
+    normalized_kind = normalize_briefing_kind(kind)
+    if normalized_kind not in BRIEFING_KINDS:
         normalized_kind = "daily"
     scope = scope if scope in {*SINGLE_MARKETS, *AGGREGATE_MARKETS} else "multi"
     build_sections = weekly_required_sections if normalized_kind == "weekly" else required_sections
@@ -180,7 +184,7 @@ def _title_line_match(value: str, title: str, expected_title: str = "", kind: st
             value,
             re.MULTILINE,
         )
-    if str(kind or "daily").strip().lower() == "weekly":
+    if is_weekly(kind):
         return re.search(
             rf"^#\s+{re.escape(title)}\s+주간\s+[—-]\s+\d{{2}}\.\d{{2}}~\d{{2}}\.\d{{2}}\s*$",
             value,
