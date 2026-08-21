@@ -335,7 +335,7 @@ export function WatchlistRoute() {
                     showEvent={false}
                   />
                 </div>
-                <EarningsPanel ticker={detailTicker} companyName={detailCompanyName} />
+                <EarningsPanel ticker={detailTicker} />
               </>
             ) : (
               // 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다.

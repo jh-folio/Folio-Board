@@ -47,6 +47,9 @@ type EarningsPayload = {
  *  직전 분기는 계절성에 흔들리고, 예측치는 매출 쪽이 아예 없다. */
 type Basis = "estimate" | "priorQuarter" | "priorYear";
 
+/** 기업분석 화면으로 종목 하나를 넘기는 자리. 쓰는 쪽이 읽고 즉시 지운다. */
+export const ANALYSIS_HANDOFF_KEY = "folio:analysis-query";
+
 const BASIS_LABELS: Record<Basis, string> = {
   estimate: "예측치",
   priorQuarter: "지난 분기",
@@ -142,7 +145,7 @@ export function epsBaseText(
   return `${base} · 손익계산서 기본 EPS ${formatEps(values.epsTop, currency)} 대비`;
 }
 
-export function EarningsPanel({ ticker, companyName }: { ticker: string; companyName?: string }) {
+export function EarningsPanel({ ticker }: { ticker: string }) {
   const [payload, setPayload] = useState<EarningsPayload | null>(null);
   const [basis, setBasis] = useState<Basis>("estimate");
   const [error, setError] = useState("");
@@ -197,9 +200,15 @@ export function EarningsPanel({ ticker, companyName }: { ticker: string; company
     <div className="watchlist-earnings-panel">
       <div className="watchlist-earnings-panel__head">
         <h3>실적</h3>
-        <a className="btn btn--text" href={`#analysis?q=${encodeURIComponent(companyName || ticker)}`}>
+        {/* 기업분석 화면은 hash에 질의를 담지 못한다(`parseHashRoute`가 `/` 앞만 읽는다).
+            라우트 파싱을 넓히는 대신 종목만 넘겨 두고 그쪽이 집어 간다 — 안 집어 가도
+            화면은 그냥 빈 입력칸으로 열린다. */}
+        <button type="button" className="btn btn--text" onClick={() => {
+          try { window.sessionStorage.setItem(ANALYSIS_HANDOFF_KEY, ticker); } catch { /* 저장이 막혀도 이동은 한다 */ }
+          window.location.hash = "#/analysis";
+        }}>
           기업분석 열기
-        </a>
+        </button>
       </div>
 
       {next.date && (
