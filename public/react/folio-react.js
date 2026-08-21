@@ -15024,7 +15024,7 @@ function Zo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 	let [s, c] = (0, l.useState)(null), [u, d] = (0, l.useState)(null), [f, p] = (0, l.useState)(""), m = (0, l.useRef)(null);
 	(0, l.useEffect)(() => {
 		let t = !0;
-		return p(""), c(null), B(`/api/market/chart?symbol=${encodeURIComponent(e)}&range=${n}&interval=${Ko(n)}`).then((e) => {
+		return p(""), c((t) => t && t.symbol === e ? t : null), B(`/api/market/chart?symbol=${encodeURIComponent(e)}&range=${n}&interval=${Ko(n)}`).then((e) => {
 			t && c(e);
 		}).catch((e) => {
 			t && p(e instanceof Error ? e.message : "차트를 불러오지 못했습니다.");

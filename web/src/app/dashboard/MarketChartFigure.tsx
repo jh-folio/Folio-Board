@@ -103,10 +103,11 @@ export function MarketChartFigure({
   useEffect(() => {
     let alive = true;
     setError("");
-    // 기간을 바꾸면 캐시 키가 달라 첫 전환은 네트워크를 탄다. 이전 계열을 남겨 두면
-    // 새 기간의 축에 옛 데이터가 잠깐 그려지므로 비우고, 무대는 고정 높이라
-    // 레이아웃이 튀지 않는다.
-    setPayload(null);
+    // **종목이 바뀔 때만 비운다.** 그리기 효과는 range를 보지 않으므로 기간만 바꾼
+    // 동안에는 옛 계열이 그대로 남아 있다가 새 자료로 교체된다 — 비우면 캐시가 없는
+    // 첫 전환에서 200ms쯤 빈 판이 번쩍인다. 반대로 다른 종목의 계열이 새 제목 아래
+    // 남아 있는 것은 잘못된 정보다. 무대는 고정 높이라 어느 쪽도 레이아웃이 튀지 않는다.
+    setPayload((prev) => (prev && prev.symbol === symbol ? prev : null));
     getJson<ChartPayload>(`/api/market/chart?symbol=${encodeURIComponent(symbol)}&range=${range}&interval=${intervalFor(range)}`)
       .then((row) => { if (alive) setPayload(row); })
       .catch((err) => { if (alive) setError(err instanceof Error ? err.message : "차트를 불러오지 못했습니다."); });
