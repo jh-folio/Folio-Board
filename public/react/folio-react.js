@@ -15027,19 +15027,19 @@ function Zo(e) {
 	return `${n} ${r} 예정${i && i !== "종일" ? ` · ${i}` : ""}`;
 }
 function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, showEvent: o = !0 }) {
-	let [s, c] = (0, l.useState)(null), [u, d] = (0, l.useState)(null), [f, p] = (0, l.useState)(""), m = (0, l.useRef)(null);
+	let [s, c] = (0, l.useState)(null), [u, d] = (0, l.useState)(!1), [f, p] = (0, l.useState)(null), [m, h] = (0, l.useState)(""), g = (0, l.useRef)(null);
 	(0, l.useEffect)(() => {
 		let t = !0;
-		return p(""), c((t) => t && t.symbol === e ? t : null), B(`/api/market/chart?symbol=${encodeURIComponent(e)}&range=${n}&interval=${qo(n)}`).then((e) => {
+		return h(""), c((t) => t && t.symbol === e ? t : null), B(`/api/market/chart?symbol=${encodeURIComponent(e)}&range=${n}&interval=${qo(n)}`).then((e) => {
 			t && c(e);
 		}).catch((e) => {
-			t && p(e instanceof Error ? e.message : "차트를 불러오지 못했습니다.");
+			t && h(e instanceof Error ? e.message : "차트를 불러오지 못했습니다.");
 		}), () => {
 			t = !1;
 		};
 	}, [e, n]), (0, l.useEffect)(() => {
 		let t = !0;
-		if (d(null), !o || !e || Jo(e)) return;
+		if (p(null), !o || !e || Jo(e)) return;
 		let n = /* @__PURE__ */ new Date(), r = new Date(n.getTime() + 7776e6);
 		return B(`/api/market-calendar?start=${encodeURIComponent(n.toISOString())}&end=${encodeURIComponent(r.toISOString())}&ticker=${encodeURIComponent(e)}&limit=20`).then((e) => {
 			if (!t) return;
@@ -15048,23 +15048,23 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 				"dividend",
 				"filing"
 			].includes(e.kind)).sort((e, t) => e.startsAt.localeCompare(t.startsAt));
-			d(n[0] || null);
+			p(n[0] || null);
 		}).catch(() => void 0), () => {
 			t = !1;
 		};
 	}, [e, o]);
-	let [h, g] = (0, l.useState)(0);
+	let [_, v] = (0, l.useState)(0);
 	(0, l.useEffect)(() => {
-		let e = new MutationObserver(() => g((e) => e + 1));
+		let e = new MutationObserver(() => v((e) => e + 1));
 		return e.observe(document.documentElement, {
 			attributes: !0,
 			attributeFilter: ["data-theme"]
 		}), () => e.disconnect();
 	}, []), (0, l.useEffect)(() => {
-		let e = m.current, t = window.LightweightCharts;
+		let e = g.current, t = window.LightweightCharts;
 		if (!e || !t || !s?.series?.length) return;
 		e.innerHTML = "";
-		let n = getComputedStyle(document.documentElement), i = (e, t) => n.getPropertyValue(e).trim() || t, a = i("--folio-green", "#3b6d11"), o = i("--folio-burgundy", "#8a1024"), c = s.series, l = s.interval === "5m", u = !(c.length > 1) || c[c.length - 1].close >= c[0].close ? a : o, d = t.createChart(e, {
+		let n = getComputedStyle(document.documentElement), i = (e, t) => n.getPropertyValue(e).trim() || t, a = i("--folio-green", "#3b6d11"), o = i("--folio-burgundy", "#8a1024"), c = s.series, l = s.interval === "5m", d = !(c.length > 1) || c[c.length - 1].close >= c[0].close ? a : o, f = t.createChart(e, {
 			autoSize: !0,
 			height: 360,
 			width: e.clientWidth || 0,
@@ -15114,21 +15114,21 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 				mouseWheel: !1,
 				pinch: !0
 			}
-		}), f = c.filter((e) => e.open != null && e.high != null && e.low != null), p = r === "candle" && f.length > 0, h = p ? d.addSeries(t.CandlestickSeries, {
+		}), p = c.filter((e) => e.open != null && e.high != null && e.low != null), m = r === "candle" && p.length > 0, h = m ? f.addSeries(t.CandlestickSeries, {
 			upColor: a,
 			downColor: o,
 			wickUpColor: a,
 			wickDownColor: o,
 			borderVisible: !1
-		}) : d.addSeries(t.AreaSeries, {
-			lineColor: u,
-			topColor: `${u}38`,
-			bottomColor: `${u}05`,
+		}) : f.addSeries(t.AreaSeries, {
+			lineColor: d,
+			topColor: `${d}38`,
+			bottomColor: `${d}05`,
 			lineWidth: 3,
 			priceLineVisible: !1,
 			lastValueVisible: !0
 		});
-		h.setData(p ? f.map((e) => ({
+		if (h.setData(m ? p.map((e) => ({
 			time: Xo(e.time, l),
 			open: e.open,
 			high: e.high,
@@ -15137,34 +15137,56 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 		})) : c.map((e) => ({
 			time: Xo(e.time, l),
 			value: e.close
-		})));
-		let g = new Map(c.map((e, t) => [String(Xo(e.time, l)), {
+		}))), u && !l) {
+			let e = [{
+				key: "ma20",
+				color: i("--folio-gold", "#a8842c")
+			}, {
+				key: "ma60",
+				color: i("--folio-chart-1", "#33506b")
+			}];
+			for (let n of e) {
+				let e = c.filter((e) => e[n.key] != null).map((e) => ({
+					time: Xo(e.time, l),
+					value: e[n.key]
+				}));
+				e.length < 2 || f.addSeries(t.LineSeries, {
+					color: n.color,
+					lineWidth: 1.5,
+					priceLineVisible: !1,
+					lastValueVisible: !1,
+					crosshairMarkerVisible: !1
+				}).setData(e);
+			}
+		}
+		let _ = new Map(c.map((e, t) => [String(Xo(e.time, l)), {
 			close: e.close,
 			previous: t > 0 ? c[t - 1].close : null
-		}])), _ = document.createElement("div");
-		return _.className = "market-chart-tooltip", _.hidden = !0, e.appendChild(_), d.subscribeCrosshairMove((t) => {
+		}])), v = document.createElement("div");
+		return v.className = "market-chart-tooltip", v.hidden = !0, e.appendChild(v), f.subscribeCrosshairMove((t) => {
 			let n = t?.point, r = t?.seriesData?.get(h), i = e.getBoundingClientRect();
 			if (!n || !r || n.x < 0 || n.y < 0 || n.x > i.width || n.y > i.height) {
-				_.hidden = !0;
+				v.hidden = !0;
 				return;
 			}
-			let a = String(r.time), o = g.get(a), s = o?.close ?? r.close ?? r.value ?? null, c = o?.previous ?? null, u = s != null && c != null ? s - c : null, d = u != null && c ? u / c * 100 : null, f = u == null || u >= 0 ? "up" : "down", p = s == null ? "가격 없음" : s.toLocaleString(void 0, { maximumFractionDigits: 2 }), m = u == null || d == null ? l ? "직전 봉 대비 없음" : "전일 대비 없음" : `${u >= 0 ? "+" : ""}${u.toLocaleString(void 0, { maximumFractionDigits: 2 })} (${d >= 0 ? "+" : ""}${d.toFixed(2)}%)`;
-			_.innerHTML = "";
-			let v = document.createElement("div");
-			v.className = "market-chart-tooltip__date", v.textContent = l ? (/* @__PURE__ */ new Date(Number(a) * 1e3)).toISOString().slice(11, 16) : a;
+			let a = String(r.time), o = _.get(a), s = o?.close ?? r.close ?? r.value ?? null, c = o?.previous ?? null, u = s != null && c != null ? s - c : null, d = u != null && c ? u / c * 100 : null, f = u == null || u >= 0 ? "up" : "down", p = s == null ? "가격 없음" : s.toLocaleString(void 0, { maximumFractionDigits: 2 }), m = u == null || d == null ? l ? "직전 봉 대비 없음" : "전일 대비 없음" : `${u >= 0 ? "+" : ""}${u.toLocaleString(void 0, { maximumFractionDigits: 2 })} (${d >= 0 ? "+" : ""}${d.toFixed(2)}%)`;
+			v.innerHTML = "";
+			let g = document.createElement("div");
+			g.className = "market-chart-tooltip__date", g.textContent = l ? (/* @__PURE__ */ new Date(Number(a) * 1e3)).toISOString().slice(11, 16) : a;
 			let y = document.createElement("div");
 			y.className = "market-chart-tooltip__price", y.textContent = p;
 			let b = document.createElement("div");
-			b.className = "market-chart-tooltip__change", b.dataset.direction = f, b.textContent = m, _.append(v, y, b);
-			let x = _.offsetWidth || 150, S = _.offsetHeight || 76, C = Math.min(Math.max(8, n.x + 14), Math.max(8, i.width - x - 8)), w = Math.min(Math.max(8, n.y - S - 12), Math.max(8, i.height - S - 8));
-			_.style.transform = `translate(${C}px, ${w}px)`, _.hidden = !1;
-		}), d.timeScale().fitContent(), () => d.remove();
+			b.className = "market-chart-tooltip__change", b.dataset.direction = f, b.textContent = m, v.append(g, y, b);
+			let x = v.offsetWidth || 150, S = v.offsetHeight || 76, C = Math.min(Math.max(8, n.x + 14), Math.max(8, i.width - x - 8)), w = Math.min(Math.max(8, n.y - S - 12), Math.max(8, i.height - S - 8));
+			v.style.transform = `translate(${C}px, ${w}px)`, v.hidden = !1;
+		}), f.timeScale().fitContent(), () => f.remove();
 	}, [
 		s,
-		h,
-		r
+		_,
+		r,
+		u
 	]);
-	let _ = s?.series || [], v = _.length ? _[_.length - 1].close : null, y = s?.interval === "5m", b = _.length > 1 ? y ? _[0].close : _[_.length - 2].close : null, x = v != null && b ? (v - b) / b * 100 : null, S = Wo[s?.freshness || ""] || (s ? s.freshness : "불러오는 중");
+	let y = s?.series || [], b = y.length ? y[y.length - 1].close : null, x = s?.interval === "5m", S = y.length > 1 ? x ? y[0].close : y[y.length - 2].close : null, C = b != null && S ? (b - S) / S * 100 : null, w = Wo[s?.freshness || ""] || (s ? s.freshness : "불러오는 중");
 	return /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [
 		/* @__PURE__ */ (0, K.jsxs)("div", {
 			className: "chart-headline",
@@ -15177,67 +15199,86 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 					}),
 					/* @__PURE__ */ (0, K.jsxs)("div", {
 						className: "chart-quote__value",
-						children: [v == null ? null : /* @__PURE__ */ (0, K.jsx)("b", { children: v.toLocaleString(void 0, { maximumFractionDigits: 2 }) }), x == null ? null : /* @__PURE__ */ (0, K.jsxs)("span", {
-							className: x > 0 ? "up" : x < 0 ? "down" : "flat",
+						children: [b == null ? null : /* @__PURE__ */ (0, K.jsx)("b", { children: b.toLocaleString(void 0, { maximumFractionDigits: 2 }) }), C == null ? null : /* @__PURE__ */ (0, K.jsxs)("span", {
+							className: C > 0 ? "up" : C < 0 ? "down" : "flat",
 							children: [
-								x > 0 ? "▲" : x < 0 ? "▼" : "—",
+								C > 0 ? "▲" : C < 0 ? "▼" : "—",
 								" ",
-								x > 0 ? "+" : "",
-								x.toFixed(1),
+								C > 0 ? "+" : "",
+								C.toFixed(1),
 								"%"
 							]
 						})]
 					}),
-					/* @__PURE__ */ (0, K.jsxs)("small", { children: [S, s?.asOf ? ` · ${s.asOf} 기준` : ""] })
+					/* @__PURE__ */ (0, K.jsxs)("small", { children: [w, s?.asOf ? ` · ${s.asOf} 기준` : ""] })
 				]
 			}), /* @__PURE__ */ (0, K.jsxs)("div", {
 				className: "cockpit-chart-controls",
-				children: [/* @__PURE__ */ (0, K.jsxs)("div", {
-					className: "segment",
-					role: "group",
-					"aria-label": "차트 유형",
-					children: [/* @__PURE__ */ (0, K.jsx)("button", {
+				children: [
+					n !== "1d" && /* @__PURE__ */ (0, K.jsxs)("button", {
 						type: "button",
-						"aria-pressed": r === "line",
-						onClick: () => a("line"),
-						children: "라인"
-					}), /* @__PURE__ */ (0, K.jsx)("button", {
-						type: "button",
-						"aria-pressed": r === "candle",
-						onClick: () => a("candle"),
-						children: "캔들"
-					})]
-				}), /* @__PURE__ */ (0, K.jsx)("div", {
-					className: "segment",
-					role: "group",
-					"aria-label": "차트 기간",
-					children: Go.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
-						type: "button",
-						"aria-pressed": n === e,
-						onClick: () => i(e),
-						children: Ko[e] || e
-					}, e))
-				})]
+						className: "btn chart-ma-toggle",
+						"aria-pressed": u,
+						onClick: () => d((e) => !e),
+						children: ["이평선", u && /* @__PURE__ */ (0, K.jsxs)("span", {
+							className: "chart-ma-toggle__legend",
+							"aria-hidden": "true",
+							children: [
+								/* @__PURE__ */ (0, K.jsx)("i", { "data-ma": "20" }),
+								" 20 ",
+								/* @__PURE__ */ (0, K.jsx)("i", { "data-ma": "60" }),
+								" 60"
+							]
+						})]
+					}),
+					/* @__PURE__ */ (0, K.jsxs)("div", {
+						className: "segment",
+						role: "group",
+						"aria-label": "차트 유형",
+						children: [/* @__PURE__ */ (0, K.jsx)("button", {
+							type: "button",
+							"aria-pressed": r === "line",
+							onClick: () => a("line"),
+							children: "라인"
+						}), /* @__PURE__ */ (0, K.jsx)("button", {
+							type: "button",
+							"aria-pressed": r === "candle",
+							onClick: () => a("candle"),
+							children: "캔들"
+						})]
+					}),
+					/* @__PURE__ */ (0, K.jsx)("div", {
+						className: "segment",
+						role: "group",
+						"aria-label": "차트 기간",
+						children: Go.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
+							type: "button",
+							"aria-pressed": n === e,
+							onClick: () => i(e),
+							children: Ko[e] || e
+						}, e))
+					})
+				]
 			})]
 		}),
-		f && /* @__PURE__ */ (0, K.jsx)("p", {
+		m && /* @__PURE__ */ (0, K.jsx)("p", {
 			className: "react-dashboard-error",
-			children: f
+			children: m
 		}),
 		/* @__PURE__ */ (0, K.jsx)("div", {
 			className: "cockpit-chart-stage",
-			ref: m,
+			ref: g,
 			children: !window.LightweightCharts && /* @__PURE__ */ (0, K.jsx)("p", { children: "차트 라이브러리를 사용할 수 없습니다." })
 		}),
-		o && u && /* @__PURE__ */ (0, K.jsxs)("p", {
+		o && f && /* @__PURE__ */ (0, K.jsxs)("p", {
 			className: "chart-next",
 			children: [
 				/* @__PURE__ */ (0, K.jsx)("span", {
-					className: `chip certainty-badge--${u.status}`,
-					children: wo[u.status] || u.status
+					className: `chip certainty-badge--${f.status}`,
+					children: wo[f.status] || f.status
 				}),
 				"다음 일정 — ",
-				/* @__PURE__ */ (0, K.jsx)("b", { children: Zo(u) }),
+				/* @__PURE__ */ (0, K.jsx)("b", { children: Zo(f) }),
 				/* @__PURE__ */ (0, K.jsx)("small", { children: "시장 캘린더 연동" })
 			]
 		}),

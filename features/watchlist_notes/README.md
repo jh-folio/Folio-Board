@@ -62,6 +62,9 @@
 - 차트는 대시보드와 같은 `MarketChartFigure`(`/api/market/chart` + Lightweight Charts)이며
   기간·유형 상태는 이 화면 안에서만 산다 — 종목 하나를 보려고 바꾼 값이 대시보드 기본값이
   되면 안 된다. 다음 일정 줄은 끄고(`showEvent={false}`) 바로 아래 실적 패널이 대신 말한다.
+  **이동평균(20·60일선) 토글이 있다** — 계산은 서버가 워밍업 구간까지 받아서 하므로 짧은
+  기간에서도 선이 구간 안에서 끊기지 않는다. 분봉(1D)에는 없고 토글도 숨긴다. 상태는
+  저장하지 않는다 — 잠깐 겹쳐 보는 보조선이지 설정이 아니다.
 - 실적은 `GET /api/market/earnings?ticker=`(`features/common/market_data/earnings_service.py`)다.
   **상세를 열 때만 부른다** — 티커당 provider 호출이라 카드 그리드에 걸면 종목 수만큼
   네트워크가 된다. 카드 배지는 계속 시장 캘린더에서 한 번에 받는다.

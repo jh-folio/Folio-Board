@@ -31,12 +31,34 @@ def normalize_chart_request(symbol: str, range_key: str, interval: str) -> tuple
     return symbol, range_key, interval
 
 
+# 이동평균 창(거래일). 계산은 서버가 한다 — 화면이 받은 구간만으로 계산하면 1M(21봉)
+# 차트에서 20일선이 끝 한두 점만 남는다. 워밍업만큼 과거를 더 받아 계산하고 구간은
+# 요청대로 돌려준다.
+MA_WINDOWS = (20, 60)
+# 거래일 60개 ≈ 달력 88일. 휴장 몰림을 감안해 넉넉히 잡는다 — 어차피 잘라서 돌려준다.
+_MA_WARMUP_CALENDAR_DAYS = 130
+
+
 def _download(symbol: str, range_key: str, interval: str) -> dict:
     import yfinance as yf
 
     end = dt.datetime.now(dt.timezone.utc)
     start = end - dt.timedelta(days=RANGES[range_key])
-    frame = yf.Ticker(symbol).history(start=start.date().isoformat(), end=(end + dt.timedelta(days=1)).date().isoformat(), interval=interval, auto_adjust=False, prepost=False)
+    fetch_start = start - dt.timedelta(days=_MA_WARMUP_CALENDAR_DAYS) if interval == "1d" else start
+    frame = yf.Ticker(symbol).history(start=fetch_start.date().isoformat(), end=(end + dt.timedelta(days=1)).date().isoformat(), interval=interval, auto_adjust=False, prepost=False)
+    ma_by_time: dict[str, dict[str, float]] = {}
+    if interval == "1d" and frame is not None and not frame.empty:
+        closes = frame["Close"]
+        for window in MA_WINDOWS:
+            series = closes.rolling(window).mean()
+            for index, value in series.items():
+                number = float(value)
+                if number != number:
+                    continue
+                ma_by_time.setdefault(index.date().isoformat(), {})[f"ma{window}"] = number
+        # 워밍업 구간은 계산에만 쓰고 응답에서는 자른다 — 구간 계약은 그대로다.
+        cutoff = start.date().isoformat()
+        frame = frame[[stamp.date().isoformat() >= cutoff for stamp in frame.index]]
     if frame is not None and not frame.empty and range_key == "1d":
         # `1D`는 하루치 장중 흐름이다 — 시초가에서 종가까지 한 세션만 그린다.
         # 이틀을 요청하는 건 휴장 다음 날이나 개장 직후에 당일 봉이 없어 빈
@@ -60,7 +82,11 @@ def _download(symbol: str, range_key: str, interval: str) -> dict:
                     return None if value != value else value
                 except (TypeError, ValueError):
                     return None
-            rows.append({"time": time_value, "open": number("Open"), "high": number("High"), "low": number("Low"), "close": close, "volume": number("Volume")})
+            rows.append({
+                "time": time_value, "open": number("Open"), "high": number("High"),
+                "low": number("Low"), "close": close, "volume": number("Volume"),
+                **ma_by_time.get(time_value, {}),
+            })
     return {"symbol": symbol, "range": range_key, "interval": interval, "series": rows, "asOf": rows[-1]["time"] if rows else "", "provider": "yfinance"}
 
 
@@ -69,7 +95,7 @@ def get_chart(data_dir: Path, *, symbol: str, range_key: str = "3m", interval: s
     runtime = runtime or ProviderFetchRuntime(Path(data_dir) / "provider-cache" / "charts", max_workers=3)
     ttl = 60 if interval == "5m" else 900
     result = runtime.fetch(
-        "yfinance", "chart_series", {"symbol": symbol, "range": range_key, "interval": interval},
+        "yfinance", "chart_series", {"symbol": symbol, "range": range_key, "interval": interval, "schema": 2},
         lambda: _download(symbol, range_key, interval),
         policy=FetchPolicy(ttl_seconds=ttl, timeout_seconds=20, stale_while_revalidate_seconds=86400),
         background_refresh=True,

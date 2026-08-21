@@ -12,7 +12,7 @@ import { KIND_KO, STATUS_KO, timeLabelKST } from "./MarketCalendar";
  * 앱 토큰을 따르고 iframe이 없어진다 — freshness 라벨로 지연을 밝히는 기존 방식을
  * 그대로 쓴다(계획 §11 5-A-3의 트레이드오프).
  */
-type Point = { time: string; open?: number | null; high?: number | null; low?: number | null; close: number };
+type Point = { time: string; open?: number | null; high?: number | null; low?: number | null; close: number; ma20?: number | null; ma60?: number | null };
 type ChartPayload = { symbol: string; range: string; interval: string; series: Point[]; freshness?: string; asOf?: string; notice?: string; fallbackReason?: string };
 type CalendarEvent = { id: string; kind: string; title: string; startsAt: string; status: string; allDay?: boolean; tickers?: string[] };
 type SeriesApi = { setData: (rows: unknown[]) => void };
@@ -96,6 +96,8 @@ export function MarketChartFigure({
   showEvent?: boolean;
 }) {
   const [payload, setPayload] = useState<ChartPayload | null>(null);
+  // 이동평균 토글. 저장하지 않는다 — 잠깐 겹쳐 보는 보조선이지 설정이 아니다.
+  const [showMa, setShowMa] = useState(false);
   const [nextEvent, setNextEvent] = useState<CalendarEvent | null>(null);
   const [error, setError] = useState("");
   const targetRef = useRef<HTMLDivElement | null>(null);
@@ -179,6 +181,25 @@ export function MarketChartFigure({
       ? ohlcRows.map((row) => ({ time: chartTime(row.time, intraday), open: row.open, high: row.high, low: row.low, close: row.close }))
       : rows.map((row) => ({ time: chartTime(row.time, intraday), value: row.close })));
 
+    // 이동평균 — 서버가 워밍업 구간까지 받아 계산해 두므로 구간 안에서 선이 끊기지
+    // 않는다. 분봉에는 없다(서버가 일봉에만 붙인다).
+    if (showMa && !intraday) {
+      const maDefs: Array<{ key: "ma20" | "ma60"; color: string }> = [
+        { key: "ma20", color: token("--folio-gold", "#a8842c") },
+        { key: "ma60", color: token("--folio-chart-1", "#33506b") },
+      ];
+      for (const def of maDefs) {
+        const maRows = rows
+          .filter((row) => row[def.key] != null)
+          .map((row) => ({ time: chartTime(row.time, intraday), value: row[def.key] as number }));
+        if (maRows.length < 2) continue;
+        chart.addSeries(library.LineSeries, {
+          color: def.color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        }).setData(maRows);
+      }
+    }
+
     // 조회 키도 라이브러리가 돌려주는 값과 같은 형태여야 한다. 원본 ISO 문자열로
     // 담아두면 분봉에서 crosshair가 무엇도 못 찾아 툴팁이 빈 채로 뜬다.
     const closeByTime = new Map(rows.map((row, index) => [String(chartTime(row.time, intraday)), { close: row.close, previous: index > 0 ? rows[index - 1].close : null }]));
@@ -229,7 +250,7 @@ export function MarketChartFigure({
     });
     chart.timeScale().fitContent();
     return () => chart.remove();
-  }, [payload, themeKey, style]);
+  }, [payload, themeKey, style, showMa]);
 
   const series = payload?.series || [];
   const lastClose = series.length ? series[series.length - 1].close : null;
@@ -259,6 +280,21 @@ export function MarketChartFigure({
           <small>{freshnessLabel}{payload?.asOf ? ` · ${payload.asOf} 기준` : ""}</small>
         </div>
         <div className="cockpit-chart-controls">
+          {range !== "1d" && (
+            <button
+              type="button"
+              className="btn chart-ma-toggle"
+              aria-pressed={showMa}
+              onClick={() => setShowMa((value) => !value)}
+            >
+              이평선
+              {showMa && (
+                <span className="chart-ma-toggle__legend" aria-hidden="true">
+                  <i data-ma="20" /> 20 <i data-ma="60" /> 60
+                </span>
+              )}
+            </button>
+          )}
           <div className="segment" role="group" aria-label="차트 유형">
             <button type="button" aria-pressed={style === "line"} onClick={() => onStyle("line")}>라인</button>
             <button type="button" aria-pressed={style === "candle"} onClick={() => onStyle("candle")}>캔들</button>

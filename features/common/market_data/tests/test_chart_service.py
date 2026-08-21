@@ -90,3 +90,55 @@ def test_chart_uses_semantic_cache_and_explicit_delay(tmp_path, monkeypatch):
     assert first["delayed"] is True
     assert second["freshness"] == "cached"
     assert calls == [("NVDA", "3m", "1d")]
+
+
+def test_daily_moving_averages_are_computed_with_warmup(monkeypatch):
+    """이동평균은 서버가 워밍업 구간까지 받아 계산한다.
+
+    화면이 받은 구간만으로 계산하면 1M(21봉) 차트에서 20일선이 끝 한두 점만 남는다.
+    워밍업 봉은 계산에만 쓰고 응답 구간은 요청대로다.
+    """
+    import datetime as dt
+
+    import pandas as pd
+
+    dates = pd.bdate_range(end=dt.date.today(), periods=90)
+    closes = [float(i + 1) for i in range(len(dates))]
+    frame = pd.DataFrame(
+        {"Open": closes, "High": closes, "Low": closes, "Close": closes, "Volume": [1.0] * len(dates)},
+        index=dates,
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules, "yfinance",
+        type("M", (), {"Ticker": staticmethod(lambda _s: type("T", (), {"history": staticmethod(lambda **_k: frame)})())})(),
+    )
+
+    payload = chart_service._download("NVDA", "1m", "1d")
+    rows = payload["series"]
+
+    # 구간은 요청(달력 35일)대로 — 워밍업 90봉이 통째로 나오면 안 된다.
+    assert 0 < len(rows) < 40
+    last = rows[-1]
+    assert last["ma20"] == sum(closes[-20:]) / 20
+    assert last["ma60"] == sum(closes[-60:]) / 60
+    # 응답 첫 봉에도 이동평균이 있다 — 워밍업 덕에 구간 안에서 선이 끊기지 않는다.
+    assert rows[0]["ma20"] is not None
+
+
+def test_intraday_bars_have_no_moving_averages(monkeypatch):
+    """5분봉에는 이동평균을 붙이지 않는다 — 일 단위 창을 분봉에 걸면 다른 지표가 된다."""
+    import datetime as dt
+
+    def bar(day, hhmm, close):
+        return (_Stamp(day, f"{day}T{hhmm}:00-04:00"), {"Open": close, "High": close, "Low": close, "Close": close, "Volume": 1})
+
+    today = dt.date(2026, 8, 6)
+    frame = _Frame([bar(today, "09:30", 90), bar(today, "15:55", 95)])
+    monkeypatch.setitem(
+        __import__("sys").modules, "yfinance",
+        type("M", (), {"Ticker": staticmethod(lambda _s: type("T", (), {"history": staticmethod(lambda **_k: frame)})())})(),
+    )
+
+    payload = chart_service._download("NVDA", "1d", "5m")
+
+    assert all("ma20" not in row for row in payload["series"])

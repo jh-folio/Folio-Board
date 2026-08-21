@@ -16358,6 +16358,13 @@ select { min-height: 36px; padding: 0 12px; }
 .watchlist-quarterly__axis { fill: var(--folio-ink-subtle); font-size: 11px; }
 .watchlist-quarterly__hit { fill: transparent; cursor: pointer; }
 .watchlist-quarterly__line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+
+/* 차트 이평선 토글. 눌림 상태는 .btn[aria-pressed] 프리미티브가 칠한다 — 여기는 범례만. */
+.chart-ma-toggle { display: inline-flex; align-items: center; gap: 7px; }
+.chart-ma-toggle__legend { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; opacity: 0.85; }
+.chart-ma-toggle__legend i { display: inline-block; width: 10px; height: 2px; border-radius: 1px; }
+.chart-ma-toggle__legend i[data-ma="20"] { background: var(--folio-gold); }
+.chart-ma-toggle__legend i[data-ma="60"] { background: var(--folio-chart-1); }
 .watchlist-quarterly__hit:focus-visible { outline: 2px solid var(--folio-focus, var(--folio-ink)); }
 
 /* 기본 그리드 정의보다 뒤에 있어야 이긴다 — 앞쪽 media 블록에 두면 같은 특이도에서
