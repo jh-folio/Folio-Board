@@ -17,8 +17,6 @@ from features.common.market_data.earnings_service import _statement_row
 # `info`에서 그대로 옮기는 칸. 이름을 바꾸지 않는 이유는 provider 필드와 화면 사이에
 # 번역층이 하나 늘 때마다 결측 원인 추적이 한 단계 어려워지기 때문이다.
 FUNDAMENTAL_FIELDS = (
-    "currentPrice",
-    "previousClose",
     "marketCap",
     "trailingPE",
     "forwardPE",

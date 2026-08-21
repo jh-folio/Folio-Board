@@ -4,7 +4,7 @@ import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
-import { changeRatio, EarningsPanel, formatEps, percentText, toneOf } from "./watchlist/EarningsPanel";
+import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
@@ -343,22 +343,6 @@ export function WatchlistRoute() {
                 <p className="section-kicker">WATCHLIST</p>
                 <h2 id="watchlistDetailTitle">{selectedLabel}</h2>
                 <p className="section-subtitle">{detailMeta(detail)}</p>
-                {/* 현재가를 머리에 올린다. 예전에는 차트 왼쪽 위에만 작게 있어서, 상세를
-                    열었을 때 가장 먼저 궁금한 값이 화면 중간에 숨어 있었다. 시세는 지표와
-                    같은 응답이라 요청이 늘지 않는다. 지연 시세임은 하단 출처 문구가 말한다. */}
-                {fundamentals.payload?.currentPrice != null && (
-                  <p className="watchlist-detail-price">
-                    <strong>{formatEps(fundamentals.payload.currentPrice, fundamentals.payload.currency || "USD")}</strong>
-                    {fundamentals.payload.previousClose != null && (() => {
-                      const ratio = changeRatio(fundamentals.payload?.currentPrice, fundamentals.payload?.previousClose);
-                      return ratio === null ? null : (
-                        <span className="watchlist-detail-price__change" data-tone={toneOf(ratio)}>
-                          전일 종가보다 {percentText(ratio)}
-                        </span>
-                      );
-                    })()}
-                  </p>
-                )}
               </div>
               <div className="watchlist-detail-actions">
                 <ConsultationEntry item={detailItem} />
@@ -388,10 +372,10 @@ export function WatchlistRoute() {
                     style={chartStyle}
                     onRange={setChartRange}
                     onStyle={setChartStyle}
-                    // 다음 일정은 옆 실적 패널이, 현재가는 모달 머리가 말한다 — 같은 종목에
-                    // 두 가격이 보이면 캐시 신선도 차이가 모순처럼 읽힌다.
+                    // 다음 일정은 옆 실적 패널이 더 자세히 말한다. 가격은 차트가 말한다 —
+                    // 머리에도 올려 봤지만 차트 종가와 신선도가 갈려 두 숫자가 모순처럼
+                    // 읽혔다(2026-08-22 사용자 결정: 차트 하나만 남긴다).
                     showEvent={false}
-                    showQuote={false}
                   />
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--earnings">

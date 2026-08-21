@@ -15026,20 +15026,20 @@ function Zo(e) {
 	}), r = Co[e.kind] || e.kind, i = e.kind === "earnings" ? zo(e) : "";
 	return `${n} ${r} 예정${i && i !== "종일" ? ` · ${i}` : ""}`;
 }
-function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, showEvent: o = !0, showQuote: s = !0 }) {
-	let [c, u] = (0, l.useState)(null), [d, f] = (0, l.useState)(null), [p, m] = (0, l.useState)(""), h = (0, l.useRef)(null);
+function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, showEvent: o = !0 }) {
+	let [s, c] = (0, l.useState)(null), [u, d] = (0, l.useState)(null), [f, p] = (0, l.useState)(""), m = (0, l.useRef)(null);
 	(0, l.useEffect)(() => {
 		let t = !0;
-		return m(""), u((t) => t && t.symbol === e ? t : null), B(`/api/market/chart?symbol=${encodeURIComponent(e)}&range=${n}&interval=${qo(n)}`).then((e) => {
-			t && u(e);
+		return p(""), c((t) => t && t.symbol === e ? t : null), B(`/api/market/chart?symbol=${encodeURIComponent(e)}&range=${n}&interval=${qo(n)}`).then((e) => {
+			t && c(e);
 		}).catch((e) => {
-			t && m(e instanceof Error ? e.message : "차트를 불러오지 못했습니다.");
+			t && p(e instanceof Error ? e.message : "차트를 불러오지 못했습니다.");
 		}), () => {
 			t = !1;
 		};
 	}, [e, n]), (0, l.useEffect)(() => {
 		let t = !0;
-		if (f(null), !o || !e || Jo(e)) return;
+		if (d(null), !o || !e || Jo(e)) return;
 		let n = /* @__PURE__ */ new Date(), r = new Date(n.getTime() + 7776e6);
 		return B(`/api/market-calendar?start=${encodeURIComponent(n.toISOString())}&end=${encodeURIComponent(r.toISOString())}&ticker=${encodeURIComponent(e)}&limit=20`).then((e) => {
 			if (!t) return;
@@ -15048,23 +15048,23 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 				"dividend",
 				"filing"
 			].includes(e.kind)).sort((e, t) => e.startsAt.localeCompare(t.startsAt));
-			f(n[0] || null);
+			d(n[0] || null);
 		}).catch(() => void 0), () => {
 			t = !1;
 		};
 	}, [e, o]);
-	let [g, _] = (0, l.useState)(0);
+	let [h, g] = (0, l.useState)(0);
 	(0, l.useEffect)(() => {
-		let e = new MutationObserver(() => _((e) => e + 1));
+		let e = new MutationObserver(() => g((e) => e + 1));
 		return e.observe(document.documentElement, {
 			attributes: !0,
 			attributeFilter: ["data-theme"]
 		}), () => e.disconnect();
 	}, []), (0, l.useEffect)(() => {
-		let e = h.current, t = window.LightweightCharts;
-		if (!e || !t || !c?.series?.length) return;
+		let e = m.current, t = window.LightweightCharts;
+		if (!e || !t || !s?.series?.length) return;
 		e.innerHTML = "";
-		let n = getComputedStyle(document.documentElement), i = (e, t) => n.getPropertyValue(e).trim() || t, a = i("--folio-green", "#3b6d11"), o = i("--folio-burgundy", "#8a1024"), s = c.series, l = c.interval === "5m", u = !(s.length > 1) || s[s.length - 1].close >= s[0].close ? a : o, d = t.createChart(e, {
+		let n = getComputedStyle(document.documentElement), i = (e, t) => n.getPropertyValue(e).trim() || t, a = i("--folio-green", "#3b6d11"), o = i("--folio-burgundy", "#8a1024"), c = s.series, l = s.interval === "5m", u = !(c.length > 1) || c[c.length - 1].close >= c[0].close ? a : o, d = t.createChart(e, {
 			autoSize: !0,
 			height: 360,
 			width: e.clientWidth || 0,
@@ -15114,7 +15114,7 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 				mouseWheel: !1,
 				pinch: !0
 			}
-		}), f = s.filter((e) => e.open != null && e.high != null && e.low != null), p = r === "candle" && f.length > 0, m = p ? d.addSeries(t.CandlestickSeries, {
+		}), f = c.filter((e) => e.open != null && e.high != null && e.low != null), p = r === "candle" && f.length > 0, h = p ? d.addSeries(t.CandlestickSeries, {
 			upColor: a,
 			downColor: o,
 			wickUpColor: a,
@@ -15128,64 +15128,68 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 			priceLineVisible: !1,
 			lastValueVisible: !0
 		});
-		m.setData(p ? f.map((e) => ({
+		h.setData(p ? f.map((e) => ({
 			time: Xo(e.time, l),
 			open: e.open,
 			high: e.high,
 			low: e.low,
 			close: e.close
-		})) : s.map((e) => ({
+		})) : c.map((e) => ({
 			time: Xo(e.time, l),
 			value: e.close
 		})));
-		let g = new Map(s.map((e, t) => [String(Xo(e.time, l)), {
+		let g = new Map(c.map((e, t) => [String(Xo(e.time, l)), {
 			close: e.close,
-			previous: t > 0 ? s[t - 1].close : null
+			previous: t > 0 ? c[t - 1].close : null
 		}])), _ = document.createElement("div");
 		return _.className = "market-chart-tooltip", _.hidden = !0, e.appendChild(_), d.subscribeCrosshairMove((t) => {
-			let n = t?.point, r = t?.seriesData?.get(m), i = e.getBoundingClientRect();
+			let n = t?.point, r = t?.seriesData?.get(h), i = e.getBoundingClientRect();
 			if (!n || !r || n.x < 0 || n.y < 0 || n.x > i.width || n.y > i.height) {
 				_.hidden = !0;
 				return;
 			}
-			let a = String(r.time), o = g.get(a), s = o?.close ?? r.close ?? r.value ?? null, c = o?.previous ?? null, u = s != null && c != null ? s - c : null, d = u != null && c ? u / c * 100 : null, f = u == null || u >= 0 ? "up" : "down", p = s == null ? "가격 없음" : s.toLocaleString(void 0, { maximumFractionDigits: 2 }), h = u == null || d == null ? l ? "직전 봉 대비 없음" : "전일 대비 없음" : `${u >= 0 ? "+" : ""}${u.toLocaleString(void 0, { maximumFractionDigits: 2 })} (${d >= 0 ? "+" : ""}${d.toFixed(2)}%)`;
+			let a = String(r.time), o = g.get(a), s = o?.close ?? r.close ?? r.value ?? null, c = o?.previous ?? null, u = s != null && c != null ? s - c : null, d = u != null && c ? u / c * 100 : null, f = u == null || u >= 0 ? "up" : "down", p = s == null ? "가격 없음" : s.toLocaleString(void 0, { maximumFractionDigits: 2 }), m = u == null || d == null ? l ? "직전 봉 대비 없음" : "전일 대비 없음" : `${u >= 0 ? "+" : ""}${u.toLocaleString(void 0, { maximumFractionDigits: 2 })} (${d >= 0 ? "+" : ""}${d.toFixed(2)}%)`;
 			_.innerHTML = "";
 			let v = document.createElement("div");
 			v.className = "market-chart-tooltip__date", v.textContent = l ? (/* @__PURE__ */ new Date(Number(a) * 1e3)).toISOString().slice(11, 16) : a;
 			let y = document.createElement("div");
 			y.className = "market-chart-tooltip__price", y.textContent = p;
 			let b = document.createElement("div");
-			b.className = "market-chart-tooltip__change", b.dataset.direction = f, b.textContent = h, _.append(v, y, b);
+			b.className = "market-chart-tooltip__change", b.dataset.direction = f, b.textContent = m, _.append(v, y, b);
 			let x = _.offsetWidth || 150, S = _.offsetHeight || 76, C = Math.min(Math.max(8, n.x + 14), Math.max(8, i.width - x - 8)), w = Math.min(Math.max(8, n.y - S - 12), Math.max(8, i.height - S - 8));
 			_.style.transform = `translate(${C}px, ${w}px)`, _.hidden = !1;
 		}), d.timeScale().fitContent(), () => d.remove();
 	}, [
-		c,
-		g,
+		s,
+		h,
 		r
 	]);
-	let v = c?.series || [], y = v.length ? v[v.length - 1].close : null, b = c?.interval === "5m", x = v.length > 1 ? b ? v[0].close : v[v.length - 2].close : null, S = y != null && x ? (y - x) / x * 100 : null, C = Wo[c?.freshness || ""] || (c ? c.freshness : "불러오는 중");
+	let _ = s?.series || [], v = _.length ? _[_.length - 1].close : null, y = s?.interval === "5m", b = _.length > 1 ? y ? _[0].close : _[_.length - 2].close : null, x = v != null && b ? (v - b) / b * 100 : null, S = Wo[s?.freshness || ""] || (s ? s.freshness : "불러오는 중");
 	return /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [
 		/* @__PURE__ */ (0, K.jsxs)("div", {
 			className: "chart-headline",
 			children: [/* @__PURE__ */ (0, K.jsxs)("div", {
 				className: "chart-quote",
-				children: [s && /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [/* @__PURE__ */ (0, K.jsx)("span", {
-					className: "chart-quote__name",
-					children: t || e
-				}), /* @__PURE__ */ (0, K.jsxs)("div", {
-					className: "chart-quote__value",
-					children: [y == null ? null : /* @__PURE__ */ (0, K.jsx)("b", { children: y.toLocaleString(void 0, { maximumFractionDigits: 2 }) }), S == null ? null : /* @__PURE__ */ (0, K.jsxs)("span", {
-						className: S > 0 ? "up" : S < 0 ? "down" : "flat",
-						children: [
-							S > 0 ? "▲" : S < 0 ? "▼" : "—",
-							" ",
-							S > 0 ? "+" : "",
-							S.toFixed(1),
-							"%"
-						]
-					})]
-				})] }), /* @__PURE__ */ (0, K.jsxs)("small", { children: [C, c?.asOf ? ` · ${c.asOf} 기준` : ""] })]
+				children: [
+					/* @__PURE__ */ (0, K.jsx)("span", {
+						className: "chart-quote__name",
+						children: t || e
+					}),
+					/* @__PURE__ */ (0, K.jsxs)("div", {
+						className: "chart-quote__value",
+						children: [v == null ? null : /* @__PURE__ */ (0, K.jsx)("b", { children: v.toLocaleString(void 0, { maximumFractionDigits: 2 }) }), x == null ? null : /* @__PURE__ */ (0, K.jsxs)("span", {
+							className: x > 0 ? "up" : x < 0 ? "down" : "flat",
+							children: [
+								x > 0 ? "▲" : x < 0 ? "▼" : "—",
+								" ",
+								x > 0 ? "+" : "",
+								x.toFixed(1),
+								"%"
+							]
+						})]
+					}),
+					/* @__PURE__ */ (0, K.jsxs)("small", { children: [S, s?.asOf ? ` · ${s.asOf} 기준` : ""] })
+				]
 			}), /* @__PURE__ */ (0, K.jsxs)("div", {
 				className: "cockpit-chart-controls",
 				children: [/* @__PURE__ */ (0, K.jsxs)("div", {
@@ -15216,30 +15220,30 @@ function Qo({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 				})]
 			})]
 		}),
-		p && /* @__PURE__ */ (0, K.jsx)("p", {
+		f && /* @__PURE__ */ (0, K.jsx)("p", {
 			className: "react-dashboard-error",
-			children: p
+			children: f
 		}),
 		/* @__PURE__ */ (0, K.jsx)("div", {
 			className: "cockpit-chart-stage",
-			ref: h,
+			ref: m,
 			children: !window.LightweightCharts && /* @__PURE__ */ (0, K.jsx)("p", { children: "차트 라이브러리를 사용할 수 없습니다." })
 		}),
-		o && d && /* @__PURE__ */ (0, K.jsxs)("p", {
+		o && u && /* @__PURE__ */ (0, K.jsxs)("p", {
 			className: "chart-next",
 			children: [
 				/* @__PURE__ */ (0, K.jsx)("span", {
-					className: `chip certainty-badge--${d.status}`,
-					children: wo[d.status] || d.status
+					className: `chip certainty-badge--${u.status}`,
+					children: wo[u.status] || u.status
 				}),
 				"다음 일정 — ",
-				/* @__PURE__ */ (0, K.jsx)("b", { children: Zo(d) }),
+				/* @__PURE__ */ (0, K.jsx)("b", { children: Zo(u) }),
 				/* @__PURE__ */ (0, K.jsx)("small", { children: "시장 캘린더 연동" })
 			]
 		}),
-		c?.notice ? /* @__PURE__ */ (0, K.jsx)("div", {
+		s?.notice ? /* @__PURE__ */ (0, K.jsx)("div", {
 			className: "cockpit-chart-foot",
-			children: /* @__PURE__ */ (0, K.jsx)("small", { children: c.notice })
+			children: /* @__PURE__ */ (0, K.jsx)("small", { children: s.notice })
 		}) : null
 	] });
 }
@@ -23738,43 +23742,70 @@ function bd(e) {
 function xd(e, t) {
 	return e == null || !Number.isFinite(e) || t == null || !Number.isFinite(t) || t === 0 ? null : e / t * 100;
 }
-var Sd = [
+var Sd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Cd = (e) => `color-mix(in srgb, ${e} 45%, transparent)`, wd = [
 	{
 		key: "earnings",
 		label: "이익",
+		mode: "bars",
+		format: "amount",
+		colors: [
+			Sd,
+			"var(--folio-green)",
+			Cd("var(--folio-green)")
+		],
 		series: [
 			{
 				key: "revenue",
-				label: "매출"
+				label: "매출",
+				of: (e) => e.revenue
 			},
 			{
 				key: "operatingIncome",
-				label: "영업이익"
+				label: "영업이익",
+				of: (e) => e.operatingIncome
 			},
 			{
 				key: "netIncome",
-				label: "순이익"
+				label: "순이익",
+				of: (e) => e.netIncome
 			}
 		]
 	},
 	{
 		key: "balance",
 		label: "재무",
+		mode: "bars",
+		format: "amount",
+		colors: [
+			Sd,
+			"var(--folio-chart-1)",
+			Cd("var(--folio-chart-1)")
+		],
 		series: [
 			{
 				key: "currentAssets",
-				label: "유동자산"
+				label: "유동자산",
+				of: (e) => e.currentAssets
 			},
 			{
 				key: "currentLiabilities",
-				label: "유동부채"
+				label: "유동부채",
+				of: (e) => e.currentLiabilities
 			},
 			{
 				key: "nonCurrentLiabilities",
-				label: "비유동부채"
+				label: "비유동부채",
+				of: (e) => e.nonCurrentLiabilities
 			}
-		],
-		ratios: [{
+		]
+	},
+	{
+		key: "stability",
+		label: "안정성",
+		mode: "lines",
+		format: "percent",
+		colors: ["var(--folio-green)", "var(--folio-burgundy)"],
+		series: [{
 			key: "currentRatio",
 			label: "유동비율",
 			of: (e) => xd(e.currentAssets, e.currentLiabilities)
@@ -23787,58 +23818,90 @@ var Sd = [
 	{
 		key: "cashflow",
 		label: "현금흐름",
+		mode: "bars",
+		format: "amount",
+		colors: [
+			Sd,
+			"var(--folio-gold)",
+			Cd("var(--folio-gold)")
+		],
 		series: [
 			{
 				key: "operatingCashFlow",
-				label: "영업현금흐름"
+				label: "영업현금흐름",
+				of: (e) => e.operatingCashFlow
 			},
 			{
 				key: "freeCashFlow",
-				label: "잉여현금흐름"
+				label: "잉여현금흐름",
+				of: (e) => e.freeCashFlow
 			},
 			{
 				key: "capitalExpenditure",
-				label: "설비투자"
+				label: "설비투자",
+				of: (e) => e.capitalExpenditure
 			}
 		]
 	}
-], Cd = [
-	"color-mix(in srgb, var(--folio-ink) 42%, transparent)",
-	"var(--folio-green)",
-	"color-mix(in srgb, var(--folio-green) 45%, transparent)"
-], wd = ["var(--folio-gold)", "var(--folio-burgundy)"];
+];
 function Td(e) {
 	let t = String(e || "");
 	return /^\d{4}-\d{2}/.test(t) ? `${t.slice(2, 4)}년 ${Number(t.slice(5, 7))}월` : "";
 }
 function Ed(e, t) {
-	let n = 0, r = 0;
-	for (let i of e) for (let e of t) {
-		let t = i[e];
-		t == null || !Number.isFinite(t) || (n = Math.max(n, t), r = Math.min(r, t));
+	let n = e.filter((e) => e !== null && Number.isFinite(e));
+	if (!n.length) return {
+		max: 0,
+		min: 0
+	};
+	let r = Math.max(...n), i = Math.min(...n);
+	if (t === "bars") r = Math.max(r, 0), i = Math.min(i, 0);
+	else {
+		let e = (r - i || Math.abs(r) || 1) * .15;
+		r += e, i -= e;
 	}
 	return {
-		max: n,
-		min: r
+		max: r,
+		min: i
 	};
 }
 function Dd({ quarters: e, currency: t }) {
-	let [n, r] = (0, l.useState)(Sd[0].key), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), c = Sd.find((e) => e.key === n) || Sd[0], u = c.series.map((e) => e.key), d = c.ratios || [], f = (e || []).filter((e) => u.some((t) => e[t] != null)), p = Math.max(0, f.length - 1), m = Math.min(i ?? p, p), h = Ed(f, u), g = h.max - h.min, _ = d.length ? 78 : 0, v = d.length ? 16 : 0, y = 194 + v + _, b = f.length ? 560 / f.length : 560, x = Math.min(30, (b - 20) / c.series.length), S = g > 0 ? h.max / g * 170 : 170, C = (e) => (h.max - e) / g * 170, w = m - 1, T = d.map((e) => f.map((t) => e.of(t))), E = T.flat().filter((e) => e !== null && Number.isFinite(e)), D = E.length ? Math.max(...E) : 0, O = D - (E.length ? Math.min(...E, 0) : 0), k = 194 + v, A = (e) => k + (O > 0 ? (D - e) / O * _ : _ / 2), j = (e) => e * b + b / 2, M = (e) => e.map((e, t) => e === null ? null : `${j(t).toFixed(1)},${A(e).toFixed(1)}`).filter(Boolean).join(" "), N = (e) => {
+	let [n, r] = (0, l.useState)(wd[0].key), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), c = wd.find((e) => e.key === n) || wd[0], u = (e || []).filter((e) => c.series.some((t) => t.of(e) != null)), d = Math.max(0, u.length - 1), f = Math.min(i ?? d, d), p = f - 1, m = c.series.map((e) => u.map((t) => {
+		let n = e.of(t);
+		return n == null || !Number.isFinite(n) ? null : n;
+	})), h = Ed(m.flat(), c.mode), g = h.max - h.min, _ = u.length ? 560 / u.length : 560, v = Math.min(30, (_ - 20) / c.series.length), y = g > 0 ? h.max / g * 190 : 190, b = (e) => (h.max - e) / g * 190, x = (e) => e * _ + _ / 2, S = (e) => c.format === "percent" ? $(e) : Ga(e, t), C = (e, t) => {
+		if (e === null || t === null) return {
+			text: "—",
+			tone: "flat"
+		};
+		if (c.format === "percent") {
+			let n = e - t;
+			return {
+				text: `${n > 0 ? "+" : ""}${n.toFixed(1)}%p`,
+				tone: Ya(n / 100)
+			};
+		}
+		let n = qa(e, t);
+		return {
+			text: n === null ? "—" : Ja(n),
+			tone: Ya(n)
+		};
+	}, w = (e) => {
 		r(e), a(null), s(null);
-	}, P = /* @__PURE__ */ (0, K.jsx)("div", {
+	}, T = /* @__PURE__ */ (0, K.jsx)("div", {
 		className: "segment",
 		role: "group",
 		"aria-label": "분기 차트 종류",
-		children: Sd.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
+		children: wd.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
 			type: "button",
 			"aria-pressed": e.key === n,
-			onClick: () => N(e.key),
+			onClick: () => w(e.key),
 			children: e.label
 		}, e.key))
 	});
-	return f.length < 2 || g <= 0 ? /* @__PURE__ */ (0, K.jsxs)("figure", {
+	return u.length < 2 || g <= 0 ? /* @__PURE__ */ (0, K.jsxs)("figure", {
 		className: "watchlist-quarterly",
-		children: [P, /* @__PURE__ */ (0, K.jsxs)("p", {
+		children: [T, /* @__PURE__ */ (0, K.jsxs)("p", {
 			className: "section-subtitle",
 			children: [
 				"이 종목은 ",
@@ -23849,14 +23912,14 @@ function Dd({ quarters: e, currency: t }) {
 	}) : /* @__PURE__ */ (0, K.jsxs)("figure", {
 		className: "watchlist-quarterly",
 		children: [
-			P,
+			T,
 			/* @__PURE__ */ (0, K.jsxs)("div", {
 				className: "watchlist-quarterly__plot",
 				onMouseLeave: () => s(null),
 				children: [/* @__PURE__ */ (0, K.jsxs)("svg", {
-					viewBox: `0 0 560 ${y}`,
+					viewBox: "0 0 560 214",
 					role: "img",
-					"aria-label": `최근 ${f.length}개 분기 ${[...c.series, ...d].map((e) => e.label).join("·")}.`,
+					"aria-label": `최근 ${u.length}개 분기 ${c.series.map((e) => e.label).join("·")}.`,
 					children: [
 						[
 							.25,
@@ -23865,65 +23928,66 @@ function Dd({ quarters: e, currency: t }) {
 						].map((e) => /* @__PURE__ */ (0, K.jsx)("line", {
 							x1: 0,
 							x2: 560,
-							y1: 170 * e,
-							y2: 170 * e,
+							y1: 190 * e,
+							y2: 190 * e,
 							className: "watchlist-quarterly__grid"
 						}, e)),
-						/* @__PURE__ */ (0, K.jsx)("line", {
+						c.mode === "bars" && /* @__PURE__ */ (0, K.jsx)("line", {
 							x1: 0,
 							x2: 560,
-							y1: S,
-							y2: S,
+							y1: y,
+							y2: y,
 							className: "watchlist-quarterly__baseline"
 						}),
-						f.map((e, t) => {
-							let n = t * b + (b - x * c.series.length - 10) / 2;
-							return /* @__PURE__ */ (0, K.jsxs)("g", { children: [c.series.map((r, i) => {
-								let a = e[r.key];
-								if (a == null || !Number.isFinite(a)) return null;
-								let o = Math.min(C(a), S), s = Math.max(2, Math.abs(C(a) - S));
+						u.map((e, t) => /* @__PURE__ */ (0, K.jsx)("text", {
+							x: x(t),
+							y: 207,
+							textAnchor: "middle",
+							className: "watchlist-quarterly__axis",
+							children: Td(e.quarter)
+						}, e.quarter || t)),
+						c.mode === "bars" && u.map((e, t) => {
+							let n = t * _ + (_ - v * c.series.length - 10) / 2;
+							return /* @__PURE__ */ (0, K.jsx)("g", { children: c.series.map((e, r) => {
+								let i = m[r][t];
+								if (i === null) return null;
+								let a = Math.min(b(i), y), o = Math.max(2, Math.abs(b(i) - y));
 								return /* @__PURE__ */ (0, K.jsx)("rect", {
 									className: "watchlist-quarterly__bar",
-									fill: Cd[i % Cd.length],
-									opacity: t === m ? 1 : .75,
-									x: n + i * (x + 5),
-									y: o,
-									width: x,
-									height: s,
+									fill: c.colors[r % c.colors.length],
+									opacity: t === f ? 1 : .75,
+									x: n + r * (v + 5),
+									y: a,
+									width: v,
+									height: o,
 									rx: 4
-								}, r.key);
-							}), /* @__PURE__ */ (0, K.jsx)("text", {
-								x: j(t),
-								y: 187,
-								textAnchor: "middle",
-								className: "watchlist-quarterly__axis",
-								children: Td(e.quarter)
-							})] }, e.quarter || t);
+								}, e.key);
+							}) }, e.quarter || t);
 						}),
-						d.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("g", { children: [/* @__PURE__ */ (0, K.jsx)("polyline", {
+						c.mode === "lines" && c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("g", { children: [/* @__PURE__ */ (0, K.jsx)("polyline", {
 							className: "watchlist-quarterly__line",
-							points: M(T[t]),
-							stroke: wd[t % wd.length]
-						}), T[t].map((e, n) => e === null ? null : /* @__PURE__ */ (0, K.jsx)("circle", {
-							cx: j(n),
-							cy: A(e),
-							r: n === m ? 4 : 2.5,
-							fill: wd[t % wd.length]
+							stroke: c.colors[t % c.colors.length],
+							points: m[t].map((e, t) => e === null ? null : `${x(t).toFixed(1)},${b(e).toFixed(1)}`).filter(Boolean).join(" ")
+						}), m[t].map((e, n) => e === null ? null : /* @__PURE__ */ (0, K.jsx)("circle", {
+							cx: x(n),
+							cy: b(e),
+							r: n === f ? 4.5 : 3,
+							fill: c.colors[t % c.colors.length]
 						}, n))] }, e.key)),
-						f.map((e, t) => /* @__PURE__ */ (0, K.jsx)("rect", {
+						u.map((e, t) => /* @__PURE__ */ (0, K.jsx)("rect", {
 							className: "watchlist-quarterly__hit",
-							x: t * b,
+							x: t * _,
 							y: 0,
-							width: b,
-							height: y,
+							width: _,
+							height: 214,
 							tabIndex: 0,
 							role: "button",
 							"aria-label": `${Td(e.quarter)} 수치 보기`,
 							onMouseEnter: () => {
-								a(t), s((t + .5) / f.length);
+								a(t), s((t + .5) / u.length);
 							},
 							onFocus: () => {
-								a(t), s((t + .5) / f.length);
+								a(t), s((t + .5) / u.length);
 							}
 						}, `hit-${e.quarter || t}`))
 					]
@@ -23931,71 +23995,39 @@ function Dd({ quarters: e, currency: t }) {
 					className: "analysis-chart-hover",
 					"data-side": o > .5 ? "left" : "right",
 					style: o > .5 ? { right: `${(1 - o) * 100}%` } : { left: `${o * 100}%` },
-					children: [
-						/* @__PURE__ */ (0, K.jsx)("b", { children: Td(f[m]?.quarter) }),
-						c.series.map((e, n) => /* @__PURE__ */ (0, K.jsxs)("p", { children: [
-							/* @__PURE__ */ (0, K.jsx)("span", {
-								className: "analysis-chart-swatch",
-								style: { background: Cd[n % Cd.length] }
-							}),
-							/* @__PURE__ */ (0, K.jsx)("span", { children: e.label }),
-							/* @__PURE__ */ (0, K.jsx)("em", { children: Ga(f[m]?.[e.key], t) })
-						] }, e.key)),
-						d.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("p", { children: [
-							/* @__PURE__ */ (0, K.jsx)("span", {
-								className: "analysis-chart-swatch",
-								style: { background: wd[t % wd.length] }
-							}),
-							/* @__PURE__ */ (0, K.jsx)("span", { children: e.label }),
-							/* @__PURE__ */ (0, K.jsx)("em", { children: $(T[t][m]) })
-						] }, e.key))
-					]
+					children: [/* @__PURE__ */ (0, K.jsx)("b", { children: Td(u[f]?.quarter) }), c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("p", { children: [
+						/* @__PURE__ */ (0, K.jsx)("span", {
+							className: "analysis-chart-swatch",
+							style: { background: c.colors[t % c.colors.length] }
+						}),
+						/* @__PURE__ */ (0, K.jsx)("span", { children: e.label }),
+						/* @__PURE__ */ (0, K.jsx)("em", { children: S(m[t][f]) })
+					] }, e.key))]
 				})]
 			}),
 			/* @__PURE__ */ (0, K.jsxs)("div", {
 				className: "analysis-chart-readout",
-				children: [
-					/* @__PURE__ */ (0, K.jsxs)("p", {
-						className: "analysis-chart-readout-head",
-						children: [/* @__PURE__ */ (0, K.jsx)("strong", { children: Td(f[m]?.quarter) }), w >= 0 && /* @__PURE__ */ (0, K.jsxs)("span", { children: [Td(f[w]?.quarter), " 대비"] })]
-					}),
-					c.series.map((e, n) => {
-						let r = f[m]?.[e.key] ?? null, i = qa(r, w >= 0 ? f[w]?.[e.key] ?? null : null);
-						return /* @__PURE__ */ (0, K.jsxs)("p", {
-							className: "analysis-chart-readout-row",
-							children: [
-								/* @__PURE__ */ (0, K.jsx)("span", {
-									className: "analysis-chart-swatch",
-									style: { background: Cd[n % Cd.length] }
-								}),
-								/* @__PURE__ */ (0, K.jsx)("span", { children: e.label }),
-								/* @__PURE__ */ (0, K.jsx)("b", { children: Ga(r, t) }),
-								/* @__PURE__ */ (0, K.jsx)("em", {
-									"data-direction": Ya(i),
-									children: i === null ? "—" : Ja(i)
-								})
-							]
-						}, e.key);
-					}),
-					d.map((e, t) => {
-						let n = T[t][m], r = w >= 0 ? T[t][w] : null, i = n !== null && r !== null ? n - r : null;
-						return /* @__PURE__ */ (0, K.jsxs)("p", {
-							className: "analysis-chart-readout-row",
-							children: [
-								/* @__PURE__ */ (0, K.jsx)("span", {
-									className: "analysis-chart-swatch",
-									style: { background: wd[t % wd.length] }
-								}),
-								/* @__PURE__ */ (0, K.jsx)("span", { children: e.label }),
-								/* @__PURE__ */ (0, K.jsx)("b", { children: $(n) }),
-								/* @__PURE__ */ (0, K.jsx)("em", {
-									"data-direction": Ya(i === null ? null : i / 100),
-									children: i === null ? "—" : `${i > 0 ? "+" : ""}${i.toFixed(1)}%p`
-								})
-							]
-						}, e.key);
-					})
-				]
+				children: [/* @__PURE__ */ (0, K.jsxs)("p", {
+					className: "analysis-chart-readout-head",
+					children: [/* @__PURE__ */ (0, K.jsx)("strong", { children: Td(u[f]?.quarter) }), p >= 0 && /* @__PURE__ */ (0, K.jsxs)("span", { children: [Td(u[p]?.quarter), " 대비"] })]
+				}), c.series.map((e, t) => {
+					let n = m[t][f], r = p >= 0 ? m[t][p] : null, i = C(n, r);
+					return /* @__PURE__ */ (0, K.jsxs)("p", {
+						className: "analysis-chart-readout-row",
+						children: [
+							/* @__PURE__ */ (0, K.jsx)("span", {
+								className: "analysis-chart-swatch",
+								style: { background: c.colors[t % c.colors.length] }
+							}),
+							/* @__PURE__ */ (0, K.jsx)("span", { children: e.label }),
+							/* @__PURE__ */ (0, K.jsx)("b", { children: S(n) }),
+							/* @__PURE__ */ (0, K.jsx)("em", {
+								"data-direction": i.tone,
+								children: i.text
+							})
+						]
+					}, e.key);
+				})]
 			}),
 			/* @__PURE__ */ (0, K.jsx)("div", {
 				className: "watchlist-quarterly__table-wrap",
@@ -24004,24 +24036,17 @@ function Dd({ quarters: e, currency: t }) {
 					children: [/* @__PURE__ */ (0, K.jsx)("thead", { children: /* @__PURE__ */ (0, K.jsxs)("tr", { children: [/* @__PURE__ */ (0, K.jsx)("th", {
 						scope: "col",
 						children: "항목"
-					}), f.map((e) => /* @__PURE__ */ (0, K.jsx)("th", {
+					}), u.map((e) => /* @__PURE__ */ (0, K.jsx)("th", {
 						scope: "col",
 						children: Td(e.quarter)
-					}, e.quarter))] }) }), /* @__PURE__ */ (0, K.jsxs)("tbody", { children: [c.series.map((e, n) => /* @__PURE__ */ (0, K.jsxs)("tr", { children: [/* @__PURE__ */ (0, K.jsxs)("th", {
+					}, e.quarter))] }) }), /* @__PURE__ */ (0, K.jsx)("tbody", { children: c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("tr", { children: [/* @__PURE__ */ (0, K.jsxs)("th", {
 						scope: "row",
 						children: [/* @__PURE__ */ (0, K.jsx)("i", {
 							className: "watchlist-quarterly__dot",
-							style: { background: Cd[n % Cd.length] },
+							style: { background: c.colors[t % c.colors.length] },
 							"aria-hidden": "true"
 						}), e.label]
-					}), f.map((n) => /* @__PURE__ */ (0, K.jsx)("td", { children: Ga(n[e.key], t) }, n.quarter))] }, e.key)), d.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("tr", { children: [/* @__PURE__ */ (0, K.jsxs)("th", {
-						scope: "row",
-						children: [/* @__PURE__ */ (0, K.jsx)("i", {
-							className: "watchlist-quarterly__dot",
-							style: { background: wd[t % wd.length] },
-							"aria-hidden": "true"
-						}), e.label]
-					}), f.map((e, n) => /* @__PURE__ */ (0, K.jsx)("td", { children: $(T[t][n]) }, e.quarter))] }, e.key))] })]
+					}), u.map((e, n) => /* @__PURE__ */ (0, K.jsx)("td", { children: S(m[t][n]) }, e.quarter))] }, e.key)) })]
 				})
 			})
 		]
@@ -24301,17 +24326,6 @@ function Ud() {
 							/* @__PURE__ */ (0, K.jsx)("p", {
 								className: "section-subtitle",
 								children: Pd(c)
-							}),
-							G.payload?.currentPrice != null && /* @__PURE__ */ (0, K.jsxs)("p", {
-								className: "watchlist-detail-price",
-								children: [/* @__PURE__ */ (0, K.jsx)("strong", { children: Ka(G.payload.currentPrice, G.payload.currency || "USD") }), G.payload.previousClose != null && (() => {
-									let e = qa(G.payload?.currentPrice, G.payload?.previousClose);
-									return e === null ? null : /* @__PURE__ */ (0, K.jsxs)("span", {
-										className: "watchlist-detail-price__change",
-										"data-tone": Ya(e),
-										children: ["전일 종가보다 ", Ja(e)]
-									});
-								})()]
 							})
 						] }), /* @__PURE__ */ (0, K.jsxs)("div", {
 							className: "watchlist-detail-actions",
@@ -24353,8 +24367,7 @@ function Ud() {
 									style: T,
 									onRange: w,
 									onStyle: E,
-									showEvent: !1,
-									showQuote: !1
+									showEvent: !1
 								})
 							}),
 							/* @__PURE__ */ (0, K.jsx)("section", {

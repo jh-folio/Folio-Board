@@ -16312,14 +16312,6 @@ select { min-height: 36px; padding: 0 12px; }
 }
 .watchlist-fundamentals-skeleton { min-height: 76px; }
 
-/* 머리의 현재가 — 상세를 열고 가장 먼저 궁금한 값이라 크게 앞세운다. */
-.watchlist-detail-price { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; }
-.watchlist-detail-price strong { font-size: 26px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
-.watchlist-detail-price__change { font-size: 13px; font-weight: var(--fw-medium); }
-.watchlist-detail-price__change[data-tone="up"] { color: var(--folio-green); }
-.watchlist-detail-price__change[data-tone="down"] { color: var(--folio-burgundy); }
-.watchlist-detail-price__change[data-tone="flat"] { color: var(--folio-ink-muted); }
-
 /* 회사 소개 — provider 원문(영문)이라 세 줄로 접고 더보기로 편다. */
 .watchlist-profile { display: grid; gap: 4px; margin-bottom: 12px; }
 /* 섹터·산업 값은 문장형 텍스트다 — 지표 행의 nowrap을 물려받으면 좁은 화면에서

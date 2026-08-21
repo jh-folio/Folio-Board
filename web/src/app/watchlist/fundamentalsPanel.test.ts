@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { balanceRatio, barScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText } from "./FundamentalsPanel";
+import { balanceRatio, CHART_SETS, chartScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText } from "./FundamentalsPanel";
 
 describe("지표 포맷", () => {
   it("결측은 —다 — provider가 실제로 비워 두는 칸이 있다(삼성전자의 PER)", () => {
@@ -36,22 +36,26 @@ describe("분기 이익 차트", () => {
     expect(quarterAxisLabel(undefined)).toBe("");
   });
 
-  it("적자 분기는 기준선 아래로 내려간다 — 0으로 접으면 이익 없음으로 읽힌다", () => {
-    const { max, min } = barScale([
-      { quarter: "2026-03-31", revenue: 100, operatingIncome: -12, netIncome: 5 },
-      { quarter: "2026-06-30", revenue: 120, operatingIncome: 40, netIncome: 112 },
-    ], ["revenue", "operatingIncome", "netIncome"]);
+  it("막대 스케일은 0을 포함한다 — 적자를 0으로 접으면 이익 없음으로 읽힌다", () => {
+    const { max, min } = chartScale([100, -12, 5, 120, 40, 112], "bars");
     expect(max).toBe(120);
     expect(min).toBe(-12);
   });
 
-  it("스케일은 고른 세트의 계열만 본다 — 재무 탭에서 매출이 축을 결정하면 안 된다", () => {
-    const rows = [
-      { quarter: "2026-03-31", revenue: 1000, currentAssets: 200, currentLiabilities: 90, nonCurrentLiabilities: 60 },
-      { quarter: "2026-06-30", revenue: 1200, currentAssets: 220, currentLiabilities: 95, nonCurrentLiabilities: 62 },
-    ];
-    const { max } = barScale(rows, ["currentAssets", "currentLiabilities", "nonCurrentLiabilities"]);
-    expect(max).toBe(220);
+  it("선(비율) 스케일은 0을 강제하지 않는다 — 29~35% 구간을 0부터 그리면 변화가 눌린다", () => {
+    const { max, min } = chartScale([29, 35], "lines");
+    expect(min).toBeGreaterThan(0);
+    expect(max).toBeGreaterThan(35);
+  });
+
+  it("네 세트가 자기 색을 갖는다 — 색이 지금 어느 탭인지 말한다", () => {
+    expect(CHART_SETS.map((set) => set.key)).toEqual(["earnings", "balance", "stability", "cashflow"]);
+    const identity = CHART_SETS.map((set) => set.colors[1]);
+    expect(new Set(identity).size).toBe(identity.length);
+    // 안정성 탭은 선 차트고 %로 말한다.
+    const stability = CHART_SETS.find((set) => set.key === "stability");
+    expect(stability?.mode).toBe("lines");
+    expect(stability?.format).toBe("percent");
   });
 
   it("비율은 분모가 0이거나 비면 계산하지 않는다", () => {
