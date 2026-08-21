@@ -219,7 +219,7 @@ features/company_analysis/financial_quality_prompt.md
 | Smart Collections | `smart_collections` | Deep Research 안의 결정적 저장 필터·상태·snapshot 변화/recovery | metadata |
 | 포트폴리오 | `portfolio` | 보유 종목 직접 입력·revision 저장, 평가 요약·구성 분석·목표 비중·백테스트. 0.5.1에서 하위 탭 3개로 재연결. 스크린샷 가져오기는 0.5.0에서 뺐고 도크로 재설계 예정 | — |
 | 시장 내러티브 메모리 / Regime 추적 v2 | `market_memory` | 중기 내러티브 상태·taxonomy·momentum/confidence·thesis 연결 | source-grounded |
-| 워치리스트 | `watchlist_notes` | 워치리스트·상세 모달(기업 정보/차트/수집 뉴스) | — |
+| 워치리스트 | `watchlist_notes` | 워치리스트·상세 모달(기업 정보/차트/수집 뉴스/다음 실적 일정) | — |
 | Native Investment Notes | `investment_notes` | Obsidian 없이 운용되는 Folio 로컬 투자 노트와 `native_note_index` | hypothesis 입력 |
 | LLM/설정/웹검색 | `llm_settings` | API Key·웹검색 보완 | — |
 | Notion 내보내기 | `notion_export` | 보고서 → Notion DB | — |
@@ -496,7 +496,8 @@ features/company_analysis/financial_quality_prompt.md
 - 백테스트 실행 결과는 자동 저장하지 않는다. 사용자가 결과 카드의 저장 버튼을 눌렀을 때만 저장한다.
 - 거래 내역 기반 원가 계산, 배당 현금흐름, 자동 리밸런싱 제안은 아직 범위 밖이다.
 - 저장은 additive `revision`을 가지며 `expectedRevision` 불일치 시 409와 최신본을 반환한다. 동시 수정은 사용자가 최신본과 다시 합친다.
-- **화면은 하위 탭 셋이다**(0.5.1): 보유·평가 / 목표 비중 / 백테스트. 빈도가 다르기 때문이다 — 세로로 쌓으면 매번 보는 것이 거의 안 쓰는 것에 밀린다. 저장 후 `revision`을 내려보내 시세·비중·목표 차이를 다시 받는다.
+- **화면은 하위 탭 셋이다**(0.5.1, 0.5.4에 이름 변경): 보유·평가 / **프리셋** / 백테스트.
+- **프리셋이 1급 시민이다**(0.5.4). 목표 비중은 프리셋으로 할 수 있는 여러 일 중 하나이고 백테스트·비교 백테스트의 입력도 같은 프리셋이라, 탭 이름이 그 셋 중 하나만 가리키면 나머지를 어디서 하는지 알 수 없다. `POST /api/portfolio/backtests/compare`는 예전부터 있었는데 **부르는 화면이 없었다** — 프리셋 2개 이상을 골라 지표 표와 겹친 시계열을 본다. 지표마다 나은 쪽 하나만 굵게 하고 동점이면 강조하지 않는다. **최대 낙폭은 음수로 오므로 `nearZero`(0에 가까울수록 낫다)로 비교한다** — "작을수록 좋다"로 두면 더 깊은 낙폭을 최선으로 강조한다. 빈도가 다르기 때문이다 — 세로로 쌓으면 매번 보는 것이 거의 안 쓰는 것에 밀린다. 저장 후 `revision`을 내려보내 시세·비중·목표 차이를 다시 받는다.
 - **목표는 프리셋이다.** `analytics.targetWeights`는 원래 포지션의 `targetWeight`만 봤고 프리셋과 서로 몰랐다. 그 값을 넣을 칸이 화면에 없어 `hasTargets`가 언제나 False였고 **목표와의 차이 표가 한 번도 뜨지 않았다**. `GET /analytics?presetId=`로 비교할 목표를 받는다. 프리셋에만 있고 아직 안 산 종목도 한 줄로 낸다.
 - `POST /presets/from-current`는 **지금 평가액 비중**을 목표로 삼는다. 예전에는 이미 설정된 `targetWeight`만 담아 실측으로 보유 3종목에서도 빈 프리셋이 나왔다.
 - 초기 공개 릴리즈에 실려 온 `.portfolio-donut-grid` 등 CSS 46개는 D1 프리미티브 이전 디자인(테두리 카드)이라 되살리지 않는다.

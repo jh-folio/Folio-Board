@@ -139,8 +139,8 @@ export function PortfolioBacktest({ revision }: { revision: number }) {
   if (!presets.length) {
     return (
       <p className="portfolio-empty">
-        백테스트는 목표 비중이 있어야 돌릴 수 있습니다. <strong>목표 비중</strong> 탭에서
-        현재 보유를 목표로 저장한 뒤 다시 오세요.
+        백테스트는 프리셋이 있어야 돌릴 수 있습니다. <strong>프리셋</strong> 탭에서
+        현재 보유로 프리셋을 만든 뒤 다시 오세요.
       </p>
     );
   }
@@ -151,7 +151,7 @@ export function PortfolioBacktest({ revision }: { revision: number }) {
         <h3>조건</h3>
         <div className="portfolio-backtest-fields">
           <label className="field">
-            <span>목표 비중</span>
+            <span>프리셋</span>
             <select value={presetId} onChange={(event) => setPresetId(event.target.value)}>
               {presets.map((preset) => (
                 <option key={preset.id} value={preset.id}>{preset.name}</option>

@@ -131,6 +131,32 @@ export type BacktestResult = {
   readonly savedAt?: string;
 };
 
+/** 프리셋 여러 개를 나란히 돌린 결과.
+ *
+ * 서버는 예전부터 이걸 만들 수 있었다(`POST /api/portfolio/backtests/compare`) —
+ * 부르는 화면만 없었다. 한 프리셋이 실패해도 나머지는 돌아오고, 실패한 것은
+ * `errors`에 남는다(부분 실패 허용).
+ */
+export type BacktestComparison = {
+  readonly type: "comparison";
+  readonly id: string;
+  readonly name?: string;
+  readonly start: string;
+  readonly end: string;
+  readonly baseCurrency: string;
+  readonly initialValue: number;
+  readonly rebalance: string;
+  readonly results: ReadonlyArray<BacktestResult>;
+  readonly errors?: ReadonlyArray<{ presetId?: string; presetName?: string; error?: string }>;
+  readonly assumptions?: ReadonlyArray<string>;
+  readonly createdAt?: string;
+  readonly savedAt?: string;
+};
+
+export function isComparison(value: BacktestResult | BacktestComparison | null): value is BacktestComparison {
+  return Boolean(value && (value as BacktestComparison).type === "comparison");
+}
+
 /** 통화 기호 없이 자릿수만 맞춘다. 통화는 라벨이 따로 말한다. */
 export function money(value: number | null | undefined, digits = 0): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";

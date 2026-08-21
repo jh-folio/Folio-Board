@@ -5,6 +5,13 @@ import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
 import { useThemePreference } from "./themePreference";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
+import {
+  ddayLabel,
+  fetchNextEarnings,
+  formatEarningsDate,
+  isEstimated,
+  type EarningsEvent,
+} from "./watchlistEarnings";
 
 type WatchlistOverviewItem = {
   item?: string;
@@ -149,6 +156,9 @@ export function WatchlistRoute() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const widgetsRef = useRef<HTMLDivElement | null>(null);
+  // 티커별 다음 실적. 카드마다 부르지 않고 한 번에 묻는다 — 종목 20개짜리
+  // 워치리스트가 20개의 요청을 만들면 목록이 그만큼 늦게 뜬다.
+  const [earnings, setEarnings] = useState<Record<string, EarningsEvent>>({});
 
   const loadOverview = useCallback(async (nextItems: string[]) => {
     if (!nextItems.length) {
@@ -156,7 +166,10 @@ export function WatchlistRoute() {
       return;
     }
     const overview = await getJson<{ items?: WatchlistOverviewItem[] }>("/api/watchlist/overview");
-    setCards(Array.isArray(overview.items) ? overview.items : []);
+    const rows = Array.isArray(overview.items) ? overview.items : [];
+    setCards(rows);
+    // 실적 조회는 목록을 막지 않는다. 실패하면 배지만 없다.
+    fetchNextEarnings(rows.map((row) => row.ticker || "").filter(Boolean)).then(setEarnings);
   }, []);
 
   const loadWatchlist = useCallback(async () => {
@@ -292,6 +305,15 @@ export function WatchlistRoute() {
 
   const newsRows = useMemo(() => sortNewsLatestFirst(detail?.news || []), [detail]);
   const selectedLabel = detailLabel(detail, detailItem);
+  // 상세의 실적은 카드 표에서 찾는다. 카드가 아는 티커와 상세가 아는 티커가 같다.
+  const detailEarnings = earningsFor(
+    cards.find((row) => (row.item || cardCompanyName(row)) === detailItem) || null,
+  ) || earnings[String(detail?.company?.ticker || "").toUpperCase()];
+
+  function earningsFor(card: WatchlistOverviewItem | null): EarningsEvent | undefined {
+    const ticker = String(card?.ticker || "").toUpperCase();
+    return ticker ? earnings[ticker] : undefined;
+  }
 
   if (detailItem) {
     return (
@@ -318,6 +340,26 @@ export function WatchlistRoute() {
             <div ref={widgetsRef} className="watchlist-detail-widgets">
               <div className="tradingview-widget-unavailable">TradingView 위젯을 준비하는 중입니다.</div>
             </div>
+            {/* 위젯과 뉴스 사이. 다음 실적은 종목을 보러 온 사람이 가장 먼저 찾는 일정이다. */}
+            {detailEarnings?.startsAt && (
+              <div className="watchlist-detail-earnings">
+                <h3>다음 실적 일정</h3>
+                <p className="watchlist-detail-earnings-line">
+                  <strong>{formatEarningsDate(detailEarnings.startsAt)}</strong>
+                  {ddayLabel(detailEarnings.startsAt) && (
+                    <span className="chip watchlist-earnings-chip" data-estimated={isEstimated(detailEarnings) ? "true" : undefined}>
+                      {ddayLabel(detailEarnings.startsAt)}
+                    </span>
+                  )}
+                  <span className="section-subtitle">
+                    {isEstimated(detailEarnings)
+                      // 확정 일정이 아니라는 사실을 숨기지 않는다. 회사 IR이 권위다.
+                      ? "제3자 예정치입니다. 회사 IR 공지로 다시 확인하세요."
+                      : "공식 일정입니다."}
+                  </span>
+                </p>
+              </div>
+            )}
             <div className="watchlist-detail-news">
               <h3>수집한 뉴스</h3>
               {detailLoading ? (
@@ -459,6 +501,22 @@ export function WatchlistRoute() {
                     {card.tags.slice(0, 5).map((tag) => <span className="tag" key={tag}>{tag}</span>)}
                   </div>
                 ) : null}
+                {/* 다음 실적. 제3자 예정치는 날짜가 움직이므로 확정과 구분해 보여준다. */}
+                {(() => {
+                  const event = earningsFor(card);
+                  if (!event?.startsAt) return null;
+                  const dday = ddayLabel(event.startsAt);
+                  if (!dday) return null;
+                  return (
+                    <span
+                      className="chip watchlist-earnings-chip"
+                      data-estimated={isEstimated(event) ? "true" : undefined}
+                      title={`실적 ${formatEarningsDate(event.startsAt)}${isEstimated(event) ? " (예정치)" : ""}`}
+                    >
+                      실적 {dday}{isEstimated(event) ? "*" : ""}
+                    </span>
+                  );
+                })()}
                 <span className="watchlist-news-count">{card.count || 0}건</span>
               </div>
             </article>

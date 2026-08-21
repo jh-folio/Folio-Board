@@ -16,8 +16,8 @@ Your files and generated reports stay local by default. LLM/API integrations are
 - **Read the day, and the week** — Generate daily briefings for any set of the four markets, each saved as its own report, or a weekly summary with next week's schedule. The Dashboard shows what actually changed since the last one, the market calendar with released figures rather than just the schedule, and charts you choose.
 - **Analyse a company** — Type a ticker, a company name, or a Korean or Japanese spelling. The screen shows which company it read before generating, offers a choice when several fit, and says so plainly when it recognises none.
 - **Answer a question** — Ask an investment question in Deep Research and approve the research plan before anything runs. The report keeps its sources, its gaps, its Smart Collection scope, and your own thinking as separate layers.
-- **Track what you follow** — Keep a Watchlist of companies, sectors, and themes, each with a chart and the news collected for it.
-- **See where you stand** — Enter your Portfolio holdings and see what they are worth in one currency, how the weight sits across markets, sectors, and currencies, and where one position has grown large. Save today's weights as a target, watch each holding drift from it, and run that target back over past prices against a benchmark.
+- **Track what you follow** — Keep a Watchlist of companies, sectors, and themes, each with a chart, the news collected for it, and the next earnings date.
+- **See where you stand** — Enter your Portfolio holdings and see what they are worth in one currency, how the weight sits across markets, sectors, and currencies, and where one position has grown large. Save today's weights as a preset, watch each holding drift from it, run that preset back over past prices against a benchmark, or compare several presets side by side.
 - **Follow the medium term** — Read a Market Memory view of the narratives running under the daily news, with a separate reading per market when the evidence supports one.
 - **Keep your own thinking separate** — Write notes beside a report and check how old they are, what argues against them, and what you said you would follow up on. Your notes stay marked as your thinking and never merge into a report's evidence.
 - **Use AI, or don't** — Chat with the Agent from Home or the dock about a holding, a watchlist entry, or a report; conversations are saved on your computer and resume later. The Work Log shows what the AI did, and any change it proposes to a saved report waits for your approval. **Folio OS runs without an AI key** — collection, search, charts, and rule-based reports all work locally.
@@ -119,6 +119,8 @@ Below that sits the market calendar — economic releases, central bank meetings
 ### Watchlist
 
 Track companies, sectors, and themes in a local Watchlist, then inspect the related news cards and market response. Type a company by name and it is stored under that company's full name, so the same company does not end up as two entries; a subject that is not a company stays exactly as you typed it. Watchlist data stays in the local workspace.
+
+Cards and detail views show the next earnings date with a countdown. When the date is a third-party estimate rather than something the company announced, it says so — check the company's own IR notice in that case.
 
 ### Briefing
 

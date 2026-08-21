@@ -16321,3 +16321,123 @@ select { min-height: 36px; padding: 0 12px; }
   transform: translate(-50%, -50%);
 }
 
+
+/* ============================================================
+   워치리스트 실적 일정 (0.5.4)
+   모양은 `.chip` 프리미티브가 갖는다. 여기서는 배치와 의미색만 얹는다.
+   ============================================================ */
+.watchlist-earnings-chip {
+  flex: 0 0 auto;
+  background: var(--folio-teal-soft);
+  color: var(--folio-teal);
+}
+/* 제3자 예정치는 확정 일정과 같은 무게로 보이면 안 된다. 날짜가 움직인다. */
+.watchlist-earnings-chip[data-estimated="true"] {
+  background: var(--folio-surface-muted);
+  color: var(--folio-ink-muted);
+}
+
+.watchlist-detail-earnings { margin-top: 18px; }
+.watchlist-detail-earnings h3 {
+  margin: 0 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+}
+.watchlist-detail-earnings-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.watchlist-detail-earnings-line strong { font-size: var(--fs-md); }
+
+/* ============================================================
+   프리셋 비교 백테스트 (0.5.4)
+   여러 계열을 한 좌표계에 겹친다. 색은 순위가 아니라 어느 프리셋인지를 가리킨다.
+   ============================================================ */
+.portfolio-compare-chart { block-size: 180px; }
+
+.portfolio-compare-line {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.portfolio-compare-line[data-tone="blue"] { stroke: var(--folio-blue); }
+.portfolio-compare-line[data-tone="teal"] { stroke: var(--folio-teal); }
+.portfolio-compare-line[data-tone="gold"] { stroke: var(--folio-gold); }
+.portfolio-compare-line[data-tone="purple"] { stroke: var(--folio-purple, var(--folio-ink-muted)); }
+.portfolio-compare-line[data-tone="burgundy"] { stroke: var(--folio-burgundy); }
+
+.portfolio-compare-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.portfolio-compare-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--r-control);
+  padding: 7px 11px;
+  background: var(--surface-control);
+  cursor: pointer;
+}
+.portfolio-compare-option small { color: var(--muted); }
+
+.portfolio-compare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.portfolio-compare-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+}
+.portfolio-compare-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.portfolio-compare-dot {
+  inline-size: 9px;
+  block-size: 9px;
+  border-radius: var(--r-pill);
+}
+.portfolio-compare-dot[data-tone="blue"] { background: var(--folio-blue); }
+.portfolio-compare-dot[data-tone="teal"] { background: var(--folio-teal); }
+.portfolio-compare-dot[data-tone="gold"] { background: var(--folio-gold); }
+.portfolio-compare-dot[data-tone="purple"] { background: var(--folio-purple, var(--folio-ink-muted)); }
+.portfolio-compare-dot[data-tone="burgundy"] { background: var(--folio-burgundy); }
+
+.portfolio-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.portfolio-compare-table th,
+.portfolio-compare-table td {
+  padding: 7px 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+.portfolio-compare-table thead th {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  color: var(--muted);
+  border-bottom: 1px solid var(--folio-border);
+}
+.portfolio-compare-table th[scope="row"],
+.portfolio-compare-table thead th:first-child {
+  text-align: left;
+  font-weight: var(--fw-medium);
+  color: var(--ink);
+}
+/* 지표마다 나은 쪽 하나만 굵게. 동점이면 아무도 강조하지 않는다 —
+   비교가 성립하지 않는데 우열을 표시하면 없는 판단을 만든다. */
+.portfolio-compare-table td[data-best="true"] { font-weight: var(--fw-bold); }
