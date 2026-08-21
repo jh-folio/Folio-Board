@@ -16346,25 +16346,9 @@ select { min-height: 36px; padding: 0 12px; }
 .watchlist-earnings-history b[data-tone="down"] { color: var(--folio-burgundy); }
 .watchlist-earnings-history b[data-tone="flat"] { color: var(--folio-ink-muted); }
 
-/* 분기별 값 표 — 막대만으로는 정확한 값을 읽을 수 없다. */
-.watchlist-quarterly__table-wrap { overflow-x: auto; }
-.watchlist-quarterly__table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.watchlist-quarterly__table th, .watchlist-quarterly__table td {
-  padding: 7px 10px 7px 0;
-  border-bottom: 1px solid var(--folio-border);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.watchlist-quarterly__table th[scope="row"], .watchlist-quarterly__table thead th:first-child { text-align: left; font-weight: var(--fw-medium); color: var(--folio-ink-muted); }
-.watchlist-quarterly__table thead th { color: var(--folio-ink-subtle); font-weight: var(--fw-normal); }
-/* 최신 분기 열이 이 표의 주인공이다. */
-.watchlist-quarterly__table td:last-child { font-weight: var(--fw-bold); color: var(--folio-ink); }
-.watchlist-quarterly__table thead th:last-child { color: var(--folio-ink); font-weight: var(--fw-medium); }
-
-/* 분기 차트(이익/재무/현금흐름 전환). 계열 색은 기업분석 차트 팔레트(--folio-chart-*)를
-   그대로 쓴다 — 두 화면의 차트가 같은 언어를 쓴다. hover 상자·판독 패널도 기업분석의
-   `analysis-chart-hover`/`analysis-chart-readout`을 재사용한다. */
+/* 분기 차트(이익/재무/안정성/현금흐름 전환). 세트별 색은 컴포넌트가 소유하고 여기는
+   배치만 갖는다. hover 상자·판독 패널은 기업분석의 `analysis-chart-hover`/
+   `analysis-chart-readout`을 재사용한다. */
 .watchlist-quarterly { margin: 0; display: grid; gap: 10px; }
 .watchlist-quarterly > .segment { justify-self: start; }
 .watchlist-quarterly__plot { position: relative; }
@@ -16375,7 +16359,6 @@ select { min-height: 36px; padding: 0 12px; }
 .watchlist-quarterly__hit { fill: transparent; cursor: pointer; }
 .watchlist-quarterly__line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .watchlist-quarterly__hit:focus-visible { outline: 2px solid var(--folio-focus, var(--folio-ink)); }
-.watchlist-quarterly__dot { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; }
 
 /* 기본 그리드 정의보다 뒤에 있어야 이긴다 — 앞쪽 media 블록에 두면 같은 특이도에서
    뒤에 오는 기본 규칙이 덮어써 모바일에서 2컬럼이 그대로 남는다(실측). */

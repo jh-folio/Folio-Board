@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { balanceRatio, CHART_SETS, chartScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText } from "./FundamentalsPanel";
+import { balanceRatio, CHART_SETS, chartScale, fractionPercentText, fundamentalsRows, percentValueText, quarterAxisLabel, rangeText, ratioText, totalLiabilities } from "./FundamentalsPanel";
 
 describe("지표 포맷", () => {
   it("결측은 —다 — provider가 실제로 비워 두는 칸이 있다(삼성전자의 PER)", () => {
@@ -62,5 +62,15 @@ describe("분기 이익 차트", () => {
     expect(balanceRatio(200, 90)).toBeCloseTo(222.2, 1);
     expect(balanceRatio(200, 0)).toBeNull();
     expect(balanceRatio(null, 90)).toBeNull();
+  });
+
+  it("부채비율은 부채총계(유동+비유동) ÷ 자본총계다", () => {
+    // 이자부채(Total Debt)로 계산했더니 그 행이 최근 분기에만 있는 회사에서
+    // 선이 점 하나로 무너졌다. 부채총계의 재료는 전 분기에 있다.
+    expect(totalLiabilities({ currentLiabilities: 90, nonCurrentLiabilities: 60 })).toBe(150);
+    // 한쪽이 비면 합계도 없다 — 반쪽 합은 부채비율을 실제보다 낮아 보이게 한다.
+    expect(totalLiabilities({ currentLiabilities: 90 })).toBeNull();
+    const debtRatio = CHART_SETS.find((set) => set.key === "stability")?.series[1];
+    expect(debtRatio?.of({ currentLiabilities: 90, nonCurrentLiabilities: 60, stockholdersEquity: 300 })).toBeCloseTo(50, 5);
   });
 });

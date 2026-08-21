@@ -23742,16 +23742,20 @@ function bd(e) {
 function xd(e, t) {
 	return e == null || !Number.isFinite(e) || t == null || !Number.isFinite(t) || t === 0 ? null : e / t * 100;
 }
-var Sd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Cd = (e) => `color-mix(in srgb, ${e} 45%, transparent)`, wd = [
+function Sd(e) {
+	let t = e.currentLiabilities, n = e.nonCurrentLiabilities;
+	return t == null || !Number.isFinite(t) || n == null || !Number.isFinite(n) ? null : t + n;
+}
+var Cd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", wd = (e) => `color-mix(in srgb, ${e} 45%, transparent)`, Td = [
 	{
 		key: "earnings",
 		label: "이익",
 		mode: "bars",
 		format: "amount",
 		colors: [
-			Sd,
+			Cd,
 			"var(--folio-green)",
-			Cd("var(--folio-green)")
+			wd("var(--folio-green)")
 		],
 		series: [
 			{
@@ -23777,9 +23781,9 @@ var Sd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Cd = (e) => `c
 		mode: "bars",
 		format: "amount",
 		colors: [
-			Sd,
+			Cd,
 			"var(--folio-chart-1)",
-			Cd("var(--folio-chart-1)")
+			wd("var(--folio-chart-1)")
 		],
 		series: [
 			{
@@ -23812,7 +23816,7 @@ var Sd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Cd = (e) => `c
 		}, {
 			key: "debtRatio",
 			label: "부채비율",
-			of: (e) => xd(e.totalDebt, e.stockholdersEquity)
+			of: (e) => xd(Sd(e), e.stockholdersEquity)
 		}]
 	},
 	{
@@ -23821,9 +23825,9 @@ var Sd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Cd = (e) => `c
 		mode: "bars",
 		format: "amount",
 		colors: [
-			Sd,
+			Cd,
 			"var(--folio-gold)",
-			Cd("var(--folio-gold)")
+			wd("var(--folio-gold)")
 		],
 		series: [
 			{
@@ -23844,11 +23848,11 @@ var Sd = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Cd = (e) => `c
 		]
 	}
 ];
-function Td(e) {
+function Ed(e) {
 	let t = String(e || "");
 	return /^\d{4}-\d{2}/.test(t) ? `${t.slice(2, 4)}년 ${Number(t.slice(5, 7))}월` : "";
 }
-function Ed(e, t) {
+function Dd(e, t) {
 	let n = e.filter((e) => e !== null && Number.isFinite(e));
 	if (!n.length) return {
 		max: 0,
@@ -23865,11 +23869,11 @@ function Ed(e, t) {
 		min: i
 	};
 }
-function Dd({ quarters: e, currency: t }) {
-	let [n, r] = (0, l.useState)(wd[0].key), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), c = wd.find((e) => e.key === n) || wd[0], u = (e || []).filter((e) => c.series.some((t) => t.of(e) != null)), d = Math.max(0, u.length - 1), f = Math.min(i ?? d, d), p = f - 1, m = c.series.map((e) => u.map((t) => {
+function Od({ quarters: e, currency: t }) {
+	let [n, r] = (0, l.useState)(Td[0].key), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), c = Td.find((e) => e.key === n) || Td[0], u = (e || []).filter((e) => c.series.some((t) => t.of(e) != null)), d = Math.max(0, u.length - 1), f = Math.min(i ?? d, d), p = f - 1, m = c.series.map((e) => u.map((t) => {
 		let n = e.of(t);
 		return n == null || !Number.isFinite(n) ? null : n;
-	})), h = Ed(m.flat(), c.mode), g = h.max - h.min, _ = u.length ? 560 / u.length : 560, v = Math.min(30, (_ - 20) / c.series.length), y = g > 0 ? h.max / g * 190 : 190, b = (e) => (h.max - e) / g * 190, x = (e) => e * _ + _ / 2, S = (e) => c.format === "percent" ? $(e) : Ga(e, t), C = (e, t) => {
+	})), h = Dd(m.flat(), c.mode), g = h.max - h.min, _ = u.length ? 560 / u.length : 560, v = Math.min(30, (_ - 20) / c.series.length), y = g > 0 ? h.max / g * 190 : 190, b = (e) => (h.max - e) / g * 190, x = (e) => e * _ + _ / 2, S = (e) => c.format === "percent" ? $(e) : Ga(e, t), C = (e, t) => {
 		if (e === null || t === null) return {
 			text: "—",
 			tone: "flat"
@@ -23892,7 +23896,7 @@ function Dd({ quarters: e, currency: t }) {
 		className: "segment",
 		role: "group",
 		"aria-label": "분기 차트 종류",
-		children: wd.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
+		children: Td.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
 			type: "button",
 			"aria-pressed": e.key === n,
 			onClick: () => w(e.key),
@@ -23944,7 +23948,7 @@ function Dd({ quarters: e, currency: t }) {
 							y: 207,
 							textAnchor: "middle",
 							className: "watchlist-quarterly__axis",
-							children: Td(e.quarter)
+							children: Ed(e.quarter)
 						}, e.quarter || t)),
 						c.mode === "bars" && u.map((e, t) => {
 							let n = t * _ + (_ - v * c.series.length - 10) / 2;
@@ -23964,7 +23968,7 @@ function Dd({ quarters: e, currency: t }) {
 								}, e.key);
 							}) }, e.quarter || t);
 						}),
-						c.mode === "lines" && c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("g", { children: [/* @__PURE__ */ (0, K.jsx)("polyline", {
+						c.mode === "lines" && c.series.map((e, t) => m[t].filter((e) => e !== null).length < 2 ? null : /* @__PURE__ */ (0, K.jsxs)("g", { children: [/* @__PURE__ */ (0, K.jsx)("polyline", {
 							className: "watchlist-quarterly__line",
 							stroke: c.colors[t % c.colors.length],
 							points: m[t].map((e, t) => e === null ? null : `${x(t).toFixed(1)},${b(e).toFixed(1)}`).filter(Boolean).join(" ")
@@ -23982,7 +23986,7 @@ function Dd({ quarters: e, currency: t }) {
 							height: 214,
 							tabIndex: 0,
 							role: "button",
-							"aria-label": `${Td(e.quarter)} 수치 보기`,
+							"aria-label": `${Ed(e.quarter)} 수치 보기`,
 							onMouseEnter: () => {
 								a(t), s((t + .5) / u.length);
 							},
@@ -23995,7 +23999,7 @@ function Dd({ quarters: e, currency: t }) {
 					className: "analysis-chart-hover",
 					"data-side": o > .5 ? "left" : "right",
 					style: o > .5 ? { right: `${(1 - o) * 100}%` } : { left: `${o * 100}%` },
-					children: [/* @__PURE__ */ (0, K.jsx)("b", { children: Td(u[f]?.quarter) }), c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("p", { children: [
+					children: [/* @__PURE__ */ (0, K.jsx)("b", { children: Ed(u[f]?.quarter) }), c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("p", { children: [
 						/* @__PURE__ */ (0, K.jsx)("span", {
 							className: "analysis-chart-swatch",
 							style: { background: c.colors[t % c.colors.length] }
@@ -24009,7 +24013,7 @@ function Dd({ quarters: e, currency: t }) {
 				className: "analysis-chart-readout",
 				children: [/* @__PURE__ */ (0, K.jsxs)("p", {
 					className: "analysis-chart-readout-head",
-					children: [/* @__PURE__ */ (0, K.jsx)("strong", { children: Td(u[f]?.quarter) }), p >= 0 && /* @__PURE__ */ (0, K.jsxs)("span", { children: [Td(u[p]?.quarter), " 대비"] })]
+					children: [/* @__PURE__ */ (0, K.jsx)("strong", { children: Ed(u[f]?.quarter) }), p >= 0 && /* @__PURE__ */ (0, K.jsxs)("span", { children: [Ed(u[p]?.quarter), " 대비"] })]
 				}), c.series.map((e, t) => {
 					let n = m[t][f], r = p >= 0 ? m[t][p] : null, i = C(n, r);
 					return /* @__PURE__ */ (0, K.jsxs)("p", {
@@ -24028,31 +24032,11 @@ function Dd({ quarters: e, currency: t }) {
 						]
 					}, e.key);
 				})]
-			}),
-			/* @__PURE__ */ (0, K.jsx)("div", {
-				className: "watchlist-quarterly__table-wrap",
-				children: /* @__PURE__ */ (0, K.jsxs)("table", {
-					className: "watchlist-quarterly__table",
-					children: [/* @__PURE__ */ (0, K.jsx)("thead", { children: /* @__PURE__ */ (0, K.jsxs)("tr", { children: [/* @__PURE__ */ (0, K.jsx)("th", {
-						scope: "col",
-						children: "항목"
-					}), u.map((e) => /* @__PURE__ */ (0, K.jsx)("th", {
-						scope: "col",
-						children: Td(e.quarter)
-					}, e.quarter))] }) }), /* @__PURE__ */ (0, K.jsx)("tbody", { children: c.series.map((e, t) => /* @__PURE__ */ (0, K.jsxs)("tr", { children: [/* @__PURE__ */ (0, K.jsxs)("th", {
-						scope: "row",
-						children: [/* @__PURE__ */ (0, K.jsx)("i", {
-							className: "watchlist-quarterly__dot",
-							style: { background: c.colors[t % c.colors.length] },
-							"aria-hidden": "true"
-						}), e.label]
-					}), u.map((e, n) => /* @__PURE__ */ (0, K.jsx)("td", { children: S(m[t][n]) }, e.quarter))] }, e.key)) })]
-				})
 			})
 		]
 	});
 }
-function Od({ payload: e }) {
+function kd({ payload: e }) {
 	let [t, n] = (0, l.useState)(!1), r = String(e.longBusinessSummary || "").trim(), i = [{
 		label: "섹터",
 		value: e.sector || ""
@@ -24081,7 +24065,7 @@ function Od({ payload: e }) {
 		]
 	});
 }
-function kd({ ticker: e, payload: t, error: n }) {
+function Ad({ ticker: e, payload: t, error: n }) {
 	if (!e) return null;
 	if (n) return /* @__PURE__ */ (0, K.jsx)("p", {
 		className: "section-subtitle",
@@ -24094,13 +24078,13 @@ function kd({ ticker: e, payload: t, error: n }) {
 	let r = t.currency || "USD";
 	return /* @__PURE__ */ (0, K.jsxs)("div", {
 		className: "watchlist-fundamentals",
-		children: [/* @__PURE__ */ (0, K.jsxs)("div", { children: [/* @__PURE__ */ (0, K.jsx)(Od, { payload: t }), /* @__PURE__ */ (0, K.jsx)("dl", {
+		children: [/* @__PURE__ */ (0, K.jsxs)("div", { children: [/* @__PURE__ */ (0, K.jsx)(kd, { payload: t }), /* @__PURE__ */ (0, K.jsx)("dl", {
 			className: "watchlist-fundamentals-rows",
 			children: bd(t).map((e) => /* @__PURE__ */ (0, K.jsxs)("div", {
 				className: "watchlist-fundamentals-row",
 				children: [/* @__PURE__ */ (0, K.jsxs)("dt", { children: [e.label, /* @__PURE__ */ (0, K.jsx)("small", { children: e.hint })] }), /* @__PURE__ */ (0, K.jsx)("dd", { children: e.value })]
 			}, e.label))
-		})] }), /* @__PURE__ */ (0, K.jsx)(Dd, {
+		})] }), /* @__PURE__ */ (0, K.jsx)(Od, {
 			quarters: t.quarters || [],
 			currency: r
 		})]
@@ -24108,23 +24092,23 @@ function kd({ ticker: e, payload: t, error: n }) {
 }
 //#endregion
 //#region src/app/WatchlistRoute.tsx
-function Ad(e) {
+function jd(e) {
 	let t = /* @__PURE__ */ new Set();
 	return e.map((e) => String(e || "").trim()).filter(Boolean).filter((e) => {
 		let n = e.toLowerCase();
 		return !t.has(n) && (t.add(n), !0);
 	});
 }
-function jd(e) {
+function Md(e) {
 	return e.ticker || e.item || "";
 }
-function Md(e) {
-	return e.companyName || e.name || e.item || jd(e);
+function Nd(e) {
+	return e.companyName || e.name || e.item || Md(e);
 }
-function Nd(e, t = "") {
+function Pd(e, t = "") {
 	return e?.company?.name || e?.item || t || "상세 보기";
 }
-function Pd(e) {
+function Fd(e) {
 	if (!e) return "상세 정보를 불러오는 중입니다.";
 	let t = e.company || {};
 	return [
@@ -24133,32 +24117,32 @@ function Pd(e) {
 		e.newsCount ? `${e.newsCount}개 뉴스` : ""
 	].filter(Boolean).join(" · ") || "확인된 심볼 정보가 없습니다.";
 }
-function Fd(e = []) {
+function Id(e = []) {
 	return [...e].sort((e, t) => String(t.date || "").localeCompare(String(e.date || "")));
 }
-function Id(e) {
+function Ld(e) {
 	return e.title || e.url || e.path || "자료";
 }
-function Ld(e) {
+function Rd(e) {
 	return [e.source, e.date].filter(Boolean).join(" · ");
 }
-var Rd = /^(?:co|inc|ltd|corp|llc|plc|ag|nv|sa|se|kk|gmbh|s\.?a\.?s|co\.?,?\s*ltd)\.?$/i;
-function zd(e, t) {
+var zd = /^(?:co|inc|ltd|corp|llc|plc|ag|nv|sa|se|kk|gmbh|s\.?a\.?s|co\.?,?\s*ltd)\.?$/i;
+function Bd(e, t) {
 	let n = String(e || "").trim();
-	return n ? t ? [n] : n.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean).filter((e) => !Rd.test(e)) : [];
+	return n ? t ? [n] : n.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean).filter((e) => !zd.test(e)) : [];
 }
-function Bd(e) {
+function Vd(e) {
 	window.location.hash = e ? `#/watchlist/${encodeURIComponent(e)}` : "#/watchlist";
 }
-function Vd() {
+function Hd() {
 	let e = window.location.hash.match(/^#\/?watchlist\/(.+)$/);
 	return e ? decodeURIComponent(e[1]) : "";
 }
-function Hd() {
+function Ud() {
 	return window.location.hash.replace(/^#\/?/, "").split("/")[0] === "watchlist";
 }
-function Ud() {
-	let [e, t] = (0, l.useState)([]), [n, r] = (0, l.useState)([]), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(() => Vd()), [c, u] = (0, l.useState)(null), [d, f] = (0, l.useState)(!1), [p, m] = (0, l.useState)(!1), [h, g] = (0, l.useState)(!1), [_, v] = (0, l.useState)(""), [y, b] = (0, l.useState)(""), [x, S] = (0, l.useState)({}), [C, w] = (0, l.useState)("3m"), [T, E] = (0, l.useState)("line"), D = (0, l.useCallback)(async (e) => {
+function Wd() {
+	let [e, t] = (0, l.useState)([]), [n, r] = (0, l.useState)([]), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(() => Hd()), [c, u] = (0, l.useState)(null), [d, f] = (0, l.useState)(!1), [p, m] = (0, l.useState)(!1), [h, g] = (0, l.useState)(!1), [_, v] = (0, l.useState)(""), [y, b] = (0, l.useState)(""), [x, S] = (0, l.useState)({}), [C, w] = (0, l.useState)("3m"), [T, E] = (0, l.useState)("line"), D = (0, l.useCallback)(async (e) => {
 		if (!e.length) {
 			r([]);
 			return;
@@ -24168,7 +24152,7 @@ function Ud() {
 	}, []), O = (0, l.useCallback)(async () => {
 		f(!0), v("");
 		try {
-			let e = await B("/api/watchlist"), n = Ad(Array.isArray(e) ? e : []);
+			let e = await B("/api/watchlist"), n = jd(Array.isArray(e) ? e : []);
 			t(n), await D(n), Qe("watchlist", {
 				surface: "watchlist",
 				viewId: "watchlist",
@@ -24185,7 +24169,7 @@ function Ud() {
 		O();
 	}, [O]), (0, l.useEffect)(() => {
 		let e = () => {
-			Hd() && s(Vd());
+			Ud() && s(Hd());
 		};
 		return window.addEventListener("hashchange", e), e(), () => window.removeEventListener("hashchange", e);
 	}, []), (0, l.useEffect)(() => {
@@ -24221,7 +24205,7 @@ function Ud() {
 	async function k(e, n) {
 		g(!0), v("");
 		try {
-			let r = await V("/api/watchlist", { items: e }), i = Ad(Array.isArray(r) ? r : []);
+			let r = await V("/api/watchlist", { items: e }), i = jd(Array.isArray(r) ? r : []);
 			t(i), await D(i), n && b(n);
 		} catch (e) {
 			v(e instanceof Error ? e.message : "워치리스트 저장에 실패했습니다.");
@@ -24238,7 +24222,7 @@ function Ud() {
 		}
 	}
 	async function L() {
-		let t = zd(i, P);
+		let t = Bd(i, P);
 		if (!t.length) return;
 		let n = [...e];
 		for (let e of t) {
@@ -24248,9 +24232,9 @@ function Ud() {
 		a(""), n.length !== e.length && await k(n, "워치리스트에 추가했습니다.");
 	}
 	async function R(t) {
-		await k(e.filter((e) => e !== t), "워치리스트에서 삭제했습니다."), o === t && Bd();
+		await k(e.filter((e) => e !== t), "워치리스트에서 삭제했습니다."), o === t && Vd();
 	}
-	let z = (0, l.useMemo)(() => Fd(c?.news || []), [c]), H = /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [/* @__PURE__ */ (0, K.jsx)("div", {
+	let z = (0, l.useMemo)(() => Id(c?.news || []), [c]), H = /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [/* @__PURE__ */ (0, K.jsx)("div", {
 		className: "watchlist-detail-section__head",
 		children: /* @__PURE__ */ (0, K.jsx)("h3", { children: "수집한 뉴스" })
 	}), p ? /* @__PURE__ */ (0, K.jsx)("p", {
@@ -24263,21 +24247,21 @@ function Ud() {
 			children: [
 				/* @__PURE__ */ (0, K.jsx)("span", {
 					className: "watchlist-news-row__meta",
-					children: Ld(e)
+					children: Rd(e)
 				}),
 				/* @__PURE__ */ (0, K.jsx)("h4", { children: e.url ? /* @__PURE__ */ (0, K.jsx)("a", {
 					href: e.url,
 					target: "_blank",
 					rel: "noopener noreferrer",
-					children: Id(e)
-				}) : /* @__PURE__ */ (0, K.jsx)("span", { children: Id(e) }) }),
+					children: Ld(e)
+				}) : /* @__PURE__ */ (0, K.jsx)("span", { children: Ld(e) }) }),
 				e.snippet && /* @__PURE__ */ (0, K.jsx)("p", { children: e.snippet })
 			]
-		}, `${Id(e)}-${t}`))
+		}, `${Ld(e)}-${t}`))
 	}) : /* @__PURE__ */ (0, K.jsx)("p", {
 		className: "section-subtitle",
 		children: "수집된 관련 뉴스가 없습니다."
-	})] }), U = Nd(c, o), ee = n.find((e) => (e.item || Md(e)) === o) || null, te = String(ee?.ticker || c?.company?.ticker || "").trim(), W = ee ? Md(ee) : Nd(c, o), G = gd(te);
+	})] }), U = Pd(c, o), ee = n.find((e) => (e.item || Nd(e)) === o) || null, te = String(ee?.ticker || c?.company?.ticker || "").trim(), W = ee ? Nd(ee) : Pd(c, o), G = gd(te);
 	function q(e) {
 		let t = String(e?.ticker || "").toUpperCase();
 		return t ? x[t] : void 0;
@@ -24294,7 +24278,7 @@ function Ud() {
 					/* @__PURE__ */ (0, K.jsx)("button", {
 						type: "button",
 						className: "reader-crumb-link",
-						onClick: () => Bd(),
+						onClick: () => Vd(),
 						children: "워치리스트"
 					}),
 					/* @__PURE__ */ (0, K.jsx)("span", {
@@ -24325,7 +24309,7 @@ function Ud() {
 							}),
 							/* @__PURE__ */ (0, K.jsx)("p", {
 								className: "section-subtitle",
-								children: Pd(c)
+								children: Fd(c)
 							})
 						] }), /* @__PURE__ */ (0, K.jsxs)("div", {
 							className: "watchlist-detail-actions",
@@ -24335,7 +24319,7 @@ function Ud() {
 								"aria-label": "닫기",
 								"data-tooltip": "닫기",
 								"data-tooltip-pos": "left",
-								onClick: () => Bd(),
+								onClick: () => Vd(),
 								children: "×"
 							})]
 						})]
@@ -24352,7 +24336,7 @@ function Ud() {
 								children: [/* @__PURE__ */ (0, K.jsx)("div", {
 									className: "watchlist-detail-section__head",
 									children: /* @__PURE__ */ (0, K.jsx)("h3", { children: "재무·투자 지표" })
-								}), /* @__PURE__ */ (0, K.jsx)(kd, {
+								}), /* @__PURE__ */ (0, K.jsx)(Ad, {
 									ticker: te,
 									payload: G.payload,
 									error: G.error
@@ -24484,16 +24468,16 @@ function Ud() {
 			/* @__PURE__ */ (0, K.jsx)("div", {
 				className: "watchlist-grid",
 				children: n.length ? n.map((e) => {
-					let t = e.item || Md(e);
+					let t = e.item || Nd(e);
 					return /* @__PURE__ */ (0, K.jsxs)("article", {
 						className: "watchlist-card",
 						"data-watchlist-detail-item": t,
 						tabIndex: 0,
 						role: "button",
 						"aria-label": `${t} 상세 보기`,
-						onClick: () => Bd(t),
+						onClick: () => Vd(t),
 						onKeyDown: (e) => {
-							(e.key === "Enter" || e.key === " ") && (e.preventDefault(), Bd(t));
+							(e.key === "Enter" || e.key === " ") && (e.preventDefault(), Vd(t));
 						},
 						children: [
 							/* @__PURE__ */ (0, K.jsx)("span", {
@@ -24526,8 +24510,8 @@ function Ud() {
 								className: "watchlist-card-top",
 								children: [/* @__PURE__ */ (0, K.jsx)("strong", {
 									className: "watchlist-ticker",
-									children: jd(e)
-								}), /* @__PURE__ */ (0, K.jsx)("h3", { children: Md(e) })]
+									children: Md(e)
+								}), /* @__PURE__ */ (0, K.jsx)("h3", { children: Nd(e) })]
 							}),
 							/* @__PURE__ */ (0, K.jsxs)("div", {
 								className: "watchlist-card-meta",
@@ -24572,16 +24556,16 @@ function Ud() {
 }
 //#endregion
 //#region src/app/AppShell.tsx
-var Wd = [
+var Gd = [
 	"light",
 	"dark",
 	"system"
-], Gd = {
+], Kd = {
 	light: "라이트",
 	dark: "다크",
 	system: "시스템"
 };
-function Kd({ preference: e }) {
+function qd({ preference: e }) {
 	return e === "light" ? /* @__PURE__ */ (0, K.jsxs)("svg", {
 		viewBox: "0 0 16 16",
 		fill: "none",
@@ -24628,8 +24612,8 @@ function Kd({ preference: e }) {
 		})]
 	});
 }
-function qd() {
-	let e = ju(), [t, n] = (0, l.useState)(!1), r = (0, l.useRef)(null), i = (0, l.useRef)(null), a = (0, l.useRef)([]), o = e.preference === "system" ? `시스템 (${Gd[e.resolved]})` : Gd[e.preference];
+function Jd() {
+	let e = ju(), [t, n] = (0, l.useState)(!1), r = (0, l.useRef)(null), i = (0, l.useRef)(null), a = (0, l.useRef)([]), o = e.preference === "system" ? `시스템 (${Kd[e.resolved]})` : Kd[e.preference];
 	(0, l.useEffect)(() => {
 		if (!t) return;
 		let e = (e) => {
@@ -24642,11 +24626,11 @@ function qd() {
 		};
 	}, [t]), (0, l.useEffect)(() => {
 		if (!t) return;
-		let n = Math.max(0, Wd.indexOf(e.preference));
+		let n = Math.max(0, Gd.indexOf(e.preference));
 		a.current[n]?.focus();
 	}, [t, e.preference]);
 	let s = (e, t) => {
-		let n = (e + t + Wd.length) % Wd.length;
+		let n = (e + t + Gd.length) % Gd.length;
 		a.current[n]?.focus();
 	};
 	return /* @__PURE__ */ (0, K.jsxs)("div", {
@@ -24662,12 +24646,12 @@ function qd() {
 			"data-tooltip": t ? "" : `테마: ${o}`,
 			"data-tooltip-pos": "bottom",
 			onClick: () => n((e) => !e),
-			children: /* @__PURE__ */ (0, K.jsx)(Kd, { preference: e.preference })
+			children: /* @__PURE__ */ (0, K.jsx)(qd, { preference: e.preference })
 		}), t && /* @__PURE__ */ (0, K.jsx)("div", {
 			className: "theme-menu-list",
 			role: "menu",
 			"aria-label": "화면 테마",
-			children: Wd.map((t, r) => /* @__PURE__ */ (0, K.jsxs)("button", {
+			children: Gd.map((t, r) => /* @__PURE__ */ (0, K.jsxs)("button", {
 				type: "button",
 				role: "menuitemradio",
 				"aria-checked": e.preference === t,
@@ -24680,20 +24664,20 @@ function qd() {
 				onKeyDown: (e) => {
 					e.key === "ArrowDown" && (e.preventDefault(), s(r, 1)), e.key === "ArrowUp" && (e.preventDefault(), s(r, -1));
 				},
-				children: [/* @__PURE__ */ (0, K.jsx)(Kd, { preference: t }), Gd[t]]
+				children: [/* @__PURE__ */ (0, K.jsx)(qd, { preference: t }), Kd[t]]
 			}, t))
 		})]
 	});
 }
-var Jd = [
+var Yd = [
 	"codex",
 	"claude",
 	"antigravity"
 ];
-function Yd(e) {
+function Xd(e) {
 	return e ? e.bridgeSupported === !1 ? "지원 안 됨" : e.installed ? e.available ? "사용 가능" : "로그인 필요" : "미설치" : "확인 중";
 }
-function Xd() {
+function Zd() {
 	let [e, t] = (0, l.useState)(null), [n, r] = (0, l.useState)(!1), [i, a] = (0, l.useState)(!1), o = (0, l.useRef)(null), s = (0, l.useRef)(null);
 	(0, l.useEffect)(() => {
 		let e = !0;
@@ -24720,10 +24704,10 @@ function Xd() {
 			document.removeEventListener("pointerdown", e), document.removeEventListener("keydown", t, !0);
 		};
 	}, [n]);
-	let c = Jd.map((t) => ({
+	let c = Yd.map((t) => ({
 		id: t,
 		row: e?.adapters?.find((e) => e.id === t)
-	})), u = e?.provider && Jd.includes(e.provider) ? e.provider : "", d = c.find((e) => e.id === u)?.row?.label || "선택 안 됨";
+	})), u = e?.provider && Yd.includes(e.provider) ? e.provider : "", d = c.find((e) => e.id === u)?.row?.label || "선택 안 됨";
 	async function f(n) {
 		a(!0);
 		try {
@@ -24783,7 +24767,7 @@ function Xd() {
 					"aria-checked": u === e,
 					disabled: i || t?.bridgeSupported === !1,
 					onClick: () => void f(e),
-					children: [/* @__PURE__ */ (0, K.jsx)("span", { children: t?.label || e }), /* @__PURE__ */ (0, K.jsx)("small", { children: Yd(t) })]
+					children: [/* @__PURE__ */ (0, K.jsx)("span", { children: t?.label || e }), /* @__PURE__ */ (0, K.jsx)("small", { children: Xd(t) })]
 				}, e)),
 				/* @__PURE__ */ (0, K.jsx)("p", {
 					className: "agent-provider-menu__note",
@@ -24793,7 +24777,7 @@ function Xd() {
 		})]
 	});
 }
-var Zd = [
+var Qd = [
 	{
 		id: "home",
 		title: "홈",
@@ -24823,7 +24807,7 @@ var Zd = [
 		title: "",
 		routes: ["settings"]
 	}
-], Qd = {
+], $d = {
 	home: /* @__PURE__ */ (0, K.jsxs)("svg", {
 		className: "react-left-nav-svg",
 		viewBox: "0 0 24 24",
@@ -24955,25 +24939,25 @@ var Zd = [
 		"aria-hidden": "true",
 		children: [/* @__PURE__ */ (0, K.jsx)("path", { d: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" }), /* @__PURE__ */ (0, K.jsx)("path", { d: "M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-.4-1.1 1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.1-.4 1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06A2 2 0 1 1 7.22 3.43l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 .4 1.1 1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.34.4.7.6 1a1.7 1.7 0 0 0 1.1.4H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.1.4c-.17.14-.31.28-.41.2Z" })]
 	})
-}, $d = "(max-width: 1024px)";
-function ef() {
-	return typeof window < "u" && window.matchMedia($d).matches;
-}
+}, ef = "(max-width: 1024px)";
 function tf() {
+	return typeof window < "u" && window.matchMedia(ef).matches;
+}
+function nf() {
 	let e = window.location.hash || Yi(Eu());
 	return /^#\/?office(?:\/|$)/.test(e) ? (window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/home`), Yi("home")) : e;
 }
-function nf() {
-	let [e, t] = (0, l.useState)(() => tf());
+function rf() {
+	let [e, t] = (0, l.useState)(() => nf());
 	return (0, l.useEffect)(() => {
-		let e = () => t(tf());
+		let e = () => t(nf());
 		return window.addEventListener("hashchange", e), e(), () => window.removeEventListener("hashchange", e);
 	}, []), {
 		hash: e,
 		routeId: Ji(e)
 	};
 }
-async function rf(e) {
+async function af(e) {
 	await new Promise((e) => window.setTimeout(e, 1500));
 	let t = Date.now() + 6e4;
 	for (; Date.now() < t;) {
@@ -24987,11 +24971,11 @@ async function rf(e) {
 	}
 	e("재시작 확인 실패 · 수동 새로고침 필요");
 }
-function af() {
-	let { hash: e, routeId: t } = nf(), n = Xi(t), r = Eu(Du().preferences), [i, a] = (0, l.useState)(() => localStorage.getItem("folio.react.navCollapsed") === "1"), o = (0, l.useRef)(!1), [s, c] = (0, l.useState)(() => {
+function of() {
+	let { hash: e, routeId: t } = rf(), n = Xi(t), r = Eu(Du().preferences), [i, a] = (0, l.useState)(() => localStorage.getItem("folio.react.navCollapsed") === "1"), o = (0, l.useRef)(!1), [s, c] = (0, l.useState)(() => {
 		let e = localStorage.getItem("folio.react.agentClosed"), t = e === null || e !== "1";
-		return t && ef() ? (o.current = !0, !1) : t;
-	}), [u, d] = (0, l.useState)(() => /* @__PURE__ */ new Set([t])), [f, p] = (0, l.useState)(() => ({ [t]: tf() })), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(!1), v = (0, l.useRef)(null), y = (0, l.useRef)(t), b = (0, l.useRef)(!1), x = (0, l.useRef)({}), S = n.id !== "home", C = S && s ? " is-agent-open" : " is-agent-closed";
+		return t && tf() ? (o.current = !0, !1) : t;
+	}), [u, d] = (0, l.useState)(() => /* @__PURE__ */ new Set([t])), [f, p] = (0, l.useState)(() => ({ [t]: nf() })), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(!1), v = (0, l.useRef)(null), y = (0, l.useRef)(t), b = (0, l.useRef)(!1), x = (0, l.useRef)({}), S = n.id !== "home", C = S && s ? " is-agent-open" : " is-agent-closed";
 	(0, l.useEffect)(() => {
 		tt(n.id, {
 			surface: `react_${n.id}`,
@@ -25006,7 +24990,7 @@ function af() {
 		}
 		localStorage.setItem("folio.react.agentClosed", s ? "0" : "1");
 	}, [s]), (0, l.useEffect)(() => {
-		let e = window.matchMedia($d), t = (e) => {
+		let e = window.matchMedia(ef), t = (e) => {
 			e.matches && c((e) => e && (o.current = !0, !1));
 		};
 		return e.addEventListener("change", t), () => e.removeEventListener("change", t);
@@ -25050,7 +25034,7 @@ function af() {
 					body: "{}"
 				});
 			} catch {}
-			h("서버 재시작 중"), await rf(h), _(!1);
+			h("서버 재시작 중"), await af(h), _(!1);
 		}
 	}
 	function T(e) {
@@ -25059,7 +25043,7 @@ function af() {
 	}
 	function E(e) {
 		let t = Xi(e);
-		return t.id === "home" ? /* @__PURE__ */ (0, K.jsx)(un, {}) : t.id === "dashboard" ? /* @__PURE__ */ (0, K.jsx)(ns, {}) : t.id === "briefing" ? /* @__PURE__ */ (0, K.jsx)(Wi, {}) : t.id === "rss" ? /* @__PURE__ */ (0, K.jsx)(au, {}) : t.id === "market-memory" ? /* @__PURE__ */ (0, K.jsx)(Rc, {}) : t.id === "analysis" ? /* @__PURE__ */ (0, K.jsx)(So, {}) : t.id === "deep-research" ? /* @__PURE__ */ (0, K.jsx)($s, {}) : t.id === "watchlist" ? /* @__PURE__ */ (0, K.jsx)(Ud, {}) : t.id === "portfolio" ? /* @__PURE__ */ (0, K.jsx)(dl, {}) : t.id === "settings" ? /* @__PURE__ */ (0, K.jsx)(md, {}) : null;
+		return t.id === "home" ? /* @__PURE__ */ (0, K.jsx)(un, {}) : t.id === "dashboard" ? /* @__PURE__ */ (0, K.jsx)(ns, {}) : t.id === "briefing" ? /* @__PURE__ */ (0, K.jsx)(Wi, {}) : t.id === "rss" ? /* @__PURE__ */ (0, K.jsx)(au, {}) : t.id === "market-memory" ? /* @__PURE__ */ (0, K.jsx)(Rc, {}) : t.id === "analysis" ? /* @__PURE__ */ (0, K.jsx)(So, {}) : t.id === "deep-research" ? /* @__PURE__ */ (0, K.jsx)($s, {}) : t.id === "watchlist" ? /* @__PURE__ */ (0, K.jsx)(Wd, {}) : t.id === "portfolio" ? /* @__PURE__ */ (0, K.jsx)(dl, {}) : t.id === "settings" ? /* @__PURE__ */ (0, K.jsx)(md, {}) : null;
 	}
 	return /* @__PURE__ */ (0, K.jsxs)("div", {
 		className: `react-shell${i ? " is-nav-collapsed" : ""}${C}${S ? "" : " is-agent-suppressed"}`,
@@ -25087,8 +25071,8 @@ function af() {
 					"aria-live": "polite",
 					children: [
 						/* @__PURE__ */ (0, K.jsx)("span", { children: m }),
-						/* @__PURE__ */ (0, K.jsx)(qd, {}),
-						/* @__PURE__ */ (0, K.jsx)(Xd, {}),
+						/* @__PURE__ */ (0, K.jsx)(Jd, {}),
+						/* @__PURE__ */ (0, K.jsx)(Zd, {}),
 						/* @__PURE__ */ (0, K.jsx)("button", {
 							className: "btn btn--sm",
 							type: "button",
@@ -25120,7 +25104,7 @@ function af() {
 					children: [/* @__PURE__ */ (0, K.jsx)("div", {
 						className: "react-left-nav-title",
 						children: "Navigate"
-					}), Zd.map((e) => /* @__PURE__ */ (0, K.jsxs)("section", {
+					}), Qd.map((e) => /* @__PURE__ */ (0, K.jsxs)("section", {
 						className: "react-left-nav-group",
 						"data-nav-group": e.id,
 						children: [e.title && /* @__PURE__ */ (0, K.jsx)("h3", { children: e.title }), /* @__PURE__ */ (0, K.jsx)("div", {
@@ -25142,7 +25126,7 @@ function af() {
 										children: [/* @__PURE__ */ (0, K.jsx)("span", {
 											className: "react-left-nav-icon",
 											"aria-hidden": "true",
-											children: Qd[a.id]
+											children: $d[a.id]
 										}), /* @__PURE__ */ (0, K.jsx)("span", {
 											className: "react-left-nav-label",
 											children: a.label
@@ -25182,7 +25166,7 @@ function af() {
 }
 //#endregion
 //#region src/app/AppTour.tsx
-var of = [
+var sf = [
 	{
 		route: "rss",
 		title: "여기로 자료가 들어옵니다",
@@ -25198,11 +25182,11 @@ var of = [
 		title: "이야기가 결과물이 됩니다",
 		body: "모인 자료와 흐름으로 매일의 브리핑을 만듭니다. 어떤 자료를 근거로 삼았는지가 함께 남고, 기업 분석과 테마 분석도 같은 자료를 씁니다."
 	}
-], sf = 340, cf = 14, lf = 12;
-function uf(e) {
+], cf = 340, lf = 14, uf = 12;
+function df(e) {
 	return document.querySelector(`.react-left-nav-item[data-route="${e}"]`);
 }
-function df(e) {
+function ff(e) {
 	if (!e) return null;
 	let t = e.getBoundingClientRect();
 	return t.width < 1 || t.height < 1 ? null : {
@@ -25212,25 +25196,25 @@ function df(e) {
 		height: t.height
 	};
 }
-function ff(e) {
+function pf(e) {
 	if (!e) return {
-		top: Math.max(lf, window.innerHeight / 2 - 120),
-		left: Math.max(lf, (window.innerWidth - sf) / 2)
+		top: Math.max(uf, window.innerHeight / 2 - 120),
+		left: Math.max(uf, (window.innerWidth - cf) / 2)
 	};
-	let t = window.innerWidth - (e.left + e.width) - cf >= 352 ? e.left + e.width + cf : Math.min(Math.max(lf, e.left), window.innerWidth - sf - lf);
+	let t = window.innerWidth - (e.left + e.width) - lf >= 352 ? e.left + e.width + lf : Math.min(Math.max(uf, e.left), window.innerWidth - cf - uf);
 	return {
-		top: Math.min(Math.max(lf, e.top - 8), Math.max(lf, window.innerHeight - 260)),
+		top: Math.min(Math.max(uf, e.top - 8), Math.max(uf, window.innerHeight - 260)),
 		left: t
 	};
 }
-function pf({ onDone: e }) {
-	let [t, n] = (0, l.useState)(0), [r, i] = (0, l.useState)(null), a = (0, l.useRef)(null), o = (0, l.useRef)(null), s = of[Math.min(t, of.length - 1)];
+function mf({ onDone: e }) {
+	let [t, n] = (0, l.useState)(0), [r, i] = (0, l.useState)(null), a = (0, l.useRef)(null), o = (0, l.useRef)(null), s = sf[Math.min(t, sf.length - 1)];
 	(0, l.useEffect)(() => {
 		let e = Yi(s.route);
 		window.location.hash !== e && (window.location.hash = e);
 	}, [s.route]), (0, l.useEffect)(() => {
 		let e = !0, t = () => {
-			e && i(df(uf(s.route)));
+			e && i(ff(df(s.route)));
 		};
 		t();
 		let n = [
@@ -25256,7 +25240,7 @@ function pf({ onDone: e }) {
 		if (!t.length) return;
 		let [n, r] = [t[0], t[t.length - 1]], i = document.activeElement;
 		e.shiftKey && (i === n || !a.current?.contains(i)) ? (e.preventDefault(), r.focus()) : !e.shiftKey && i === r && (e.preventDefault(), n.focus());
-	}, d = ff(r), f = t === of.length - 1;
+	}, d = pf(r), f = t === sf.length - 1;
 	return /* @__PURE__ */ (0, K.jsxs)("div", {
 		className: "tour-layer",
 		role: "dialog",
@@ -25281,7 +25265,7 @@ function pf({ onDone: e }) {
 			style: {
 				top: d.top,
 				left: d.left,
-				width: sf
+				width: cf
 			},
 			children: [
 				/* @__PURE__ */ (0, K.jsxs)("p", {
@@ -25289,7 +25273,7 @@ function pf({ onDone: e }) {
 					children: [
 						t + 1,
 						" / ",
-						of.length
+						sf.length
 					]
 				}),
 				/* @__PURE__ */ (0, K.jsx)("h2", {
@@ -25331,13 +25315,13 @@ function pf({ onDone: e }) {
 }
 //#endregion
 //#region src/app/WelcomeWizard.tsx
-var mf = [
+var hf = [
 	"welcome",
 	"theme",
 	"engine",
 	"markets",
 	"done"
-], hf = [
+], gf = [
 	{
 		id: "light",
 		label: "라이트"
@@ -25350,7 +25334,7 @@ var mf = [
 		id: "system",
 		label: "시스템"
 	}
-], gf = [
+], _f = [
 	{
 		id: "openai",
 		label: "OpenAI",
@@ -25366,12 +25350,12 @@ var mf = [
 		label: "Claude",
 		url: "https://console.anthropic.com/settings/keys"
 	}
-], _f = {
+], vf = {
 	US: "US",
 	KR: "KR",
 	EUROPE: "EU",
 	JP: "JP"
-}, vf = {
+}, yf = {
 	welcome: /* @__PURE__ */ (0, K.jsx)("path", { d: "M3 7.5 12 3l9 4.5-9 4.5zM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" }),
 	theme: /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [/* @__PURE__ */ (0, K.jsx)("circle", {
 		cx: "12",
@@ -25393,21 +25377,21 @@ var mf = [
 		r: "8.6"
 	}), /* @__PURE__ */ (0, K.jsx)("path", { d: "M3.4 12h17.2M12 3.4c2.5 2.6 3.8 5.5 3.8 8.6S14.5 18 12 20.6C9.5 18 8.2 15.1 8.2 12S9.5 6 12 3.4z" })] }),
 	done: /* @__PURE__ */ (0, K.jsx)("path", { d: "M5 12.6 9.6 17 19 7.6" })
-}, yf = {
+}, bf = {
 	welcome: "환영합니다",
 	theme: "화면",
 	engine: "선택 사항",
 	markets: "수집 범위",
 	done: "준비 완료"
 };
-function bf({ step: e }) {
+function xf({ step: e }) {
 	return /* @__PURE__ */ (0, K.jsx)("svg", {
 		viewBox: "0 0 24 24",
 		"aria-hidden": "true",
-		children: vf[e]
+		children: yf[e]
 	});
 }
-function xf({ onFinish: e }) {
+function Sf({ onFinish: e }) {
 	let t = ju(), [n, r] = (0, l.useState)("welcome"), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(""), c = (0, l.useCallback)((e) => {
 		s(""), r(e);
 	}, []), [u, d] = (0, l.useState)("none"), [f, p] = (0, l.useState)(!1), [m, h] = (0, l.useState)("openai"), [g, _] = (0, l.useState)(""), [v, y] = (0, l.useState)(null), [b, x] = (0, l.useState)(null), [S, C] = (0, l.useState)(null), [w, T] = (0, l.useState)([]), [E, D] = (0, l.useState)(!1), [O, k] = (0, l.useState)(null);
@@ -25499,7 +25483,7 @@ function xf({ onFinish: e }) {
 		if (!t.length) return;
 		let [n, r] = [t[0], t[t.length - 1]], i = document.activeElement, a = F.current?.querySelector("h1") ?? null;
 		e.shiftKey && (i === n || i === a || !F.current?.contains(i)) ? (e.preventDefault(), r.focus()) : !e.shiftKey && i === r && (e.preventDefault(), n.focus());
-	}, R = mf.indexOf(n), z = gf.find((e) => e.id === m);
+	}, R = hf.indexOf(n), z = _f.find((e) => e.id === m);
 	return /* @__PURE__ */ (0, K.jsx)("div", {
 		className: "welcome-shell",
 		role: "dialog",
@@ -25518,7 +25502,7 @@ function xf({ onFinish: e }) {
 							"단계 ",
 							/* @__PURE__ */ (0, K.jsx)("b", { children: R + 1 }),
 							" / ",
-							mf.length
+							hf.length
 						]
 					})]
 				}),
@@ -25527,16 +25511,16 @@ function xf({ onFinish: e }) {
 					role: "progressbar",
 					"aria-label": "진행 단계",
 					"aria-valuemin": 1,
-					"aria-valuemax": mf.length,
+					"aria-valuemax": hf.length,
 					"aria-valuenow": R + 1,
-					style: { "--welcome-fill": `${(R + 1) / mf.length * 100}%` }
+					style: { "--welcome-fill": `${(R + 1) / hf.length * 100}%` }
 				}),
 				/* @__PURE__ */ (0, K.jsxs)("section", {
 					className: "welcome-body",
 					children: [
 						/* @__PURE__ */ (0, K.jsxs)("p", {
 							className: "welcome-eyebrow",
-							children: [/* @__PURE__ */ (0, K.jsx)(bf, { step: n }), yf[n]]
+							children: [/* @__PURE__ */ (0, K.jsx)(xf, { step: n }), bf[n]]
 						}),
 						n === "welcome" && /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [
 							/* @__PURE__ */ (0, K.jsx)("h1", {
@@ -25569,7 +25553,7 @@ function xf({ onFinish: e }) {
 								className: "welcome-choices",
 								role: "group",
 								"aria-label": "화면 테마",
-								children: hf.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
+								children: gf.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
 									type: "button",
 									"aria-pressed": t.preference === e.id,
 									onClick: () => t.setPreference(e.id),
@@ -25631,7 +25615,7 @@ function xf({ onFinish: e }) {
 									className: "welcome-choices",
 									role: "group",
 									"aria-label": "제공사",
-									children: gf.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
+									children: _f.map((e) => /* @__PURE__ */ (0, K.jsx)("button", {
 										type: "button",
 										"aria-pressed": m === e.id,
 										onClick: () => h(e.id),
@@ -25689,7 +25673,7 @@ function xf({ onFinish: e }) {
 								role: "group",
 								"aria-label": "수집·표시할 시장",
 								children: S.markets.map((e) => {
-									let t = _f[e.id] ?? e.id;
+									let t = vf[e.id] ?? e.id;
 									return /* @__PURE__ */ (0, K.jsx)("button", {
 										type: "button",
 										"data-code": t,
@@ -25785,7 +25769,7 @@ function xf({ onFinish: e }) {
 							R > 0 && n !== "done" && /* @__PURE__ */ (0, K.jsx)("button", {
 								className: "welcome-btn",
 								type: "button",
-								onClick: () => c(mf[R - 1]),
+								onClick: () => c(hf[R - 1]),
 								disabled: !!i,
 								children: "이전"
 							}),
@@ -25831,7 +25815,7 @@ function xf({ onFinish: e }) {
 }
 //#endregion
 //#region src/app/App.tsx
-function Sf() {
+function Cf() {
 	let [e, t] = (0, l.useState)(!1), [n, r] = (0, l.useState)(!1);
 	return (0, l.useEffect)(() => {
 		let e = !1;
@@ -25847,28 +25831,28 @@ function Sf() {
 		let e = () => t(!0);
 		return window.addEventListener("folio:show-welcome", e), () => window.removeEventListener("folio:show-welcome", e);
 	}, []), /* @__PURE__ */ (0, K.jsxs)(K.Fragment, { children: [
-		/* @__PURE__ */ (0, K.jsx)(af, {}),
-		e && /* @__PURE__ */ (0, K.jsx)(xf, { onFinish: (e) => {
+		/* @__PURE__ */ (0, K.jsx)(of, {}),
+		e && /* @__PURE__ */ (0, K.jsx)(Sf, { onFinish: (e) => {
 			t(!1), r(e);
 		} }),
-		n && /* @__PURE__ */ (0, K.jsx)(pf, { onDone: () => r(!1) })
+		n && /* @__PURE__ */ (0, K.jsx)(mf, { onDone: () => r(!1) })
 	] });
 }
 //#endregion
 //#region src/main.tsx
-var Cf = { "market-state": () => /* @__PURE__ */ (0, K.jsx)(yc, {}) };
-function wf() {
+var wf = { "market-state": () => /* @__PURE__ */ (0, K.jsx)(yc, {}) };
+function Tf() {
 	document.querySelectorAll("[data-react-island]").forEach((e) => {
-		let t = Cf[e.dataset.reactIsland || ""];
+		let t = wf[e.dataset.reactIsland || ""];
 		!t || e.dataset.reactMounted === "1" || (e.dataset.reactMounted = "1", (0, u.createRoot)(e).render(/* @__PURE__ */ (0, K.jsx)(l.StrictMode, { children: t() })));
 	});
 }
-function Tf() {
-	let e = document.getElementById("folioReactRoot");
-	return e ? e.dataset.reactMounted === "1" || (e.dataset.reactMounted = "1", (0, u.createRoot)(e).render(/* @__PURE__ */ (0, K.jsx)(l.StrictMode, { children: /* @__PURE__ */ (0, K.jsx)(Sf, {}) })), !0) : !1;
-}
 function Ef() {
-	Tf(), wf();
+	let e = document.getElementById("folioReactRoot");
+	return e ? e.dataset.reactMounted === "1" || (e.dataset.reactMounted = "1", (0, u.createRoot)(e).render(/* @__PURE__ */ (0, K.jsx)(l.StrictMode, { children: /* @__PURE__ */ (0, K.jsx)(Cf, {}) })), !0) : !1;
 }
-document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", Ef) : Ef();
+function Df() {
+	Ef(), Tf();
+}
+document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", Df) : Df();
 //#endregion

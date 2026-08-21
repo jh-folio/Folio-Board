@@ -46,11 +46,11 @@ _QUARTER_STATEMENTS = (
     )),
     ("quarterly_balance_sheet", (
         # 막대는 유동성 구조(유동자산·유동부채·비유동부채), 선은 비율(유동비율·부채비율)이다.
-        # 부채비율의 분자·분모(총부채·자기자본)는 화면이 계산하도록 값으로 싣는다.
+        # 부채비율은 화면이 부채총계(유동+비유동) ÷ 자본총계로 계산한다 — 이자부채(Total
+        # Debt)는 분기 커버리지가 회사마다 뚫려 있어 선이 점 하나로 무너졌다(실측).
         ("currentAssets", "Current Assets"),
         ("currentLiabilities", "Current Liabilities"),
         ("nonCurrentLiabilities", "Total Non Current Liabilities Net Minority Interest"),
-        ("totalDebt", "Total Debt"),
         ("stockholdersEquity", "Stockholders Equity"),
     )),
     ("quarterly_cashflow", (

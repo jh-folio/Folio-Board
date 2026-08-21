@@ -27,7 +27,6 @@ export type FundamentalsQuarter = {
   currentAssets?: number | null;
   currentLiabilities?: number | null;
   nonCurrentLiabilities?: number | null;
-  totalDebt?: number | null;
   stockholdersEquity?: number | null;
   operatingCashFlow?: number | null;
   freeCashFlow?: number | null;
@@ -136,6 +135,16 @@ export function balanceRatio(numerator: number | null | undefined, denominator: 
   return (numerator / denominator) * 100;
 }
 
+/** 부채총계 = 유동부채 + 비유동부채. 한쪽이 비면 합계도 없다 — 반쪽 합을 부채총계라고
+ *  말하면 부채비율이 실제보다 낮아 보인다. */
+export function totalLiabilities(row: FundamentalsQuarter): number | null {
+  const current = row.currentLiabilities;
+  const nonCurrent = row.nonCurrentLiabilities;
+  if (current === null || current === undefined || !Number.isFinite(current)) return null;
+  if (nonCurrent === null || nonCurrent === undefined || !Number.isFinite(nonCurrent)) return null;
+  return current + nonCurrent;
+}
+
 // 세트마다 자기 색 농담을 갖는다 — 한 세트 안에 여러 색을 섞으면 알록달록하고, 네 세트가
 // 같은 색이면 지금 어느 탭인지 색이 말해 주지 않는다. 첫 계열(규모 기준)은 공통 중립 잉크,
 // 세트의 정체성은 둘째·셋째 계열 색이 만든다.
@@ -171,7 +180,10 @@ export const CHART_SETS: ChartSet[] = [
     colors: ["var(--folio-green)", "var(--folio-burgundy)"],
     series: [
       { key: "currentRatio", label: "유동비율", of: (row) => balanceRatio(row.currentAssets, row.currentLiabilities) },
-      { key: "debtRatio", label: "부채비율", of: (row) => balanceRatio(row.totalDebt, row.stockholdersEquity) },
+      // 부채총계 ÷ 자본총계 — 한국식 표준 정의다. 이자부채(Total Debt)로 계산했더니
+      // 그 행이 최근 분기에만 있는 회사에서 점 하나만 떠 있었다. 부채총계의 재료
+      // (유동·비유동부채)는 재무 탭 막대가 그리는 값이라 전 분기에 있다.
+      { key: "debtRatio", label: "부채비율", of: (row) => balanceRatio(totalLiabilities(row), row.stockholdersEquity) },
     ],
   },
   {
@@ -320,6 +332,9 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
             );
           })}
           {chartSet.mode === "lines" && chartSet.series.map((series, seriesIndex) => (
+            // 점이 하나뿐인 계열은 그리지 않는다 — 선이 안 되는 외딴 점 하나는
+            // 정보가 아니라 오독 거리다(어느 분기 값인지 축을 세어 봐야 안다).
+            values[seriesIndex].filter((value) => value !== null).length < 2 ? null : (
             <g key={series.key}>
               <polyline
                 className="watchlist-quarterly__line"
@@ -341,6 +356,7 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
                 )
               ))}
             </g>
+            )
           ))}
           {/* 기간 구간이 hover 대상이다 — 기업분석 차트와 같은 계약. */}
           {rows.map((row, rowIndex) => (
@@ -395,28 +411,6 @@ function QuarterlyStatementChart({ quarters, currency }: { quarters: Fundamental
             </p>
           );
         })}
-      </div>
-      {/* 분기별 값 표 — 그림만으로는 정확한 값을 읽을 수 없다. 넓으면 표가 스스로 스크롤한다. */}
-      <div className="watchlist-quarterly__table-wrap">
-        <table className="watchlist-quarterly__table">
-          <thead>
-            <tr>
-              <th scope="col">항목</th>
-              {rows.map((row) => <th scope="col" key={row.quarter}>{quarterAxisLabel(row.quarter)}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {chartSet.series.map((series, seriesIndex) => (
-              <tr key={series.key}>
-                <th scope="row">
-                  <i className="watchlist-quarterly__dot" style={{ background: chartSet.colors[seriesIndex % chartSet.colors.length] }} aria-hidden="true" />
-                  {series.label}
-                </th>
-                {rows.map((row, rowIndex) => <td key={row.quarter}>{formatValue(values[seriesIndex][rowIndex])}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </figure>
   );

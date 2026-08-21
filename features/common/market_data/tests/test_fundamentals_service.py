@@ -93,7 +93,7 @@ def test_quarterly_earnings_align_series_by_quarter():
     latest = rows[-1]
     assert (latest["revenue"], latest["operatingIncome"], latest["netIncome"]) == (119.8, 40.8, 112.2)
     # 재무·현금흐름 계열은 이 픽스처에 없다 — 없는 계열은 그 분기에서 None이다.
-    assert latest["totalDebt"] is None and latest["freeCashFlow"] is None
+    assert latest["currentLiabilities"] is None and latest["freeCashFlow"] is None
 
 
 def test_quarterly_earnings_survive_missing_statement():
