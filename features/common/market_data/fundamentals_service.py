@@ -17,6 +17,8 @@ from features.common.market_data.earnings_service import _statement_row
 # `info`에서 그대로 옮기는 칸. 이름을 바꾸지 않는 이유는 provider 필드와 화면 사이에
 # 번역층이 하나 늘 때마다 결측 원인 추적이 한 단계 어려워지기 때문이다.
 FUNDAMENTAL_FIELDS = (
+    "currentPrice",
+    "previousClose",
     "marketCap",
     "trailingPE",
     "forwardPE",
@@ -31,6 +33,9 @@ FUNDAMENTAL_FIELDS = (
     "revenueGrowth",
     "currency",
 )
+
+# 문자열 칸은 따로 간다 — 숫자 강제 변환을 태우면 전부 None이 된다.
+PROFILE_FIELDS = ("sector", "industry", "longBusinessSummary")
 
 
 # 분기 이익 차트에 싣는 계열. 이름은 yfinance 손익계산서 행 그대로다(실측: GOOGL 기준
@@ -63,6 +68,8 @@ def _download(symbol: str) -> dict:
     ticker = yf.Ticker(symbol)
     info = ticker.info or {}
     out: dict[str, object] = {"symbol": symbol}
+    for field in PROFILE_FIELDS:
+        out[field] = str(info.get(field) or "")
     for field in FUNDAMENTAL_FIELDS:
         value = info.get(field)
         if field == "currency":
@@ -87,7 +94,7 @@ def get_fundamentals(data_dir: Path, *, symbol: str, runtime: ProviderFetchRunti
     # 캐시 키에 스키마 버전을 넣는다. 없으면 필드를 추가한 판올림 직후 TTL이 지날 때까지
     # 옛 모양의 캐시가 그대로 내려와, 새 화면(분기 차트)이 조용히 비어 있게 된다(실측).
     result = runtime.fetch(
-        "yfinance", "fundamentals", {"symbol": symbol, "schema": 2},
+        "yfinance", "fundamentals", {"symbol": symbol, "schema": 3},
         lambda: _download(symbol),
         policy=FetchPolicy(ttl_seconds=3600, timeout_seconds=20, stale_while_revalidate_seconds=86400),
         background_refresh=True,
@@ -95,6 +102,7 @@ def get_fundamentals(data_dir: Path, *, symbol: str, runtime: ProviderFetchRunti
     value = result.get("value") if isinstance(result.get("value"), dict) else {"symbol": symbol}
     return {
         **{field: None for field in FUNDAMENTAL_FIELDS},
+        **{field: "" for field in PROFILE_FIELDS},
         "quarters": [],
         **value,
         "freshness": result.get("status"),

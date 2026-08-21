@@ -32,7 +32,7 @@ describe("지표 포맷", () => {
 
 describe("분기 이익 차트", () => {
   it("축 라벨은 분기 종료월이다", () => {
-    expect(quarterAxisLabel("2026-06-30")).toBe("26.06");
+    expect(quarterAxisLabel("2026-06-30")).toBe("26년 6월");
     expect(quarterAxisLabel(undefined)).toBe("");
   });
 

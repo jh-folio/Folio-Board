@@ -31,7 +31,7 @@ def test_fundamentals_keep_missing_fields_as_none(monkeypatch, tmp_path):
 
     payload = fundamentals_service.get_fundamentals(tmp_path, symbol="005930.ks", runtime=runtime)
 
-    assert runtime.calls == [("yfinance", "fundamentals", {"symbol": "005930.KS", "schema": 2})]
+    assert runtime.calls == [("yfinance", "fundamentals", {"symbol": "005930.KS", "schema": 3})]
     assert payload["marketCap"] == 2.5e12
     assert payload["trailingPE"] is None
     assert payload["currency"] == "KRW"
@@ -61,6 +61,7 @@ def test_download_coerces_non_numbers_to_none(monkeypatch):
     assert row["beta"] is None
     assert row["trailingPE"] == 12.5
     assert row["currency"] == ""
+    assert row["sector"] == ""
 
 
 def test_quarterly_earnings_align_series_by_quarter():

@@ -16291,9 +16291,65 @@ select { min-height: 36px; padding: 0 12px; }
 }
 .watchlist-fundamentals-skeleton { min-height: 76px; }
 
+/* 머리의 현재가 — 상세를 열고 가장 먼저 궁금한 값이라 크게 앞세운다. */
+.watchlist-detail-price { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 0; }
+.watchlist-detail-price strong { font-size: 26px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
+.watchlist-detail-price__change { font-size: 13px; font-weight: var(--fw-medium); }
+.watchlist-detail-price__change[data-tone="up"] { color: var(--folio-green); }
+.watchlist-detail-price__change[data-tone="down"] { color: var(--folio-burgundy); }
+.watchlist-detail-price__change[data-tone="flat"] { color: var(--folio-ink-muted); }
+
+/* 회사 소개 — provider 원문(영문)이라 세 줄로 접고 더보기로 편다. */
+.watchlist-profile { display: grid; gap: 4px; margin-bottom: 12px; }
+/* 섹터·산업 값은 문장형 텍스트다 — 지표 행의 nowrap을 물려받으면 좁은 화면에서
+   "Semiconductor Equipment & Materials" 한 줄이 모달 밖까지 밀린다(실측 +26px). */
+.watchlist-profile .watchlist-fundamentals-row dd { white-space: normal; text-align: right; }
+.watchlist-profile__summary { position: relative; margin: 0; color: var(--folio-ink-muted); font-size: 13px; line-height: 1.6; }
+.watchlist-profile__summary--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.watchlist-profile__more { justify-self: start; padding: 0; font-size: 12px; }
+
+/* 지난 발표 목록 — 최근 분기 하나만 보이면 흐름을 알 수 없다. */
+.watchlist-earnings-history { display: grid; gap: 6px; }
+.watchlist-earnings-history ul { margin: 0; padding: 0; list-style: none; display: grid; }
+.watchlist-earnings-history li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--folio-border);
+  font-size: 12.5px;
+}
+.watchlist-earnings-history li:last-child { border-bottom: none; }
+.watchlist-earnings-history__label { color: var(--folio-ink-subtle); min-width: 108px; }
+.watchlist-earnings-history__eps { flex: 1; font-variant-numeric: tabular-nums; }
+.watchlist-earnings-history__eps small { color: var(--folio-ink-subtle); }
+.watchlist-earnings-history b { font-variant-numeric: tabular-nums; }
+.watchlist-earnings-history b[data-tone="up"] { color: var(--folio-green); }
+.watchlist-earnings-history b[data-tone="down"] { color: var(--folio-burgundy); }
+.watchlist-earnings-history b[data-tone="flat"] { color: var(--folio-ink-muted); }
+
+/* 분기별 값 표 — 막대만으로는 정확한 값을 읽을 수 없다. */
+.watchlist-quarterly__table-wrap { overflow-x: auto; }
+.watchlist-quarterly__table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.watchlist-quarterly__table th, .watchlist-quarterly__table td {
+  padding: 7px 10px 7px 0;
+  border-bottom: 1px solid var(--folio-border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.watchlist-quarterly__table th[scope="row"], .watchlist-quarterly__table thead th:first-child { text-align: left; font-weight: var(--fw-medium); color: var(--folio-ink-muted); }
+.watchlist-quarterly__table thead th { color: var(--folio-ink-subtle); font-weight: var(--fw-normal); }
+
 /* 분기 이익 차트. 색은 데이터 계열용이다 — 매출은 중립 잉크, 이익 두 계열은 초록 농담. */
 .watchlist-quarterly { margin: 0; display: grid; gap: 8px; }
 .watchlist-quarterly svg { width: 100%; height: auto; }
+.watchlist-quarterly__grid { stroke: var(--folio-border); stroke-width: 0.6; opacity: 0.6; }
 .watchlist-quarterly__baseline { stroke: var(--folio-border); stroke-width: 1; }
 .watchlist-quarterly__axis { fill: var(--folio-ink-subtle); font-size: 11px; }
 .watchlist-quarterly__bar--revenue { fill: color-mix(in srgb, var(--folio-ink) 42%, transparent); }
@@ -16309,8 +16365,11 @@ select { min-height: 36px; padding: 0 12px; }
 /* 기본 그리드 정의보다 뒤에 있어야 이긴다 — 앞쪽 media 블록에 두면 같은 특이도에서
    뒤에 오는 기본 규칙이 덮어써 모바일에서 2컬럼이 그대로 남는다(실측). */
 @media (max-width: 820px) {
-  .watchlist-detail-grid { grid-template-columns: 1fr; grid-template-areas: "metrics" "chart" "earnings" "news"; }
-  .watchlist-fundamentals { grid-template-columns: 1fr; }
+  /* `1fr`은 min-content가 셀을 밀어낸다(minmax(auto,1fr)) — nowrap 값 한 줄이면
+     모달 전체에 가로 스크롤이 생긴다(실측 375px에서 +26px). minmax(0,1fr)로 잠근다. */
+  .watchlist-detail-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "metrics" "chart" "earnings" "news"; }
+  .watchlist-fundamentals { grid-template-columns: minmax(0, 1fr); }
+  .watchlist-fundamentals-rows { grid-template-columns: minmax(0, 1fr); }
 }
 .watchlist-detail-source { margin: 0; color: var(--folio-ink-subtle); font-size: 11px; }
 

@@ -99,7 +99,7 @@ export function percentText(ratio: number | null): string {
   return `${ratio > 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%`;
 }
 
-function toneOf(ratio: number | null): "up" | "down" | "flat" {
+export function toneOf(ratio: number | null): "up" | "down" | "flat" {
   if (ratio === null || Math.abs(ratio) < 0.0005) return "flat";
   return ratio > 0 ? "up" : "down";
 }
@@ -269,6 +269,24 @@ export function EarningsPanel({ ticker }: { ticker: string }) {
               EPS 서프라이즈 <b data-tone={toneOf(latest.surprisePercent)}>{percentText(latest.surprisePercent)}</b> · 예측치 기준
             </p>
           )}
+        </div>
+      )}
+
+      {(payload?.history || []).length > 1 && (
+        <div className="watchlist-earnings-history">
+          <span className="section-kicker">지난 발표</span>
+          <ul>
+            {(payload?.history || []).slice(1).map((row) => (
+              <li key={row.quarter || row.label}>
+                <span className="watchlist-earnings-history__label">{row.label || row.quarter}</span>
+                <span className="watchlist-earnings-history__eps">
+                  EPS {formatEps(row.epsActual, currency)}
+                  {row.epsEstimate != null && <small> · 예측 {formatEps(row.epsEstimate, currency)}</small>}
+                </span>
+                <b data-tone={toneOf(row.surprisePercent ?? null)}>{percentText(row.surprisePercent ?? null)}</b>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

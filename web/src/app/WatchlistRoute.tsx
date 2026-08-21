@@ -4,8 +4,8 @@ import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
-import { EarningsPanel } from "./watchlist/EarningsPanel";
-import { FundamentalsPanel } from "./watchlist/FundamentalsPanel";
+import { changeRatio, EarningsPanel, formatEps, percentText, toneOf } from "./watchlist/EarningsPanel";
+import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
   ddayLabel,
@@ -319,6 +319,7 @@ export function WatchlistRoute() {
   const detailCard = cards.find((row) => (row.item || cardCompanyName(row)) === detailItem) || null;
   const detailTicker = String(detailCard?.ticker || detail?.company?.ticker || "").trim();
   const detailCompanyName = detailCard ? cardCompanyName(detailCard) : detailLabel(detail, detailItem);
+  const fundamentals = useFundamentals(detailTicker);
 
   function earningsFor(card: WatchlistOverviewItem | null): EarningsEvent | undefined {
     const ticker = String(card?.ticker || "").toUpperCase();
@@ -340,6 +341,22 @@ export function WatchlistRoute() {
                 <p className="section-kicker">WATCHLIST</p>
                 <h2 id="watchlistDetailTitle">{selectedLabel}</h2>
                 <p className="section-subtitle">{detailMeta(detail)}</p>
+                {/* 현재가를 머리에 올린다. 예전에는 차트 왼쪽 위에만 작게 있어서, 상세를
+                    열었을 때 가장 먼저 궁금한 값이 화면 중간에 숨어 있었다. 시세는 지표와
+                    같은 응답이라 요청이 늘지 않는다. 지연 시세임은 하단 출처 문구가 말한다. */}
+                {fundamentals.payload?.currentPrice != null && (
+                  <p className="watchlist-detail-price">
+                    <strong>{formatEps(fundamentals.payload.currentPrice, fundamentals.payload.currency || "USD")}</strong>
+                    {fundamentals.payload.previousClose != null && (() => {
+                      const ratio = changeRatio(fundamentals.payload?.currentPrice, fundamentals.payload?.previousClose);
+                      return ratio === null ? null : (
+                        <span className="watchlist-detail-price__change" data-tone={toneOf(ratio)}>
+                          전일 종가보다 {percentText(ratio)}
+                        </span>
+                      );
+                    })()}
+                  </p>
+                )}
               </div>
               <div className="watchlist-detail-actions">
                 <ConsultationEntry item={detailItem} />
@@ -359,7 +376,7 @@ export function WatchlistRoute() {
               <div className="watchlist-detail-grid">
                 <section className="watchlist-detail-section watchlist-detail-section--metrics">
                   <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
-                  <FundamentalsPanel ticker={detailTicker} />
+                  <FundamentalsPanel ticker={detailTicker} payload={fundamentals.payload} error={fundamentals.error} />
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--chart">
                   <MarketChartFigure
