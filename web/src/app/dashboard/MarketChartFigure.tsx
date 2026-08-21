@@ -12,7 +12,7 @@ import { KIND_KO, STATUS_KO, timeLabelKST } from "./MarketCalendar";
  * 앱 토큰을 따르고 iframe이 없어진다 — freshness 라벨로 지연을 밝히는 기존 방식을
  * 그대로 쓴다(계획 §11 5-A-3의 트레이드오프).
  */
-type Point = { time: string; open?: number | null; high?: number | null; low?: number | null; close: number; ma20?: number | null; ma60?: number | null };
+type Point = { time: string; open?: number | null; high?: number | null; low?: number | null; close: number; ma20?: number | null; ma60?: number | null; ma120?: number | null; ma200?: number | null };
 type ChartPayload = { symbol: string; range: string; interval: string; series: Point[]; freshness?: string; asOf?: string; notice?: string; fallbackReason?: string };
 type CalendarEvent = { id: string; kind: string; title: string; startsAt: string; status: string; allDay?: boolean; tickers?: string[] };
 type SeriesApi = { setData: (rows: unknown[]) => void };
@@ -33,6 +33,24 @@ type LightweightApi = {
 };
 
 declare global { interface Window { LightweightCharts?: LightweightApi } }
+
+/** 토큰 hex를 연한 rgba로. Lightweight Charts는 canvas에 직접 그려 `color-mix()`를
+ *  못 읽는다 — CSS가 아니라 라이브러리가 색을 파싱한다. */
+function fadedColor(hex: string, alpha: number): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return hex;
+  const value = parseInt(match[1], 16);
+  return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
+// 이평선 계열. 보조선이라 연하고(알파 0.55) 얇게(1px) — 가격 위에 겹쳐도 거슬리지
+// 않아야 한다. 범례와 시리즈가 이 표 하나를 읽는다.
+export const MA_SERIES = [
+  { key: "ma20", label: "20일", token: "--folio-gold", fallback: "#a8842c" },
+  { key: "ma60", label: "60일", token: "--folio-chart-1", fallback: "#33506b" },
+  { key: "ma120", label: "120일", token: "--folio-chart-3", fallback: "#3f5c39" },
+  { key: "ma200", label: "200일", token: "--folio-chart-2", fallback: "#71383f" },
+] as const;
 
 const FRESHNESS_KO: Record<string, string> = {
   snapshot: "스냅샷", current: "최신", fresh: "최신", cached: "최근 조회", delayed: "지연", stale: "오래됨", unavailable: "불러올 수 없음",
@@ -182,19 +200,17 @@ export function MarketChartFigure({
       : rows.map((row) => ({ time: chartTime(row.time, intraday), value: row.close })));
 
     // 이동평균 — 서버가 워밍업 구간까지 받아 계산해 두므로 구간 안에서 선이 끊기지
-    // 않는다. 분봉에는 없다(서버가 일봉에만 붙인다).
+    // 않는다. 분봉에는 없다(서버가 일봉에만 붙인다). 창을 못 채운 계열(짧은 상장
+    // 이력의 200일선)은 건너뛴다.
     if (showMa && !intraday) {
-      const maDefs: Array<{ key: "ma20" | "ma60"; color: string }> = [
-        { key: "ma20", color: token("--folio-gold", "#a8842c") },
-        { key: "ma60", color: token("--folio-chart-1", "#33506b") },
-      ];
-      for (const def of maDefs) {
+      for (const def of MA_SERIES) {
         const maRows = rows
           .filter((row) => row[def.key] != null)
           .map((row) => ({ time: chartTime(row.time, intraday), value: row[def.key] as number }));
         if (maRows.length < 2) continue;
         chart.addSeries(library.LineSeries, {
-          color: def.color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false,
+          color: fadedColor(token(def.token, def.fallback), 0.55),
+          lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
           crosshairMarkerVisible: false,
         }).setData(maRows);
       }
@@ -281,18 +297,15 @@ export function MarketChartFigure({
         </div>
         <div className="cockpit-chart-controls">
           {range !== "1d" && (
+            // 이평선은 유형·기간보다 한 단계 아래의 보조 컨트롤이다 — 작은 텍스트
+            // 버튼(btn--sm btn--text)으로 낮추고, 범례는 버튼 밖(차트 위 오른쪽)에 둔다.
             <button
               type="button"
-              className="btn chart-ma-toggle"
+              className="btn btn--sm btn--text chart-ma-toggle"
               aria-pressed={showMa}
               onClick={() => setShowMa((value) => !value)}
             >
               이평선
-              {showMa && (
-                <span className="chart-ma-toggle__legend" aria-hidden="true">
-                  <i data-ma="20" /> 20 <i data-ma="60" /> 60
-                </span>
-              )}
             </button>
           )}
           <div className="segment" role="group" aria-label="차트 유형">
@@ -309,6 +322,13 @@ export function MarketChartFigure({
         </div>
       </div>
       {error && <p className="react-dashboard-error">{error}</p>}
+      {showMa && range !== "1d" && (
+        <div className="chart-ma-legend" aria-label="이동평균선 범례">
+          {MA_SERIES.map((def) => (
+            <span key={def.key}><i data-ma={def.key} aria-hidden="true" />{def.label}</span>
+          ))}
+        </div>
+      )}
       <div className="cockpit-chart-stage" ref={targetRef}>
         {!window.LightweightCharts && <p>차트 라이브러리를 사용할 수 없습니다.</p>}
       </div>

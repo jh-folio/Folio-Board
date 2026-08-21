@@ -102,7 +102,7 @@ def test_daily_moving_averages_are_computed_with_warmup(monkeypatch):
 
     import pandas as pd
 
-    dates = pd.bdate_range(end=dt.date.today(), periods=90)
+    dates = pd.bdate_range(end=dt.date.today(), periods=240)
     closes = [float(i + 1) for i in range(len(dates))]
     frame = pd.DataFrame(
         {"Open": closes, "High": closes, "Low": closes, "Close": closes, "Volume": [1.0] * len(dates)},
@@ -121,6 +121,9 @@ def test_daily_moving_averages_are_computed_with_warmup(monkeypatch):
     last = rows[-1]
     assert last["ma20"] == sum(closes[-20:]) / 20
     assert last["ma60"] == sum(closes[-60:]) / 60
+    assert last["ma120"] == sum(closes[-120:]) / 120
+    # 240봉으로는 200일선도 창을 채운다. 못 채우는 창은 키 자체가 없다(None 아님).
+    assert last["ma200"] == sum(closes[-200:]) / 200
     # 응답 첫 봉에도 이동평균이 있다 — 워밍업 덕에 구간 안에서 선이 끊기지 않는다.
     assert rows[0]["ma20"] is not None
 

@@ -34,9 +34,9 @@ def normalize_chart_request(symbol: str, range_key: str, interval: str) -> tuple
 # 이동평균 창(거래일). 계산은 서버가 한다 — 화면이 받은 구간만으로 계산하면 1M(21봉)
 # 차트에서 20일선이 끝 한두 점만 남는다. 워밍업만큼 과거를 더 받아 계산하고 구간은
 # 요청대로 돌려준다.
-MA_WINDOWS = (20, 60)
-# 거래일 60개 ≈ 달력 88일. 휴장 몰림을 감안해 넉넉히 잡는다 — 어차피 잘라서 돌려준다.
-_MA_WARMUP_CALENDAR_DAYS = 130
+MA_WINDOWS = (20, 60, 120, 200)
+# 거래일 200개 ≈ 달력 292일. 휴장 몰림을 감안해 넉넉히 잡는다 — 어차피 잘라서 돌려준다.
+_MA_WARMUP_CALENDAR_DAYS = 320
 
 
 def _download(symbol: str, range_key: str, interval: str) -> dict:
@@ -95,7 +95,7 @@ def get_chart(data_dir: Path, *, symbol: str, range_key: str = "3m", interval: s
     runtime = runtime or ProviderFetchRuntime(Path(data_dir) / "provider-cache" / "charts", max_workers=3)
     ttl = 60 if interval == "5m" else 900
     result = runtime.fetch(
-        "yfinance", "chart_series", {"symbol": symbol, "range": range_key, "interval": interval, "schema": 2},
+        "yfinance", "chart_series", {"symbol": symbol, "range": range_key, "interval": interval, "schema": 3},
         lambda: _download(symbol, range_key, interval),
         policy=FetchPolicy(ttl_seconds=ttl, timeout_seconds=20, stale_while_revalidate_seconds=86400),
         background_refresh=True,
