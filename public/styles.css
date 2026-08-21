@@ -5269,17 +5269,6 @@ button:disabled {
   gap: 8px;
 }
 
-.watchlist-detail-news {
-  display: grid;
-  gap: 10px;
-}
-
-.watchlist-detail-news h3 {
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--fs-md);
-}
-
 .watchlist-detail-news-list {
   display: grid;
   gap: 10px;
@@ -16134,12 +16123,11 @@ select { min-height: 36px; padding: 0 12px; }
    차트 자체의 모양(`.chart-headline`/`.cockpit-chart-stage`)은 대시보드와 공유한다.
    여기서는 배치만 갖는다 — 모양을 다시 선언하면 두 화면이 갈라진다.
    ============================================================ */
-.watchlist-detail-chart { margin-top: 18px; }
+
 
 .watchlist-earnings-panel {
   display: grid;
   gap: 12px;
-  margin-top: 18px;
 }
 .watchlist-earnings-panel__head {
   display: flex;
@@ -16159,7 +16147,8 @@ select { min-height: 36px; padding: 0 12px; }
   gap: 8px;
   padding: 12px 14px;
   border-radius: var(--r-group);
-  background: var(--surface-group);
+  /* 섹션이 group 면이 되면서 같은 색이면 상자가 사라진다 — panel 면으로 반전한다. */
+  background: var(--surface-panel);
 }
 .watchlist-earnings-next__date {
   display: flex;
@@ -16229,7 +16218,58 @@ select { min-height: 36px; padding: 0 12px; }
 .watchlist-earnings-panel [data-tone="flat"] { color: var(--folio-ink-muted); }
 
 .watchlist-earnings-skeleton { min-height: 96px; }
-.watchlist-earnings-source { margin: 0; }
+
+/* 상세 모달의 네 섹션(지표/차트/실적/뉴스). 면은 프리미티브(surface--group)가 소유하고
+   여기는 배치만 갖는다. 간격은 이 grid gap 하나다 — 자식 margin이 더해지면 섹션마다
+   간격이 18/36px로 갈려 무엇이 한 묶음인지 읽히지 않던 것이 이 화면의 원래 문제였다. */
+.watchlist-detail-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  grid-template-areas:
+    "metrics metrics"
+    "chart earnings"
+    "news news";
+  align-items: start;
+}
+.watchlist-detail-section { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.watchlist-detail-section--metrics { grid-area: metrics; }
+.watchlist-detail-section--chart { grid-area: chart; }
+.watchlist-detail-section--earnings { grid-area: earnings; }
+.watchlist-detail-section--news { grid-area: news; }
+.watchlist-detail-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.watchlist-detail-section__head h3 {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+}
+
+.watchlist-fundamentals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+.watchlist-fundamentals-grid dt { color: var(--folio-ink-subtle); font-size: 12px; }
+.watchlist-fundamentals-grid dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+.watchlist-fundamentals-skeleton { min-height: 76px; }
+
+/* 기본 그리드 정의보다 뒤에 있어야 이긴다 — 앞쪽 media 블록에 두면 같은 특이도에서
+   뒤에 오는 기본 규칙이 덮어써 모바일에서 2컬럼이 그대로 남는다(실측). */
+@media (max-width: 820px) {
+  .watchlist-detail-grid { grid-template-columns: 1fr; grid-template-areas: "metrics" "chart" "earnings" "news"; }
+}
+.watchlist-detail-source { margin: 0; color: var(--folio-ink-subtle); font-size: 11px; }
 
 /* ============================================================
    프리셋 비교 백테스트 (0.5.4)

@@ -8,7 +8,8 @@ import { ddayLabel, formatEarningsDate } from "../watchlistEarnings";
  * 네트워크가 된다 — 목록에는 시장 캘린더에서 온 D-day 배지만 남긴다.
  *
  * 숫자는 yfinance다. 기업분석은 SEC companyfacts를 최우선으로 쓰므로(§6 절대 규칙 6)
- * 같은 앱 안에서 등급이 다른 숫자다 — 패널이 출처를 적어 그 차이를 숨기지 않는다.
+ * 같은 앱 안에서 값이 다를 수 있다 — 출처 문구는 모달 하단에 하나만 둔다(지표·차트도
+ * 같은 출처라 패널마다 반복하면 소음이다).
  */
 
 type EarningsRow = {
@@ -270,10 +271,6 @@ export function EarningsPanel({ ticker }: { ticker: string }) {
           )}
         </div>
       )}
-
-      <p className="section-subtitle watchlist-earnings-source">
-        출처 {payload?.provider || "yfinance"} · 기업분석의 SEC 기준 숫자와 등급이 다릅니다.
-      </p>
     </div>
   );
 }

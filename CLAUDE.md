@@ -660,7 +660,8 @@ features/company_analysis/financial_quality_prompt.md
 
 ### 워치리스트 상세 (차트·실적)
 
-- 상세는 **회사 정보 → 네이티브 차트 → 실적 → 수집 뉴스** 순이다. **TradingView 임베드는 0.5.4에 전부 걷어냈다** — 이 모달이 브리지(`public/tradingview-widgets.js`)의 마지막 소비자였고, iframe 세 장은 앱 토큰을 따르지 않으며 종목 정보·펀더멘털 위젯은 제목줄·실적 패널·기업분석과 역할이 겹쳤다. Lightweight Charts의 `attributionLogo`와 `THIRD_PARTY_NOTICES.md`는 그대로 둔다.
+- 상세는 **재무·투자 지표 → 네이티브 차트 → 실적 → 수집 뉴스** 순이며, 네 섹션이 같은 면(`surface--group`)과 같은 머리 문법을 쓰고 데스크톱에서 차트·실적이 2컬럼으로 나란히 선다. 간격은 `.watchlist-detail-grid`의 gap 하나가 소유한다 — 자식 margin이 더해지면 섹션 간격이 갈려 무엇이 한 묶음인지 읽히지 않는다(실측으로 그랬다). 모바일 1컬럼 규칙은 **기본 그리드 정의보다 뒤에** 있어야 한다(같은 특이도라 앞쪽 media 블록은 진다).
+- 재무·투자 지표는 `GET /api/market/fundamentals`(`features/common/market_data/fundamentals_service.py`) — yfinance `info`를 차트와 같은 캐시 정책(1시간 TTL + 하루 stale-while-revalidate)으로 감싼다. 결측은 `—`로 표시한다(삼성전자의 PER처럼 provider가 실제로 비워 둔다). **배당수익률은 이미 % 단위다** — fraction으로 오해해 100을 곱하면 도요타가 326%가 된다. 출처 문구는 모달 하단에 11px로 하나만 둔다(패널마다 반복하지 않고, "등급" 같은 내부 용어를 화면에 쓰지 않는다). **TradingView 임베드는 0.5.4에 전부 걷어냈다** — 이 모달이 브리지(`public/tradingview-widgets.js`)의 마지막 소비자였고, iframe 세 장은 앱 토큰을 따르지 않으며 종목 정보·펀더멘털 위젯은 제목줄·실적 패널·기업분석과 역할이 겹쳤다. Lightweight Charts의 `attributionLogo`와 `THIRD_PARTY_NOTICES.md`는 그대로 둔다.
 - 차트는 대시보드와 같은 `MarketChartFigure`다(그림 한 장만 갖고 종목 선택·설정 저장은 대시보드가 소유). 기간·유형은 이 화면 안에서만 살며 대시보드 설정을 건드리지 않는다. **트레이드오프**: 준실시간·지표를 잃고 yfinance 지연 시세를 쓰며 freshness 라벨로 지연을 밝힌다.
 - 실적은 `GET /api/market/earnings`(`features/common/market_data/earnings_service.py`)이며 **상세를 열 때만** 부른다 — 티커당 provider 호출이라 카드 그리드에 걸면 종목 수만큼 네트워크가 된다. 차트·실적 요청은 상세 응답을 기다리지 않고 함께 시작한다(카드 표가 이미 티커를 안다).
 - **다음 발표일과 컨센서스는 제3자 예정치다.** 확정 배지를 붙이지 않고 IR 재확인을 함께 적는다. 숫자는 yfinance라 기업분석의 SEC 숫자와 등급이 다르며(§6 절대 규칙 6) 패널이 출처를 적어 그 차이를 숨기지 않는다.

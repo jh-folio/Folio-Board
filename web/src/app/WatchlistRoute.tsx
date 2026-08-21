@@ -5,6 +5,7 @@ import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
+import { FundamentalsPanel } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
   ddayLabel,
@@ -284,6 +285,33 @@ export function WatchlistRoute() {
   }
 
   const newsRows = useMemo(() => sortNewsLatestFirst(detail?.news || []), [detail]);
+  // 종목·테마 키워드 두 분기가 같은 뉴스 섹션을 쓴다. JSX를 두 벌 두면 한쪽만 고쳐진다.
+  const newsSection = (
+    <>
+      <div className="watchlist-detail-section__head"><h3>수집한 뉴스</h3></div>
+      {detailLoading ? (
+        <p className="section-subtitle">관련 뉴스를 불러오는 중입니다.</p>
+      ) : newsRows.length ? (
+        <div className="watchlist-detail-news-list">
+          {newsRows.map((row, index) => (
+            <article className="compact-item" key={`${newsTitle(row)}-${index}`}>
+              <div className="meta">{sourceLabel(row)}</div>
+              <h4>
+                {row.url ? (
+                  <a href={row.url} target="_blank" rel="noopener noreferrer">{newsTitle(row)}</a>
+                ) : (
+                  <span>{newsTitle(row)}</span>
+                )}
+              </h4>
+              {row.snippet && <p>{row.snippet}</p>}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="section-subtitle">수집된 관련 뉴스가 없습니다.</p>
+      )}
+    </>
+  );
   const selectedLabel = detailLabel(detail, detailItem);
   // 차트·실적은 **종목 코드**로 부른다. 카드 표가 목록 단계에서 이미 티커를 알고 있어,
   // 상세 응답을 기다리지 않고 두 요청을 함께 시작할 수 있다(계획 §11 5-A-3 ②).
@@ -320,10 +348,19 @@ export function WatchlistRoute() {
             </div>
             {error && <p className="react-dashboard-error">{error}</p>}
             {/* 차트는 앱이 직접 그린다. TradingView iframe 세 장은 앱 토큰을 따르지 않았고,
-                종목 정보·펀더멘털 위젯은 위 제목줄과 아래 실적 패널·기업분석에 이미 있다. */}
+                종목 정보·펀더멘털 위젯은 아래 지표·실적 패널과 기업분석이 대신한다.
+
+                네 섹션(지표/차트/실적/뉴스)은 **같은 면(surface--group)과 같은 머리 문법**
+                (굵은 제목 좌 + 보조 컨트롤 우)을 쓴다. 예전에는 실적의 일부만 상자에 있고
+                차트·뉴스는 맨바닥이라 어떤 정보가 한 묶음인지 눈이 읽지 못했다. 간격은
+                grid gap 하나가 소유한다 — 자식 margin-top이 겹치면 리듬이 깨진다. */}
             {detailTicker ? (
-              <>
-                <div className="watchlist-detail-chart">
+              <div className="watchlist-detail-grid">
+                <section className="surface--group watchlist-detail-section watchlist-detail-section--metrics">
+                  <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
+                  <FundamentalsPanel ticker={detailTicker} />
+                </section>
+                <section className="surface--group watchlist-detail-section watchlist-detail-section--chart">
                   <MarketChartFigure
                     symbol={detailTicker}
                     label={detailCompanyName || detailTicker}
@@ -331,40 +368,30 @@ export function WatchlistRoute() {
                     style={chartStyle}
                     onRange={setChartRange}
                     onStyle={setChartStyle}
-                    // 다음 일정은 바로 아래 실적 패널이 더 자세히 말한다.
+                    // 다음 일정은 옆 실적 패널이 더 자세히 말한다.
                     showEvent={false}
                   />
-                </div>
-                <EarningsPanel ticker={detailTicker} />
-              </>
+                </section>
+                <section className="surface--group watchlist-detail-section watchlist-detail-section--earnings">
+                  <EarningsPanel ticker={detailTicker} />
+                </section>
+                <section className="surface--group watchlist-detail-section watchlist-detail-section--news">
+                  {newsSection}
+                </section>
+              </div>
             ) : (
-              // 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다.
-              <p className="section-subtitle">이 항목은 종목 코드가 없어 차트와 실적을 표시하지 않습니다.</p>
+              <>
+                {/* 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다. */}
+                <p className="section-subtitle">이 항목은 종목 코드가 없어 차트와 실적을 표시하지 않습니다.</p>
+                <section className="surface--group watchlist-detail-section">{newsSection}</section>
+              </>
             )}
-            <div className="watchlist-detail-news">
-              <h3>수집한 뉴스</h3>
-              {detailLoading ? (
-                <p className="section-subtitle">관련 뉴스를 불러오는 중입니다.</p>
-              ) : newsRows.length ? (
-                <div className="watchlist-detail-news-list">
-                  {newsRows.map((row, index) => (
-                    <article className="compact-item" key={`${newsTitle(row)}-${index}`}>
-                      <div className="meta">{sourceLabel(row)}</div>
-                      <h4>
-                        {row.url ? (
-                          <a href={row.url} target="_blank" rel="noopener noreferrer">{newsTitle(row)}</a>
-                        ) : (
-                          <span>{newsTitle(row)}</span>
-                        )}
-                      </h4>
-                      {row.snippet && <p>{row.snippet}</p>}
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="section-subtitle">수집된 관련 뉴스가 없습니다.</p>
-              )}
-            </div>
+            {detailTicker && (
+              // 시세·지표·실적이 전부 yfinance라 문구 하나가 모달 전체를 대표한다.
+              // 기업분석은 SEC companyfacts를 최우선으로 쓰므로 같은 회사라도 값이
+              // 다를 수 있다 — 그 차이를 숨기지 않되, 각 패널마다 반복하지 않는다.
+              <p className="watchlist-detail-source">출처 yfinance — 기업분석(SEC 공시 기준)과 수치가 다를 수 있습니다.</p>
+            )}
           </section>
         </div>
       </div>
