@@ -1,17 +1,17 @@
-"""주도 기업 후보의 종합 점수 정렬 — 이야기 × 시장 영향력.
+"""주도 기업 후보의 종합 점수 정렬 — 이야기 + 시장 영향력.
 
 실측(2026-08): 보도량만으로 정렬하던 동안 니치 기업이 미국장 주도 기업 두 자리를
-다 차지했다(Nebius·CoreWeave). 절충은 자리 고정이 아니라 점수로 한다 — 시총 상위
-구성종목에 배율을 곱하되, 이야기가 충분히 큰 니치는 여전히 이긴다.
+다 차지했다(Nebius·CoreWeave). 절충은 자리 고정이 아니라 점수이고, 종합은 곱이
+아니라 **합**이다 — 곱은 이야기 점수가 0인 대형주를 통째로 소멸시킨다.
 """
+from features.common.market_calendar import briefing_market_windows
 from features.daily_briefing.selection import (
-    MAJOR_LEADER_MULTIPLIER,
+    MAJOR_IMPACT_WEIGHT,
     group_ticker,
     major_ticker_set,
     prioritize_briefing_groups,
 )
 from features.daily_briefing.service import build_llm_context
-from features.common.market_calendar import briefing_market_windows
 
 
 def _doc(name, ticker, title, weight=0):
@@ -38,8 +38,8 @@ def test_major_ticker_set_is_market_scoped_and_fails_open():
     assert major_ticker_set("both") == frozenset()
 
 
-def test_leader_score_blends_story_and_market_weight():
-    """비슷한 이야기 크기면 시총 상위가 이기고, 이야기가 배율 이상 크면 니치가 이긴다."""
+def test_leader_score_adds_impact_to_story():
+    """비슷한 이야기면 시총 상위가 이기고, 이야기 격차가 충분히 크면 니치가 이긴다."""
     windows = briefing_market_windows("2026-08-20")
     similar = prioritize_briefing_groups([
         {"company": "Nebius", "sector": "Tech", "docs": [_doc("Nebius", "NBIS", "Nebius update", weight=40)], "score": 1},
@@ -47,7 +47,10 @@ def test_leader_score_blends_story_and_market_weight():
     ], windows, market_scope="us")
     assert similar[0]["company"] == "NVIDIA"
     assert similar[0]["isMajor"] is True
-    assert similar[0]["leaderScore"] > similar[0]["briefingGroupScore"]
+
+    # 종합 계약: 영향력 점수는 그날 최고 이야기 점수 × 비중이고, **더해진다**.
+    top = max(row["briefingGroupScore"] for row in similar)
+    assert similar[0]["leaderScore"] == similar[0]["briefingGroupScore"] + MAJOR_IMPACT_WEIGHT * top
 
     big_story = prioritize_briefing_groups([
         {"company": "Nebius", "sector": "Tech",
@@ -56,17 +59,26 @@ def test_leader_score_blends_story_and_market_weight():
     ], windows, market_scope="us")
     assert big_story[0]["company"] == "Nebius"
 
-    # 배율 계약: 이야기 점수는 0 하한(briefing_doc_score)이라 곱 가중이 안전하다.
-    # 하한이 사라져 음수가 생기면 곱이 대형주를 거꾸로 끌어내린다 — 그때 이 테스트가
-    # 계약 위반을 알린다.
-    assert similar[0]["briefingGroupScore"] >= 0
-    assert similar[0]["leaderScore"] == similar[0]["briefingGroupScore"] * MAJOR_LEADER_MULTIPLIER
+
+def test_zero_story_major_does_not_vanish():
+    """이야기 점수 0인 대형주가 소멸하지 않는다 — 곱이었다면 leaderScore도 0이다."""
+    windows = briefing_market_windows("2026-08-20")
+    rows = prioritize_briefing_groups([
+        {"company": "Nebius", "sector": "Tech", "docs": [_doc("Nebius", "NBIS", "Nebius update", weight=40)], "score": 1},
+        # weight 없는 한 글자 제목 — 이야기 점수 0으로 떨어지는 최소 문서.
+        {"company": "NVIDIA", "sector": "Tech", "docs": [_doc("NVIDIA", "NVDA", "V", weight=-40)], "score": 1},
+    ], windows, market_scope="us")
+    nvda = next(row for row in rows if row["company"] == "NVIDIA")
+    assert nvda["briefingGroupScore"] == 0
+    assert nvda["leaderScore"] > 0
+    # 이야기가 있는 니치가 그래도 앞선다 — 영향력 점수는 보정이지 대체가 아니다.
+    assert rows[0]["company"] == "Nebius"
 
 
 def test_candidate_context_labels_blended_rank_and_majors():
     """후보 묶음 헤더가 종합 점수 순임을 밝히고, 가중 근거(시총 상위)가 줄에 붙는다."""
     windows = briefing_market_windows("2026-08-20")
-    doc = _doc("NVIDIA", "NVDA", "NVIDIA earnings")
+    doc = _doc("NVIDIA", "NVDA", "NVIDIA update", weight=40)
     groups = prioritize_briefing_groups(
         [{"company": "NVIDIA", "sector": "Tech", "docs": [doc], "score": 1}],
         windows, market_scope="us",

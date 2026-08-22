@@ -439,10 +439,11 @@ def major_ticker_set(market_scope):
         return frozenset()
 
 
-# 시총 상위 구성종목의 종합 점수 배율. 보도량(이야기) 점수에 곱해져, 조용한 대형주가
-# 이야기 없는 채로 니치를 이기지도, 이야기가 큰 니치가 배제되지도 않는다 — 절충은
-# 자리 고정이 아니라 점수로 한다(2026-08-22 사용자 결정).
-MAJOR_LEADER_MULTIPLIER = 1.5
+# 시장 영향력 축의 무게 — 시총 상위 구성종목은 **그날 최고 이야기 점수의 이 비율**을
+# 영향력 점수로 받는다. 종합은 곱이 아니라 **합**이다(2026-08-22 사용자 결정) — 곱은
+# 이야기 점수가 0인 대형주를 통째로 소멸시킨다. 고정 상수 대신 그날 최고점 기준으로
+# 스케일을 맞춘다 — 이야기 점수는 날마다 수십~수백으로 널뛴다.
+MAJOR_IMPACT_WEIGHT = 0.5
 
 
 def prioritize_briefing_groups(groups, market_windows, limit=None, market_scope=None):
@@ -452,9 +453,10 @@ def prioritize_briefing_groups(groups, market_windows, limit=None, market_scope=
     상단을 차지할 수 있다. 주말/휴장 모드에서는 off_session_news 자료가 있는
     기업/섹터를 우선해 '다음 거래일 반영 후보' 중심으로 주도 기업 섹션을 만든다.
 
-    `market_scope`를 주면 **이야기 점수 × 시장 영향력 가중**의 종합 점수로 정렬한다.
+    `market_scope`를 주면 **이야기 점수 + 시장 영향력 점수**의 종합으로 정렬한다.
     보도량만으로 정렬하던 동안 니치 기업이 미국장 주도 기업 두 자리를 다 차지했다
-    (실측 Nebius·CoreWeave). 가중은 곱이라 이야기가 충분히 큰 니치는 여전히 이긴다.
+    (실측 Nebius·CoreWeave). 합이라 이야기가 충분히 큰 니치는 여전히 이기고, 이야기가
+    0인 대형주도 후보에서 소멸하지 않는다.
     """
     weekend_mode = bool(market_windows.get("weekendOrHolidayNewsMode"))
     majors = major_ticker_set(market_scope) if market_scope else frozenset()
@@ -468,18 +470,17 @@ def prioritize_briefing_groups(groups, market_windows, limit=None, market_scope=
             score += sum(briefing_doc_score(d, market_windows) for d in off_docs[:4]) * 1.2
             score += len(off_docs[:4]) * 30
         is_major = bool(majors) and group_ticker(group) in majors
-        # `briefing_doc_score`는 0 하한이라(:return max(score, 0.0)) 그룹 점수도 음수가
-        # 없다 — 곱 가중이 안전하다. 하한이 사라지면 음수×배율이 대형주를 거꾸로
-        # 끌어내리므로, 그때는 절대값 가중으로 바꿔야 한다.
-        leader_score = score * MAJOR_LEADER_MULTIPLIER if is_major else score
         out.append({
             **group,
             "docs": scored_docs,
             "briefingGroupScore": score,
-            "leaderScore": leader_score,
             "isMajor": is_major,
             "offSessionDocCount": len(off_docs),
         })
+    # 영향력 점수는 그날 최고 이야기 점수 기준으로 스케일을 맞춘 뒤 **더한다**.
+    top_story = max((g["briefingGroupScore"] for g in out), default=0.0)
+    for g in out:
+        g["leaderScore"] = g["briefingGroupScore"] + (MAJOR_IMPACT_WEIGHT * top_story if g["isMajor"] else 0.0)
     out.sort(key=lambda g: (g.get("leaderScore", 0), g.get("briefingGroupScore", 0), g.get("score", 0)), reverse=True)
     return out[:limit] if limit else out
 
