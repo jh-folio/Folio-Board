@@ -349,7 +349,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     for doc in docs:
         doc["marketSessionDate"] = infer_market_session_date(doc, market_windows)
     scoped_docs = documents_for_scope(docs, market_scope)
-    groups = prioritize_briefing_groups(group_docs(scoped_docs), market_windows, limit=6)
+    groups = prioritize_briefing_groups(group_docs(scoped_docs), market_windows, limit=6, market_scope=market_scope)
     session_modes = session_modes_from_windows(market_windows)
     # 시장별 문서를 한 번만 고른다. 아래 동인·참고자료·시각자료가 모두 이것을 쓴다.
     market_docs = {
@@ -372,7 +372,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         target_sources = prioritized_source_refs(
             target_docs, market_windows, limit=ref_limit, issue_coverage=target_issues, market_scope=target,
         ) or briefing_sources_from_headlines(
-            _briefing_headlines(prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6)),
+            _briefing_headlines(prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6, market_scope=target)),
             limit=ref_limit,
         )
         sources_by_market[target] = source_refs(target_sources, limit=ref_limit)
@@ -383,7 +383,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 세션 기준일은 빌더와 같은 규칙을 쓴다. 여기서 따로 고르면 Agent 경로만
             # 유럽·일본에 한국 세션일을 찍는다.
             "marketSessionDate": _scope_session_date(target, market_windows),
-            "groups": prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6),
+            "groups": prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6, market_scope=target),
         }
     try:
         if week is not None:

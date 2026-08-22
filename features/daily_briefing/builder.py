@@ -146,8 +146,8 @@ def cached_korea_market_data(date, market_windows=None):
     return payload
 
 
-def _scope_groups_and_drivers(docs, market_windows):
-    groups = prioritize_briefing_groups(group_docs(docs), market_windows, limit=6)
+def _scope_groups_and_drivers(docs, market_windows, scope=None):
+    groups = prioritize_briefing_groups(group_docs(docs), market_windows, limit=6, market_scope=scope)
     drivers = derive_market_drivers(docs, market_windows, limit=4)
     return groups, drivers
 
@@ -260,7 +260,7 @@ def _scope_result(
     kind = normalize_briefing_kind(kind)
     ref_limit = source_ref_limit(kind)
     scoped_docs = documents_for_scope(docs, scope)
-    groups, drivers = _scope_groups_and_drivers(scoped_docs, market_windows)
+    groups, drivers = _scope_groups_and_drivers(scoped_docs, market_windows, scope)
     issues = build_issue_coverage(scoped_docs, scope.upper(), market_windows, limit=ISSUE_COVERAGE_LIMIT)
     headlines = _headlines(groups)
     session_modes = session_modes_from_windows(market_windows)

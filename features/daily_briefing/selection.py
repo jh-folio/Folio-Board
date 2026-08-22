@@ -412,14 +412,52 @@ def derive_market_drivers(docs, market_windows, limit=4):
     return out[:limit]
 
 
-def prioritize_briefing_groups(groups, market_windows, limit=None):
+def group_ticker(group):
+    """묶음 회사의 티커. 회사 태그(name+ticker)를 단 문서에서 읽는다 — 이름 매칭으로
+    대형주 목록과 잇는 것은 표기가 달라 신뢰할 수 없다(정식명 vs 기사 표기)."""
+    name = str(group.get("company") or "")
+    if not name:
+        return ""
+    for doc in group.get("docs", []):
+        for company in doc.get("companies", []) or []:
+            if str(company.get("name") or "") == name and company.get("ticker"):
+                return str(company["ticker"]).upper()
+    return ""
+
+
+def major_ticker_set(market_scope):
+    """그 시장의 시총 상위 구성종목 티커. 못 읽으면 빈 집합 — 가중이 없을 뿐이다."""
+    try:
+        from features.common.market_data.major_companies import major_company_symbols
+        from features.common.markets import MarketCode
+
+        code = {"us": "US", "kr": "KR", "europe": "EUROPE", "jp": "JP"}.get(str(market_scope or "").lower())
+        if not code:
+            return frozenset()
+        return frozenset(symbol.upper() for symbol in major_company_symbols([MarketCode(code)]))
+    except Exception:  # noqa: BLE001 - 가중일 뿐 브리핑을 막지 않는다
+        return frozenset()
+
+
+# 시총 상위 구성종목의 종합 점수 배율. 보도량(이야기) 점수에 곱해져, 조용한 대형주가
+# 이야기 없는 채로 니치를 이기지도, 이야기가 큰 니치가 배제되지도 않는다 — 절충은
+# 자리 고정이 아니라 점수로 한다(2026-08-22 사용자 결정).
+MAJOR_LEADER_MULTIPLIER = 1.5
+
+
+def prioritize_briefing_groups(groups, market_windows, limit=None, market_scope=None):
     """주도 기업/섹터 그룹을 브리핑 모드에 맞게 재정렬한다.
 
     group_docs()는 일반 뉴스 검색용 점수라 주말에는 직전 정규장 자료가 계속
     상단을 차지할 수 있다. 주말/휴장 모드에서는 off_session_news 자료가 있는
     기업/섹터를 우선해 '다음 거래일 반영 후보' 중심으로 주도 기업 섹션을 만든다.
+
+    `market_scope`를 주면 **이야기 점수 × 시장 영향력 가중**의 종합 점수로 정렬한다.
+    보도량만으로 정렬하던 동안 니치 기업이 미국장 주도 기업 두 자리를 다 차지했다
+    (실측 Nebius·CoreWeave). 가중은 곱이라 이야기가 충분히 큰 니치는 여전히 이긴다.
     """
     weekend_mode = bool(market_windows.get("weekendOrHolidayNewsMode"))
+    majors = major_ticker_set(market_scope) if market_scope else frozenset()
     out = []
     for group in groups or []:
         docs = list(group.get("docs") or [])
@@ -429,13 +467,20 @@ def prioritize_briefing_groups(groups, market_windows, limit=None):
         if weekend_mode:
             score += sum(briefing_doc_score(d, market_windows) for d in off_docs[:4]) * 1.2
             score += len(off_docs[:4]) * 30
+        is_major = bool(majors) and group_ticker(group) in majors
+        # `briefing_doc_score`는 0 하한이라(:return max(score, 0.0)) 그룹 점수도 음수가
+        # 없다 — 곱 가중이 안전하다. 하한이 사라지면 음수×배율이 대형주를 거꾸로
+        # 끌어내리므로, 그때는 절대값 가중으로 바꿔야 한다.
+        leader_score = score * MAJOR_LEADER_MULTIPLIER if is_major else score
         out.append({
             **group,
             "docs": scored_docs,
             "briefingGroupScore": score,
+            "leaderScore": leader_score,
+            "isMajor": is_major,
             "offSessionDocCount": len(off_docs),
         })
-    out.sort(key=lambda g: (g.get("briefingGroupScore", 0), g.get("score", 0)), reverse=True)
+    out.sort(key=lambda g: (g.get("leaderScore", 0), g.get("briefingGroupScore", 0), g.get("score", 0)), reverse=True)
     return out[:limit] if limit else out
 
 
