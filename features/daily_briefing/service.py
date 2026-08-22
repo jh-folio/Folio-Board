@@ -1026,7 +1026,9 @@ def build_llm_context(
     lines += [
         "",
         "## 후보 이슈 묶음",
+        "묶음 순서는 **보도량 기준**이다 — 시장 영향력 순서가 아니다. 주도 기업 선정은 프롬프트의 선정 기준을 따른다.",
     ]
+    major_tickers = _major_ticker_set(market_scope)
     for i, group in enumerate(groups[:6], 1):
         subject = group.get("company") or group.get("sector") or "시장"
         tags = []
@@ -1034,7 +1036,10 @@ def build_llm_context(
             for tag in d.get("impactTags", []) + d.get("sectors", []):
                 if tag and tag not in tags:
                     tags.append(tag)
-        lines.append(f"\n{i}. {subject} | 태그: {', '.join(tags[:6]) or '없음'} | 관련자료: {len(group.get('docs', []))}건")
+        # 시총 상위 구성종목이면 표시한다. 코드는 판정하지 않고 힌트만 준다 — 시장
+        # 영향력은 그날의 사실이라 목록만으로 단정할 수 없다.
+        major_mark = " | 시장 시총 상위" if _group_ticker(group) in major_tickers else ""
+        lines.append(f"\n{i}. {subject} | 태그: {', '.join(tags[:6]) or '없음'} | 관련자료: {len(group.get('docs', []))}건{major_mark}")
         # sourceWeight가 아니라 브리핑 적합도(분석 우선순위 가중 포함)로 정렬해 KR D-1
         # 정규장 자료가 계속 상단에 노출되지 않게 한다.
         for gd in sorted(group.get("docs", []), key=lambda d: briefing_doc_score(d, market_windows), reverse=True)[:3]:
@@ -1190,6 +1195,34 @@ def llm_status_message(generation):
     if status.startswith("error:"):
         return f"{provider} LLM 호출 실패로 규칙 기반 브리핑으로 대체했습니다. 상세: {status[7:240]}"
     return "규칙 기반 브리핑으로 생성했습니다."
+
+
+def _group_ticker(group):
+    """묶음 회사의 티커. 회사 태그(name+ticker)를 단 문서에서 읽는다 — 이름 매칭으로
+    대형주 목록과 잇는 것은 표기가 달라 신뢰할 수 없다(정식명 vs 기사 표기)."""
+    name = str(group.get("company") or "")
+    if not name:
+        return ""
+    for doc in group.get("docs", []):
+        for company in doc.get("companies", []) or []:
+            if str(company.get("name") or "") == name and company.get("ticker"):
+                return str(company["ticker"]).upper()
+    return ""
+
+
+def _major_ticker_set(market_scope):
+    """그 시장의 시총 상위 구성종목 티커. 못 읽으면 빈 집합 — 힌트가 없을 뿐이다."""
+    try:
+        from features.common.market_data.major_companies import major_company_symbols
+        from features.common.markets import MarketCode
+
+        scope = normalize_market_scope(market_scope)
+        code = {"us": "US", "kr": "KR", "europe": "EUROPE", "jp": "JP"}.get(scope)
+        if not code:
+            return frozenset()
+        return frozenset(symbol.upper() for symbol in major_company_symbols([MarketCode(code)]))
+    except Exception:  # noqa: BLE001 - 힌트일 뿐 브리핑을 막지 않는다
+        return frozenset()
 
 
 def choose_leaders(groups):
