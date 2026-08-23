@@ -614,7 +614,7 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
             )
     draft = replace_leading_company_visuals(draft, aligned_visuals)
     sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=ref_limit)
-    markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=ref_limit)
+    markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=ref_limit, kind=kind)
     generation = A.agent_generation(
         len(sources),
         message="LLM CLI 브리핑 생성 완료: Agent CLI / context pack 기반",

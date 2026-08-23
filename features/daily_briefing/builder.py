@@ -301,7 +301,7 @@ def _scope_result(
         )
     if llm_result:
         sources = source_refs(llm_result.get("usedDocs", []), limit=ref_limit)
-        markdown = append_briefing_sources(llm_result["markdown"], sources, limit=ref_limit)
+        markdown = append_briefing_sources(llm_result["markdown"], sources, limit=ref_limit, kind=kind)
         generation = {
             "mode": "llm", "status": llm_status, "provider": llm_result.get("provider", ""),
             "model": llm_result.get("model", ""), "responseId": llm_result.get("responseId", ""),
@@ -323,7 +323,6 @@ def _scope_result(
                 issue_coverage=issues,
                 calendar_block=calendar_block,
                 memory_context=render_market_memory_context(MARKET_MEMORY_DB_PATH),
-                source_lines=source_lines(sources, limit=ref_limit),
             )
         else:
             markdown = build_prompt_markdown(

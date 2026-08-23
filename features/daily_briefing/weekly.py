@@ -206,7 +206,6 @@ def build_weekly_rules_markdown(
     issue_coverage=None,
     calendar_block: str = "",
     memory_context: str = "",
-    source_lines: str = "",
 ) -> str:
     """LLM 없이 만드는 주간 보고서.
 
@@ -281,10 +280,7 @@ def build_weekly_rules_markdown(
         "",
         "**다음주 확인점:** 위 다음주 일정 표를 참고하세요.",
         "",
-        "## 참고자료",
-        "",
-        source_lines or "- 참고자료를 선별하지 못했습니다.",
-        "",
+        # 참고자료는 본문에 싣지 않는다 — `sources` 필드와 리더 패널이 단일 소유자다.
         "## Source & Data Notes",
         "",
         f"- 로컬 articles/rss 자료 {len(docs or [])}건({window.week_start} ~ {window.week_end})을 기준으로 만들었습니다.",

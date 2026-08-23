@@ -281,8 +281,40 @@ def markdown_has_sources(markdown):
     return bool(re.search(r"(?im)^#{1,3}\s*(참고\s*자료|참고자료|sources\s+used|sources)\s*$", str(markdown or "")))
 
 
-def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT):
+# 모델이 변형해 쓰는 참고자료 헤딩까지 잡는다 — `## 7. 참고자료`, `### 참고 자료`,
+# `## 참고자료 (24건)`. `markdown_has_sources`의 정확 일치 검사는 이런 변형을 놓쳐
+# 코드가 두 번째 목록을 덧붙였고, 리더는 정확 일치하는 쪽만 떼어내 첫 목록이 본문에
+# 남았다(2026-08-22 사용자 보고: 주간 브리핑에 참고자료가 두 번).
+_SOURCE_HEADING_LOOSE_RE = re.compile(
+    r"(?im)^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\b[^\n]*$"
+)
+
+
+def strip_markdown_sources_section(markdown):
+    """본문에서 참고자료 섹션(다음 `##` 헤딩 전까지)을 떼어낸다. 뒤따르는 섹션은 남긴다."""
+    text = str(markdown or "")
+    match = _SOURCE_HEADING_LOOSE_RE.search(text)
+    if not match:
+        return text
+    rest = text[match.end():]
+    next_heading = re.search(r"(?m)^#{1,2}\s", rest)
+    tail = rest[next_heading.start():] if next_heading else ""
+    head = text[:match.start()].rstrip()
+    # 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게 한다.
+    head = re.sub(r"(?:\n\s*---\s*)+$", "", head).rstrip()
+    return f"{head}\n\n{tail.lstrip()}".strip() if tail.strip() else head
+
+
+def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT, kind=DEFAULT_BRIEFING_KIND):
+    """참고자료 목록을 본문 끝에 붙인다.
+
+    **주간은 붙이지 않고 오히려 떼어낸다.** 주간의 출처는 `sources` 필드와 리더 패널이
+    단일 소유자다 — 본문에도 두면 모델이 쓴 목록과 코드가 붙인 목록이 겹쳐 두 번 보인다.
+    일간은 기존 계약(본문 `## 참고자료` + 리더가 떼어내 패널로 표시)을 유지한다.
+    """
     markdown = str(markdown or "").strip()
+    if is_weekly(kind):
+        return strip_markdown_sources_section(markdown)
     sources = source_refs(sources or [], limit=limit)
     if not markdown or markdown_has_sources(markdown) or not sources:
         return markdown

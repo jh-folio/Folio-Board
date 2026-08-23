@@ -601,3 +601,34 @@ def test_one_predicate_decides_what_is_weekly():
         if 'in {"daily", "weekly"}' in text or 'str(kind or "daily").strip().lower()' in text:
             offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_weekly_body_never_carries_a_sources_section():
+    """주간 본문에는 참고자료 섹션이 없다 — 출처는 `sources` 필드와 리더 패널이 단일 소유자다.
+
+    모델이 `## 7. 참고자료`처럼 변형 헤딩으로 목록을 쓰면 정확 일치 검사가 놓쳐 코드가
+    두 번째 `## 참고자료`를 덧붙였고, 리더는 정확 일치하는 쪽만 떼어내 첫 목록이 본문에
+    남아 두 번 보였다(2026-08-22 사용자 보고).
+    """
+    from features.daily_briefing.service import append_briefing_sources, strip_markdown_sources_section
+
+    body = (
+        "## 이번 주 결론\n\n**한 주의 시장 성격:** 강세\n\n"
+        "## 7. 참고자료 (24건)\n\n- [A](https://a)\n- [B](https://b)\n\n"
+        "## Source & Data Notes\n\n- 로컬 자료 24건"
+    )
+    sources = [{"title": "A", "url": "https://a", "source": "x", "date": "2026-08-20"}]
+
+    weekly = append_briefing_sources(body, sources, limit=24, kind="weekly")
+    assert "참고자료" not in weekly
+    # 뒤따르는 Source & Data Notes는 살아남는다 — 끝까지 자르면 노트까지 사라진다.
+    assert "## Source & Data Notes" in weekly and "로컬 자료 24건" in weekly
+    assert weekly.startswith("## 이번 주 결론")
+
+    # 일간 계약은 그대로다 — 본문에 참고자료가 없으면 코드가 붙인다.
+    daily = append_briefing_sources("## 0. 오늘\n\n본문", sources, limit=24, kind="daily")
+    assert "## 참고자료" in daily
+
+    # 변형 헤딩 세 가지를 모두 잡는다.
+    for heading in ("## 참고자료", "### 참고 자료", "## Sources Used"):
+        assert "참고" not in strip_markdown_sources_section(f"## 본문\n\n글\n\n{heading}\n\n- x") or "Sources" not in strip_markdown_sources_section(f"## 본문\n\n글\n\n{heading}\n\n- x")
