@@ -34,6 +34,7 @@ from features.daily_briefing.limits import (
     source_ref_limit,
 )
 from features.daily_briefing.source_window import scope_session_documents
+from features.daily_briefing.weekly_visuals import collect_weekly_visuals
 from features.daily_briefing.weekly import (
     calendar_preview,
     render_calendar_preview,
@@ -272,10 +273,6 @@ def _briefing_headlines(groups):
     return headlines
 
 
-class _NoWeeklyVisuals(Exception):
-    """주간 보고서는 세션 시각자료를 만들지 않는다는 표시. 경고가 아니다."""
-
-
 class WeeklyWindowEmptyError(ValueError):
     """주간 창에 자료가 하나도 없다. CLI를 부르기 전에 멈춘다."""
 
@@ -387,13 +384,15 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         }
     try:
         if week is not None:
-            # 주간에는 세션 스냅샷을 싣지 않는다(§builder와 같은 규칙).
-            raise _NoWeeklyVisuals
-        visual_result = collect_briefing_visuals(date, market_scope, visual_scope_results)
-    except _NoWeeklyVisuals:
-        visual_result = {
-            "visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": [],
-        }
+            # 세션 스냅샷은 싣지 않고(§builder와 같은 규칙) 주 단위 계열을 만든다.
+            # **pack 단계에서 만든다** — A·B·C는 본문 내용이 아니라 창·지수·자료 풀에서
+            # 나오므로 CLI 답을 기다릴 이유가 없고, 규칙 경로와 같은 계약이 된다.
+            visual_result = collect_weekly_visuals(
+                week, market_scope,
+                documents=[row for target in requested_markets for row in scope_docs.get(target, [])],
+            )
+        else:
+            visual_result = collect_briefing_visuals(date, market_scope, visual_scope_results)
     except Exception:
         visual_result = {
             "visualRecommendations": [], "visualSnapshots": [], "sidecar": {},
@@ -596,7 +595,9 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         "warnings": list(leader_subjects.get("warnings") or []),
     }
     if kind == "weekly":
-        # 주간에는 세션 시각자료가 없다. pack도 만들지 않았으므로 맞출 것도 없다.
+        # 주간 그림(A·B·C)은 pack 단계에서 이미 만들어 draft에 실려 있고, 본문에서
+        # 기업을 다시 읽어 맞출 세션 차트가 없다. `replace_leading_company_visuals`는
+        # `leading_company` 행만 갈아끼우므로 주간 스냅샷은 그대로 남는다.
         aligned_visuals["warnings"] = []
         visual_scope_results = {}
     if visual_scope_results:

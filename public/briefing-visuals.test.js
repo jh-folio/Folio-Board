@@ -17,6 +17,8 @@ const {
   lightweightRows,
   sectionRole,
   sectionMarket,
+  weeklyCaption,
+  signedPercent,
   preferredIndexTicker,
   heatmapNodes,
   compactLevelText,
@@ -474,4 +476,42 @@ test("the root level resize keeps every sector label readable", () => {
     const match = String(text[index]).match(/font-size:(\d+)px/);
     assert.ok(Number(match[1]) >= 12, `${id}가 ${match[1]}px`);
   }
+});
+
+test("네 시장 모두 섹션 슬롯을 얻는다", () => {
+  // 유럽·일본이 빠져 있던 시절 그 두 시장 브리핑은 슬롯이 하나도 만들어지지 않아,
+  // 저장된 스냅샷 네 장이 화면에 아무것도 그리지 못했다(실측 2026-08-12~14, 6건).
+  assert.equal(sectionMarket("1. 유럽장 시장 흐름", "europe"), "EUROPE");
+  assert.equal(sectionMarket("1. 일본장 시장 흐름", "jp"), "JP");
+  assert.equal(sectionMarket("1. 시장 흐름", "europe"), "EUROPE");
+  assert.equal(sectionMarket("1. 시장 흐름", "jp"), "JP");
+  assert.equal(sectionMarket("1. 시장 흐름", "both"), "");
+  // 카드 태그도 같이 안다. `BOTH`로 접으면 내보내기·필터가 통합 카드로 오인한다.
+  assert.equal(normalizeVisualMarket("EUROPE"), "EUROPE");
+  assert.equal(normalizeVisualMarket("JP"), "JP");
+  assert.equal(normalizeVisualMarket("both"), "BOTH");
+});
+
+test("주간 헤딩은 주간 슬롯을, 일간 헤딩은 일간 슬롯을 만든다", () => {
+  assert.equal(sectionRole("1. 지난주 미국장 흐름"), "weekly_flow");
+  assert.equal(sectionRole("2. 지난주 미국장을 움직인 핵심 변수"), "weekly_story_share");
+  // 일간 §2도 "핵심 변수"다. `지난주`가 없으면 일간에 빈 슬롯이 생긴다.
+  assert.equal(sectionRole("2. 미국장을 움직인 핵심 변수"), null);
+  assert.equal(sectionRole("1. 미국장 시장 흐름"), "market_flow");
+  // 주간 §3은 기업 ①②가 없다 — 주간에는 종목별 세션 차트를 만들지 않는다.
+  assert.equal(sectionRole("3. 지난주 한국장을 주도한 기업·업종"), null);
+});
+
+test("주간 캡션은 창을, 퍼센트는 결측을 정직하게 말한다", () => {
+  assert.equal(weeklyCaption({ weekLabel: "08.10~08.16" }, "본문"), "08.10~08.16 · 본문");
+  assert.equal(
+    weeklyCaption({ window: { weekStart: "2026-08-10", weekEnd: "2026-08-16" } }, "본문"),
+    "2026-08-10~2026-08-16 · 본문",
+  );
+  assert.equal(signedPercent(1.234), "+1.23%");
+  assert.equal(signedPercent(-0.5), "-0.50%");
+  assert.equal(signedPercent(0), "0.00%");
+  // `Number(null)`이 0이라 결측이 "0.00%"가 되면 "안 움직였다"는 사실로 둔갑한다.
+  assert.equal(signedPercent(null), "—");
+  assert.equal(signedPercent(undefined), "—");
 });

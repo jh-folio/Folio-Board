@@ -98,6 +98,7 @@ from features.daily_briefing.visuals import (
     leading_company_subjects_from_markdown,
     write_visual_sidecar,
 )
+from features.daily_briefing.weekly_visuals import collect_weekly_visuals
 from features.llm_settings.client import selected_llm_config
 from features.market_memory.memory import build_memory_from_briefing, list_briefing_memories, upsert_memory
 from features.market_memory.snapshot import render_market_memory_context
@@ -112,7 +113,7 @@ BRIEFING_PROMPT_PATH = ROOT / "features" / "daily_briefing" / "prompt.md"
 
 
 class _NoWeeklyVisuals(Exception):
-    """주간 보고서는 세션 시각자료를 만들지 않는다는 표시. 경고가 아니다."""
+    """주간 창을 만들지 못해 주간 그림을 건너뛴다는 표시. 경고가 아니다."""
 
 
 def _ensure_dirs():
@@ -573,14 +574,20 @@ def build_briefing(
 
     try:
         if kind == "weekly":
-            # 주간에는 세션 스냅샷을 싣지 않는다. 시각자료는 하루 세션의 가격 계열과
-            # 히트맵이라, 한 주를 덮는 보고서에 그대로 붙이면 특정 하루가 그 주를
-            # 대표하는 것처럼 읽힌다. 주간 차트는 별도 설계가 필요하다.
-            raise _NoWeeklyVisuals
-        leader_subjects = leading_company_subjects_from_markdown(markdown)
-        visual_result = collect_briefing_visuals(
-            date, market_scope, results, leader_subjects=leader_subjects,
-        )
+            # **세션 스냅샷은 여전히 싣지 않는다.** 하루 세션의 가격 계열과 그날 등락
+            # 히트맵을 한 주 보고서에 붙이면 특정 하루가 그 주를 대표하는 것처럼 읽힌다.
+            # 대신 주 단위 계열을 따로 만든다 — 세 그림이 **같은 창 객체**를 받아
+            # 주초·주말 경계가 하나다(§12.3).
+            if week is None:
+                raise _NoWeeklyVisuals
+            visual_result = collect_weekly_visuals(
+                week, market_scope, documents=weekly_pool if weekly_pool is not None else [],
+            )
+        else:
+            leader_subjects = leading_company_subjects_from_markdown(markdown)
+            visual_result = collect_briefing_visuals(
+                date, market_scope, results, leader_subjects=leader_subjects,
+            )
     except _NoWeeklyVisuals:
         visual_result = {
             "visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": [],

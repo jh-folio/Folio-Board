@@ -36,6 +36,7 @@ from features.common.company_resolution import resolve_company_query
 from features.common.utils import read_json, write_json
 from features.daily_briefing.schema import (
     SINGLE_MARKET_SCOPES,
+    normalize_briefing_kind,
     briefing_file_name,
     briefing_scope_view,
     normalize_market_scope,
@@ -808,8 +809,13 @@ def write_visual_sidecar(path, payload, market_scope):
     return merged
 
 
-def load_visual_sidecar(date, base_dir=None, market_scope=None):
-    """Load one immutable dated sidecar without allowing path traversal."""
+def load_visual_sidecar(date, base_dir=None, market_scope=None, kind=None):
+    """Load one immutable dated sidecar without allowing path traversal.
+
+    **종류를 함께 받는다.** 주간 사이드카는 같은 날 같은 시장의 일간 사이드카와
+    발행일·시장이 겹치므로, 종류가 없으면 주간 히트맵을 물었을 때 그날 일간 히트맵이
+    돌아온다 — 한 주 등락이라고 적힌 카드에 하루 등락이 그려진다.
+    """
     date_text = str(date or "").strip()
     if not DATE_PATTERN.fullmatch(date_text):
         return None
@@ -819,13 +825,17 @@ def load_visual_sidecar(date, base_dir=None, market_scope=None):
         return None
     root = Path(base_dir) if base_dir is not None else data_dir() / "briefings"
     scope = str(market_scope or "").strip().lower()
+    report_kind = normalize_briefing_kind(kind)
     file_names = []
     if scope in SINGLE_MARKET_SCOPES:
         file_names.extend((
-            visual_sidecar_gzip_file_name(date_text, scope),
-            visual_sidecar_file_name(date_text, scope),
+            visual_sidecar_gzip_file_name(date_text, scope, report_kind),
+            visual_sidecar_file_name(date_text, scope, report_kind),
         ))
-    file_names.extend((visual_sidecar_gzip_file_name(date_text), visual_sidecar_file_name(date_text)))
+    file_names.extend((
+        visual_sidecar_gzip_file_name(date_text, None, report_kind),
+        visual_sidecar_file_name(date_text, None, report_kind),
+    ))
     for file_name in file_names:
         payload = _read_sidecar_file(root / file_name)
         if isinstance(payload, dict) and str(payload.get("date") or "") == date_text:

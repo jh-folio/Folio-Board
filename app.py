@@ -701,8 +701,8 @@ def api_delete_briefing(date: str, market: str = "", kind: str = "daily"):
 
 
 @fastapi_app.get("/api/briefings/{date}/visuals")
-def api_get_briefing_visuals(date: str, market: str = "", marketScope: str = ""):
-    payload = load_visual_sidecar(date, BRIEFINGS_DIR, market_scope=market or marketScope)
+def api_get_briefing_visuals(date: str, market: str = "", marketScope: str = "", kind: str = ""):
+    payload = load_visual_sidecar(date, BRIEFINGS_DIR, market_scope=market or marketScope, kind=kind)
     if payload is None:
         raise HTTPException(status_code=404, detail="Briefing visuals not found")
     return payload
