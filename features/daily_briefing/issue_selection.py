@@ -386,13 +386,18 @@ def publisher_issue_concentration(docs):
     return result
 
 
-def build_issue_coverage(docs, target_market, market_windows, limit=10, publisher_issue_shares=None):
+def build_issue_coverage(docs, target_market, market_windows, limit=10, publisher_issue_shares=None, coherence_policy=False):
     scoped = [doc for doc in docs or [] if infer_doc_market(doc) in {str(target_market).upper(), "BOTH", "GLOBAL"}]
     if publisher_issue_shares is None:
         publisher_issue_shares = publisher_issue_concentration(scoped)
+    clusters = cluster_documents(scoped)
+    if coherence_policy:
+        from features.daily_briefing.concentration.coherence import refine_clusters
+
+        clusters = refine_clusters(clusters, similarity=_similarity)
     evaluated = [
         evaluate_issue_cluster(cluster, target_market, market_windows, publisher_issue_shares)
-        for cluster in cluster_documents(scoped)
+        for cluster in clusters
     ]
     evaluated.sort(key=lambda issue: (issue["issueScore"], issue["publisherCount"]), reverse=True)
     return evaluated[:limit]

@@ -99,7 +99,7 @@ def test_deep_research_plan_adds_bounded_subquestions():
 
     assert deep["enabled"] is True
     assert deep["maxRounds"] == 2
-    assert 3 <= len(deep["subQuestions"]) <= 8
+    assert 3 <= len(deep["subQuestions"]) <= 12
     assert all({"id", "question", "axisKey", "round", "searchQueries"} <= set(q) for q in deep["subQuestions"])
     assert {q["round"] for q in deep["subQuestions"]} <= {1, 2}
     assert deep["falsificationTriggers"], "심층 모드는 반증 조건을 계획 단계에서 만든다"

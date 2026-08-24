@@ -92,7 +92,7 @@ def _materials(approved: ApprovedRequest, rows: list[dict]) -> tuple[dict, dict,
     return topic, market_data, macro_data
 
 
-def attempt_direct(prompt: str, context: str) -> EngineOutput:
+def attempt_direct(prompt: str, context: str, *, max_output_tokens: int = 9000, timeout_seconds: int | None = None) -> EngineOutput:
     config = selected_llm_config()
     if not use_llm_analysis() or not config.get("apiKey") or not prompt:
         raise EngineUnavailableError("api")
@@ -102,7 +102,8 @@ def attempt_direct(prompt: str, context: str) -> EngineOutput:
             prompt,
             context,
             web_search=False,
-            max_output_tokens=9000,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
             include_usage=True,
         )
     except (LlmRequestError, urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
@@ -128,6 +129,7 @@ def attempt_cli(
     job_id: str,
     approved: ApprovedRequest,
     evidence_items: list[dict],
+    timeout_seconds: int | None = None,
 ) -> EngineOutput:
     pack = agent_schema.build_pack(
         task_type="topic_report",
@@ -152,7 +154,9 @@ def attempt_cli(
         ]
     )
     try:
-        result = agent_bridge.run_agent_prompt(agent_prompt, adapter=adapter, job_id=job_id)
+        result = agent_bridge.run_agent_prompt(
+            agent_prompt, adapter=adapter, job_id=job_id, timeout=int(timeout_seconds or 0),
+        )
     except RuntimeError as error:
         message = str(error).casefold()
         unavailable = (

@@ -66,7 +66,7 @@ def build_rule_report(
                 f"- **라운드 상한**: {deep.get('maxRounds', 2)}회",
                 "- **하위 질문**:",
             ]
-            for question in (deep.get("subQuestions") or [])[:8]:
+            for question in (deep.get("subQuestions") or [])[:12]:
                 coverage_lines.append(
                     f"  - R{question.get('round', 1)} · {question.get('question', '')}"
                 )

@@ -33,6 +33,8 @@ from features.topic_report.approval_submission import (
     SubmissionRequest,
 )
 from features.topic_report.approved_generation import ApprovedGenerationInput, build_approved_report
+from features.topic_report.deep_pipeline import run_deep_pipeline
+from features.common.quality_generation.candidate_store import CandidateStore
 from features.topic_report.service import _stable_topic_id
 
 
@@ -188,6 +190,25 @@ class ApprovedTopicJobs:
         try:
             self.store.transition(job_id, JobStatus.RUNNING)
             outcome = build_approved_report(command, job_id=job_id, clock=self.clock)
+            initial_report = dict(outcome.report)
+            initial_provenance = initial_report.get("executionProvenance")
+            initial_plan_hash = str(initial_provenance.get("planHash") or "") if isinstance(initial_provenance, dict) else ""
+            report_id = _stable_topic_id(
+                str(initial_report["date"]),
+                str(initial_report["topicKey"]),
+                str(initial_report["topicLabel"]),
+                discriminator=initial_plan_hash,
+            )
+            is_deep = bool(getattr(getattr(command, "approved", None), "deepResearch", False))
+            if is_deep:
+                self.store.update_runtime(job_id, {"progress": 60})
+                outcome = run_deep_pipeline(
+                    outcome,
+                    command,
+                    job_id=job_id,
+                    report_id=report_id,
+                    candidate_store=CandidateStore(self.data_dir / "job-context"),
+                )
             self.store.update_runtime(
                 job_id,
                 {
@@ -207,14 +228,6 @@ class ApprovedTopicJobs:
             # topicKey는 승인 경로에서 늘 "custom"이고 topicLabel은 40자 주제어라,
             # 같은 날 같은 주제로 시작하는 다른 질문이 같은 id가 되어 서로 덮어썼다.
             # planHash는 계획 payload에서 나오므로 같은 계획 재실행만 같은 id가 된다.
-            provenance = report.get("executionProvenance")
-            plan_hash = str(provenance.get("planHash") or "") if isinstance(provenance, dict) else ""
-            report_id = _stable_topic_id(
-                str(report["date"]),
-                str(report["topicKey"]),
-                str(report["topicLabel"]),
-                discriminator=plan_hash,
-            )
             report["id"] = report_id
             terminal = {
                 "artifactId": report_id,

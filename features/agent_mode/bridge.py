@@ -345,6 +345,7 @@ def _agent_prompt(pack_path: Path, pack: dict) -> str:
         str(value).strip() for value in (contract.get("expectedTitles") or {}).values()
         if str(value).strip()
     ]
+    expected_leaders = contract.get("expectedLeadingCompanies") or {}
     title_instruction = (
         "Market title H1 lines must exactly match: " + " / ".join(f"'# {title}'" for title in expected_titles) + "."
         if expected_titles
@@ -359,6 +360,12 @@ def _agent_prompt(pack_path: Path, pack: dict) -> str:
             title_instruction,
             "After each market title, start immediately with the matching '## 0. 오늘의 ... 성격' section. Do not add market-scope notes, source-date explanations, blockquotes, or any preamble.",
             "Leading company headings must include the concrete company name after an em dash, e.g. '## 3. 미국장을 주도한 기업 ① — NVIDIA'. Never leave '[기업명]' or omit the company name.",
+            *(
+                ["Leading company names and order must exactly match: " + " / ".join(
+                    f"{market.upper()}={', '.join(names)}" for market, names in expected_leaders.items()
+                ) + "."]
+                if expected_leaders else []
+            ),
             "Required Markdown heading fragments, in contract order:",
             *(f"- {section}" for section in required),
         ])

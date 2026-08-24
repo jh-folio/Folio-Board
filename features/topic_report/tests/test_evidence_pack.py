@@ -125,6 +125,42 @@ def test_deep_research_pack_records_question_coverage_and_rounds():
     assert all({"question", "count", "level", "round"} <= set(row) for row in pack["questionCoverage"].values())
     assert any(item.get("researchQuestionId") for item in pack["items"])
     assert {item.get("researchRound") for item in pack["items"] if item.get("researchRound")} <= {1, 2}
+    assert pack["deepResearch"]["rounds"]
+    assert pack["deepResearch"]["round2Reason"] in {
+        "executed_for_coverage_gaps", "skipped_sufficient_round_1", "skipped_no_approved_round_2_questions"
+    }
+
+
+def test_round_two_is_skipped_when_round_one_has_coverage_and_challenging_evidence():
+    base = _plan()
+    base["analysisAxes"] = base["analysisAxes"][:1]
+    plan = P.apply_deep_research_plan(base)
+    unique = 0
+
+    def search(_queries, limit=12):
+        nonlocal unique
+        unique += 1
+        return [
+            {
+                "id": f"doc-{unique}-{index}",
+                "title": f"risk weak pressure evidence {unique} {index}",
+                "summary": "리스크 약세 우려 부담 하락 압력",
+                "source": "Reuters",
+                "date": "2026-06-10",
+                "url": f"https://example.com/{unique}/{index}",
+            }
+            for index in range(4)
+        ]
+
+    pack = E.build_evidence_pack(
+        plan,
+        search_docs=search,
+        search_memories=lambda *_args, **_kwargs: [],
+        date="2026-06-11",
+        deep_research=True,
+    )
+    assert pack["deepResearch"]["round2Reason"] == "skipped_sufficient_round_1"
+    assert all(item.get("researchRound") != 2 for item in pack["items"])
 
 
 def test_source_ledger_keeps_deep_research_metadata():

@@ -24,6 +24,16 @@
 
 LLM 입력과 표시 참고자료에는 같은 evidence lane·cluster dedupe·매체별 soft cap을 적용합니다. 시장 반응 자료가 없으면 영향 0으로 간주하지 않고 `marketImpactStatus: unavailable`과 `dataGaps`를 남깁니다. 공개 RSS에는 연합뉴스와 매일경제 공식 피드가 추가되었으며 유료 본문 우회 수집은 하지 않습니다.
 
+### 한국 일일 브리핑의 기업 쏠림 제어
+
+한국 일일(`kr` + `daily`)에만 feature-local concentration control을 적용한다. 기본 모드는 `shadow`이며 `KR_BRIEFING_CONCENTRATION_MODE=active`에서 선별 순서와 부분 보강을 실제 본문에 반영한다. 미국·유럽·일본·주간 브리핑에는 적용하지 않는다.
+
+- 같은 기사·같은 업종이라는 이유만으로 기업을 배제하지 않는다. 문장을 direct/shared/incidental claim으로 귀속하고 기업별 촉매→전달 경로→결과→근거의 causal signature를 비교한다.
+- 사건 군집은 KR 일일에서 complete-link coherence를 한 번 더 적용해 A-B, B-C가 비슷하다는 이유만으로 서로 다른 A-C 사건까지 합쳐지는 연쇄 오탐을 막는다.
+- 두 번째 리더가 같은 공통 동인을 공유해도 고유 인과 경로와 독립 근거가 있으면 유지한다. 경계 사례만 Agent가 후보 whitelist 안에서 1회 판정하며, timeout·형식 오류·미사용 상태는 deterministic fallback으로 내려가고 생성을 중단하지 않는다.
+- 생성 뒤 전체 본문에서 명시적 반복과 표현만 다른 causal-path 반복을 함께 감사한다. 기업 이름 언급 횟수만으로 보강하지 않는다. 활성 모드의 repair candidate만 Agent를 최대 1회 호출하고, 허용된 섹션 본문만 교체한 뒤 중복 지표가 실제 개선될 때 채택한다.
+- 호출 예산은 판정 1 + 본문 생성 1 + 부분 보강 1이다. 내부 signature·점수·감사 상태는 `concentrationControl` telemetry에 남기되 독자 Markdown에는 노출하지 않는다.
+
 ## 브리핑 종류 — 일간과 주간 (0.5.4)
 
 브리핑에는 **종류**(`kind`)가 있고 `daily`와 `weekly` 둘이다. 편집 강조점(`briefingType`)과 직교한다 — 그쪽 세 값은 모두 "기존 섹션 구성을 유지하라"고 지시하므로, 골격이 다른 주간을 그 enum에 넣으면 계약이 자기 자신과 모순된다. **저장된 예약과 보고서에 이 값이 없으면 일간이다**(판올림 호환).
@@ -588,5 +598,4 @@ POST /api/briefings/{date}/export-notion
 `GET /api/briefings/{date}/visuals`는 저장된 과거 히트맵 sidecar만 반환하며 현재 시세를 다시 조회하거나 보고서 JSON을 수정하지 않습니다.
 
 `GET /api/briefings/{date}/visuals/current`는 저장된 종목 universe를 최신 무료 일봉으로 조회한 임시 응답을 반환합니다. 저장 보고서와 sidecar에는 쓰지 않으며, yfinance가 설치되지 않았거나 조회에 실패하면 `unavailable`과 warning을 반환합니다.
-
 

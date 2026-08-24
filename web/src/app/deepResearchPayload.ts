@@ -180,6 +180,13 @@ export type TopicReport = {
   readonly sourceLedger: readonly SourceLedgerItemPayload[];
   readonly dataGaps: readonly DataGapPayload[];
   readonly quality: QualityPayload | null;
+  readonly researchTraceSummary: {
+    readonly usedSourceCount: number;
+    readonly latestSourceDate: string;
+    readonly challengingSourceCount: number;
+    readonly unresolvedDataGapCount: number;
+    readonly cautionReasons: readonly string[];
+  } | null;
   readonly researchResolution: ResearchResolutionPayload | null;
   readonly marketStateResolution: MarketStateResolutionPayload | undefined;
   readonly qualityPreflight: UnknownRecord | null;
@@ -317,6 +324,31 @@ function parseQuality(value: unknown): QualityPayload | null {
   };
 }
 
+function parseResearchTrace(value: unknown): TopicReport["researchTraceSummary"] {
+  if (!isRecord(value)) return null;
+  return {
+    usedSourceCount: numberValue(value.usedSourceCount) ?? 0,
+    latestSourceDate: stringValue(value.latestSourceDate),
+    challengingSourceCount: numberValue(value.challengingSourceCount) ?? 0,
+    unresolvedDataGapCount: numberValue(value.unresolvedDataGapCount) ?? 0,
+    cautionReasons: strings(value.cautionReasons).slice(0, 2),
+  };
+}
+
+function deriveResearchTrace(sourceLedger: readonly SourceLedgerItemPayload[], dataGaps: readonly DataGapPayload[]): TopicReport["researchTraceSummary"] {
+  if (!sourceLedger.length && !dataGaps.length) return null;
+  const used = sourceLedger.filter((row) => row.usedInSections.length > 0);
+  const dates = used.map((row) => row.date.slice(0, 10)).filter(Boolean).sort();
+  const unresolved = dataGaps.filter((row) => !row.resolved);
+  return {
+    usedSourceCount: used.length,
+    latestSourceDate: dates.length ? dates[dates.length - 1] : "",
+    challengingSourceCount: used.filter((row) => row.evidenceRole === "challenging").length,
+    unresolvedDataGapCount: unresolved.length,
+    cautionReasons: unresolved.map((row) => row.description).filter(Boolean).slice(0, 2),
+  };
+}
+
 function parseResolution(value: unknown): ResearchResolutionPayload | null {
   if (!isRecord(value) || !isRecord(value.resolution)) return null;
   const row = value.resolution;
@@ -394,7 +426,7 @@ export function parseTopicReportPayload(value: unknown): TopicReport {
   for (const key of ["evidenceItems", "sourceLedger", "dataGaps", "checkpoints"] as const) {
     if (malformedOptional(value, key, "array")) warnings.push(key + "_invalid");
   }
-  for (const key of ["topicPlan", "evidencePackSummary", "quality", "researchResolution", "personalOverlay", "qualityPreflight", "executionProvenance", "marketTape", "marketStateResolution"] as const) {
+  for (const key of ["topicPlan", "evidencePackSummary", "quality", "researchTraceSummary", "researchResolution", "personalOverlay", "qualityPreflight", "executionProvenance", "marketTape", "marketStateResolution"] as const) {
     if (malformedOptional(value, key, "record")) warnings.push(key + "_invalid");
   }
   const evidenceItems = parseEvidence(value.evidenceItems);
@@ -403,6 +435,7 @@ export function parseTopicReportPayload(value: unknown): TopicReport {
   const topicPlan = parseTopicPlan(value.topicPlan);
   const evidencePackSummary = parseCoverage(value.evidencePackSummary);
   const quality = parseQuality(value.quality);
+  const researchTraceSummary = parseResearchTrace(value.researchTraceSummary) ?? deriveResearchTrace(sourceLedger, dataGaps);
   const researchResolution = parseResolution(value.researchResolution);
   const marketStateResolution = parseMarketState(value.marketStateResolution);
   const executionProvenance = parseExecution(value.executionProvenance);
@@ -433,7 +466,7 @@ export function parseTopicReportPayload(value: unknown): TopicReport {
     memoryCount: numberValue(value.memoryCount) ?? 0,
     userContext: typeof value.userContext === "string" || typeof value.userContext === "boolean" ? value.userContext : false,
     generation, sources, topicPlan, evidencePackSummary,
-    evidenceItems, sourceLedger, dataGaps, quality,
+    evidenceItems, sourceLedger, dataGaps, quality, researchTraceSummary,
     researchResolution,
     marketStateResolution,
     qualityPreflight: isRecord(value.qualityPreflight) ? value.qualityPreflight : null,

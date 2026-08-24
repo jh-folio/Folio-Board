@@ -415,7 +415,7 @@ def build_rule_plan(topic: str, *, user_context: str = "") -> dict:
     return normalize_topic_plan(plan, topic=label, topic_label=subject or label)
 
 
-def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: int = 8) -> dict:
+def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: int = 12) -> dict:
     """Attach bounded deep-research subquestions to a normalized TopicPlan.
 
     The base TopicPlan remains compatible with existing consumers. Deep metadata
@@ -424,7 +424,7 @@ def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: 
     """
     out = deepcopy(plan if isinstance(plan, dict) else {})
     max_rounds = max(1, min(2, int(max_rounds or 2)))
-    max_questions = max(3, min(8, int(max_questions or 8)))
+    max_questions = max(3, min(12, int(max_questions or 12)))
     axes = out.get("analysisAxes") or []
     base_queries = list(out.get("searchQueries") or [])[:3]
 
@@ -432,7 +432,10 @@ def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: 
 
     def add_question(question: str, *, axis_key: str = "", round_no: int = 1, queries: list[str] | None = None) -> None:
         text = str(question or "").strip()
+        normalized_round = max(1, min(max_rounds, int(round_no or 1)))
         if not text or len(subquestions) >= max_questions:
+            return
+        if sum(int(row.get("round") or 1) == normalized_round for row in subquestions) >= 6:
             return
         if any(q["question"] == text for q in subquestions):
             return
@@ -444,7 +447,7 @@ def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: 
             "id": qid,
             "question": text[:240],
             "axisKey": axis_key,
-            "round": max(1, min(max_rounds, int(round_no or 1))),
+            "round": normalized_round,
             "searchQueries": search_queries[:4],
         })
 

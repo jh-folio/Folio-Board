@@ -204,7 +204,8 @@ def _build_llm_context(
             url = d.get("url", "")
             role = d.get("evidenceRole", "")
             axis = d.get("axisKey", "")
-            meta = f"[{i}] {source} | {date_d}"
+            evidence_id = str(d.get("id") or f"item_{i}")
+            meta = f"[{evidence_id}] {source} | {date_d}"
             if role:
                 meta += f" | 역할={role}"
             if axis:
@@ -239,7 +240,7 @@ def _build_llm_context(
             f"- 리서치 라운드 상한: {deep.get('maxRounds', 2)}회",
             "- 아래 하위 질문별 커버리지와 남은 갭을 보고서의 '심층 리서치 커버리지' 또는 Source & Data Notes에 반영하세요.",
         ]
-        for question in (deep.get("subQuestions") or [])[:8]:
+        for question in (deep.get("subQuestions") or [])[:12]:
             lines.append(f"- R{question.get('round', 1)} · {question.get('question', '')}")
         lines += [
             "- 산출물에는 시나리오(기본/우호/악화), 반대 논지, 반증 조건, 정량 근거표를 포함하세요.",

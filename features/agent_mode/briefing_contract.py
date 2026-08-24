@@ -76,6 +76,7 @@ def briefing_output_contract(
     expected_titles: dict | None = None,
     markets: "tuple[str, ...] | list[str] | None" = None,
     kind: str = "daily",
+    expected_leading_companies: dict[str, list[str]] | None = None,
 ) -> dict:
     """생성 결과가 지켜야 할 계약. **시장 목록이 곧 계약 대상이다.**
 
@@ -150,6 +151,11 @@ def briefing_output_contract(
         "expectedTitles": {
             key: value for key, value in (expected_titles or {}).items() if key in markets
         },
+        "expectedLeadingCompanies": {
+            key: [str(name).strip() for name in names[:2] if str(name).strip()]
+            for key, names in (expected_leading_companies or {}).items()
+            if key in markets and isinstance(names, list)
+        },
         "titleDatePattern": "YYYY.MM.DD 마감|장중",
         "requireImmediateSectionZeroAfterTitle": True,
         "requireLeadingCompanyNames": True,
@@ -218,6 +224,15 @@ def _has_named_leading_company_heading(value: str, fragment: str) -> bool:
     return False
 
 
+def _leading_company_name(value: str, fragment: str) -> str:
+    match = re.search(
+        rf"^#{{2,6}}\s+{re.escape(fragment)}\s*[—-]\s*(.+?)\s*$",
+        value,
+        re.MULTILINE,
+    )
+    return match.group(1).strip() if match else ""
+
+
 def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
     value = str(markdown or "").strip()
     headings = [
@@ -272,6 +287,13 @@ def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
                 fragment = f"{3 if ordinal == '①' else 4}. {prefix}을 주도한 기업 {ordinal}"
                 if not _has_named_leading_company_heading(value, fragment):
                     violations.append(f"주도 기업명 누락: '## {fragment} — [실제 기업명]' 형식 필요")
+            expected_companies = (contract.get("expectedLeadingCompanies") or {}).get(key) or []
+            for index, expected in enumerate(expected_companies[:2]):
+                ordinal = "①" if index == 0 else "②"
+                fragment = f"{3 if index == 0 else 4}. {prefix}을 주도한 기업 {ordinal}"
+                actual = _leading_company_name(value, fragment)
+                if actual != str(expected):
+                    violations.append(f"주도 기업 불일치: '{fragment} — {expected}' 필요 (현재: {actual or '없음'})")
 
     minimum_characters = int(contract.get("minimumCharacters") or 0)
     if len(value) < minimum_characters:

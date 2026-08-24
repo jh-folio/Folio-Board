@@ -183,9 +183,12 @@ def _fail_legacy_interrupted_jobs() -> None:
 def load_jobs() -> None:
     store = _store()
     lifecycle = _lifecycle()
+    from features.topic_report.candidate_recovery import recover_deep_candidates_startup
+
     steps: tuple[Callable[[], None], ...] = (
         lambda: recover_json_jobs_startup(JOBS_PATH.parent, store, lifecycle, clock=_clock),
         lambda: _recover_sql_jobs_startup(store, lifecycle),
+        lambda: recover_deep_candidates_startup(JOBS_PATH.parent, store, lifecycle, clock=_clock),
         lambda: lifecycle.recover_startup(store),
     )
     for step in steps:

@@ -71,6 +71,11 @@ from features.daily_briefing.issue_selection import (
     public_issue_coverage,
     session_modes_from_windows,
 )
+from features.daily_briefing.concentration.runtime import (
+    finalize_concentration,
+    prepare_concentration,
+    render_concentration_context,
+)
 from features.daily_briefing.builder import _scope_session_date
 from features.daily_briefing.schema import (
     DEFAULT_BRIEFING_KIND,
@@ -353,6 +358,24 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         target: documents_for_scope(scope_docs.get(target) or docs, target)
         for target in requested_markets
     }
+    concentration_by_market = {}
+    effective_groups_by_market = {}
+    for target in requested_markets:
+        target_groups = prioritize_briefing_groups(
+            group_docs(market_docs[target]), market_windows, limit=6, market_scope=target,
+        )
+        effective_groups, control = prepare_concentration(
+            target_groups,
+            market_scope=target,
+            kind=kind,
+            # Agent pack preparation normally runs while bridge._RUN_SEMAPHORE is held.
+            agent_serialize=False,
+        )
+        effective_groups_by_market[target] = effective_groups
+        if control:
+            concentration_by_market[target] = control
+    if requested_markets == ["kr"]:
+        groups = effective_groups_by_market["kr"]
     # **동인과 참고자료는 시장마다 다르다.** 예전에는 합쳐진 풀로 한 번만 만들어 네 시장
     # 보고서가 같은 동인과 같은 참고자료를 실었다. 동인에는 시장을 붙여야 저장 시
     # `_single_market_briefing`의 필터가 그 시장 것만 남긴다 — 시장이 비어 있으면
@@ -380,19 +403,23 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 세션 기준일은 빌더와 같은 규칙을 쓴다. 여기서 따로 고르면 Agent 경로만
             # 유럽·일본에 한국 세션일을 찍는다.
             "marketSessionDate": _scope_session_date(target, market_windows),
-            "groups": prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6, market_scope=target),
+            "groups": effective_groups_by_market[target],
         }
     try:
         if week is not None:
             # 세션 스냅샷은 싣지 않고(§builder와 같은 규칙) 주 단위 계열을 만든다.
             # **pack 단계에서 만든다** — A·B·C는 본문 내용이 아니라 창·지수·자료 풀에서
             # 나오므로 CLI 답을 기다릴 이유가 없고, 규칙 경로와 같은 계약이 된다.
+            # 문서 풀은 **중복 제거된 것**을 넘긴다. 시장별 리스트를 이어 붙이면 주간
+            # 풀이 시장 수만큼 복제돼 이야기 비중의 표본 수가 N배로 부풀고, 표본 부족
+            # 경고(MIN_CONFIDENT_SAMPLE)가 조용히 사라진다 — 규칙 경로는 한 번만 넘긴다.
             visual_result = collect_weekly_visuals(
                 week, market_scope,
-                documents=[row for target in requested_markets for row in scope_docs.get(target, [])],
+                documents=docs,
+                markets=requested_markets,
             )
         else:
-            visual_result = collect_briefing_visuals(date, market_scope, visual_scope_results)
+            visual_result = collect_briefing_visuals(date, market_scope, visual_scope_results, markets=list(visual_scope_results))
     except Exception:
         visual_result = {
             "visualRecommendations": [], "visualSnapshots": [], "sidecar": {},
@@ -442,6 +469,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         kind=kind,
         weekly_window=week.to_dict() if week is not None else None,
         calendar_block=calendar_block,
+        concentration_context="\n\n".join(
+            render_concentration_context(control) for control in concentration_by_market.values() if control
+        ),
     )
     target_block = render_quality_target_context(
         "briefing",
@@ -515,6 +545,14 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             for d in market_drivers
         ],
         "issueCoverage": public_issue_coverage(issue_coverage_raw),
+        "concentrationControl": {
+            "version": 1,
+            "mode": next(
+                (str((row.get("leaderDecision") or {}).get("mode") or "shadow") for row in concentration_by_market.values()),
+                "off",
+            ),
+            "byMarket": deepcopy(concentration_by_market),
+        },
         "briefings": {},
         "visualRecommendations": visual_result.get("visualRecommendations", []),
         "visualSnapshots": visual_result.get("visualSnapshots", []),
@@ -556,6 +594,15 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 )
             ),
             kind=kind,
+            expected_leading_companies={
+                target: [
+                    str(signature.get("subject") or "")
+                    for candidate in (control.get("leaderDecision") or {}).get("finalPair") or []
+                    for signature in control.get("signatures") or []
+                    if signature.get("candidateId") == candidate
+                ]
+                for target, control in concentration_by_market.items()
+            },
         ),
         write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json")},
         save_target=str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json"),
@@ -569,6 +616,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 시장별 참고자료. 저장할 때 각 시장 섹션에 붙는다 — 하나로 합치면 네 시장
             # 보고서가 같은 참고자료를 싣는다.
             "sourcesByMarket": sources_by_market,
+            "concentrationByMarket": deepcopy(concentration_by_market),
         },
     )
     return pack, _write_pack(pack, owner_job_id)
@@ -628,6 +676,24 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         normalize_market_selection(draft.get("generationMarkets") or market_scope)
     )
     market_markdowns = split_market_markdown(markdown, market_scope)
+    concentration_by_market = deepcopy((pack.get("internal") or {}).get("concentrationByMarket") or {})
+    for scope, control in list(concentration_by_market.items()):
+        scoped_markdown = str((market_markdowns.get(scope) or {}).get("markdown") or "")
+        repaired_markdown, concentration_by_market[scope] = finalize_concentration(
+            scoped_markdown,
+            control,
+            agent_serialize=False,
+        )
+        if repaired_markdown != scoped_markdown:
+            markdown = markdown.replace(scoped_markdown, repaired_markdown, 1)
+    if concentration_by_market:
+        market_markdowns = split_market_markdown(markdown, market_scope)
+    if concentration_by_market:
+        draft["concentrationControl"] = {
+            "version": 1,
+            "mode": str((draft.get("concentrationControl") or {}).get("mode") or "shadow"),
+            "byMarket": concentration_by_market,
+        }
     scope_checkpoints = {
         scope: checkpoints_from_markdown(
             (market_markdowns.get(scope) or {}).get("markdown", ""),

@@ -10403,6 +10403,55 @@ body.watchlist-detail-open #watchlist > :not(.watchlist-detail-inline) {
   color: var(--folio-ink-muted);
 }
 
+.topicrpt-trace-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.topicrpt-trace-summary > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--r-control);
+  background: var(--folio-surface);
+}
+
+.topicrpt-trace-summary dt {
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+
+.topicrpt-trace-summary dd {
+  margin: 0;
+  font-weight: var(--fw-bold);
+}
+
+.topicrpt-trace-summary .topicrpt-trace-caution {
+  grid-column: 1 / -1;
+}
+
+.topicrpt-trace-details > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--folio-ink-muted);
+  font-weight: var(--fw-bold);
+}
+
+.topicrpt-trace-details > summary:focus-visible {
+  outline: 2px solid var(--folio-focus);
+  outline-offset: 2px;
+}
+
+.topicrpt-trace-details[open] > summary {
+  margin-bottom: 14px;
+}
+
 .topicrpt-provenance-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10763,6 +10812,7 @@ body.watchlist-detail-open #watchlist > :not(.watchlist-detail-inline) {
   }
 
   .topicrpt-provenance-grid,
+  .topicrpt-trace-summary,
   .topicrpt-provenance-facts,
   .topicrpt-provenance-facts-wide {
     grid-template-columns: minmax(0, 1fr);

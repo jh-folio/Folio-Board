@@ -164,8 +164,8 @@ class ApprovedRequestService:
             )
         now = self._runtime.clock().astimezone(UTC)
         payload: dict[str, JsonValue] = {
-            "schemaVersion": 1,
-            "planRevision": 1,
+            "schemaVersion": 2,
+            "planRevision": 2,
             "asOfDate": now.astimezone(timezone(timedelta(hours=9))).date().isoformat(),
             "qualityMode": "diagnose_only",
             "question": request.question,

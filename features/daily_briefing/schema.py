@@ -420,6 +420,7 @@ def normalize_briefing_contract(report):
     out.setdefault("visualRecommendations", [])
     out.setdefault("visualSnapshots", [])
     out.setdefault("issueCoverage", [])
+    out.setdefault("concentrationControl", {"version": 1, "mode": "off", "byMarket": {}})
     return out
 
 
