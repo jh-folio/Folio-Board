@@ -97,3 +97,49 @@ def test_research_trace_counts_only_sources_used_in_body() -> None:
         "unresolvedDataGapCount": 1,
         "cautionReasons": ["공식 거시 데이터가 없습니다."],
     }
+
+
+def test_numbered_headings_still_link_sources():
+    """실제 보고서는 `## 1. Executive Summary`처럼 번호를 붙인다 — usage 키를 원문으로
+    두면 정규화 이름 조회가 한 번도 맞지 않아 연결이 항상 0이었다."""
+    from features.topic_report.section_sources import parse_section_source_ids
+
+    usage, malformed = parse_section_source_ids(
+        "## 1. Executive Summary\n본문 <!-- folio-source-ids: ev_001 -->\n"
+    )
+    assert usage.get("Executive Summary") == ["ev_001"]
+    assert malformed == []
+
+
+def test_unknown_tag_is_warning_not_blocking():
+    """모르는 id는 usage에서 이미 제외된다 — 차단으로 두면 id 하나 잘못 베낀 것으로
+    다 만든 보고서가 통째로 버려진다. 자기참조(forbidden)만 차단이다."""
+    from features.topic_report.report_contract import validate_deep_report
+
+    result = validate_deep_report(
+        "## 1. Executive Summary\n본문 <!-- folio-source-ids: ev_nope -->\n",
+        source_ledger=[{"sourceId": "ev_001"}],
+        depth_policy={},
+        material_resolution={},
+        internal_score=80,
+    )
+    codes = {(d["code"], d["category"]) for d in result["defects"]}
+    assert ("unknown_source_tag", "major") in codes
+    assert not any(code == "unknown_source_tag" and cat == "blocking" for code, cat in codes)
+
+
+def test_material_source_ids_are_tag_safe():
+    """^KS11 같은 티커가 sourceId에 그대로 들어가면 모델이 계약대로 인용하는 순간
+    malformed가 된다 — id 문자로 정규화한다."""
+    import re
+    from features.topic_report.material_requirements import material_source_items
+    from features.topic_report.section_sources import _SOURCE_ID
+
+    items = material_source_items(
+        {"market": [{"symbol": "^KS11", "status": "available"}], "macro": []},
+        {"tickers": {"^KS11": {"symbol": "^KS11", "close": 1.0}}},
+        {},
+    )
+    for row in items:
+        if row.get("sourceId"):
+            assert _SOURCE_ID.fullmatch(row["sourceId"]), row["sourceId"]

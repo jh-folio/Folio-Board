@@ -1,6 +1,8 @@
 """Resolve approved market/macro requirements without silently dropping gaps."""
 from __future__ import annotations
 
+import re
+
 from datetime import UTC, datetime
 
 from features.topic_report.macro_data import BOK_SERIES_META, FRED_SERIES_META
@@ -73,7 +75,9 @@ def resolve_material_requirements(
             "symbol": symbol,
             "status": status,
             "asOfDate": as_of,
-            "sourceId": f"market_{symbol}" if symbol else "",
+            # 티커의 ^ . = 는 태그 id 규칙(_SOURCE_ID)이 거절한다 — 모델이 계약대로
+            # 이 id를 인용하는 순간 malformed가 되므로 id 문자로 정규화해 둔다.
+            "sourceId": f"market_{re.sub(r'[^A-Za-z0-9_-]', '_', symbol)}" if symbol else "",
         })
 
     fred = ((macro_data.get("fred") or {}).get("series") or {}) if isinstance(macro_data, dict) else {}

@@ -31,8 +31,9 @@ test("every schedule field survives the save payload", () => {
   // 예약이 목록이 되면서 필드가 늘었다. payload에서 빠진 필드는 저장할 때마다
   // 서버 기본값으로 되돌아가고, 화면에서는 되돌아간 뒤에야 보인다.
   const block = settings.slice(settings.indexOf("    briefingSchedules: ("));
+  // 창은 payload 객체 리터럴을 다 담을 만큼만 — 필드에 붙는 주석이 늘며 500자를 넘겼다.
   for (const field of ["id", "enabled", "time", "markets", "briefingType", "qualityMode", "runPrerequisites"]) {
-    assert.ok(block.slice(0, 500).includes(`${field}:`), `저장 payload에 ${field}가 없습니다`);
+    assert.ok(block.slice(0, 900).includes(`${field}:`), `저장 payload에 ${field}가 없습니다`);
   }
 });
 

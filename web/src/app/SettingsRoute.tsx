@@ -204,7 +204,9 @@ function buildAutomationPayload(form: AutomationSettings): AutomationSettings {
       briefingType: row.briefingType || "default",
       kind: row.kind === "weekly" ? "weekly" : "daily",
       qualityMode: row.qualityMode || "diagnose_only",
-      runPrerequisites: Boolean(row.runPrerequisites),
+      // 결측=켬(서버 기본값과 같은 계약). Boolean()은 결측을 false로 굳혀
+      // 사전작업이 사용자가 끈 적 없이 꺼진다(2026-08-24 실측).
+      runPrerequisites: row.runPrerequisites !== false,
       // 요일을 고른 적 없는 예약은 키를 보내지 않는다. 서버가 `매일`로 읽어 판올림
       // 이전 동작을 지킨다 — 빈 배열을 보내면 영영 안 도는 예약이 된다.
       ...(row.days ? { days: [...row.days] } : {}),

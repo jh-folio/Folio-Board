@@ -37,3 +37,19 @@ test("Deep Research recovery rejects cross-task and malformed records", async (t
   assert.equal(result.kind, "invalid");
   assert.equal(storage.getItem(resume.DEEP_RESEARCH_ACTIVE_JOB_KEY), null);
 });
+
+test("404는 사라진 잡이다 — 저장된 id를 지워 영구 안내를 막는다", async (t) => {
+  const vite = await createServer({ configFile: false, root: webRoot, server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  t.after(() => vite.close());
+  const resume = await vite.ssrLoadModule("/src/app/deepResearchJobResume.ts");
+  const storage = new MemoryStorage();
+  resume.persistDeepResearchJobId(id, storage);
+  const gone = await resume.recoverDeepResearchJob(() => Promise.reject(Object.assign(new Error("not found"), { status: 404 })), storage);
+  assert.equal(gone.kind, "invalid");
+  assert.equal(storage.getItem(resume.DEEP_RESEARCH_ACTIVE_JOB_KEY), null);
+  // 네트워크 단절(상태 없음)은 계속 unavailable — id를 지키고 다음 방문에 재시도한다.
+  resume.persistDeepResearchJobId(id, storage);
+  const offline = await resume.recoverDeepResearchJob(() => Promise.reject(new Error("fetch failed")), storage);
+  assert.equal(offline.kind, "unavailable");
+  assert.equal(storage.getItem(resume.DEEP_RESEARCH_ACTIVE_JOB_KEY), id);
+});

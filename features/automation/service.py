@@ -477,7 +477,9 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             "droppedMarkets": dropped,
         }
     prerequisites = {}
-    if cfg.get("runPrerequisites"):
+    # 값이 없으면 켠 것으로 읽는다(§10 계약, schema 기본값과 동일). 결측을 끔으로
+    # 읽으면 이 키가 생기기 전의 예약이 조용히 사전작업을 잃는다.
+    if cfg.get("runPrerequisites", True):
         prerequisites = run_briefing_prerequisites()
     date = kst_date()
     generation_mode = default_generation_mode()

@@ -33,10 +33,13 @@ def _validation(markdown: str) -> dict:
     )
 
 
-def test_unknown_source_is_blocking_even_if_report_is_long() -> None:
+def test_unknown_source_is_a_warning_not_a_job_killer() -> None:
+    """모르는 id는 usage에서 이미 제외된다 — 차단으로 두면 id 하나 잘못 베낀 것으로
+    다 만든 보고서가 통째로 버려진다. 자기참조(forbidden)만 차단으로 남는다."""
     result = _validation(_report(unknown_source=True))
-    assert result["valid"] is False
-    assert any(row["code"] == "unknown_source_tag" for row in result["defects"])
+    assert result["valid"] is True
+    unknown = [row for row in result["defects"] if row["code"] == "unknown_source_tag"]
+    assert unknown and all(row["category"] == "major" for row in unknown)
 
 
 def test_candidate_comparator_never_accepts_new_boundary_violation() -> None:

@@ -29,7 +29,11 @@ def _market_block(key: str) -> str:
 
 
 def _report(keys) -> str:
-    return "\n\n".join(_market_block(key) for key in keys) + "\n\n## Source & Data Notes\n자료 메모.\n"
+    # Notes는 시장마다 하나다(2026-08-24 계약) — 합본 꼬리 하나만 쓰면 분리가
+    # 그 꼬리를 마지막 시장 파일에 몰아준다.
+    return "\n\n".join(
+        _market_block(key) + "\n\n## Source & Data Notes\n자료 메모." for key in keys
+    ) + "\n"
 
 
 def _contract(keys):

@@ -9,13 +9,20 @@ _TAG = re.compile(r"<!--\s*folio-source-ids:\s*(.*?)-->", re.IGNORECASE | re.DOT
 _SOURCE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,79}$")
 
 
+def canonical_heading(value: str) -> str:
+    """번호 접두를 뗀 헤딩. 실제 저장 보고서는 `## 1. Executive Summary`처럼
+    번호를 붙이므로, usage 키를 원문 그대로 두면 검증의 정규화 이름 조회가 한 번도
+    맞지 않아 모든 보고서의 섹션 연결이 0이 된다(리뷰 실측)."""
+    return re.sub(r"^\d+\.\s*", "", str(value or "").strip())
+
+
 def parse_section_source_ids(markdown: str) -> tuple[dict[str, list[str]], list[str]]:
     text = str(markdown or "")
     matches = list(_HEADING.finditer(text))
     usage: dict[str, list[str]] = {}
     malformed: list[str] = []
     for index, match in enumerate(matches):
-        heading = match.group(1).strip()
+        heading = canonical_heading(match.group(1))
         body_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         body = text[match.end():body_end]
         ids: list[str] = []

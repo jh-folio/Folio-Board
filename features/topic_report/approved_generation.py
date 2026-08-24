@@ -224,7 +224,12 @@ def build_approved_report(
         artifact_type="topic_report",
     )
     executed_at = utc_z(clock())
-    research_trace = build_research_trace_summary(source_ledger, data_gaps)
+    # 숨은 출처 태그 계약은 딥 모드에만 있다 — 일반 보고서에 요약을 쓰면 근거 30건을
+    # 쓴 보고서가 "사용 근거 0건"으로 표시된다(태그가 없을 뿐인데).
+    research_trace = (
+        build_research_trace_summary(source_ledger, data_gaps)
+        if approved.deepResearch else None
+    )
     report: dict[str, JsonValue] = {
         "saved": False,
         "generatedAt": executed_at,

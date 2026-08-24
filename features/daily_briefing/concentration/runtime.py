@@ -26,7 +26,9 @@ def prepare_concentration(
     signatures = [build_signature(group, index) for index, group in enumerate(projected) if group.get("company")]
     decision = select_leader_pair(signatures, mode=mode)
     budget = kr_briefing_budget()
-    if decision.get("conflictSignals"):
+    # shadow는 관측 전용이라 실제 CLI/API 호출을 쓰지 않는다 — 판정은 active에서만
+    # 부른다. shadow에서 부르면 브리핑마다 수십 초짜리 호출이 telemetry를 위해 든다.
+    if mode == "active" and decision.get("conflictSignals"):
         budget.claim("adjudication")
         decision = configured_adjudication(decision, signatures, serialize=agent_serialize)
     effective = projected
@@ -77,7 +79,12 @@ def finalize_concentration(markdown: str, control: dict, *, agent_serialize: boo
     other = [str(row.get("subject") or "") for row in signatures if row.get("candidateId") not in set(decision.get("finalPair") or [])][:3]
     audit = audit_concentration(markdown, leader_subjects=leaders, other_major_subjects=other)
     if control.get("mode") == "active" and audit.get("status") == "repair_candidate":
-        record_call(control, "repair")
+        # 예산 소진은 보강 생략이지 실패가 아니다 — 여기서 예외를 올리면 저장 직전의
+        # 브리핑 커밋 전체가 죽는다(보강은 선택 단계다).
+        try:
+            record_call(control, "repair")
+        except RuntimeError:
+            return markdown, {**control, "audit": {**audit, "repairSkipped": "call_budget_exhausted"}}
         markdown, audit = configured_repair(
             markdown,
             audit,

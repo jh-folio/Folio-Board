@@ -140,3 +140,25 @@ def test_recheck_persists_through_the_canonical_pipeline(tmp_path, monkeypatch):
     ))
     regenerated = json.loads(path.read_text(encoding="utf-8"))
     assert regenerated["markdown"] == "# 본문 v2"
+
+
+def test_not_executed_questions_do_not_zero_the_coverage_score():
+    """round 1이 충분해 건너뛴 질문은 결측이지 0점이 아니다 — 0으로 세면 커버리지가
+    가장 좋았던 실행일수록 점수가 깎인다."""
+    from features.common.research_quality.evaluator import evaluate_report
+
+    def run(question_coverage):
+        return evaluate_report(
+            "## 본문 내용",
+            evidence_summary={
+                "deepResearch": {"enabled": True},
+                "questionCoverage": question_coverage,
+            },
+        )["checks"]["deep_question_coverage"]
+
+    covered = run({
+        "q1": {"level": "high", "question": "a"},
+        "q2": {"level": "not_executed", "question": "b", "executed": False},
+    })
+    only_high = run({"q1": {"level": "high", "question": "a"}})
+    assert covered == only_high

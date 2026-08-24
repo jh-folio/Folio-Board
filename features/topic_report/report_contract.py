@@ -5,17 +5,13 @@ import re
 from collections import Counter
 
 from features.topic_report.depth_policy import visible_character_count
-from features.topic_report.section_sources import apply_section_usage
+from features.topic_report.section_sources import apply_section_usage, canonical_heading
 from features.topic_report.topic_schema import EXPECTED_SECTIONS_V2
 
 
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SENTENCE = re.compile(r"(?:다\.|[.!?。！？])\s+|[\r\n]+")
 _SOURCE_REQUIRED = set(EXPECTED_SECTIONS_V2) - {"질문 정의와 분석 범위", "Source & Data Notes"}
-
-
-def canonical_heading(value: str) -> str:
-    return re.sub(r"^\d+\.\s*", "", str(value or "").strip())
 
 
 def split_sections(markdown: str) -> list[dict]:
@@ -53,13 +49,17 @@ def validate_deep_report(
     if headings != EXPECTED_SECTIONS_V2:
         defects.append(_defect("blocking", "required_heading_order", 100))
     projected_ledger, source_result = apply_section_usage(text, source_ledger)
-    for code, values in (
-        ("malformed_source_tag", source_result["malformedSourceIds"]),
-        ("unknown_source_tag", source_result["unknownSourceIds"]),
-        ("forbidden_source_tag", source_result["forbiddenSourceIds"]),
+    for code, values, category, severity in (
+        # 태그는 숨은 주석이고, 모르는 id는 usage에서 이미 제외된다. 차단으로 두면
+        # 모델이 id 하나를 잘못 베낀 것만으로 다 만든 보고서가 통째로 버려진다 —
+        # 근거 연결이 줄어드는 것은 linkage 점수가 이미 벌한다.
+        ("malformed_source_tag", source_result["malformedSourceIds"], "major", 60),
+        ("unknown_source_tag", source_result["unknownSourceIds"], "major", 60),
+        # 자기참조 근거만은 계속 차단이다(§5 원칙 5) — 위 둘과 달리 내용 오염이다.
+        ("forbidden_source_tag", source_result["forbiddenSourceIds"], "blocking", 100),
     ):
         if values:
-            defects.append(_defect("blocking", code, 100))
+            defects.append(_defect(category, code, severity))
     usage = source_result["sectionUsage"]
     linked_required = sum(bool(usage.get(heading)) for heading in _SOURCE_REQUIRED)
     linkage_ratio = linked_required / max(1, len(_SOURCE_REQUIRED))

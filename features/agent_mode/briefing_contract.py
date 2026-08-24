@@ -115,9 +115,16 @@ def briefing_output_contract(
         normalized_kind = "daily"
     scope = scope if scope in {*SINGLE_MARKETS, *AGGREGATE_MARKETS} else "multi"
     build_sections = weekly_required_sections if normalized_kind == "weekly" else required_sections
-    sections = [section for market in markets for section in build_sections(market)]
+    # **Notes는 시장마다 하나다.** 합본에 하나만 요구하면 모델이 모든 시장을 합친
+    # 공통 꼬리를 쓰고, 시장별 분리가 그 꼬리를 마지막 시장 파일에 통째로 준다 —
+    # 실측(2026-08-24 kr+jp): 일본장 파일의 Notes에 한국장 문장이 들어가고 한국장
+    # 파일에는 Notes가 아예 없었다. 필수 섹션 위반 검사는 이미 개수를 세므로
+    # 시장 수만큼 넣으면 그대로 강제된다.
+    sections = []
+    for market in markets:
+        sections.extend(build_sections(market))
+        sections.append("Source & Data Notes")
     market_count = len(markets)
-    sections.append("Source & Data Notes")
     if normalized_kind == "weekly":
         return {
             "format": "markdown",
@@ -292,7 +299,12 @@ def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
                 ordinal = "①" if index == 0 else "②"
                 fragment = f"{3 if index == 0 else 4}. {prefix}을 주도한 기업 {ordinal}"
                 actual = _leading_company_name(value, fragment)
-                if actual != str(expected):
+                # 정확 문자열 비교는 띄어쓰기("SK 하이닉스")나 티커 부기 하나로 위반이
+                # 되고, 재작성 한 번 뒤 잡 전체가 실패한다 — 공백 제거·대소문자 무시
+                # 후 어느 한쪽 포함이면 같은 회사로 본다.
+                wanted = str(expected).replace(" ", "").casefold()
+                got = actual.replace(" ", "").casefold()
+                if not wanted or (wanted not in got and got not in wanted):
                     violations.append(f"주도 기업 불일치: '{fragment} — {expected}' 필요 (현재: {actual or '없음'})")
 
     minimum_characters = int(contract.get("minimumCharacters") or 0)

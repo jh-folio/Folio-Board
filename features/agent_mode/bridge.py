@@ -340,6 +340,11 @@ def _agent_prompt(pack_path: Path, pack: dict) -> str:
         "Follow agentInstructions, prompt, context, evidence boundaries, outputContract, and writeBackContract in that pack.",
         "Do not modify files, run the Folio OS writeback command, or expose credentials.",
     ]
+    if sum(1 for section in (contract.get("requiredSections") or []) if section == "Source & Data Notes") > 1:
+        lines.append(
+            "Each market block must end with its own '## Source & Data Notes' covering ONLY that market. "
+            "Do not write a combined tail section (notes or references) that spans multiple markets."
+        )
     required = contract.get("requiredSections") or []
     expected_titles = [
         str(value).strip() for value in (contract.get("expectedTitles") or {}).values()

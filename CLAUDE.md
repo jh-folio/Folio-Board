@@ -450,6 +450,10 @@ features/company_analysis/financial_quality_prompt.md
 - 한국장 핵심 수치는 `features/common/market_data/providers.py`의 provider 체인을 사용한다. 지금 체인은 yfinance 하나이며, KOSPI/KOSDAQ 종가 등락률이 없으면 추정하지 말고 한계를 명시한다.
 - **pykrx는 2026-08-12에 제거했다.** 1.2.x부터 지수 조회에 KRX 계정(`KRX_ID`/`KRX_PW`)을 요구해, 자격증명이 없는 설치에서는 매번 실패하고 조용히 yfinance로 떨어졌다(이 PC의 캐시 12건이 모두 그랬다). 사용자에게 API 키를 하나 더 받아 되살릴 만한 가치가 없다고 봤다. 히트맵 universe가 같은 이유로 이미 같은 결정을 했다(`kospi200_universe`). 실제로 잃은 것은 없다 — 투자자 수급·업종 등락·거래대금은 이미 모든 브리핑에서 비어 있었고, 이제 그 사실이 문서와 일치한다.
 - **주도 기업 선정 기준은 시장별 프롬프트가 소유하고 `PROMPT_REQUIRED_RULES`가 지킨다**(0.5.4). 4시장 분리 때 기준이 legacy `prompt.md`에만 남아 시장별 프롬프트에서 사라졌고, 기준 없는 모델이 보도량 상위의 니치 기업(Nebius·CoreWeave)과 SK hynix ADR을 미국장 주도 기업으로 올렸다. 절충은 자리 고정이 아니라 **점수**이고, 종합은 곱이 아니라 **합**이다(2026-08-22 사용자 결정) — 곱은 이야기 점수가 0인 대형주를 통째로 소멸시킨다. `prioritize_briefing_groups(market_scope=...)`가 `leaderScore = 이야기 점수(보도량·적합도 합) + 시장 영향력 점수`로 후보를 정렬하며, 영향력 점수는 시총 상위 구성종목에 **그날 최고 이야기 점수 × `MAJOR_IMPACT_WEIGHT`(0.5)**를 준다 — 고정 상수는 날마다 수십~수백으로 널뛰는 이야기 점수 스케일에 묻히거나 압도한다. 합이라 이야기가 충분히 큰 니치는 여전히 이기고, 이야기 0인 대형주도 후보에서 사라지지 않되 이야기 있는 니치를 넘어서지는 못한다(가산 상한이 최고점의 절반). 프롬프트는 두 축 종합으로 두 기업을 고르라고 지시하고, 컨텍스트는 순서가 종합 점수임을 명시하며 가산 근거(`시장 시총 상위`)를 줄에 붙인다. 티커 연결은 이름이 아니라 문서 회사 태그의 ticker로 한다.
+- **KR 집중 종목(concentration, 0.5.4)의 기본 모드 `shadow`는 관측 전용이다.** 규칙 선별·서명·감사만 계산해 telemetry(`concentrationControl`)에 남기고, 프롬프트 권위 주입(`render_concentration_context`)·출력 계약의 기업명 강제(`expectedLeadingCompanies`)·판정/보수 CLI 호출은 전부 `active`에서만 한다. shadow가 본문을 지배하면 규칙 선별과 모델 판단이 갈릴 때마다 재작성 1회 + 잡 실패가 된다(리뷰 4각도 수렴). active의 기업명 비교는 공백 제거·포함 일치다 — 띄어쓰기 하나로 45분짜리 CLI 두 번을 버리지 않는다. 보수 예산 소진은 실패가 아니라 생략이다.
+- **다시장 CLI 실행의 Source & Data Notes는 시장마다 하나다.** 계약이 합본에 하나만 요구하던 시절, 모델이 모든 시장을 합친 꼬리를 썼고 시장별 분리가 그 꼬리를 마지막 시장 파일에 몰아줬다 — 일본장 파일의 Notes에 한국장 문장이 들어가고 한국장 파일에는 Notes가 없었다(2026-08-24 실측). 필수 섹션 검사는 개수를 세므로 시장 수만큼 등재하면 강제된다. 참고자료도 시장별이다 — 합본에 붙이면 `has_sources`가 참이 되어 시장별 본문이 목록을 영영 못 받으므로, 분리 후 시장별로 떼고(`strip`) 그 시장의 선별 목록(`sourcesByMarket`)을 붙인다.
+- **예약의 `runPrerequisites`는 결측=켬이다.** 서버 schema 기본값·실행부(`cfg.get(..., True)`)·화면 저장 payload(`!== false`) 세 곳이 같은 계약을 가져야 한다 — 화면이 `Boolean()`으로 접던 시절 이 키가 생기기 전의 예약이 저장 한 번에 False로 굳어, 사전작업(시장 내러티브 갱신 포함)이 사용자가 끈 적 없이 꺼졌다(2026-08-24 실측).
+- KR 일간의 이슈 응집 정책(`coherence_policy`)은 규칙 생성과 Agent 생성 두 경로가 같이 켠다. 한쪽만 켜면 같은 날 두 경로가 다른 이슈 클러스터를 먹는다.
 - LLM 실패 시 규칙 기반 브리핑이 필요하다. 참고자료 섹션은 유지한다.
 - `select_briefing_docs()`의 fallback 경로에서 `market_windows`는 브리핑 날짜 기준 원본을 유지한다. 문서 날짜로 재계산하면 공휴일/주말에 `krPreviousSessionDate`가 틀린 날짜를 가리키는 버그가 발생한다.
 
@@ -486,6 +490,10 @@ features/company_analysis/financial_quality_prompt.md
 - Personal Overlay와 Quality 재평가는 **저장된 보고서에만** 동작한다(파일 기준). overlay 생성은 기본 `markdown`을 수정하지 않는다(Step 2 `with_overlay` 재사용).
 - 보고서는 승인된 `POST /api/topic-reports` SharedJob의 committing 단계에서 `data/topic-reports/`에 **자동 저장**된다. 공개 save route는 없으며, 명시적 proposal 승인만 기존 Canonical revision을 바꾼다. 저장 JSON에는 `topicPlan`/`researchResolution`/`executionProvenance`/`evidencePackSummary`/`sourceLedger`/`quality`/`personalOverlay`를 함께 둔다.
 - LLM이 없어도 규칙 fallback이 리서치 계획 요약·데이터 부족 경고·체크포인트·Source & Data Notes를 포함한 보고서를 만든다.
+- **딥 리서치(0.5.4+)는 LLM 전용 경로다.** `deep_pipeline.py`는 초기 생성이 규칙 fallback으로 떨어지면 후보 없이 실패를 보고한다 — 한 주의 질문을 후보·검증·제한 보수로 풀어내는 일은 규칙이 흉내 낼 수 없다. 일반(비딥) 테마보고서의 규칙 fallback은 그대로다.
+- 딥 후보는 `data/job-context/{job}/quality-candidate-{n}.json`(`quality_generation/candidate_store.py`, 원자 쓰기·해시 검증)에 체크포인트로 남고, 서버 재시작 시 `candidate_recovery.py`가 RUNNING 잡을 수락된 후보로 완성한다. **이 복구는 어떤 예외에도 기동을 막지 않는다** — 후보 하나가 깨져도 그 잡만 건너뛰고, 남은 잡은 기존 `failed_restart` 정리가 받는다.
+- 섹션 출처 태그(`<!-- folio-source-ids -->`)의 usage 키는 **정규화 헤딩**이다(`## 1. Executive Summary` → `Executive Summary`). 원문 키로 두면 검증 조회가 한 번도 맞지 않아 모든 보고서의 연결이 0이 된다(실측). 모르는 id·형식 오류 id는 **경고(major)**다 — id 하나 잘못 베낀 것으로 다 만든 보고서를 버리지 않는다. 자기참조(forbidden)만 차단(blocking)으로 남는다(§5 원칙 5). material sourceId는 티커의 `^ . =`를 `_`로 정규화해 태그 규칙과 어긋나지 않게 한다.
+- `researchTraceSummary`(사용 근거 요약)는 **딥 실행에만** 쓴다. 태그 계약이 없는 일반 보고서에 쓰면 근거 수십 건을 쓴 보고서가 "사용 근거 0건"이 된다. 딥 파이프라인의 후보·보수 이력은 `qualityGeneration.deep` 하위 키다 — Step 11 필드를 덮어쓰지 않는다.
 
 ### 포트폴리오
 
@@ -583,6 +591,7 @@ features/company_analysis/financial_quality_prompt.md
 - 결과는 보고서 JSON의 별도 `qualityGeneration` 필드에 저장한다. `qualityBefore`/`qualityAfter`/`repairApplied`/`repairCount`/`repairType`/`weakSectionsBefore`/`weakSectionsAfter`/`telemetry`/`preflight`/`warnings`를 포함하며, Canonical markdown은 품질 진단만으로 바꾸지 않는다.
 - 사용자 Obsidian 노트는 계속 hypothesis다. preflight나 repair에서 evidence count/source grounding으로 승격하지 않는다.
 - API는 `/api/quality-generation/preflight`, `/api/quality-generation/repair`, `/api/quality-generation/run`을 사용한다.
+- `call_budget.py`는 보고서 유형별 LLM 호출 상한(딥 리서치·KR 집중 종목)을, `candidate_store.py`는 잡별 후보 체크포인트(`data/job-context/{job}/quality-candidate-{n}.json`, `write_bytes_atomic`·소유자 검증·해시 검증)를 소유한다. 예산 소진은 선택 단계(보수·판정)의 생략이지 잡 실패가 아니다.
 
 ### 투자 리뷰 (Investment Review)
 

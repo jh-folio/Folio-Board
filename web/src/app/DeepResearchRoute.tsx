@@ -45,7 +45,7 @@ import {
 } from "./deepResearchPayload";
 import { SmartCollectionsPanel, SmartCollectionWorkspace } from "./SmartCollectionWorkspace";
 import { InvestmentContextCard } from "./InvestmentContextCard";
-import { clearDeepResearchJobId, persistDeepResearchJobId, recoverDeepResearchJob } from "./deepResearchJobResume";
+import { clearDeepResearchJobId, persistDeepResearchJobId, readDeepResearchJobId, recoverDeepResearchJob } from "./deepResearchJobResume";
 
 /** 계획을 누가 쓰는가. 둘 중 하나이므로 세그먼트로 고른다. */
 const PLANNER_ENGINES: ReadonlyArray<{ value: PlannerEngine; label: string; hint: string }> = [
@@ -691,6 +691,13 @@ export function DeepResearchRoute() {
       try {
         const done = recovery.kind === "active" ? await pollJob(recovery.job as AgentJob, controller.signal) : recovery.job as AgentJob;
         if (!current) return;
+        // 복구 폴링 중에 사용자가 새 딥 리서치를 시작했으면(새 id가 저장돼 있으면)
+        // 여기서 지우거나 화면을 갈아치우지 않는다 — 새 실행의 재개 열쇠를 지우고
+        // 그 화면 위에 옛 결과를 덮어쓰는 경합이 있었다.
+        {
+          const persisted = readDeepResearchJobId();
+          if (persisted !== null && persisted !== recovery.job.id) return;
+        }
         if (done.status !== "done") throw new JobTerminalError(done);
         clearDeepResearchJobId();
         const reportId = done.result?.reportId || done.result?.artifactId || "";

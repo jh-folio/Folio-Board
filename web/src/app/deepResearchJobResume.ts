@@ -33,7 +33,15 @@ export async function recoverDeepResearchJob(fetchJob: (id: string) => Promise<u
   const id = readDeepResearchJobId(storage);
   if (!id) return { kind: "none" };
   let value: unknown;
-  try { value = await fetchJob(id); } catch { return { kind: "unavailable", id }; }
+  try {
+    value = await fetchJob(id);
+  } catch (error) {
+    // 404는 잡이 저장소에서 사라진 것이다(보존 정리·워크스페이스 이동). unavailable로
+    // 두면 방문할 때마다 "서버 연결이 돌아오면 다시 확인합니다"가 영원히 뜬다.
+    const status = (error as { status?: number } | null)?.status;
+    if (status === 404) { clearDeepResearchJobId(storage); return { kind: "invalid" }; }
+    return { kind: "unavailable", id };
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) { clearDeepResearchJobId(storage); return { kind: "invalid" }; }
   const job = value as ResumableJob;
   if (job.id !== id || !STATUSES.has(job.status) || (job.taskType !== undefined && job.taskType !== "topic_report")) {

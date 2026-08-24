@@ -46,6 +46,7 @@ from features.daily_briefing.service import (
     MARKET_LABELS,
     resolve_briefing_by_session,
     append_briefing_sources,
+    strip_markdown_sources_section,
     briefing_checkpoint_headings,
     briefing_sources_from_headlines,
     build_llm_context,
@@ -385,7 +386,12 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     sources_by_market = {}
     for target in requested_markets:
         target_docs = market_docs[target]
-        target_issues = build_issue_coverage(target_docs, target.upper(), market_windows, limit=ISSUE_COVERAGE_LIMIT)
+        # builder와 같은 계약 — KR 일간만 응집 분해를 켠다. 한쪽만 켜면 같은 날
+        # 두 생성 경로가 다른 이슈 클러스터를 먹는다.
+        target_issues = build_issue_coverage(
+            target_docs, target.upper(), market_windows, limit=ISSUE_COVERAGE_LIMIT,
+            coherence_policy=(target == "kr" and week is None),
+        )
         issue_coverage_raw.extend(target_issues)
         for driver in derive_market_drivers(target_docs, market_windows, limit=4):
             market_drivers.append({**driver, "market": target})
@@ -469,8 +475,11 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         kind=kind,
         weekly_window=week.to_dict() if week is not None else None,
         calendar_block=calendar_block,
+        # shadow는 관측 전용이다(README 계약) — 프롬프트 권위 주입은 active만.
         concentration_context="\n\n".join(
-            render_concentration_context(control) for control in concentration_by_market.values() if control
+            render_concentration_context(control)
+            for control in concentration_by_market.values()
+            if control and control.get("mode") == "active"
         ),
     )
     target_block = render_quality_target_context(
@@ -594,6 +603,8 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 )
             ),
             kind=kind,
+            # shadow는 관측 전용 — 이름 강제는 active만. shadow에서 강제하면 규칙
+            # 선별과 모델 판단이 갈릴 때마다 재작성 1회 + 잡 실패가 된다.
             expected_leading_companies={
                 target: [
                     str(signature.get("subject") or "")
@@ -602,6 +613,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                     if signature.get("candidateId") == candidate
                 ]
                 for target, control in concentration_by_market.items()
+                if control.get("mode") == "active"
             },
         ),
         write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json")},
@@ -663,7 +675,18 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
             )
     draft = replace_leading_company_visuals(draft, aligned_visuals)
     sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=ref_limit)
-    markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=ref_limit, kind=kind)
+    # 저장된 pack의 시장 목록이 권위다(아래 requested_scopes와 같은 규칙).
+    generation_scopes = list(
+        normalize_market_selection(draft.get("generationMarkets") or market_scope)
+    )
+    if len(generation_scopes) <= 1:
+        markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=ref_limit, kind=kind)
+    else:
+        # 다시장 합본에는 여기서 붙이지 않는다 — 합본에 목록이 하나라도 있으면
+        # has_sources가 참이 되어 시장별 본문이 참고자료를 영영 못 받고, 분리가
+        # 그 하나를 마지막 시장 파일에 준다(2026-08-24 kr+jp 실측). 시장별 처리는
+        # 아래 집중 종목 마무리 뒤에 한다.
+        markdown = str(markdown or "").strip()
     generation = A.agent_generation(
         len(sources),
         message="LLM CLI 브리핑 생성 완료: Agent CLI / context pack 기반",
@@ -672,9 +695,7 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     # 일반 라벨 목록("내일 확인할 체크포인트" 등)은 네 시장 프롬프트 어디에도 없어
     # Agent 생성 브리핑은 체크포인트가 항상 0건이었고, 통합 본문에 한 번 부르면
     # 시장별 파일이 남의 체크포인트를 갖는다.
-    checkpoint_scopes = list(
-        normalize_market_selection(draft.get("generationMarkets") or market_scope)
-    )
+    checkpoint_scopes = generation_scopes
     market_markdowns = split_market_markdown(markdown, market_scope)
     concentration_by_market = deepcopy((pack.get("internal") or {}).get("concentrationByMarket") or {})
     for scope, control in list(concentration_by_market.items()):
@@ -687,6 +708,21 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         if repaired_markdown != scoped_markdown:
             markdown = markdown.replace(scoped_markdown, repaired_markdown, 1)
     if concentration_by_market:
+        market_markdowns = split_market_markdown(markdown, market_scope)
+    if len(generation_scopes) > 1 and market_markdowns:
+        # **시장별 본문이 각자 참고자료·Notes를 소유한다.** 모델이 쓴 목록은 시장을
+        # 구분하지 않으므로 떼어내고, 일간은 그 시장의 선별 목록(sourcesByMarket)을
+        # 붙인다(규칙 생성과 같은 계약). 주간은 본문에 목록을 두지 않는다(§10).
+        scoped_sources = (pack.get("internal") or {}).get("sourcesByMarket") or {}
+        parts = []
+        for scope_key, section in market_markdowns.items():
+            scoped_markdown = strip_markdown_sources_section(str(section.get("markdown") or ""))
+            if kind != "weekly" and scope_key in scoped_sources:
+                scoped_markdown = append_briefing_sources(
+                    scoped_markdown, scoped_sources.get(scope_key) or sources, limit=ref_limit, kind=kind,
+                )
+            parts.append(scoped_markdown)
+        markdown = "\n\n".join(part for part in parts if part).strip()
         market_markdowns = split_market_markdown(markdown, market_scope)
     if concentration_by_market:
         draft["concentrationControl"] = {

@@ -180,15 +180,24 @@ def _fail_legacy_interrupted_jobs() -> None:
         return
 
 
+def _recover_deep_candidates_safe(store, lifecycle) -> None:
+    try:
+        from features.topic_report.candidate_recovery import recover_deep_candidates_startup
+
+        recover_deep_candidates_startup(JOBS_PATH.parent, store, lifecycle, clock=_clock)
+    except Exception:  # noqa: BLE001 - 백신 잠금·스키마 드리프트가 서버 기동을 막으면 안 된다
+        pass
+
+
 def load_jobs() -> None:
     store = _store()
     lifecycle = _lifecycle()
-    from features.topic_report.candidate_recovery import recover_deep_candidates_startup
-
     steps: tuple[Callable[[], None], ...] = (
         lambda: recover_json_jobs_startup(JOBS_PATH.parent, store, lifecycle, clock=_clock),
         lambda: _recover_sql_jobs_startup(store, lifecycle),
-        lambda: recover_deep_candidates_startup(JOBS_PATH.parent, store, lifecycle, clock=_clock),
+        # 이 단계는 어떤 예외에도 기동을 막지 않는다 — 체크포인트 복구는 부가 기능이고,
+        # 실패해도 아래 lifecycle.recover_startup()이 해당 잡을 failed_restart로 정리한다.
+        lambda: _recover_deep_candidates_safe(store, lifecycle),
         lambda: lifecycle.recover_startup(store),
     )
     for step in steps:

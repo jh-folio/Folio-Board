@@ -183,12 +183,18 @@ def run_deep_pipeline(
         "callBudget": budget.snapshot(),
     })
     best_report["executionProvenance"] = provenance
+    # Step 11 필드(qualityBefore/After 등)를 덮어쓰지 않는다 — 딥 정보는 같은 필드의
+    # 하위 키로 둔다. executionProvenance에도 같은 값이 있으므로 소비자는 어느 쪽을
+    # 읽어도 된다.
     best_report["qualityGeneration"] = {
-        "policyVersion": 2,
-        "selectedCandidateIndex": selected_index,
-        "attemptedRepairCount": attempted_repairs,
-        "acceptedRepairCount": accepted_repairs,
-        "validation": best_validation,
+        **(best_report.get("qualityGeneration") or {}),
+        "deep": {
+            "policyVersion": 2,
+            "selectedCandidateIndex": selected_index,
+            "attemptedRepairCount": attempted_repairs,
+            "acceptedRepairCount": accepted_repairs,
+            "validation": best_validation,
+        },
     }
     return ApprovedGenerationOutcome(
         report=best_report,

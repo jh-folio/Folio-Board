@@ -268,7 +268,11 @@ def _scope_result(
     scoped_docs = documents_for_scope(docs, scope)
     groups, drivers = _scope_groups_and_drivers(scoped_docs, market_windows, scope)
     groups, concentration_control = prepare_concentration(groups, market_scope=scope, kind=kind)
-    concentration_context = render_concentration_context(concentration_control)
+    # shadow는 관측 전용이다 — 프롬프트 권위 주입은 active만(agent 경로와 같은 계약).
+    concentration_context = (
+        render_concentration_context(concentration_control)
+        if (concentration_control or {}).get("mode") == "active" else ""
+    )
     issues = build_issue_coverage(
         scoped_docs,
         scope.upper(),

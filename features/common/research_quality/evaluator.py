@@ -168,7 +168,11 @@ def evaluate_report(
 
     if deep_enabled and question_coverage:
         level_score = {"high": 1.0, "medium": 0.65, "low": 0.35, "none": 0.0}
-        q_avg = sum(level_score.get(c.get("level", "none"), 0.0) for c in question_coverage.values()) / len(question_coverage)
+        # round 1이 충분해 건너뛴 질문(not_executed)은 결측이지 0점이 아니다 —
+        # 0으로 세면 커버리지가 가장 좋았던 실행일수록 점수가 깎인다.
+        scored = [c for c in question_coverage.values() if c.get("level") != "not_executed"]
+        scored = scored or list(question_coverage.values())
+        q_avg = sum(level_score.get(c.get("level", "none"), 0.0) for c in scored) / len(scored)
         scores["deep_question_coverage"] = q_avg
         weak_questions = [c.get("question", "") for c in question_coverage.values() if c.get("level") in ("none", "low")]
         if weak_questions:

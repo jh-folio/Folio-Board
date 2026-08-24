@@ -338,6 +338,10 @@ function parseResearchTrace(value: unknown): TopicReport["researchTraceSummary"]
 function deriveResearchTrace(sourceLedger: readonly SourceLedgerItemPayload[], dataGaps: readonly DataGapPayload[]): TopicReport["researchTraceSummary"] {
   if (!sourceLedger.length && !dataGaps.length) return null;
   const used = sourceLedger.filter((row) => row.usedInSections.length > 0);
+  // 숨은 출처 태그는 딥 모드 계약이다. 태그가 하나도 없는 보고서(일반·과거 보고서)에
+  // 요약을 만들면 근거 수십 건을 쓴 보고서가 "사용 근거 0건"으로 표시된다 — 그런
+  // 보고서는 요약 없음(empty state)이 정답이다.
+  if (!used.length) return null;
   const dates = used.map((row) => row.date.slice(0, 10)).filter(Boolean).sort();
   const unresolved = dataGaps.filter((row) => !row.resolved);
   return {
