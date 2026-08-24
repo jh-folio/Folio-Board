@@ -166,9 +166,18 @@ def year_ago_key(quarter: str, available) -> str:
 def _download(symbol: str) -> dict:
     import yfinance as yf
 
-    ticker = yf.Ticker(symbol)
-    history = _earnings_history(ticker)
-    revenue, basic_eps = _quarterly_statement(ticker)
+    from features.common.market_data.symbols import yfinance_symbol_candidates
+
+    ticker = None
+    history, revenue, basic_eps = [], {}, {}
+    for candidate in yfinance_symbol_candidates(symbol):
+        ticker = yf.Ticker(candidate)
+        history = _earnings_history(ticker)
+        revenue, basic_eps = _quarterly_statement(ticker)
+        # 통화 추정(`suffix_currency`)도 접미사에서 나온다 — 해석된 심볼로 바꿔 둔다.
+        symbol = candidate
+        if history or revenue:
+            break
     eps_by_quarter = {row["quarter"]: row["epsActual"] for row in history}
     for index, row in enumerate(history):
         row["revenueActual"] = revenue.get(row["quarter"])

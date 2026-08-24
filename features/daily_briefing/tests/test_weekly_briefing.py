@@ -632,3 +632,51 @@ def test_weekly_body_never_carries_a_sources_section():
     # 변형 헤딩 세 가지를 모두 잡는다.
     for heading in ("## 참고자료", "### 참고 자료", "## Sources Used"):
         assert "참고" not in strip_markdown_sources_section(f"## 본문\n\n글\n\n{heading}\n\n- x") or "Sources" not in strip_markdown_sources_section(f"## 본문\n\n글\n\n{heading}\n\n- x")
+
+
+def test_sources_heading_variants_are_loose_but_safe():
+    """변형 헤딩은 잡고, 진짜 분석 섹션은 참고자료로 오인하지 않는다."""
+    from features.daily_briefing.service import markdown_has_sources, strip_markdown_sources_section
+
+    assert markdown_has_sources("## 7. 참고자료\n- a")
+    assert markdown_has_sources("### 참고 자료 (24건)\n- a")
+    assert markdown_has_sources("## Sources Used:\n- a")
+    # "Sources of Uncertainty"는 분석 섹션이다 — 오인하면 Canonical 본문이 잘린다.
+    assert not markdown_has_sources("## Sources of Uncertainty\n본문")
+
+    text = "## 분석\n글\n\n## Sources of Uncertainty\n불확실성\n\n## 참고자료\n- x"
+    out = strip_markdown_sources_section(text)
+    assert "Uncertainty" in out and "- x" not in out
+
+
+def test_strip_sources_keeps_following_h3_section():
+    """h3 참고자료 뒤의 h3 섹션이 함께 지워지면 안 된다(꼬리 탐색이 h3까지 봐야 한다)."""
+    from features.daily_briefing.service import strip_markdown_sources_section
+
+    text = "## 본문\n글\n\n### 참고 자료\n- [a](http://x) — s, d\n\n### Source & Data Notes\n노트"
+    out = strip_markdown_sources_section(text)
+    assert "Source & Data Notes" in out and "참고 자료" not in out
+
+
+def test_daily_append_skips_variant_heading():
+    """모델이 `## 7. 참고자료`로 쓴 날 코드가 두 번째 목록을 덧붙이면 안 된다(일간)."""
+    from features.daily_briefing.service import append_briefing_sources
+
+    markdown = "## 본문\n글\n\n## 7. 참고자료\n- 모델이 쓴 목록"
+    out = append_briefing_sources(markdown, [{"title": "T", "source": "S", "date": "D", "url": "http://u"}])
+    assert out.count("참고자료") == 1
+
+
+def test_export_markdown_reattaches_weekly_sources():
+    """주간 본문에는 참고자료가 없다 — 내보내기 경계에서 sources 필드로 되붙인다."""
+    from features.daily_briefing.service import export_markdown_with_sources
+
+    unit = {
+        "markdown": "## 지난주 미국장 흐름\n글",
+        "sources": [{"title": "기사", "source": "매체", "date": "2026-08-21", "url": "http://a"}],
+    }
+    out = export_markdown_with_sources(unit)
+    assert "## 참고자료" in out and "http://a" in out
+    # 일간처럼 본문에 이미 있으면 그대로 통과한다 — 두 번 붙이지 않는다.
+    daily = {"markdown": "## 본문\n\n## 참고자료\n- 이미", "sources": unit["sources"]}
+    assert export_markdown_with_sources(daily).count("참고자료") == 1

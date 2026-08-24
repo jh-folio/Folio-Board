@@ -81,7 +81,11 @@ def export_briefing(date, briefing, chart_images=None):
     units = briefing_export_units(briefing)
     exports = []
     for unit in units:
-        markdown = unit.get("markdown", "")
+        from features.daily_briefing.service import export_markdown_with_sources
+
+        # 주간 본문에는 참고자료 섹션이 없다(sources 필드가 소유). 내보내기는 markdown만
+        # 렌더링하므로 여기서 되붙인다 — 일간은 본문에 이미 있어 그대로 통과한다.
+        markdown = export_markdown_with_sources(unit)
         if not markdown:
             parts = []
             for h in (unit.get("headlines") or []):

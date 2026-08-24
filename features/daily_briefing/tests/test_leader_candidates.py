@@ -34,8 +34,10 @@ def test_major_ticker_set_is_market_scoped_and_fails_open():
     us = major_ticker_set("us")
     assert "NVDA" in us and "AAPL" in us
     assert "005930.KS" in major_ticker_set("kr")
-    # 종합 범위는 시장 하나를 못 고르므로 가중이 없을 뿐이다 — 예외가 아니다.
-    assert major_ticker_set("both") == frozenset()
+    # 종합 범위는 선택 시장들의 **합집합**이다 — 예약 기본값이 미국+한국(both)이라
+    # 여기서 빈 집합을 주면 가장 흔한 구성에서 가중이 사라진다(Agent pack 경로).
+    both = major_ticker_set("both")
+    assert us <= both and "005930.KS" in both
 
 
 def test_leader_score_adds_impact_to_story():
@@ -89,3 +91,37 @@ def test_candidate_context_labels_blended_rank_and_majors():
     assert "종합 점수 순" in context
     line = next(l for l in context.splitlines() if "NVIDIA | " in l and "관련자료" in l)
     assert "시장 시총 상위" in line
+
+
+def test_major_ticker_set_carries_bare_forms(monkeypatch):
+    """대형주 목록은 provider 심볼(005930.KS)인데 기사 태그는 bare 코드(005930)다.
+
+    접미사를 떼지 않으면 isMajor가 미국 밖에서 한 번도 참이 되지 않는다.
+    """
+    import features.common.market_data.major_companies as majors
+    from features.daily_briefing import selection
+
+    monkeypatch.setattr(majors, "major_company_symbols", lambda codes: ["005930.KS", "7203.T", "AAPL"])
+    out = selection.major_ticker_set("kr")
+    assert {"005930.KS", "005930", "7203.T", "7203", "AAPL"} <= out
+
+
+def test_major_ticker_set_aggregate_scope_is_union(monkeypatch):
+    """종합 범위(both/multi/all)는 빈 집합이 아니라 선택 시장들의 합집합이다.
+
+    예약 기본값이 미국+한국(both)인데 종합이라고 가중을 끄면, 가장 흔한 구성에서
+    주도 기업 절충(0.5.4)이 무작동이다 — 컨텍스트 헤더는 가산했다고 말하면서.
+    """
+    import features.common.market_data.major_companies as majors
+    from features.daily_briefing import selection
+
+    seen = []
+
+    def fake_symbols(codes):
+        seen.extend(code.value for code in codes)
+        return ["AAPL", "005930.KS"]
+
+    monkeypatch.setattr(majors, "major_company_symbols", fake_symbols)
+    out = selection.major_ticker_set("both")
+    assert out, "종합 범위에서 빈 집합이면 가중이 사라진다"
+    assert {"US", "KR"} <= set(seen)

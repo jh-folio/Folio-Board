@@ -425,16 +425,40 @@ def group_ticker(group):
     return ""
 
 
+def _ticker_forms(symbol):
+    """provider 심볼과 기사 태그가 같은 종목을 다른 표기로 부른다 — 둘 다 담는다.
+
+    대형주 목록은 provider 심볼(`005930.KS`, `7203.T`, `ASML.AS`)인데 기사 회사 태그는
+    bare 코드(`005930`)나 SEC 표기(`ASML`)다. 접미사만 떼면 두 표기가 만난다. 이걸 안
+    하면 `isMajor`가 미국 밖에서 한 번도 참이 되지 않아, 니치가 두 자리를 차지하는
+    바로 그 문제(cf2128f가 고친 것)가 KR·유럽·일본에서 그대로 남는다(실측: 색인의
+    삼성전자 태그는 `005930`).
+    """
+    upper = str(symbol or "").upper()
+    if not upper:
+        return ()
+    root = upper.split(".", 1)[0]
+    return (upper,) if root == upper else (upper, root)
+
+
 def major_ticker_set(market_scope):
-    """그 시장의 시총 상위 구성종목 티커. 못 읽으면 빈 집합 — 가중이 없을 뿐이다."""
+    """그 범위의 시총 상위 구성종목 티커(표기 변형 포함). 못 읽으면 빈 집합.
+
+    종합 범위(`both`/`multi`/`all`)는 선택된 시장들의 **합집합**이다 — 예약 기본값이
+    미국+한국인데 종합이라는 이유로 빈 집합을 주면, 가장 흔한 구성에서 가중이 없다.
+    """
     try:
         from features.common.market_data.major_companies import major_company_symbols
+        from features.daily_briefing.schema import normalize_market_selection
         from features.common.markets import MarketCode
 
-        code = {"us": "US", "kr": "KR", "europe": "EUROPE", "jp": "JP"}.get(str(market_scope or "").lower())
-        if not code:
+        markets = normalize_market_selection(market_scope)
+        codes = [MarketCode(market.upper()) for market in markets]
+        if not codes:
             return frozenset()
-        return frozenset(symbol.upper() for symbol in major_company_symbols([MarketCode(code)]))
+        return frozenset(
+            form for symbol in major_company_symbols(codes) for form in _ticker_forms(symbol)
+        )
     except Exception:  # noqa: BLE001 - 가중일 뿐 브리핑을 막지 않는다
         return frozenset()
 

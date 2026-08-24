@@ -49,6 +49,12 @@ from features.daily_briefing.issue_selection import (
     public_issue_coverage,
     session_modes_from_windows,
 )
+from features.daily_briefing.concentration.runtime import (
+    finalize_concentration,
+    prepare_concentration,
+    record_call,
+    render_concentration_context,
+)
 from features.daily_briefing.schema import (
     AGGREGATE_SCOPES,
     DEFAULT_BRIEFING_KIND,
@@ -79,7 +85,6 @@ from features.daily_briefing.service import (
     briefing_checkpoint_headings,
     briefing_sources_from_headlines,
     build_prompt_markdown,
-    source_lines,
     extract_prev_checklist,
     generate_llm_briefing,
     group_digest,
@@ -262,7 +267,15 @@ def _scope_result(
     ref_limit = source_ref_limit(kind)
     scoped_docs = documents_for_scope(docs, scope)
     groups, drivers = _scope_groups_and_drivers(scoped_docs, market_windows, scope)
-    issues = build_issue_coverage(scoped_docs, scope.upper(), market_windows, limit=ISSUE_COVERAGE_LIMIT)
+    groups, concentration_control = prepare_concentration(groups, market_scope=scope, kind=kind)
+    concentration_context = render_concentration_context(concentration_control)
+    issues = build_issue_coverage(
+        scoped_docs,
+        scope.upper(),
+        market_windows,
+        limit=ISSUE_COVERAGE_LIMIT,
+        coherence_policy=(scope == "kr" and kind == DEFAULT_BRIEFING_KIND),
+    )
     headlines = _headlines(groups)
     session_modes = session_modes_from_windows(market_windows)
     window = (weekly or {}).get("window")
@@ -299,7 +312,10 @@ def _scope_result(
             kind=kind,
             weekly_window=window.to_dict() if window is not None else None,
             calendar_block=calendar_block,
+            concentration_context=concentration_context,
         )
+        if llm_status not in {"disabled", "missing_prompt"} and not llm_status.startswith("missing_"):
+            record_call(concentration_control, "generation")
     if llm_result:
         sources = source_refs(llm_result.get("usedDocs", []), limit=ref_limit)
         markdown = append_briefing_sources(llm_result["markdown"], sources, limit=ref_limit, kind=kind)
@@ -355,6 +371,7 @@ def _scope_result(
             session_modes=session_modes,
         )
     generation["message"] = llm_status_message(generation)
+    markdown, concentration_control = finalize_concentration(markdown, concentration_control)
     return {
         "marketScope": scope,
         "kind": kind,
@@ -372,6 +389,7 @@ def _scope_result(
         "issueCoverage": public_issue_coverage(issues),
         "groups": groups,
         "documents": scoped_docs,
+        "concentrationControl": concentration_control,
     }
 
 
@@ -445,6 +463,12 @@ def _single_market_briefing(briefing, scope, checkpoints=None):
         deepcopy(item) for item in (briefing.get("issueCoverage") or [])
         if str(item.get("market") or "").lower() in {scope, "both", ""}
     ]
+    control = deepcopy(briefing.get("concentrationControl") or {})
+    scoped["concentrationControl"] = {
+        "version": int(control.get("version") or 1),
+        "mode": str(control.get("mode") or "shadow"),
+        "byMarket": {scope: deepcopy((control.get("byMarket") or {}).get(scope) or {})},
+    }
     stats = deepcopy(scoped.get("stats") or {})
     stats["marketScope"] = scope
     stats["visualSnapshotCount"] = len(scoped.get("visualSnapshots") or [])
@@ -582,11 +606,13 @@ def build_briefing(
                 raise _NoWeeklyVisuals
             visual_result = collect_weekly_visuals(
                 week, market_scope, documents=weekly_pool if weekly_pool is not None else [],
+                markets=requested_markets,
             )
         else:
             leader_subjects = leading_company_subjects_from_markdown(markdown)
             visual_result = collect_briefing_visuals(
                 date, market_scope, results, leader_subjects=leader_subjects,
+                markets=list(results),
             )
     except _NoWeeklyVisuals:
         visual_result = {
@@ -706,6 +732,22 @@ def build_briefing(
         "marketWindows": market_windows,
         "marketDrivers": scope_drivers,
         "issueCoverage": issue_coverage,
+        "concentrationControl": {
+            "version": 1,
+            "mode": next(
+                (
+                    str((results[scope].get("concentrationControl") or {}).get("leaderDecision", {}).get("mode") or "shadow")
+                    for scope in requested_scopes
+                    if results[scope].get("concentrationControl")
+                ),
+                "off",
+            ),
+            "byMarket": {
+                scope: deepcopy(results[scope].get("concentrationControl") or {})
+                for scope in requested_scopes
+                if results[scope].get("concentrationControl")
+            },
+        },
         "visualRecommendations": visual_result.get("visualRecommendations", []),
         "visualSnapshots": visual_result.get("visualSnapshots", []),
         "checkpoints": checkpoints,
@@ -809,4 +851,3 @@ def build_briefing(
                     *scope_warnings,
                 ]
     return briefing_scope_view(briefing, market_scope)
-

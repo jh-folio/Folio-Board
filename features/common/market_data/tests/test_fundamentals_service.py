@@ -103,3 +103,26 @@ def test_quarterly_earnings_survive_missing_statement():
             raise RuntimeError("no statement")
 
     assert fundamentals_service._quarterly_earnings(_Ticker()) == []
+
+
+def test_download_resolves_bare_kr_code_to_suffixed_listing(monkeypatch):
+    """bare 005930의 info는 사실상 빈 응답이다 — .KS 후보로 넘어가야 지표가 나온다."""
+    import sys, types
+
+    class _Empty:
+        info = {"trailingPegRatio": None}
+
+    class _Listed:
+        info = {"shortName": "SamsungElec", "marketCap": 2.5e12, "currency": "KRW"}
+        quarterly_income_stmt = None
+        quarterly_balance_sheet = None
+        quarterly_cashflow = None
+
+    fake = types.ModuleType("yfinance")
+    fake.Ticker = lambda symbol: _Listed() if symbol.endswith(".KS") else _Empty()
+    monkeypatch.setitem(sys.modules, "yfinance", fake)
+
+    row = fundamentals_service._download("005930")
+
+    assert row["symbol"] == "005930.KS"
+    assert row["marketCap"] == 2.5e12

@@ -213,3 +213,28 @@ def test_sidecar_reference_carries_the_weekly_file_name():
     # 종류가 빠지면 같은 날 일간 사이드카를 가리켜 하루 등락이 주간 카드에 그려진다.
     assert inline["sidecarRef"]["file"] == "data/briefings/2026-08-23.us.weekly.visuals.json.gz"
     assert result["sidecar"]["kind"] == "weekly"
+
+
+def test_collect_weekly_visuals_uses_market_list_over_label():
+    """kr+jp 예약의 라벨은 `multi`다 — 라벨 정규화는 BOTH(미국+한국)로 떨어지므로
+    명시된 시장 목록이 이겨야 일본 주간에 시각자료가 실린다."""
+    from features.daily_briefing.weekly import WeeklyWindow
+    from features.daily_briefing.weekly_visuals import collect_weekly_visuals
+
+    window = WeeklyWindow(
+        publication_date="2026-08-23", week_start="2026-08-17", week_end="2026-08-23",
+        preview_start="2026-08-24", preview_end="2026-08-30",
+    )
+    asked = []
+
+    def fake_fetch(symbol, session_date):
+        asked.append(symbol)
+        return {"intraday": {"interval": "5m", "points": []}, "daily": {"interval": "1d", "points": []}}
+
+    result = collect_weekly_visuals(
+        window, "multi", documents=[], markets=["kr", "jp"],
+        price_history_fetcher=fake_fetch,
+        heatmap_fetchers={key: (lambda session_date: {}) for key in ("us", "kr", "europe", "jp")},
+    )
+    markets = {snap.get("market") for snap in result["visualSnapshots"]}
+    assert "JP" in markets and "US" not in markets, markets

@@ -28,7 +28,6 @@ type WatchlistCompany = {
   name?: string;
   ticker?: string;
   market?: string;
-  tradingViewSymbol?: string;
 };
 
 type WatchlistNews = {

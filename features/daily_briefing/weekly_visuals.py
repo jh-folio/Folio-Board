@@ -334,6 +334,7 @@ def collect_weekly_visuals(
     market_scope,
     *,
     documents=None,
+    markets=None,
     price_history_fetcher=None,
     heatmap_fetchers=None,
 ) -> dict:
@@ -345,11 +346,19 @@ def collect_weekly_visuals(
         "europe": lambda session_date: build_europe_heatmap_snapshot(session_date, cache_dir=MARKET_CACHE_DIR),
         "jp": lambda session_date: build_nikkei_heatmap_snapshot(session_date, cache_dir=MARKET_CACHE_DIR),
     }
-    scope = normalize_saved_market_scope(market_scope, default=SavedMarketScope.BOTH)
-    scopes = [
-        key for key in (code.value.lower() for code in market_keys_for_scope(scope, saved=True))
-        if key in MARKET_META
-    ]
+    # **시장은 목록으로 받는 것이 정답이다.** 범위 라벨은 임의 조합을 담지 못한다 —
+    # 한국+일본은 `multi`가 되고, `multi`는 정규화가 몰라 기본값 `BOTH`(미국+한국)로
+    # 떨어진다. 그러면 일본 주간은 시각자료 0장으로 조용히 저장되고 미국 universe를
+    # 받아서 버린다(예약이 고른 시장만 만든다는 §10 계약과 같은 결함). 라벨은 목록이
+    # 없는 옛 호출자 호환용 fallback으로만 남는다.
+    if markets:
+        scopes = [key for key in (str(market).lower() for market in markets) if key in MARKET_META]
+    else:
+        scope = normalize_saved_market_scope(market_scope, default=SavedMarketScope.BOTH)
+        scopes = [
+            key for key in (code.value.lower() for code in market_keys_for_scope(scope, saved=True))
+            if key in MARKET_META
+        ]
     snapshots, recommendations, sidecar_snapshots, warnings = [], [], {}, []
 
     for market_key in scopes:

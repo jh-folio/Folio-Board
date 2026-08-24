@@ -11,9 +11,10 @@ import { changeRatio, compactAmount, percentText, toneOf } from "./EarningsPanel
  *
  * 각 지표에는 계산식 한 줄을 붙인다. 라벨만으로는 PBR과 PER을 처음 보는 사람이
  * 구분할 수 없고, 설명 없이 숫자만 나열하면 항목이 서로 구분되지 않는다는 피드백이
- * 이 구성의 출발점이다. 분기 차트(이익/재무/현금흐름 전환)와 분기별 값 표가
- * 표의 시각화 짝이고, hover 상자·판독 패널은 기업분석 차트와 같은 양식을 쓴다
- * (`analysis-chart-hover`/`analysis-chart-readout` 클래스 재사용).
+ * 이 구성의 출발점이다. 분기 차트(이익/재무/안정성/현금흐름 네 세트 전환)가 표의
+ * 시각화 짝이고, hover 상자·판독 패널은 기업분석 차트와 같은 양식을 쓴다
+ * (`analysis-chart-hover`/`analysis-chart-readout` 클래스 재사용). 분기별 값 표는
+ * 판독 패널과 정보가 겹쳐 뺐다(2026-08-22).
  *
  * 회사 소개는 provider 원문(영문) 그대로다. LLM 번역을 붙였다가 뺐다 — 키가 있는
  * 설치만 한국어가 되는 반쪽 기능은 없느니만 못하다(2026-08-22 사용자 결정).

@@ -278,15 +278,20 @@ def briefing_sources_from_headlines(headlines, limit=SOURCE_REF_LIMIT):
 
 
 def markdown_has_sources(markdown):
-    return bool(re.search(r"(?im)^#{1,3}\s*(참고\s*자료|참고자료|sources\s+used|sources)\s*$", str(markdown or "")))
+    # 주간에서 잡은 것과 같은 느슨 일치를 쓴다 — 정확 일치로 두면 모델이 `## 7. 참고자료`로
+    # 쓴 날 코드가 두 번째 목록을 덧붙이는 이중 표시가 **일간에서** 재현된다.
+    return bool(_SOURCE_HEADING_LOOSE_RE.search(str(markdown or "")))
 
 
 # 모델이 변형해 쓰는 참고자료 헤딩까지 잡는다 — `## 7. 참고자료`, `### 참고 자료`,
 # `## 참고자료 (24건)`. `markdown_has_sources`의 정확 일치 검사는 이런 변형을 놓쳐
 # 코드가 두 번째 목록을 덧붙였고, 리더는 정확 일치하는 쪽만 떼어내 첫 목록이 본문에
 # 남았다(2026-08-22 사용자 보고: 주간 브리핑에 참고자료가 두 번).
+# 느슨하되 안전하게: 번호 접두(`## 7.`)와 괄호 부연(`(24건)`)만 허용하고 자유 꼬리는
+# 허용하지 않는다 — `\b[^\n]*$`로 두면 "## Sources of Uncertainty" 같은 진짜 분석
+# 섹션까지 참고자료로 오인해 Canonical 본문에서 잘라낸다.
 _SOURCE_HEADING_LOOSE_RE = re.compile(
-    r"(?im)^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\b[^\n]*$"
+    r"(?im)^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$"
 )
 
 
@@ -297,12 +302,33 @@ def strip_markdown_sources_section(markdown):
     if not match:
         return text
     rest = text[match.end():]
-    next_heading = re.search(r"(?m)^#{1,2}\s", rest)
+    # 꼬리 탐색도 h3까지 본다 — h1·h2만 보면 `### 참고 자료` 뒤의 다른 h3 섹션까지
+    # 참고자료에 딸려 삭제된다.
+    next_heading = re.search(r"(?m)^#{1,3}\s", rest)
     tail = rest[next_heading.start():] if next_heading else ""
     head = text[:match.start()].rstrip()
     # 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게 한다.
     head = re.sub(r"(?:\n\s*---\s*)+$", "", head).rstrip()
     return f"{head}\n\n{tail.lstrip()}".strip() if tail.strip() else head
+
+
+def export_markdown_with_sources(unit):
+    """내보내기용 본문. 본문에 참고자료가 없으면 `sources` 필드로 목록을 붙인다.
+
+    주간 본문은 참고자료 섹션을 갖지 않는다(출처는 `sources` 필드와 리더 패널이 단일
+    소유자). 그런데 Obsidian·Notion 내보내기는 markdown만 렌더링하므로, 이대로 내보내면
+    주간 노트에 출처가 하나도 없다 — 내보내기 경계에서만 되붙인다. Canonical 저장본은
+    바꾸지 않는다.
+    """
+    markdown = str((unit or {}).get("markdown") or "").strip()
+    raw = (unit or {}).get("sources") or []
+    if not markdown or not raw or markdown_has_sources(markdown):
+        return markdown
+    # 서버가 이미 종류별 상한으로 선별해 저장했다 — 여기서는 자르지 않는다.
+    sources = source_refs(raw, limit=len(raw))
+    if not sources:
+        return markdown
+    return f"{markdown}\n\n---\n\n## 참고자료\n\n{source_lines(sources, limit=len(sources))}"
 
 
 def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT, kind=DEFAULT_BRIEFING_KIND):
@@ -721,6 +747,7 @@ def build_llm_context(
     kind=DEFAULT_BRIEFING_KIND,
     weekly_window=None,
     calendar_block="",
+    concentration_context="",
 ):
     market_windows = market_windows or briefing_market_windows(date)
     market_scope = normalize_market_scope(market_scope)
@@ -974,6 +1001,8 @@ def build_llm_context(
         ]
     if diversity_warnings:
         lines.append("출처 다양성 경고: " + " / ".join(diversity_warnings))
+    if concentration_context:
+        lines += ["", concentration_context]
     if issue_coverage:
         lines += ["", "## issueCoverage (구조화 선별 근거)"]
         for issue in issue_coverage[:10]:
@@ -1119,7 +1148,7 @@ def build_llm_context(
     return "\n".join(lines), selected_for_refs
 
 
-def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block=""):
+def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block="", concentration_context=""):
     cfg = selected_llm_config()
     kind = normalize_briefing_kind(kind)
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
@@ -1148,6 +1177,7 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
         kind=kind,
         weekly_window=weekly_window,
         calendar_block=calendar_block,
+        concentration_context=concentration_context,
     )
     target_block = render_quality_target_context(
         "briefing",

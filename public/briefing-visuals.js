@@ -889,7 +889,7 @@
       <span class="briefing-weekly-legend__item">
         <i style="background:${PALETTE[index % PALETTE.length]}" aria-hidden="true"></i>
         <b>${escapeHtml(row.label || row.ticker)}</b>
-        <em data-direction="${signedPercent(row.changePct) === "—" ? "flat" : finite(row.changePct) >= 0 ? "up" : "down"}">${escapeHtml(signedPercent(row.changePct))}</em>
+        <em data-direction="${signedPercent(row.changePct) === "—" ? "flat" : (finite(row.changePct) || 0) > 0 ? "up" : finite(row.changePct) < 0 ? "down" : "flat"}">${escapeHtml(signedPercent(row.changePct))}</em>
       </span>`).join("");
     stage.before(legend);
 

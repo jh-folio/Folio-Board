@@ -524,6 +524,7 @@ def collect_briefing_visuals(
     leader_subjects=None,
     include_market_visuals=True,
     now=None,
+    markets=None,
 ):
     """Collect renderer-neutral snapshots and a heatmap sidecar payload."""
     if price_history_fetcher is not None:
@@ -550,12 +551,17 @@ def collect_briefing_visuals(
     # 스냅샷 범위는 브리핑 본문의 scope enum이 아니라 시장 계약을 따른다. 유럽·일본
     # 차트는 브리핑 생성이 그 시장을 지원하기 전에도 만들 수 있어야 하고, 나중에
     # 브리핑 scope가 넓어져도 여기는 그대로 둘 수 있다.
-    # `both`는 저장된 US/KR 묶음, `all`은 네 시장이다.
-    scope = normalize_saved_market_scope(market_scope, default=SavedMarketScope.BOTH)
-    scopes = [
-        key for key in (code.value.lower() for code in market_keys_for_scope(scope, saved=True))
-        if key in MARKET_META
-    ]
+    # `both`는 저장된 US/KR 묶음, `all`은 네 시장이다. 단 **라벨은 임의 조합을 담지
+    # 못한다** — 한국+일본 예약은 `multi`이고 정규화가 몰라 `BOTH`로 떨어져 미국·한국
+    # 시각자료를 만든다. 생성 경로는 `markets` 목록을 명시적으로 넘긴다(주간과 동일).
+    if markets:
+        scopes = [key for key in (str(market).lower() for market in markets) if key in MARKET_META]
+    else:
+        scope = normalize_saved_market_scope(market_scope, default=SavedMarketScope.BOTH)
+        scopes = [
+            key for key in (code.value.lower() for code in market_keys_for_scope(scope, saved=True))
+            if key in MARKET_META
+        ]
     snapshots = []
     recommendations = []
     sidecar_snapshots = {}
@@ -790,12 +796,19 @@ def _read_sidecar_file(path):
 
 
 def _write_gzip_json(path, payload):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with gzip.open(temporary, "wt", encoding="utf-8", compresslevel=6) as stream:
-        json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
-    temporary.replace(path)
+    """사이드카 gzip 쓰기. `atomic_replace`를 거친다 — Windows에서 백신·색인기가 파일을
+    수십 ms 잡으면 raw `os.replace`는 WinError 5/32로 실패하고, 사이드카가 조용히
+    사라진다(§파일 저장 절대 규칙). mtime=0 고정은 같은 내용이 같은 바이트가 되게 한다.
+    """
+    import gzip
+    import io
+
+    from features.common.atomic_replace import write_bytes_atomic
+
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    write_bytes_atomic(Path(path), buffer.getvalue())
 
 
 def write_visual_sidecar(path, payload, market_scope):

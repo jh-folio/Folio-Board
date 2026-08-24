@@ -82,8 +82,20 @@ def _quarterly_earnings(ticker) -> list[dict]:
 def _download(symbol: str) -> dict:
     import yfinance as yf
 
-    ticker = yf.Ticker(symbol)
-    info = ticker.info or {}
+    from features.common.market_data.symbols import yfinance_symbol_candidates
+
+    ticker = None
+    info = {}
+    for candidate in yfinance_symbol_candidates(symbol):
+        ticker = yf.Ticker(candidate)
+        info = ticker.info or {}
+        # bare KR 코드의 info는 사실상 빈 응답이다(실측 키 1개). 이름조차 없으면 다음
+        # 후보(.KQ)를 본다 — 진짜 없는 종목이면 마지막 후보의 빈 응답이 그대로 남는다.
+        if info.get("shortName") or info.get("longName") or any(
+            info.get(field) is not None for field in FUNDAMENTAL_FIELDS if field != "currency"
+        ):
+            symbol = candidate
+            break
     out: dict[str, object] = {"symbol": symbol}
     for field in PROFILE_FIELDS:
         out[field] = str(info.get(field) or "")

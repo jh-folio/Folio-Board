@@ -45,7 +45,14 @@ def _download(symbol: str, range_key: str, interval: str) -> dict:
     end = dt.datetime.now(dt.timezone.utc)
     start = end - dt.timedelta(days=RANGES[range_key])
     fetch_start = start - dt.timedelta(days=_MA_WARMUP_CALENDAR_DAYS) if interval == "1d" else start
-    frame = yf.Ticker(symbol).history(start=fetch_start.date().isoformat(), end=(end + dt.timedelta(days=1)).date().isoformat(), interval=interval, auto_adjust=False, prepost=False)
+    from features.common.market_data.symbols import yfinance_symbol_candidates
+
+    # 캐시 키는 요청 심볼(bare 코드) 그대로다 — 해석은 fetch 안에서만 일어난다.
+    frame = None
+    for candidate in yfinance_symbol_candidates(symbol):
+        frame = yf.Ticker(candidate).history(start=fetch_start.date().isoformat(), end=(end + dt.timedelta(days=1)).date().isoformat(), interval=interval, auto_adjust=False, prepost=False)
+        if frame is not None and not frame.empty:
+            break
     ma_by_time: dict[str, dict[str, float]] = {}
     if interval == "1d" and frame is not None and not frame.empty:
         closes = frame["Close"]
