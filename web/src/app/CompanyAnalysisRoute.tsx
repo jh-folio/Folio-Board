@@ -11,6 +11,7 @@ import { ReaderActionButton, ReaderActionGroup } from "./reportReader/ReaderActi
 import { ReportReaderShell } from "./reportReader/ReportReaderShell";
 import { RouteHero } from "./RouteHero";
 import { parsePersonalOverlayPayload } from "./deepResearchPayload";
+import { ANALYSIS_HANDOFF_KEY } from "./watchlist/EarningsPanel";
 
 type AnalysisViewMode = "recent" | "company" | "month";
 type AnalysisStyle = "beginner" | "advanced";
@@ -280,6 +281,15 @@ export function CompanyAnalysisRoute() {
     const handleHashChange = () => {
       if (!isAnalysisHash()) return;
       setDetailId(readAnalysisDetailId());
+      // 워치리스트 실적 패널이 넘긴 종목. 한 번만 쓰고 지운다 — 남겨 두면 다음에
+      // 이 화면을 그냥 열었을 때 지난번 종목이 입력칸에 다시 들어앉는다.
+      try {
+        const handoff = window.sessionStorage.getItem(ANALYSIS_HANDOFF_KEY);
+        if (handoff) {
+          window.sessionStorage.removeItem(ANALYSIS_HANDOFF_KEY);
+          setQuery(handoff);
+        }
+      } catch { /* 세션 저장소가 막혀 있으면 그냥 빈 입력칸이다 */ }
     };
     window.addEventListener("hashchange", handleHashChange);
     handleHashChange();

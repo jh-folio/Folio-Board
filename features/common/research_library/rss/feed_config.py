@@ -271,7 +271,11 @@ def normalize_feed(row: dict) -> dict | None:
         "media": media,
         "category": str(row.get("category") or "").strip(),
         "priority": int(row.get("priority") or 3),
-        "allow_full_text": bool(row.get("allow_full_text", False)),
+        # `allow_full_text`는 여기서 읽히기만 하고 **소비자가 없었다**(0.5.4에 제거).
+        # 본문 확보 여부는 수집 시점에 정해진다 — aggregator 리다이렉트는 기사 HTML을
+        # 가져오지 않고, 유료벽 문구가 잡히면 요약만 남는다. 그래서 이 플래그와 실제
+        # 결과가 어긋나 있었다: 설정이 `false`인 CNBC가 실측 538건 중 538건 전문 확보,
+        # `true`인 피드 중에도 0%가 있었다. 없는 신호를 남겨 두면 다음 판단이 그것을 믿는다.
         "reliability_tier": reliability_tier,
         "default_market": default_market,
         **target_metadata,

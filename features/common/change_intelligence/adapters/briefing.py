@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from features.common.canonical_identity import BRIEFING_KIND_SUFFIXES
 from features.common.change_intelligence.basis import content_hash, normalize_basis, stable_id
 from features.common.markets import PRODUCT_MARKETS
 from features.common.research_schema.data_gaps import data_gap_rows
+
+
+def _briefing_kind(report: dict) -> str:
+    """`daily` 또는 `weekly`. 저장된 옛 보고서에는 이 값이 없고 그때는 일간이다."""
+    value = str((report or {}).get("kind") or "").strip().lower()
+    return value if value in BRIEFING_KIND_SUFFIXES else "daily"
 
 
 def _briefing_artifact_id(report: dict, scope: str) -> str:
@@ -11,12 +18,25 @@ def _briefing_artifact_id(report: dict, scope: str) -> str:
     A bare date collides in the projection's ``(artifact_kind, artifact_id)`` key —
     the KR commit would overwrite the US change event — and leaves the Change Feed
     unable to tell which briefing to open.
+
+    **종류도 같은 이유로 실린다.** 주간 보고서의 `date`는 발행일이라 그날이 세션일인
+    일간 보고서와 값이 같다. 종류가 없으면 평일에 낸 주간이 그날 일간의 변화 이벤트를
+    덮어써서, Change Feed가 일간 자리에 주간 내용을 보여주고 잘못된 보고서를 연다.
     """
     base = str(report.get("id") or report.get("date") or "").strip()
-    markets = {market.value.lower() for market in PRODUCT_MARKETS}
-    if not base or scope not in markets or base.endswith(f".{scope}"):
+    if not base:
         return base
-    return f"{base}.{scope}"
+    # **종류 접미사를 먼저 뗀다.** 안 떼면 이미 `.weekly`로 끝나는 id가 "시장 접미사가
+    # 없다"로 읽혀 `2026-08-20.us.weekly.us.weekly`가 된다.
+    for suffix in BRIEFING_KIND_SUFFIXES:
+        if base.endswith(f".{suffix}"):
+            base = base[: -len(suffix) - 1]
+            break
+    markets = {market.value.lower() for market in PRODUCT_MARKETS}
+    if scope in markets and not base.endswith(f".{scope}"):
+        base = f"{base}.{scope}"
+    kind = _briefing_kind(report)
+    return base if kind == "daily" else f"{base}.{kind}"
 
 
 def build_briefing_basis(report: dict, *, generation_docs: list[dict] | None = None) -> dict:
@@ -101,9 +121,15 @@ def build_briefing_basis(report: dict, *, generation_docs: list[dict] | None = N
             })
     counter = [gap.get("message") or gap.get("title") for gap in data_gap_rows(report.get("dataGaps"))]
     scope = str(report.get("marketScope") or "both").strip().lower() or "both"
+    # **계보에도 종류가 들어간다.** `select_report_baseline`은 같은 계보에서 가장 최근의
+    # 다른 artifact를 기준선으로 고르는데, 종류가 없으면 주간이 직전 일간을 기준선으로
+    # 잡고 — 더 나쁘게는 — 그다음 일간이 그 주간을 기준선으로 잡는다. 한 주의 동인 집합과
+    # 하루의 동인 집합을 비교한 결과가 Change Feed에 실린다.
+    kind = _briefing_kind(report)
+    lineage = f"briefing:{scope}" if kind == "daily" else f"briefing:{scope}:{kind}"
     return normalize_basis({
         "artifactKind": "briefing", "artifactId": _briefing_artifact_id(report, scope),
-        "lineageId": f"briefing:{scope}", "scope": {"market": scope},
+        "lineageId": lineage, "scope": {"market": scope},
         "asOf": report.get("generatedAt") or report.get("date"), "changeUnits": units,
         "sourceRefs": refs, "counterSignals": [], "uncertainties": counter, "metrics": metrics,
         "coverage": {"comparison": 1 if units else 0, "market": 1 if metrics else 0},

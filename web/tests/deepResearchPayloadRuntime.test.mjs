@@ -72,6 +72,9 @@ test("typed Topic report parser preserves every provenance layer and sanitizes l
   assert.equal(report.personalOverlay.stale, true);
   assert.equal(report.sourceLedger[0].artifactType, "topic_report");
   assert.equal(report.sourceLedger[0].researchRound, 1);
+  assert.equal(report.researchTraceSummary.usedSourceCount, 1);
+  assert.equal(report.researchTraceSummary.latestSourceDate, "");
+  assert.equal(report.researchTraceSummary.unresolvedDataGapCount, 1);
   assert.equal(report.researchResolution.collectionDefinitionHash, "def-hash");
   assert.deepEqual(report.researchResolution.resolvedCandidateIds, ["candidate-1"]);
   assert.deepEqual(report.researchResolution.executionUniverseIds, ["doc-1"]);

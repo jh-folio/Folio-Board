@@ -261,6 +261,103 @@
 .briefing-visuals-attribution { margin: 9px 2px 0; color: var(--folio-ink-muted); font-size: 10px; }
 .briefing-visuals-attribution a { color: inherit; }
 
+/* ── 주간 그림 (0.5.4 §12) ─────────────────────────────────────────────────
+   카드 껍데기·무대·tooltip은 일간과 같은 클래스를 쓴다. 여기서는 주간에만 있는
+   것(범례, 캡션, 쌓은 막대)의 배치만 갖는다 — 모양을 다시 선언하면 같은 리더 안에서
+   일간 카드와 주간 카드가 갈린다. */
+
+/* 캡션은 §12.4의 그림 규칙이다: 무엇을 보여주는지 한 줄, 접이식 없음. */
+.briefing-visual-card .briefing-visual-caption {
+  margin: 10px 2px 0;
+  color: var(--folio-ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.briefing-weekly-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 10px 0 8px;
+}
+.briefing-weekly-legend__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+.briefing-weekly-legend__item i {
+  align-self: center;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+.briefing-weekly-legend__item b { color: var(--folio-ink); font-weight: 600; }
+.briefing-weekly-legend__item em {
+  font-style: normal;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+/* 방향색은 브리핑 전체와 같은 의미색이고, 부호가 함께 있어 색만으로 알리지 않는다. */
+.briefing-weekly-legend__item em[data-direction="up"] { color: var(--folio-green); }
+.briefing-weekly-legend__item em[data-direction="down"] { color: var(--folio-burgundy); }
+.briefing-weekly-legend__item em[data-direction="flat"] { color: var(--folio-ink-muted); }
+.briefing-weekly-flow-card .briefing-price-stage { height: clamp(240px, 26vw, 320px); min-height: 240px; }
+
+.briefing-story-share-stage {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding: 4px 2px 0;
+}
+.briefing-story-share-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: clamp(6px, 1.6vw, 18px);
+  height: 220px;
+}
+.briefing-story-share-col {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+}
+/* 막대는 위에서 아래로 쌓는다. 첫 동인이 맨 위에 오면 색 순서가 범례와 같은 방향으로
+   읽힌다. 각 칸의 높이는 인라인 %라 값이 곧 그림이다. */
+.briefing-story-share-stack {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--folio-surface-muted);
+}
+.briefing-story-share-stack span { display: block; width: 100%; }
+.briefing-story-share-axis {
+  display: grid;
+  gap: 1px;
+  text-align: center;
+}
+.briefing-story-share-axis b {
+  color: var(--folio-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.briefing-story-share-axis small { color: var(--folio-ink-subtle, var(--folio-ink-muted)); font-size: 10.5px; }
+.briefing-story-share-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--folio-ink-muted);
+  font-size: 11.5px;
+}
+.briefing-story-share-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.briefing-story-share-legend i { width: 9px; height: 9px; border-radius: 2px; }
+
 @media (max-width: 760px) {
   .briefing-visuals-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
   .briefing-visuals-grid { grid-template-columns: minmax(0, 1fr); }
@@ -275,6 +372,10 @@
   .briefing-price-card { padding: 14px; border-radius: 12px; }
   .briefing-price-stage { height: 280px; min-height: 280px; }
   .briefing-heatmap-stage { height: 620px; min-height: 620px; }
+  .briefing-weekly-flow-card .briefing-price-stage { height: 240px; min-height: 240px; }
+  .briefing-story-share-bars { height: 180px; gap: 5px; }
+  .briefing-story-share-axis b { font-size: 10.5px; }
+  .briefing-story-share-axis small { display: none; }
   .briefing-chart-controls { align-items: stretch; flex-direction: column; }
   .briefing-chart-controls > div { width: 100%; overflow-x: auto; }
   .briefing-chart-controls button { flex: 1 0 auto; }

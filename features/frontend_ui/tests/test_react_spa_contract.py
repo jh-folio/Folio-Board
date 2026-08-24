@@ -70,14 +70,11 @@ def test_react_routes_cover_current_product_surfaces():
 def test_report_rendering_and_visual_wrappers_remain_available():
     app_bridge = (ROOT / "public" / "app.js").read_text(encoding="utf-8")
     visuals = (ROOT / "public" / "briefing-visuals.js").read_text(encoding="utf-8")
-    tradingview = (ROOT / "public" / "tradingview-widgets.js").read_text(encoding="utf-8")
     reader = (ROOT / "web" / "src" / "app" / "reportReader" / "ReportBody.tsx").read_text(encoding="utf-8")
 
     assert "FolioBriefingVisuals?.render" in app_bridge
     assert "FolioBriefingVisuals?.cleanup" in app_bridge
     assert "card.dataset.market = normalizeVisualMarket(snapshot.market)" in visuals
-    assert "renderDashboardBoard" in tradingview
-    assert "renderWatchlistDetail" in tradingview
     assert "legacyBridge" in reader
     assert "bridge.renderMarkdown" in reader
 

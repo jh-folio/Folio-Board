@@ -12,6 +12,7 @@ def _no_side_effects(monkeypatch):
     monkeypatch.setattr(service, "run_rss_market_memory_update", lambda *a, **k: {"ok": True, "promotedCount": 2})
     monkeypatch.setattr(service, "_append_run", lambda row: None)
     monkeypatch.setattr(service, "market_memory_recently_run", lambda **kw: False)
+    monkeypatch.setattr(service, "market_state_snapshot_recently_run", lambda **kw: False)
 
 
 def test_the_rule_based_pass_alone_is_not_enough(monkeypatch):
@@ -23,7 +24,7 @@ def test_the_rule_based_pass_alone_is_not_enough(monkeypatch):
     전부 사용자가 버튼을 누른 것이었다.
     """
     calls = []
-    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda: calls.append("snapshot") or {"ok": True})
+    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda **kw: calls.append("snapshot") or {"ok": True})
 
     out = service.run_briefing_prerequisites()
 
@@ -34,13 +35,61 @@ def test_the_rule_based_pass_alone_is_not_enough(monkeypatch):
 def test_a_fresh_snapshot_is_not_rebuilt(monkeypatch):
     """최근에 돌았으면 건너뛴다. 예약마다 CLI를 다시 부르면 브리핑이 그만큼 늦어진다."""
     monkeypatch.setattr(service, "market_memory_recently_run", lambda **kw: True)
+    monkeypatch.setattr(service, "market_state_snapshot_recently_run", lambda **kw: True)
     calls = []
-    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda: calls.append("snapshot"))
+    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda **kw: calls.append("snapshot"))
 
     out = service.run_briefing_prerequisites()
 
     assert calls == []
     assert out["marketMemory"]["skipped"] is True
+    assert out["marketMemory"]["stateSnapshot"]["skipped"] is True
+
+
+def test_a_fresh_memory_pass_does_not_hide_a_stale_screen(monkeypatch):
+    """**두 신선도는 따로 본다.**
+
+    규칙 갱신이 12시간 안에 돌았다는 이유로 화면 스냅샷까지 건너뛰면, 사전작업이
+    도는 날에도 시장 내러티브 탭은 며칠 전 해석 그대로 남는다. 규칙 갱신은 스킵해도
+    스냅샷이 오래됐으면 스냅샷은 새로 만든다.
+    """
+    monkeypatch.setattr(service, "market_memory_recently_run", lambda **kw: True)
+    monkeypatch.setattr(service, "market_state_snapshot_recently_run", lambda **kw: False)
+    calls = []
+    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda **kw: calls.append("snapshot") or {"ok": True})
+
+    out = service.run_briefing_prerequisites()
+
+    assert calls == ["snapshot"]
+    assert out["marketMemory"]["skipped"] is True
+    assert out["marketMemory"]["stateSnapshot"] == {"ok": True}
+
+
+def test_snapshot_freshness_reads_the_snapshot_itself(monkeypatch):
+    """자동화 실행 기록이 아니라 스냅샷의 `as_of`를 읽는다.
+
+    실행 기록으로 판정하면 사전작업이 스냅샷만 다시 만든 경우가 기록에 없어서
+    다음 실행이 또 만든다. 스냅샷은 자기 시각을 알고 있다.
+    """
+    import datetime as dt
+
+    now = dt.datetime(2026, 8, 20, 12, 0, tzinfo=dt.timezone.utc)
+    import features.market_memory.snapshot as snapshot_module
+
+    monkeypatch.undo()  # 이 테스트는 판정 함수 자체를 본다
+
+    monkeypatch.setattr(
+        snapshot_module, "latest_market_state_snapshot_as_of", lambda *a, **k: "2026-08-20T04:00:00+00:00"
+    )
+    assert service.market_state_snapshot_recently_run(now=now, max_age_hours=12) is True
+
+    monkeypatch.setattr(
+        snapshot_module, "latest_market_state_snapshot_as_of", lambda *a, **k: "2026-08-19T18:00:00+00:00"
+    )
+    assert service.market_state_snapshot_recently_run(now=now, max_age_hours=12) is False
+
+    monkeypatch.setattr(snapshot_module, "latest_market_state_snapshot_as_of", lambda *a, **k: None)
+    assert service.market_state_snapshot_recently_run(now=now, max_age_hours=12) is False
 
 
 def test_a_failed_snapshot_does_not_take_the_briefing_down(monkeypatch):
@@ -102,14 +151,109 @@ def test_the_manual_prerequisite_path_shares_one_definition():
     assert "rss = import_rssarchive(run_collection=True)\n            memory = run_rss" not in source
 
 
+def test_the_api_path_uses_the_same_attempt_lifecycle_as_the_button(monkeypatch):
+    """API(LLM) 모드도 버튼과 같은 attempt/watermark 라이프사이클을 탄다.
+
+    바로 저장하면 attempt 기록이 없는 스냅샷이 남아 reconcile이 중단된 갱신을
+    복구할 근거를 잃는다. scope는 예약이 고른 시장과 무관한 GLOBAL이다 — 화면의
+    시장 내러티브는 시장별 보고서가 아니라 하나의 해석이다.
+    """
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
+    seen = {}
+
+    class FakeService:
+        def run_manual(self, command):
+            seen["scope"] = command.scope
+            seen["date"] = command.date
+            return {"ok": True, "snapshot": {"id": "snap-9"}, "attempt": {"attemptId": "att-3"}}
+
+    import features.market_memory.http_runtime as http_runtime
+
+    monkeypatch.setattr(http_runtime, "create_market_state_service", lambda data_dir: FakeService())
+
+    result = service._refresh_market_state_snapshot()
+
+    assert result["ok"] is True
+    assert result["snapshotId"] == "snap-9"
+    assert result["attemptId"] == "att-3"
+    assert str(seen["scope"]) == "GLOBAL"
+    assert result["scope"] == "GLOBAL"
+
+
 def test_an_explicit_run_ignores_the_freshness_guard(monkeypatch):
     monkeypatch.setattr(service, "market_memory_recently_run", lambda **kw: True)
+    monkeypatch.setattr(service, "market_state_snapshot_recently_run", lambda **kw: True)
     calls = []
-    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda: calls.append("snapshot") or {"ok": True})
+    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda **kw: calls.append("snapshot") or {"ok": True})
 
     skipped = service.run_briefing_prerequisites()
     forced = service.run_briefing_prerequisites(force=True)
 
     assert skipped["marketMemory"].get("skipped") is True
     assert forced["marketMemory"].get("skipped") is not True
+    assert calls == ["snapshot"]
+
+
+def test_a_fresh_memory_only_needs_the_snapshot_step(monkeypatch):
+    """메모리가 신선하면 CLI 2단계 작업을 다시 돌리지 않는다.
+
+    전체 작업은 중기 메모리 갱신까지 포함한다 — 가드가 방금 "최근이라 건너뛴다"고
+    판정한 바로 그 작업이다. 그것을 다시 부르면 아끼려던 비용을 그대로 치른다.
+    """
+    calls = []
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm_cli")
+    monkeypatch.setattr(service, "kst_date", lambda: "2026-08-21")
+
+    import features.agent_mode.bridge as bridge
+
+    monkeypatch.setattr(bridge, "run_agent_task", lambda task, params=None, **kw: calls.append(f"only:{task}") or {"snapshotId": "s1"})
+    monkeypatch.setattr(bridge, "run_market_memory_update_task", lambda params=None, **kw: calls.append("full") or {"snapshotId": "s2"})
+
+    fresh = service._refresh_market_state_snapshot(memory_is_fresh=True)
+    assert fresh["snapshotId"] == "s1"
+    assert calls == ["only:market_state_snapshot"]
+
+    calls.clear()
+    stale = service._refresh_market_state_snapshot()
+    assert stale["snapshotId"] == "s2"
+    assert calls == ["full"]
+
+
+def test_a_failed_snapshot_is_not_retried_every_schedule(monkeypatch):
+    """실패한 스냅샷을 예약마다 다시 시도하지 않는다.
+
+    어댑터가 죽어 있으면 `market_state_snapshot_recently_run()`이 영원히 거짓이라,
+    유예가 없으면 브리핑 예약이 돌 때마다 수십 초짜리 CLI가 무한히 재시도된다.
+    """
+    now = service.dt.datetime(2026, 8, 21, 12, 0, 0)
+    runs = [{
+        "kind": "marketStateSnapshot",
+        "status": "failed",
+        "finishedAt": "2026-08-21T09:00:00",
+    }]
+
+    assert service.market_state_snapshot_recently_failed(now=now, runs=runs) is True
+
+    # 유예가 지나면 다시 시도한다.
+    old = [{"kind": "marketStateSnapshot", "status": "failed", "finishedAt": "2026-08-20T09:00:00"}]
+    assert service.market_state_snapshot_recently_failed(now=now, runs=old) is False
+
+    # 성공한 기록은 유예 대상이 아니다.
+    ok = [{"kind": "marketStateSnapshot", "status": "done", "finishedAt": "2026-08-21T09:00:00"}]
+    assert service.market_state_snapshot_recently_failed(now=now, runs=ok) is False
+
+
+def test_an_explicit_run_ignores_the_failure_backoff(monkeypatch):
+    """사용자가 직접 누른 실행은 유예를 보지 않는다 — 눌러도 아무 일이 없으면 안 된다."""
+    calls = []
+    monkeypatch.setattr(service, "import_rssarchive", lambda run_collection=True: "rss-ok")
+    monkeypatch.setattr(service, "market_memory_recently_run", lambda **kw: True)
+    monkeypatch.setattr(service, "market_state_snapshot_recently_run", lambda **kw: False)
+    monkeypatch.setattr(service, "market_state_snapshot_recently_failed", lambda **kw: True)
+    monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
+    monkeypatch.setattr(service, "run_rss_market_memory_update", lambda: {"ok": True})
+    monkeypatch.setattr(service, "_append_run", lambda row: None)
+
+    service.run_briefing_prerequisites(force=True)
+
     assert calls == ["snapshot"]

@@ -24,6 +24,74 @@
 
 LLM 입력과 표시 참고자료에는 같은 evidence lane·cluster dedupe·매체별 soft cap을 적용합니다. 시장 반응 자료가 없으면 영향 0으로 간주하지 않고 `marketImpactStatus: unavailable`과 `dataGaps`를 남깁니다. 공개 RSS에는 연합뉴스와 매일경제 공식 피드가 추가되었으며 유료 본문 우회 수집은 하지 않습니다.
 
+### 한국 일일 브리핑의 기업 쏠림 제어
+
+한국 일일(`kr` + `daily`)에만 feature-local concentration control을 적용한다. 기본 모드는 `shadow`이며 `KR_BRIEFING_CONCENTRATION_MODE=active`에서 선별 순서와 부분 보강을 실제 본문에 반영한다. 미국·유럽·일본·주간 브리핑에는 적용하지 않는다.
+
+- 같은 기사·같은 업종이라는 이유만으로 기업을 배제하지 않는다. 문장을 direct/shared/incidental claim으로 귀속하고 기업별 촉매→전달 경로→결과→근거의 causal signature를 비교한다.
+- 사건 군집은 KR 일일에서 complete-link coherence를 한 번 더 적용해 A-B, B-C가 비슷하다는 이유만으로 서로 다른 A-C 사건까지 합쳐지는 연쇄 오탐을 막는다.
+- 두 번째 리더가 같은 공통 동인을 공유해도 고유 인과 경로와 독립 근거가 있으면 유지한다. 경계 사례만 Agent가 후보 whitelist 안에서 1회 판정하며, timeout·형식 오류·미사용 상태는 deterministic fallback으로 내려가고 생성을 중단하지 않는다.
+- 생성 뒤 전체 본문에서 명시적 반복과 표현만 다른 causal-path 반복을 함께 감사한다. 기업 이름 언급 횟수만으로 보강하지 않는다. 활성 모드의 repair candidate만 Agent를 최대 1회 호출하고, 허용된 섹션 본문만 교체한 뒤 중복 지표가 실제 개선될 때 채택한다.
+- 호출 예산은 판정 1 + 본문 생성 1 + 부분 보강 1이다. 내부 signature·점수·감사 상태는 `concentrationControl` telemetry에 남기되 독자 Markdown에는 노출하지 않는다.
+
+## 브리핑 종류 — 일간과 주간 (0.5.4)
+
+브리핑에는 **종류**(`kind`)가 있고 `daily`와 `weekly` 둘이다. 편집 강조점(`briefingType`)과 직교한다 — 그쪽 세 값은 모두 "기존 섹션 구성을 유지하라"고 지시하므로, 골격이 다른 주간을 그 enum에 넣으면 계약이 자기 자신과 모순된다. **저장된 예약과 보고서에 이 값이 없으면 일간이다**(판올림 호환).
+
+- **저장 키가 갈린다.** 주간은 `{발행일}.{시장}.weekly.json`이다. 접미사가 없으면 일요일 실행에서 `_scope_session_date()`가 금요일을 돌려줘 그 주 금요일 일간 브리핑을 통째로 덮어쓴다 — 이번 릴리즈에서 가장 위험했던 충돌이다. 파일 이름 규칙은 `schema.py::_scoped_file_stem()`, 아카이브 정규식(`archive.py`), `canonical_identity.BRIEFING_KIND_SUFFIXES` 셋이 함께 알아야 한다. 마지막 것을 빼먹으면 저장이 정체성 검증에서만 조용히 막힌다.
+- **주간에는 세션이 없다.** 발행일이 곧 저장 키이고 제목은 `{라벨} 주간 — {MM.DD}~{MM.DD}`다. `마감`/`장중`을 붙이지 않고, 세션 제목 정규화(`normalize_briefing_markdown_titles`)를 태우지 않는다 — 태우면 구간이 세션일로 바뀌어 보고서가 스스로를 잘못 소개한다.
+- **자료 창은 달력 7일이다**(`weekly.py::WeeklyWindow`). 발행일 기준 `P-6 … P`이며, 시장마다 창을 다르게 잡지 않는다. **비어도 넓히지 않는다** — 일간의 세션 창은 비면 예전 풀로 되돌아가지만, 주간에서 창을 넓히면 "지난주"라는 말이 거짓이 된다.
+- **다음주 프리뷰는 시장 캘린더에서 온다.** `weekly.calendar_preview()`가 그 시장 + `GLOBAL` 일정을 `macro/central_bank/holiday/earnings/dividend` 다섯 종으로 읽어 표로 싣고, `confirmed`/`estimated` 구분을 그대로 남긴다. 프롬프트와 컨텍스트 양쪽이 "표에 없는 일정을 기억으로 채우지 말라"고 못박는다 — 프롬프트에만 적으면 부탁이지 제한이 아니다.
+- **주간은 시장 내러티브에 적재하지 않는다.** 같은 이슈를 일간이 이미 그 주에 넣었고, 다시 넣으면 한 사건이 두 번 세어져 regime 근거 카운트가 부푼다. `AGGREGATE_SCOPES` 게이트 앞에서 명시적으로 끊는다.
+- **주간은 세션 시각자료를 만들지 않고 주 단위 계열을 따로 만든다**(`weekly_visuals.py`, 0.5.4 §12). 하루 세션의 가격 계열과 그날 등락 히트맵을 한 주 보고서에 붙이면 특정 하루가 그 주를 대표하는 것처럼 읽힌다 — 그 결정은 그대로이고, 대신 세 그림이 생겼다. 자세한 규칙은 아래 "주간 시각자료"를 본다.
+- **프롬프트는 별도 파일 넷이다**(`prompt_weekly_{us,kr,europe,jp}.md`). 일간 프롬프트에 "이번엔 주간으로 써라"를 덧붙이는 방식은 두 지시가 충돌한다 — 일간은 제목에 세션 상태를 붙이라고, 오늘 하루를 하나의 이야기로 엮으라고 지시한다. 계약 검사도 갈린다(`contracts.py::weekly_prompt_contract_errors`, `briefing_contract.weekly_required_sections`).
+- **규칙 fallback은 사실만 싣는다.** `weekly.build_weekly_rules_markdown()`은 자료 건수·동인 목록·이슈 묶음·내러티브 상태·다음주 일정 표를 담고, 해석 문장이 비어 있다는 사실을 본문에 적는다. 한 주의 이야기를 엮는 일은 LLM 산출물이고, 규칙이 흉내 내면 근거 없는 문장이 남는다(§5 원칙 3·4).
+- **아카이브 카드가 갈린다.** dedup 키는 `(세션일, 시장, 종류)`다. 주간의 구간 끝은 그 시장의 세션일과 같은 날일 수 있어, 종류가 없으면 둘 중 하나가 조용히 사라진다. 화면 해시도 `#/briefing/{date}/{scope}/{kind}`로 종류를 싣는다 — 없으면 주간 카드를 눌러도 그날 일간 브리핑이 열린다.
+- **삭제도 종류를 본다.** `DELETE /api/briefings/{date}?kind=weekly`는 주간 파일만 지운다. 종류를 무시하면 주간 카드의 삭제가 그날 일간 브리핑을 지운다.
+- **보고서의 정체성에도 종류가 들어간다.** 변화 감지의 `artifactId`는 `{발행일}.{시장}.weekly`이고 `lineageId`는 `briefing:{시장}:weekly`다(`change_intelligence/adapters/briefing.py`). 둘 다 빠뜨리면 두 가지가 동시에 깨진다 — `change_event_index`의 PK가 `(artifact_kind, artifact_id)`라 평일에 낸 주간이 그날 일간의 변화 이벤트를 **덮어쓰고**, `select_report_baseline`이 계보만 보므로 주간이 직전 일간을 기준선으로 잡고 그다음 일간이 그 주간을 기준선으로 잡는다. 뒤엣것이 더 나쁘다 — 이미 있던 일간 Change Feed가 주간이 생긴 순간부터 조용히 망가진다.
+- **리더의 액션도 종류를 싣는다.** 개인 해석(`personal-overlay`)과 내보내기(`export-notion`/`export-obsidian`)는 `kind`를 받는다. 없으면 `resolve_briefing`·`_briefing_overlay_path`가 일간으로 떨어져, 주간을 열어 두고 누른 개인 해석이 **그날 일간 보고서를 고치고** 이어지는 재조회가 화면의 주간을 일간으로 바꿔치기한다. CLI 경로는 report id로 파일을 되짚으므로 `{발행일}.weekly` 형태로 종류를 id에 싣는다.
+- **자료가 없는 주는 CLI를 부르지 않는다.** 주간은 창이 비어도 넓히지 않으므로 수집이 한 주 내내 꺼져 있었으면 0건이 된다. 그대로 pack을 만들면 CLI가 근거 없이 쓰고 출력 계약의 최소 분량에 걸려 재작성 1회 뒤 실패한다 — 수십 초짜리 CLI를 두 번 돌리고 아무것도 남기지 못한다. `WeeklyWindowEmptyError`로 먼저 멈춘다. 규칙 경로는 그대로 진행해 "자료 0건"과 캘린더 표를 담은 보고서를 낸다(비용이 없고 정직한 산출물이다).
+
+## 개수 상한은 한 곳에서 나온다 (0.5.4)
+
+`features/daily_briefing/limits.py`가 선별 파이프라인의 상한을 소유한다. 예전에는 `limit=14`가 기본 인자 여섯 곳과 호출부 전부에 흩어져 있어 어느 하나를 고쳐도 나머지가 그대로였다.
+
+```text
+이슈 ISSUE_COVERAGE_LIMIT(10)  →  다양성 선발 DIVERSE_SELECTION_LIMIT(18)
+  →  컨텍스트 CONTEXT_DOC_LIMIT(24, 주간 40)
+  →  참고자료 SOURCE_REF_LIMIT(= 컨텍스트와 같은 값)
+  →  다시장 병합 = 시장 수 × 시장당 상한
+```
+
+- **참고자료는 프롬프트가 본 문서 전부다.** 예전에는 컨텍스트 24건 중 14건만 보여줘, 근거로 쓰였을 수 있는 열 건이 출처 목록에 없었다 — source-grounding 원칙과 어긋난다. 표시 개수 설정은 만들지 않는다(일치가 기본이면 설정할 것이 없다, 2026-08-20 사용자 결정).
+- `source_lines()`의 기본값이 8이라 `build_prompt_markdown()`이 인자 없이 불러 **규칙 경로는 14건을 뽑아 놓고 8건만 출력했다.** 기본값을 `SOURCE_REF_LIMIT`으로 바꾸고 호출부도 명시한다.
+- 병합 상한 28은 이미 잘라먹고 있었다. 네 시장이면 시장당 상한만 곱해도 그 두 배가 넘어 뒤에 오는 시장의 출처가 통째로 빠졌다. 시장 수에서 산출한다(`merged_source_limit`).
+
+## 참고자료는 그 시장의 참고자료다 (0.5.4)
+
+**티어 표가 시장을 안다.** 예전에는 한국장 키워드 티어(`kr_current_flow`·`korea_market_data`)가 어느 시장 브리핑에서든 걸렸다. 그래서 유럽장·일본장 참고자료의 **상위 다섯 건이 전부 국내 매체**였다(실측 2026-08-08~14 창). 프롬프트는 같은 자리에서 "국내 매체 보도는 보조자료로 쓰세요"라고 지시하는데 목록은 정반대로 정렬돼 있었다.
+
+- `_HOME_MARKET_TIERS`가 시장별 고유 티어를 소유한다. 범위를 모르거나 종합(`both`/`all`/`multi`)이면 예전처럼 전부 켠다 — 종합 본문은 시장을 모두 담으므로 어느 시장 고유 자료도 상단에 올 수 있어야 한다.
+- 유럽·일본에는 `is_us_market_close_article` 같은 "그 시장 마감 기사" 판정기가 없다. 없는 것을 흉내 내지 않고 매체 적합도 밴드가 그 자리를 대신한다.
+- **적합도 밴드는 같은 티어 안의 저울이다**(`_publisher_fit_band`). 전문성 점수를 정렬 키에 그대로 넣으면 문서 점수를 덮어써서 매체 이름만으로 순서가 정해진다. 거친 밴드 셋(2/1/0)으로 두어 브리핑 적합도가 여전히 주 정렬 기준이다.
+- 실측 효과(같은 창, LLM 경로 참고자료 상위 5): 유럽 `매일경제×4·연합뉴스` → `Financial Times·The Guardian·Reuters·CNBC·매일경제`, 일본 `매일경제×4·CNBC` → `Financial Times×3·Reuters·CNBC`. 미국 브리핑에서는 667건이 한국장 티어를 잃었다. 매체 **수**와 상위 2사 점유율은 거의 그대로다 — 매체별 soft cap이 이미 binding이라 바뀐 것은 **순서**이고, 독자가 먼저 보는 것이 순서다.
+- `SOURCE_PROFILES`는 네 시장 모두에 전문성 값을 갖고 유럽·일본 매체를 등재한다. 예전에는 `us`/`kr` 둘뿐이라 `profile.get("europe")`가 없어 fallback(`sourceWeight`)으로 떨어졌고, 유럽·일본 브리핑의 매체 권위 점수가 사실상 무작동이었다.
+- `region: "domestic"`은 **한국장 교차 확인 판정 전용**이다(`domestic_count`). 새 유럽·일본 매체는 `regional`로 두어 KR 이외 이슈에서 교차 확인 보너스가 붙지 않게 한다. 교차 확인 판정을 유럽·일본까지 일반화하는 것은 이번 범위가 아니다.
+
+### 본문 확보 피드를 추가하지 않은 이유
+
+`config/rss_feeds.yaml`의 `allow_full_text`는 **읽히기만 하고 소비자가 없었다**(0.5.4에 제거). 본문 확보 여부는 수집 시점에 정해진다 — aggregator 리다이렉트는 기사 HTML을 가져오지 않고, 유료벽 문구가 잡히면 요약만 남는다. 그래서 설정과 실제가 어긋나 있었고, 그 플래그를 근거로 세운 "미국·한국은 본문 확보 피드가 0개"라는 진단도 틀렸다.
+
+실측(저장된 evidence 행 기준 본문 확보율):
+
+```text
+CNBC 538/538  ·  한국경제 932/932  ·  매일경제 828/828  ·  연합뉴스 1801/1803  ·  연합인포맥스 1322/1471
+Handelsblatt 1345/1359  ·  Financial Times 225/459
+Reuters 127/1820  ·  MarketWatch 11/317  ·  WSJ 8/1001  ·  Bloomberg 3/2555
+```
+
+본문이 없는 쪽은 전부 유료벽이 있는 매체다. 유료 본문 우회는 금지이므로(§6 원칙 4) **추가할 피드가 없다.** 같은 이유로 매체별 soft cap(4)도 조이지 않았다 — 미국장에서 본문이 있는 자료의 절반이 국내 매체라, 국내 매체를 더 줄이면 본문 있는 근거를 제목뿐인 근거로 바꾸는 거래가 된다.
+
 ## 시장 범위와 저장
 
 생성 대상은 **시장 집합**입니다. 화면에서 미국장·한국장·유럽장·일본장을 원하는 만큼 골라 생성하면 고른 시장이 각각 만들어집니다. 최소 한 개는 선택되어 있어야 합니다.
@@ -351,12 +419,65 @@ API, Agent CLI, 규칙 기반 fallback은 같은 `briefingType` 계약을 사용
 ## 저장 위치
 
 ```text
-data/briefings/YYYY-MM-DD.json
+data/briefings/YYYY-MM-DD.json                  # legacy 합본(읽기 호환)
+data/briefings/YYYY-MM-DD.{market}.json         # 일간, 그 시장의 세션일 기준
+data/briefings/YYYY-MM-DD.{market}.weekly.json  # 주간, 발행일 기준
 data/briefings/YYYY-MM-DD.visuals.json
 data/briefings/YYYY-MM-DD.visuals.json.gz
 ```
 
 신규 가격 시계열은 보고서 JSON의 `visualSnapshots`에 저장하고, 종목 수가 많은 시장 히트맵 rows는 날짜별 `.visuals.json.gz` 사이드카에 저장한다. `.visuals.json`은 legacy 읽기 전용으로 유지한다. 브리핑 화면은 과거 보고서를 열 때 이 저장 데이터만 사용하므로 이후 시세가 바뀌어도 생성 당시 차트가 달라지지 않는다.
+
+## 주간 시각자료 (0.5.4 §12)
+
+로직은 `features/daily_briefing/weekly_visuals.py`이고 렌더러는 일간과 같은
+`public/briefing-visuals.js`다. 세 그림이 있다.
+
+| 그림 | role / type | 자리 |
+|---|---|---|
+| A. 주간 지수 흐름 | `weekly_flow` / `price_series` | `## 1. 지난주 {시장} 흐름` 바로 아래 |
+| B. 주간 히트맵 | `weekly_flow` / `market_heatmap` (사이드카) | 같은 자리, A 다음 |
+| C. 이야기 비중 추이 | `weekly_story_share` / `story_share_series` | `## 2. 지난주 {시장}을 움직인 핵심 변수` 바로 아래 |
+
+- **셋이 같은 `WeeklyWindow` 객체를 받는다.** A의 "주초 대비 %", B의 "주초 종가 대비
+  주말 종가", C의 "그 주 거래일별 비중"이 모두 그 창 하나에서 나오고 캡션이 같은 구간을
+  적는다. 각자 경계를 계산하면 한 보고서 안에서 세 그림이 세 주를 말한다.
+- **A의 기준은 창 안 첫 종가다.** 전주 금요일을 기준으로 삼으면 첫 점이 0이 아니라 주말
+  갭이 되어 "이번 주 어디서 출발했나"에 다른 답을 한다. 값이 %인 이유는 지수마다 자릿수가
+  달라 절대가로는 한 좌표계에 겹칠 수 없기 때문이며, hover는 그날 종가도 함께 말한다.
+- **A·B의 주초·주말은 지수 계열이 실제로 가진 거래일이다**(`_session_bounds`). 달력 날짜로
+  각자 잡으면 휴장일에서 하루씩 어긋난다.
+- **B는 주말 스냅샷의 상자 크기·분류를 그대로 쓰고 색만 다시 계산한다.** 주초 시가총액으로
+  그리면 한 주 동안 오른 종목이 작은 상자에 담겨 그림이 스스로와 어긋난다. 주초 종가가 없는
+  종목은 그리지 않는다 — 0%로 두면 "안 움직였다"가 되어 결측이 사실로 둔갑한다.
+- **C의 입력은 그 주간 보고서가 쓴 자료 풀 그대로다**(`weekly_documents`). 대시보드처럼
+  세션 창으로 다시 고르지 않는다 — 세션 창은 보통 이틀이라 이웃한 날의 창이 겹쳐 같은 기사가
+  두 막대에 들어간다. 동인 어휘표는 대시보드와 **같은 것**(`infer_drivers`)이고, 색과 순서는
+  그 주 전체 기준으로 한 번 정한다(날마다 상위 넷을 다시 고르면 같은 색이 막대마다 다른
+  이야기를 가리켜 추이를 읽을 수 없다).
+- **사이드카는 `{발행일}.{시장}.weekly.visuals.json.gz`다.** 조회 경로도 종류를 싣는다
+  (`GET /api/briefings/{date}/visuals?market=&kind=weekly`) — 빠지면 발행일·시장이 같은
+  그날 일간 히트맵이 돌아와 "주간 등락"이라 적힌 카드에 하루 등락이 그려진다.
+- **캡션은 필수다**(§12.4). 무엇을 보여주는지 한 줄, 본문 폭 안, 접이식 없음. B는 일간과
+  **같은 그림**이라 캡션이 없으면 하루 등락으로 읽히므로, 일간 렌더러를 건드리지 않고
+  `renderRecommendation()`이 주간일 때만 한 줄을 붙인다.
+- **그림 선택은 코드가, 캡션은 템플릿이 한다.** LLM이 그림을 고르거나 캡션을 쓰지 않는다
+  (§5 원칙 4).
+- 실패는 보고서를 막지 않는다. provider 실패·자료 없음은 `freshness`/`coverage`/`warnings`로
+  남고 builder가 `dataGaps`로 옮긴다.
+- 규칙 생성과 Agent CLI 생성이 **같은 경로**를 쓴다. Agent 경로는 pack 단계에서 만든다 —
+  A·B·C는 본문 내용이 아니라 창·지수·자료 풀에서 나오므로 CLI 답을 기다릴 이유가 없다.
+
+### 섹션 앵커와 시장 판정
+
+`public/briefing-visuals.js::sectionRole()`이 헤딩 텍스트로 슬롯을 만든다. 주간 규칙을
+**먼저** 본다 — `/지난주 .*흐름/`, `/지난주 .*핵심 변수/`. `지난주`를 빼면 일간 §2
+(`미국장을 움직인 핵심 변수`)까지 걸려 일간 본문에 빈 슬롯이 생긴다.
+
+`sectionMarket()`은 **네 시장을 모두 안다**. 미국·한국만 알던 시절 유럽장·일본장 브리핑은
+슬롯이 하나도 만들어지지 않아 저장된 스냅샷 네 장이 화면에 아무것도 그리지 못했다(실측
+2026-08-12~14의 유럽·일본 보고서 6건 전부). 카드 태그(`normalizeVisualMarket`)와 사이드카
+조회 쿼리도 같은 네 시장을 싣는다.
 
 ## 생성 당시 시장 시각자료
 
@@ -432,6 +553,9 @@ py -3 -m features.daily_briefing.tests.verify_briefing --llm --persist  # 실제
 ## 관련 코드
 
 - `features/daily_briefing/service.py`: `select_briefing_docs()`, `build_llm_context()`, `generate_llm_briefing()`, `build_prompt_markdown()`
+- `features/daily_briefing/limits.py`: `CONTEXT_DOC_LIMIT`, `SOURCE_REF_LIMIT`, `merged_source_limit()` — 선별 상한의 단일 출처
+- `features/daily_briefing/weekly.py`: `weekly_window()`, `weekly_title()`, `weekly_documents()`, `calendar_preview()`, `build_weekly_rules_markdown()`
+- `features/daily_briefing/target.py`: `resolve_targets()`(일간 세션 판정), `resolve_weekly_targets()`(주간)
 - `features/daily_briefing/selection.py`: `briefing_doc_score()`, `derive_market_drivers()`, `infer_drivers()`, `briefing_doc_excerpt()`
 - `features/common/market_calendar.py`: `briefing_market_windows()`, `doc_market_bucket()`
 - `features/common/market_data/providers.py`: `MarketDataProvider`, `fetch_korea_market_data()`
@@ -451,11 +575,15 @@ POST /api/briefings
 POST /api/briefings/{date}/export-notion
 ```
 
-`POST /api/briefings`는 `date`, `strictDate`, `webSearch` 값을 받을 수 있습니다.
+`POST /api/briefings`는 `date`, `strictDate`, `webSearch`, `markets`, `briefingType`, `kind` 값을 받을 수 있습니다. `kind: "weekly"`면 `date`는 세션일이 아니라 **발행일**이고 세션 판정(`resolve_targets`) 대신 `resolve_weekly_targets`를 탑니다 — 주말 발행이 정상인 산출물을 "그날은 거래일이 아니다"로 막으면 주간을 손으로 만들 길이 아예 없습니다. 아직 오지 않은 날짜는 `week_not_available`로 거부합니다.
 
-`GET /api/briefings/index`는 시장별 아카이브 메타 목록을 `{items,total,offset,limit,warnings,cache}` 형태로 반환합니다. `q`, `marketScope`, `briefingType`, `dateFrom`, `dateTo`, `offset`, `limit` 필터를 지원합니다. 메모리 캐시는 30초 TTL과 파일 `mtime_ns`·크기를 사용해 변경된 날짜 JSON만 다시 읽으며, 조회 과정에서 보고서 JSON을 쓰거나 별도 영구 인덱스를 만들지 않습니다.
+`POST /api/briefings/{date}/personal-overlay`, `POST /api/briefings/{date}/export-notion`, `POST /api/briefings/{date}/export-obsidian`도 `kind`를 받습니다(기본 `daily`). 받지 않으면 주간 보고서를 열어 둔 상태의 액션이 그날 일간 보고서를 대상으로 동작합니다.
 
-`DELETE /api/briefings/{date}?market=us|kr`는 신규 시장별 저장 파일(`{date}.us.json`/`{date}.kr.json`)과 해당 시장 시각자료 사이드카만 삭제하고 아카이브 캐시를 즉시 갱신합니다. `market`을 생략하면 날짜 전체 삭제로 동작해 레거시 `{date}.json`과 양쪽 시장 파일·사이드카를 함께 삭제합니다. 기존 레거시 `{date}.json`만 있는 날짜는 시장 단위로 분리 삭제할 수 없으므로 날짜 전체 삭제 안내를 표시합니다. 잘못된 날짜/시장 형식은 400, 없는 파일은 404를 반환합니다.
+`GET /api/briefings/{date}`는 `marketScope`와 `kind`를 받습니다. **주간을 물었는데 일간으로 되돌아가지 않습니다** — 같은 날 두 보고서가 나란히 있을 수 있어, 되돌아가면 화면이 다른 보고서를 열어 놓고 주간이라고 말합니다.
+
+`GET /api/briefings/index`는 시장별 아카이브 메타 목록을 `{items,total,offset,limit,warnings,cache}` 형태로 반환합니다. `q`, `marketScope`, `briefingType`, `kind`, `dateFrom`, `dateTo`, `offset`, `limit` 필터를 지원합니다. `kind`는 `all | daily | weekly`이며 모르는 값은 400입니다. 메모리 캐시는 30초 TTL과 파일 `mtime_ns`·크기를 사용해 변경된 날짜 JSON만 다시 읽으며, 조회 과정에서 보고서 JSON을 쓰거나 별도 영구 인덱스를 만들지 않습니다.
+
+`DELETE /api/briefings/{date}?market=us|kr&kind=daily|weekly`는 `kind`가 가리키는 종류만 지웁니다(기본 `daily`). 종류를 무시하면 주간 카드의 삭제가 그날 일간 브리핑을 지웁니다. 일간 삭제는 신규 시장별 저장 파일(`{date}.us.json`/`{date}.kr.json`)과 해당 시장 시각자료 사이드카만 삭제하고 아카이브 캐시를 즉시 갱신합니다. `market`을 생략하면 날짜 전체 삭제로 동작해 레거시 `{date}.json`과 양쪽 시장 파일·사이드카를 함께 삭제합니다. 기존 레거시 `{date}.json`만 있는 날짜는 시장 단위로 분리 삭제할 수 없으므로 날짜 전체 삭제 안내를 표시합니다. 잘못된 날짜/시장 형식은 400, 없는 파일은 404를 반환합니다.
 
 프론트엔드 브리핑 탭은 **하나의 화면으로 통합**되어 있습니다(과거의 `생성`/`목록` 하위 탭과 좌측 사이드바 하위 탭은 제거). 위쪽에 생성 컨트롤, 아래쪽에 저장된 브리핑 피드가 함께 있습니다.
 
@@ -470,5 +598,4 @@ POST /api/briefings/{date}/export-notion
 `GET /api/briefings/{date}/visuals`는 저장된 과거 히트맵 sidecar만 반환하며 현재 시세를 다시 조회하거나 보고서 JSON을 수정하지 않습니다.
 
 `GET /api/briefings/{date}/visuals/current`는 저장된 종목 universe를 최신 무료 일봉으로 조회한 임시 응답을 반환합니다. 저장 보고서와 sidecar에는 쓰지 않으며, yfinance가 설치되지 않았거나 조회에 실패하면 `unavailable`과 warning을 반환합니다.
-
 

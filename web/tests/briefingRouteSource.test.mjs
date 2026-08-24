@@ -123,7 +123,9 @@ test("Report Reader foundation mirrors the legacy inline reader contract", async
   assert.match(source, /report-note-panel is-open/);
   assert.match(bodySource, /stripInlineReferenceSections/);
   assert.match(bodySource, /참고\\s\*자료/);
-  assert.match(bodySource, /Sources Used/);
+  // 안전-느슨 헤딩 계약: 변형(`## 7. 참고자료`)은 잡고 "Sources of Uncertainty" 같은
+  // 분석 섹션은 잡지 않는다 — 리터럴 "Sources Used" 대신 선택 그룹 형태를 검사한다.
+  assert.match(bodySource, /Sources\(\?:\\s\+Used\)\?/);
   assert.match(bodySource, /sourcePanelHtml/);
 });
 

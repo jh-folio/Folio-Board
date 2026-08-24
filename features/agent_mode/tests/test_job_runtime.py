@@ -135,12 +135,12 @@ def test_briefing_identity_covers_every_market_and_legacy_files():
     for market in BRIEFING_MARKETS:
         report_id = f"2026-08-14.{market}"
         path = str(Path("D:/data/briefings") / f"{report_id}.json")
-        assert job_runtime._identity(ReportKind.BRIEFING, report_id, path) == ("2026-08-14", market)
+        assert job_runtime._identity(ReportKind.BRIEFING, report_id, path) == ("2026-08-14", market, "")
 
     # 접미사 없는 옛 브리핑도 저장 대상이다. 하류 `_briefing_identity`가 scope=None을 받는다.
     assert job_runtime._identity(
         ReportKind.BRIEFING, "2026-06-18", "/data/briefings/2026-06-18.json",
-    ) == ("2026-06-18", None)
+    ) == ("2026-06-18", None, "")
 
 
 def test_quality_repair_save_target_prefix_is_stripped():
@@ -152,10 +152,10 @@ def test_quality_repair_save_target_prefix_is_stripped():
 
     assert job_runtime._identity(
         ReportKind.BRIEFING, "2026-08-14.jp", "briefing:2026-08-14.jp",
-    ) == ("2026-08-14", "jp")
+    ) == ("2026-08-14", "jp", "")
     assert job_runtime._identity(
         ReportKind.BRIEFING, "briefing:2026-08-14", "briefing:2026-08-14",
-    ) == ("2026-08-14", None)
+    ) == ("2026-08-14", None, "")
 
 
 def test_non_briefing_identities_are_untouched():
@@ -163,4 +163,36 @@ def test_non_briefing_identities_are_untouched():
 
     assert job_runtime._identity(
         ReportKind.COMPANY_ANALYSIS, "NVDA_2026-08-14", "/data/company-analysis/NVDA_2026-08-14.json",
-    ) == ("NVDA_2026-08-14", None)
+    ) == ("NVDA_2026-08-14", None, "")
+
+
+def test_the_weekly_kind_survives_the_identity_split():
+    """종류를 벗기되 **버리지 않는다.**
+
+    시장을 찾으려면 접미사를 먼저 떼야 하는데, 떼고 잊으면 주간 대상이 일간 id가 되어
+    하류 `resolve_exact_report_path`가 그날 **일간 파일**을 연다 — 주간 품질 개선이
+    CLI를 다 돌린 뒤 커밋에서 정체성 검증에 걸리거나 일간 보고서를 덮어쓴다.
+    """
+    from features.common.canonical_identity import ReportKind
+
+    assert job_runtime._identity(
+        ReportKind.BRIEFING, "2026-08-23.us.weekly", "/data/briefings/2026-08-23.us.weekly.json",
+    ) == ("2026-08-23", "us", "weekly")
+
+    # report id에는 종류를, artifact id에는 저장 파일과 같은 순서를 싣는다.
+    assert job_runtime._briefing_target("2026-08-23", "us", "weekly") == ("2026-08-23.weekly", "2026-08-23.us.weekly")
+    assert job_runtime._briefing_target("2026-08-23", "us", "") == ("2026-08-23", "2026-08-23.us")
+
+
+def test_the_weekly_report_id_resolves_to_the_weekly_file(tmp_path):
+    """정체성 분해 결과가 실제로 주간 파일을 연다."""
+    from features.common.canonical_identity import ReportKind, resolve_exact_report_path
+
+    briefings = tmp_path / "briefings"
+    briefings.mkdir()
+    (briefings / "2026-08-23.us.json").write_text("{}", encoding="utf-8")
+    (briefings / "2026-08-23.us.weekly.json").write_text("{}", encoding="utf-8")
+
+    report_id, _ = job_runtime._briefing_target("2026-08-23", "us", "weekly")
+
+    assert resolve_exact_report_path(tmp_path, ReportKind.BRIEFING, report_id, "us").name == "2026-08-23.us.weekly.json"

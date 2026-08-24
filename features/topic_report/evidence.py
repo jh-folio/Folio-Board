@@ -170,39 +170,87 @@ def build_evidence_pack(
     question_coverage: dict[str, dict] = {}
     deep_meta = plan.get("deepResearch") or {}
     subquestions = list(deep_meta.get("subQuestions") or []) if deep_research else []
+    round_stats: list[dict] = []
+    round_1_gap_reasons: list[str] = []
+    round_2_reason = "not_applicable"
 
     if subquestions:
         axis_counts = {axis.get("key", ""): 0 for axis in axes}
-        for question in subquestions:
-            qid = str(question.get("id") or "")
-            axis_key = str(question.get("axisKey") or "")
-            round_no = int(question.get("round") or 1)
-            queries = list(question.get("searchQueries") or []) or list(plan.get("searchQueries") or [])[:2]
-            added = 0
-            try:
-                docs = search_docs(queries, limit=limit_per_axis * 2)
-            except Exception:
-                docs = []
-            for doc in docs:
-                if _add_doc(
-                    doc,
-                    axis_key,
-                    queries,
-                    research_question_id=qid,
-                    research_round=round_no,
-                ):
-                    added += 1
-                    if axis_key in axis_counts:
-                        axis_counts[axis_key] += 1
-                if added >= limit_per_axis:
-                    break
-            question_coverage[qid] = {
-                "question": question.get("question", ""),
-                "axisKey": axis_key,
+        by_round = {
+            round_no: [question for question in subquestions if int(question.get("round") or 1) == round_no]
+            for round_no in (1, 2)
+        }
+
+        def execute_round(round_no: int, questions: list[dict]) -> None:
+            searched = selected = 0
+            executed_ids = []
+            for question in questions:
+                qid = str(question.get("id") or "")
+                axis_key = str(question.get("axisKey") or "")
+                queries = list(question.get("searchQueries") or []) or list(plan.get("searchQueries") or [])[:2]
+                added = 0
+                try:
+                    docs = search_docs(queries, limit=limit_per_axis * 2)
+                except Exception:
+                    docs = []
+                searched += len(docs)
+                for doc in docs:
+                    if _add_doc(
+                        doc,
+                        axis_key,
+                        queries,
+                        research_question_id=qid,
+                        research_round=round_no,
+                    ):
+                        added += 1
+                        selected += 1
+                        if axis_key in axis_counts:
+                            axis_counts[axis_key] += 1
+                    if added >= limit_per_axis:
+                        break
+                question_coverage[qid] = {
+                    "question": question.get("question", ""),
+                    "axisKey": axis_key,
+                    "round": round_no,
+                    "count": added,
+                    "level": _coverage_level(added),
+                    "executed": True,
+                }
+                executed_ids.append(qid)
+            round_stats.append({
                 "round": round_no,
-                "count": added,
-                "level": _coverage_level(added),
-            }
+                "executedQuestionIds": executed_ids,
+                "searchedCount": searched,
+                "selectedCount": selected,
+            })
+
+        execute_round(1, by_round[1])
+        for question in by_round[1]:
+            coverage = question_coverage.get(str(question.get("id") or ""), {})
+            if coverage.get("level") in {"none", "low"}:
+                round_1_gap_reasons.append(f"low_question_coverage:{question.get('id', '')}")
+        for axis in axes:
+            axis_key = axis.get("key", "")
+            if _coverage_level(axis_counts.get(axis_key, 0)) in {"none", "low"}:
+                round_1_gap_reasons.append(f"low_axis_coverage:{axis_key}")
+        challenging_count = sum(item.get("evidenceRole") == "challenging" for item in items)
+        if challenging_count == 0:
+            round_1_gap_reasons.append("missing_challenging_evidence")
+        if by_round[2] and round_1_gap_reasons:
+            execute_round(2, by_round[2])
+            round_2_reason = "executed_for_coverage_gaps"
+        else:
+            round_2_reason = "skipped_sufficient_round_1" if by_round[2] else "skipped_no_approved_round_2_questions"
+            for question in by_round[2]:
+                qid = str(question.get("id") or "")
+                question_coverage[qid] = {
+                    "question": question.get("question", ""),
+                    "axisKey": question.get("axisKey", ""),
+                    "round": 2,
+                    "count": 0,
+                    "level": "not_executed",
+                    "executed": False,
+                }
         for axis in axes:
             axis_key = axis.get("key", "")
             count = axis_counts.get(axis_key, 0)
@@ -246,12 +294,16 @@ def build_evidence_pack(
         if cov["level"] in ("none", "low"):
             data_gaps.append(f"'{cov['label']}' 축의 로컬 자료가 부족합니다 ({cov['count']}건).")
     for qid, cov in question_coverage.items():
-        if cov["level"] in ("none", "low"):
+        if cov["level"] in ("none", "low") and cov.get("executed", True):
             data_gaps.append(f"심층 질문 '{cov['question']}'의 로컬 근거가 부족합니다 ({cov['count']}건).")
 
     role_counts: dict[str, int] = {}
     for item in items:
         role_counts[item["evidenceRole"]] = role_counts.get(item["evidenceRole"], 0) + 1
+    freshness_counts: dict[str, int] = {}
+    for item in items:
+        freshness = str(item.get("freshness") or "unknown")
+        freshness_counts[freshness] = freshness_counts.get(freshness, 0) + 1
 
     return {
         "items": items,
@@ -262,6 +314,11 @@ def build_evidence_pack(
             "enabled": bool(subquestions),
             "maxRounds": min(2, int(deep_meta.get("maxRounds") or 1)) if subquestions else 1,
             "subQuestionCount": len(subquestions),
+            "rounds": round_stats,
+            "round1GapReasons": round_1_gap_reasons,
+            "round2Reason": round_2_reason,
+            "challengingEvidenceCount": role_counts.get("challenging", 0),
+            "freshnessCounts": freshness_counts,
         },
         "dataGaps": data_gaps[:10],
         "roleCounts": role_counts,

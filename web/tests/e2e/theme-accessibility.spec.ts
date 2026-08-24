@@ -67,7 +67,6 @@ test.describe("public workspace quality gate", () => {
         await openRoute(page, route, theme);
         const results = await new AxeBuilder({ page })
           .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-          .exclude(".tradingview-widget-container")
           .analyze();
         const blocking = results.violations.filter((violation) =>
           violation.impact === "serious" || violation.impact === "critical"

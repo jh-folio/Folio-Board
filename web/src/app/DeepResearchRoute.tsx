@@ -45,6 +45,7 @@ import {
 } from "./deepResearchPayload";
 import { SmartCollectionsPanel, SmartCollectionWorkspace } from "./SmartCollectionWorkspace";
 import { InvestmentContextCard } from "./InvestmentContextCard";
+import { clearDeepResearchJobId, persistDeepResearchJobId, readDeepResearchJobId, recoverDeepResearchJob } from "./deepResearchJobResume";
 
 /** 계획을 누가 쓰는가. 둘 중 하나이므로 세그먼트로 고른다. */
 const PLANNER_ENGINES: ReadonlyArray<{ value: PlannerEngine; label: string; hint: string }> = [
@@ -101,14 +102,25 @@ function DeepResearchProvenance({ report }: { readonly report: TopicReport }) {
       <div className="topicrpt-provenance-heading">
         <p className="section-kicker">사용한 자료와 생성 과정</p>
         <h2 id="dr-provenance-heading">리서치 근거 추적</h2>
-        <p>승인한 계획, 외부 근거, 부족한 자료, 내 생각을 서로 구분해 보여줍니다.</p>
+        <p>본문에서 실제 사용한 근거와 남은 자료 공백만 간단히 요약합니다.</p>
       </div>
+      {report.researchTraceSummary ? (
+        <dl className="topicrpt-trace-summary" data-qa="dr-trace-summary">
+          <div><dt>사용 근거</dt><dd>{report.researchTraceSummary.usedSourceCount}건</dd></div>
+          <div><dt>최신 근거</dt><dd>{report.researchTraceSummary.latestSourceDate || "날짜 미상"}</dd></div>
+          <div><dt>반대·도전 근거</dt><dd>{report.researchTraceSummary.challengingSourceCount}건</dd></div>
+          <div><dt>남은 자료 공백</dt><dd>{report.researchTraceSummary.unresolvedDataGapCount}건</dd></div>
+          {report.researchTraceSummary.cautionReasons.length > 0 && <div className="topicrpt-trace-caution"><dt>주의</dt><dd>{report.researchTraceSummary.cautionReasons.join(" · ")}</dd></div>}
+        </dl>
+      ) : <EmptyProvenance>요약 추적 정보가 없는 이전 보고서입니다.</EmptyProvenance>}
       {report.contractWarnings.length > 0 && (
         <div className="topicrpt-contract-warning" role="status">
           일부 구조화 필드가 올바르지 않아 안전한 빈 상태로 표시했습니다.
         </div>
       )}
-      <div className="topicrpt-provenance-grid">
+      <details className="topicrpt-trace-details">
+        <summary>전체 근거 추적 보기</summary>
+        <div className="topicrpt-provenance-grid">
         <section className="topicrpt-provenance-panel" data-qa="dr-approved-plan" aria-labelledby="dr-approved-plan-heading">
           <h3 id="dr-approved-plan-heading">승인된 계획</h3>
           {plan ? (
@@ -174,13 +186,9 @@ function DeepResearchProvenance({ report }: { readonly report: TopicReport }) {
         </section>
 
         <section className="topicrpt-provenance-panel" data-qa="dr-quality" aria-labelledby="dr-quality-heading">
-          <h3 id="dr-quality-heading">품질과 경고</h3>
+          <h3 id="dr-quality-heading">검토 시 주의할 점</h3>
           {report.quality ? (
             <>
-              <dl className="topicrpt-provenance-facts">
-                <div><dt>평가</dt><dd>{report.quality.score ?? "—"}점 · {report.quality.grade || "등급 미상"}</dd></div>
-                <div><dt>상태</dt><dd>{report.quality.status || "미기록"}</dd></div>
-              </dl>
               <h4>경고</h4>{renderList(report.quality.warnings, "경고 없음")}
               <h4>보완 제안</h4>{renderList(report.quality.suggestedFixes, "제안 없음")}
             </>
@@ -217,7 +225,8 @@ function DeepResearchProvenance({ report }: { readonly report: TopicReport }) {
           <h3 id="dr-overlay-heading">개인 해석</h3>
           <PersonalOverlayView overlay={overlay} staleQa="dr-overlay-stale" />
         </aside>
-      </div>
+        </div>
+      </details>
     </section>
   );
 }
@@ -311,9 +320,7 @@ class JobTerminalError extends Error {
 
 async function pollJob(job: AgentJob, signal: AbortSignal): Promise<AgentJob> {
   let current = job;
-  const deadline = Date.now() + 120_000;
   while (isActiveJobStatus(current.status)) {
-    if (Date.now() >= deadline) throw new Error("작업이 아직 실행 중입니다. 잠시 후 작업 목록에서 다시 확인하세요.");
     await sleep(1000, signal);
     current = await getJson<AgentJob>(`/api/jobs/${encodeURIComponent(current.id)}`, { signal });
   }
@@ -666,6 +673,55 @@ export function DeepResearchRoute() {
   }, [loadReports, contentRevision]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    let current = true;
+    void (async () => {
+      const recovery = await recoverDeepResearchJob((id) => getJson<AgentJob>(`/api/jobs/${encodeURIComponent(id)}`, { signal: controller.signal }));
+      if (!current || recovery.kind === "none") return;
+      if (recovery.kind === "unavailable") {
+        setStatus("이전에 시작한 딥 리서치 작업이 있습니다. 서버 연결이 돌아오면 다시 확인합니다.");
+        return;
+      }
+      if (recovery.kind === "invalid") {
+        setError("저장된 딥 리서치 작업 정보를 확인할 수 없어 안전하게 제거했습니다.");
+        return;
+      }
+      setPhase("generation");
+      setStatus(recovery.kind === "active" ? "이전에 시작한 딥 리서치 작업에 다시 연결했습니다." : "완료된 딥 리서치 결과를 불러오는 중입니다.");
+      try {
+        const done = recovery.kind === "active" ? await pollJob(recovery.job as AgentJob, controller.signal) : recovery.job as AgentJob;
+        if (!current) return;
+        // 복구 폴링 중에 사용자가 새 딥 리서치를 시작했으면(새 id가 저장돼 있으면)
+        // 여기서 지우거나 화면을 갈아치우지 않는다 — 새 실행의 재개 열쇠를 지우고
+        // 그 화면 위에 옛 결과를 덮어쓰는 경합이 있었다.
+        {
+          const persisted = readDeepResearchJobId();
+          if (persisted !== null && persisted !== recovery.job.id) return;
+        }
+        if (done.status !== "done") throw new JobTerminalError(done);
+        clearDeepResearchJobId();
+        const reportId = done.result?.reportId || done.result?.artifactId || "";
+        if (!reportId) throw new Error("완료된 보고서 ID를 확인하지 못했습니다.");
+        const report = parseTopicReportPayload(await getJson<unknown>(`/api/topic-reports/${encodeURIComponent(reportId)}?includePersonal=true`, { signal: controller.signal }));
+        if (!current) return;
+        setReports((rows) => [report, ...rows.filter((row) => row.id !== report.id)]);
+        setSelected(report);
+        setPhase("report");
+        setStatus("딥 리서치를 생성하고 자동 저장했습니다.");
+        setTopicHash(report.id);
+      } catch (err) {
+        if (!current || (err instanceof DOMException && err.name === "AbortError")) return;
+        if (err instanceof JobTerminalError) clearDeepResearchJobId();
+        setError(errorCopy("generation", err));
+        setErrorKind("generation");
+        setPhase("recoverable-error");
+        setStatus("");
+      }
+    })();
+    return () => { current = false; controller.abort(); };
+  }, []);
+
+  useEffect(() => {
     const ownedCollectionIdentity = {
       collectionId: selectedCollectionRef?.id || null,
       collectionRevision: selectedCollectionRef?.revision || null,
@@ -845,10 +901,12 @@ export function DeepResearchRoute() {
       const response = await postJson<JobEnvelope>("/api/topic-reports", body, { signal: request.signal });
       const job = isJobEnvelope(response) ? response.job : isAgentJob(response) ? response : null;
       if (!job) throw new Error("생성 작업 ID를 확인하지 못했습니다.");
+      persistDeepResearchJobId(job.id);
       const done = await pollJob(job, request.signal);
       if (!isCurrentRequest(request.id)) return;
       const reportId = done.result?.reportId || done.result?.artifactId || "";
       if (!reportId) throw new Error("생성된 보고서 ID를 확인하지 못했습니다.");
+      clearDeepResearchJobId();
       const report = parseTopicReportPayload(await getJson<unknown>(`/api/topic-reports/${encodeURIComponent(reportId)}?includePersonal=true`, { signal: request.signal }));
       if (!isCurrentRequest(request.id)) return;
       setReports((current) => [report, ...current.filter((item) => item.id !== report.id)]);
@@ -860,6 +918,7 @@ export function DeepResearchRoute() {
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (!isCurrentRequest(request.id)) return;
+      if (err instanceof JobTerminalError) clearDeepResearchJobId();
       setError(errorCopy("generation", err));
       setErrorKind(err instanceof ApiRequestError && (err.code === "evidence_confirmation_required" || err.code === "resolution_changed") ? "degraded" : "generation");
       setErrorReason(errorCode(err));

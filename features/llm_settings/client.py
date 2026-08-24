@@ -439,7 +439,7 @@ def json_repair_prompt():
 # Provider request functions
 # ---------------------------------------------------------------------------
 
-def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False):
+def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
     body = {
         "model": cfg["model"],
         "instructions": prompt,
@@ -461,7 +461,7 @@ def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=Non
             "Authorization": f"Bearer {cfg['apiKey']}",
             "Content-Type": "application/json",
         },
-        int(os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
+        int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
     )
     result = (extract_response_text(payload), payload.get("id", ""))
     if include_usage:
@@ -469,7 +469,7 @@ def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=Non
     return result
 
 
-def request_gemini(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False):
+def request_gemini(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
     model = urllib.parse.quote(cfg["model"], safe="")
     body = {
         "system_instruction": {"parts": [{"text": prompt}]},
@@ -491,7 +491,7 @@ def request_gemini(cfg, prompt, context, web_search=False, max_output_tokens=Non
             "x-goog-api-key": cfg["apiKey"],
             "Content-Type": "application/json",
         },
-        int(os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
+        int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
     )
     result = (extract_gemini_text(payload), "")
     if include_usage:
@@ -499,7 +499,7 @@ def request_gemini(cfg, prompt, context, web_search=False, max_output_tokens=Non
     return result
 
 
-def request_claude(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False):
+def request_claude(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
     body = {
         "model": cfg["model"],
         "max_tokens": int(max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000"))),
@@ -520,7 +520,7 @@ def request_claude(cfg, prompt, context, web_search=False, max_output_tokens=Non
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         },
-        int(os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
+        int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
     )
     result = (extract_anthropic_text(payload), payload.get("id", ""))
     if include_usage:
@@ -528,9 +528,9 @@ def request_claude(cfg, prompt, context, web_search=False, max_output_tokens=Non
     return result
 
 
-def request_llm_text(cfg, prompt, context, *, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False):
+def request_llm_text(cfg, prompt, context, *, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
     if cfg["provider"] == "gemini":
-        return request_gemini(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage)
+        return request_gemini(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage, timeout_seconds=timeout_seconds)
     if cfg["provider"] == "claude":
-        return request_claude(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage)
-    return request_openai(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage)
+        return request_claude(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage, timeout_seconds=timeout_seconds)
+    return request_openai(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage, timeout_seconds=timeout_seconds)

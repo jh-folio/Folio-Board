@@ -22,11 +22,25 @@ type StorySharePayload = {
   market?: string;
   collectedCount?: number;
   previousDate?: string;
+  previousDates?: string[];
+  previousSessionCount?: number;
+  previousCollectedCount?: number;
   items?: StoryShareRow[];
   warnings?: string[];
   smallSample?: boolean;
   minConfidentSample?: number;
+  driverBasis?: { kind?: string; count?: number };
 };
+
+/** 비교 기준을 정확히 말한다. "직전 거래일 대비"는 창이 하루일 때만 맞는 말이다. */
+export function comparisonLabel(payload: StorySharePayload): string {
+  const sessions = payload.previousSessionCount || 0;
+  if (!sessions) return "비교 기준 없음";
+  if (sessions === 1) return "직전 거래일 대비";
+  const collected = payload.previousCollectedCount;
+  const volume = typeof collected === "number" ? ` ${collected}건` : "";
+  return `직전 ${sessions}거래일 합산${volume} 대비`;
+}
 
 // 순위별 고정 팔레트 + "그 외"는 회색. 색이 의미(순위)를 담는다.
 const SEGMENT_TONES = ["blue", "teal", "gold", "purple"] as const;
@@ -68,7 +82,9 @@ export function StoryShare({ market }: { market: StoryMarket }) {
     <div className="story-share">
       <div className="story-share__head">
         <span className="story-share__title">오늘의 이야기 비중</span>
-        <span className="story-share__meta">수집 기사 {payload.collectedCount || 0}건 · 직전 거래일 대비</span>
+        <span className="story-share__meta">
+          수집 기사 {payload.collectedCount || 0}건 · {comparisonLabel(payload)}
+        </span>
       </div>
       {payload.smallSample && (
         // 표본이 적으면 기사 한두 건이 비중을 수십 %p 움직인다. 그 흔들림을
@@ -96,7 +112,12 @@ export function StoryShare({ market }: { market: StoryMarket }) {
           );
         })}
       </ul>
-      <p className="story-share__note">수집된 뉴스 기준 규칙 계산 · 브리핑과 독립 · 비중 이동은 보도량 변화일 뿐 내용 변화가 아닙니다</p>
+      {/* 동인은 고정 어휘표다. 표에 없는 주제는 아무리 크게 보도돼도 이 막대에 나타나지
+          않으므로, 무엇을 보고 있는지 밝힌다. */}
+      <p className="story-share__note">
+        수집된 뉴스 기준 규칙 계산 · 브리핑과 독립 · 비중 이동은 보도량 변화일 뿐 내용 변화가 아닙니다
+        {payload.driverBasis?.count ? ` · 고정된 ${payload.driverBasis.count}개 동인 기준` : ""}
+      </p>
     </div>
   );
 }

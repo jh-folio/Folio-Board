@@ -185,7 +185,7 @@ def test_archive_route_translates_query_and_maps_value_error():
         )
     assert result["total"] == 0
     query.assert_called_once_with(
-        q="chips", market_scope="us", briefing_type="concise",
+        q="chips", market_scope="us", briefing_type="concise", kind="all",
         date_from="2026-06-01", date_to="2026-06-30", offset=2, limit=5,
     )
 

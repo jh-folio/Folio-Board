@@ -109,3 +109,55 @@ def test_conflicting_uncertain_is_left_alone():
     evaluation = evaluate_semantic_changes(summary, llm_call=_llm("new_information"))
     result = apply_semantic_verdicts(summary, evaluation)
     assert result["status"] == "conflicting_uncertain"
+
+
+def test_the_summary_records_why_it_could_not_judge():
+    """판정하지 못한 **이유**를 남긴다.
+
+    이유가 없으면 화면은 엔진이 없어서인지 호출이 실패해서인지 구분할 수 없어
+    어댑터를 스스로 뒤지게 된다. 그 추측이 LLM API 키만 쓰는 설치에서
+    "AI Agent를 연결하세요"를 되살렸다 — 판정 엔진은 이미 연결돼 있다.
+    """
+    from features.common.change_intelligence.semantic import apply_semantic_verdicts
+
+    summary = {
+        "status": "developing_signal",
+        "generatedAt": "2026-08-21T09:00:00+09:00",
+        "changedItems": [
+            {"id": "u1", "kind": "market_driver", "contextDocs": ["제목"]},
+        ],
+    }
+
+    unavailable = apply_semantic_verdicts(
+        summary, {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"},
+    )
+    assert unavailable["semanticEvaluation"]["reason"] == "llm_unavailable"
+    assert unavailable["changedItems"][0]["semanticVerdict"] == "not_evaluated"
+
+    failed = apply_semantic_verdicts(
+        summary, {"status": "not_evaluated", "verdicts": {}, "reason": "llm_failed"},
+    )
+    assert failed["semanticEvaluation"]["reason"] == "llm_failed"
+
+
+def test_items_without_titles_are_never_marked_unjudged():
+    """대표 기사 제목이 없는 단위에는 아무 표시도 남기지 않는다.
+
+    서버가 판정하지 않을 단위다. 표시가 남으면 화면이 그것을 "다음 생성에서 판정할
+    기록"으로 세는데, 그 약속은 영원히 지켜지지 않는다.
+    """
+    from features.common.change_intelligence.semantic import apply_semantic_verdicts
+
+    result = apply_semantic_verdicts(
+        {
+            "status": "developing_signal",
+            "changedItems": [
+                {"id": "u1", "kind": "market_driver"},
+                {"id": "u2", "kind": "market_driver", "contextDocs": ["제목"]},
+            ],
+        },
+        {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"},
+    )
+
+    assert "semanticVerdict" not in result["changedItems"][0]
+    assert result["changedItems"][1]["semanticVerdict"] == "not_evaluated"

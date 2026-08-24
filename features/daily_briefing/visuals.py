@@ -36,6 +36,7 @@ from features.common.company_resolution import resolve_company_query
 from features.common.utils import read_json, write_json
 from features.daily_briefing.schema import (
     SINGLE_MARKET_SCOPES,
+    normalize_briefing_kind,
     briefing_file_name,
     briefing_scope_view,
     normalize_market_scope,
@@ -523,6 +524,7 @@ def collect_briefing_visuals(
     leader_subjects=None,
     include_market_visuals=True,
     now=None,
+    markets=None,
 ):
     """Collect renderer-neutral snapshots and a heatmap sidecar payload."""
     if price_history_fetcher is not None:
@@ -549,12 +551,17 @@ def collect_briefing_visuals(
     # 스냅샷 범위는 브리핑 본문의 scope enum이 아니라 시장 계약을 따른다. 유럽·일본
     # 차트는 브리핑 생성이 그 시장을 지원하기 전에도 만들 수 있어야 하고, 나중에
     # 브리핑 scope가 넓어져도 여기는 그대로 둘 수 있다.
-    # `both`는 저장된 US/KR 묶음, `all`은 네 시장이다.
-    scope = normalize_saved_market_scope(market_scope, default=SavedMarketScope.BOTH)
-    scopes = [
-        key for key in (code.value.lower() for code in market_keys_for_scope(scope, saved=True))
-        if key in MARKET_META
-    ]
+    # `both`는 저장된 US/KR 묶음, `all`은 네 시장이다. 단 **라벨은 임의 조합을 담지
+    # 못한다** — 한국+일본 예약은 `multi`이고 정규화가 몰라 `BOTH`로 떨어져 미국·한국
+    # 시각자료를 만든다. 생성 경로는 `markets` 목록을 명시적으로 넘긴다(주간과 동일).
+    if markets:
+        scopes = [key for key in (str(market).lower() for market in markets) if key in MARKET_META]
+    else:
+        scope = normalize_saved_market_scope(market_scope, default=SavedMarketScope.BOTH)
+        scopes = [
+            key for key in (code.value.lower() for code in market_keys_for_scope(scope, saved=True))
+            if key in MARKET_META
+        ]
     snapshots = []
     recommendations = []
     sidecar_snapshots = {}
@@ -789,12 +796,19 @@ def _read_sidecar_file(path):
 
 
 def _write_gzip_json(path, payload):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with gzip.open(temporary, "wt", encoding="utf-8", compresslevel=6) as stream:
-        json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
-    temporary.replace(path)
+    """사이드카 gzip 쓰기. `atomic_replace`를 거친다 — Windows에서 백신·색인기가 파일을
+    수십 ms 잡으면 raw `os.replace`는 WinError 5/32로 실패하고, 사이드카가 조용히
+    사라진다(§파일 저장 절대 규칙). mtime=0 고정은 같은 내용이 같은 바이트가 되게 한다.
+    """
+    import gzip
+    import io
+
+    from features.common.atomic_replace import write_bytes_atomic
+
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    write_bytes_atomic(Path(path), buffer.getvalue())
 
 
 def write_visual_sidecar(path, payload, market_scope):
@@ -808,8 +822,13 @@ def write_visual_sidecar(path, payload, market_scope):
     return merged
 
 
-def load_visual_sidecar(date, base_dir=None, market_scope=None):
-    """Load one immutable dated sidecar without allowing path traversal."""
+def load_visual_sidecar(date, base_dir=None, market_scope=None, kind=None):
+    """Load one immutable dated sidecar without allowing path traversal.
+
+    **종류를 함께 받는다.** 주간 사이드카는 같은 날 같은 시장의 일간 사이드카와
+    발행일·시장이 겹치므로, 종류가 없으면 주간 히트맵을 물었을 때 그날 일간 히트맵이
+    돌아온다 — 한 주 등락이라고 적힌 카드에 하루 등락이 그려진다.
+    """
     date_text = str(date or "").strip()
     if not DATE_PATTERN.fullmatch(date_text):
         return None
@@ -819,13 +838,17 @@ def load_visual_sidecar(date, base_dir=None, market_scope=None):
         return None
     root = Path(base_dir) if base_dir is not None else data_dir() / "briefings"
     scope = str(market_scope or "").strip().lower()
+    report_kind = normalize_briefing_kind(kind)
     file_names = []
     if scope in SINGLE_MARKET_SCOPES:
         file_names.extend((
-            visual_sidecar_gzip_file_name(date_text, scope),
-            visual_sidecar_file_name(date_text, scope),
+            visual_sidecar_gzip_file_name(date_text, scope, report_kind),
+            visual_sidecar_file_name(date_text, scope, report_kind),
         ))
-    file_names.extend((visual_sidecar_gzip_file_name(date_text), visual_sidecar_file_name(date_text)))
+    file_names.extend((
+        visual_sidecar_gzip_file_name(date_text, None, report_kind),
+        visual_sidecar_file_name(date_text, None, report_kind),
+    ))
     for file_name in file_names:
         payload = _read_sidecar_file(root / file_name)
         if isinstance(payload, dict) and str(payload.get("date") or "") == date_text:

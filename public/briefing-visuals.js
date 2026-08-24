@@ -226,20 +226,33 @@
 
   function sectionRole(text) {
     const value = String(text || "").replace(/\s+/g, " ").trim();
+    // 주간 규칙을 먼저 본다. 주간 §1은 `지난주 미국장 흐름`이라 일간의 `시장 흐름`에
+    // 걸리지 않고, §2는 `지난주 …을 움직인 핵심 변수`다 — `지난주`가 없으면 일간
+    // §2(`미국장을 움직인 핵심 변수`)까지 슬롯을 만들어 빈 자리가 생긴다.
+    if (/지난주 .*흐름/.test(value)) return "weekly_flow";
+    if (/지난주 .*핵심 변수/.test(value)) return "weekly_story_share";
     if (/시장 흐름/.test(value)) return "market_flow";
     const leader = value.match(/주도한 기업\s*([①②])/);
     if (leader) return { role: "leading_company", ordinal: leader[1] === "①" ? 1 : 2 };
     return null;
   }
 
+  // 시장 판정은 **네 시장 전부**를 안다. 미국·한국만 알던 시절 유럽장·일본장 브리핑은
+  // 슬롯이 하나도 만들어지지 않아, 저장된 스냅샷 네 장이 화면에 아무것도 그리지 못했다
+  // (실측 2026-08-12~14 유럽·일본 보고서 6건 전부).
+  const MARKET_HEADING_PATTERNS = [
+    ["US", /미국장|us market/],
+    ["KR", /한국장|korea market/],
+    ["EUROPE", /유럽장|europe market/],
+    ["JP", /일본장|japan market/],
+  ];
+  const SCOPE_MARKETS = { us: "US", kr: "KR", europe: "EUROPE", jp: "JP" };
+
   function sectionMarket(text, articleScope = "both") {
     const value = String(text || "").toLowerCase();
-    if (/미국장|us market/.test(value)) return "US";
-    if (/한국장|korea market/.test(value)) return "KR";
-    const scope = String(articleScope || "").toLowerCase();
-    if (scope === "us") return "US";
-    if (scope === "kr") return "KR";
-    return "";
+    const matched = MARKET_HEADING_PATTERNS.find(([, pattern]) => pattern.test(value));
+    if (matched) return matched[0];
+    return SCOPE_MARKETS[String(articleScope || "").toLowerCase()] || "";
   }
 
   function preferredIndexTicker(sectionText, series, market) {
@@ -618,9 +631,11 @@
     }).format(number);
   }
 
+  const SINGLE_VISUAL_MARKETS = new Set(["US", "KR", "EUROPE", "JP"]);
+
   function normalizeVisualMarket(value) {
     const market = String(value || "").toUpperCase();
-    return market === "US" || market === "KR" ? market : "BOTH";
+    return SINGLE_VISUAL_MARKETS.has(market) ? market : "BOTH";
   }
 
   function formatPriceValue(value, snapshot, subject) {
@@ -822,6 +837,208 @@
     return card;
   }
 
+  // ── 주간 그림 ─────────────────────────────────────────────────────────────
+  //
+  // 일간 차트(`renderTrend`)는 **하루 세션**의 계약이다 — 지수 하나를 골라 절대가로
+  // 그리고 1D/1M/3M/YTD/1Y 기간을 고른다. 주간은 묻는 것이 다르다: "이번 주 시장이
+  // 어디서 어디로 갔나". 그래서 대표 지수를 **함께** 겹치고, 값은 주초 대비 %이며,
+  // 기간 버튼이 없다(기간이 곧 그 주다).
+
+  // 색은 이 파일이 이미 쓰는 `PALETTE`를 그대로 쓴다. 차트는 canvas에 그려 CSS 변수를
+  // 못 읽으므로 hex가 필요한데, 목록을 따로 두면 두 그림이 서서히 다른 색이 된다.
+
+  /** 캡션. 세 그림이 같은 문장으로 같은 구간을 말한다 — 그림마다 기간이 다르면
+   *  한 보고서 안에서 세 그림이 세 주를 말하게 된다. */
+  function weeklyCaption(snapshot, body) {
+    const period = snapshot.window || {};
+    const range = snapshot.weekLabel || `${period.weekStart || ""}~${period.weekEnd || ""}`;
+    return `${range} · ${body}`;
+  }
+
+  function appendCaption(card, text) {
+    const caption = document.createElement("p");
+    caption.className = "briefing-visual-caption";
+    caption.textContent = text;
+    card.append(caption);
+    return caption;
+  }
+
+  function signedPercent(value) {
+    // `finite()`를 그대로 쓰지 않는다 — `Number(null)`이 0이라 결측이 "0.00%"가 되어
+    // "안 움직였다"는 사실로 둔갑한다. 모르는 것은 모른다고 적는다.
+    if (value === null || value === undefined || value === "") return "—";
+    const number = finite(value);
+    if (number === null) return "—";
+    return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
+  }
+
+  function renderWeeklyFlow(snapshot, title) {
+    const series = (snapshot.series || []).filter((row) => (row.points || []).length >= 2);
+    if (!series.length) {
+      return unavailableCard(snapshot, title, "그 주 지수 종가가 충분히 저장되지 않았습니다.");
+    }
+    const LC = root.LightweightCharts;
+    if (!LC?.createChart) return unavailableCard(snapshot, title, "가격 차트 라이브러리를 불러오지 못했습니다.");
+    const { id, card, stage } = cardShell(snapshot, title, "trend");
+    card.classList.add("briefing-weekly-flow-card");
+    stage.classList.add("briefing-price-stage");
+
+    const legend = document.createElement("div");
+    legend.className = "briefing-weekly-legend";
+    legend.innerHTML = series.map((row, index) => `
+      <span class="briefing-weekly-legend__item">
+        <i style="background:${PALETTE[index % PALETTE.length]}" aria-hidden="true"></i>
+        <b>${escapeHtml(row.label || row.ticker)}</b>
+        <em data-direction="${signedPercent(row.changePct) === "—" ? "flat" : (finite(row.changePct) || 0) > 0 ? "up" : finite(row.changePct) < 0 ? "down" : "flat"}">${escapeHtml(signedPercent(row.changePct))}</em>
+      </span>`).join("");
+    stage.before(legend);
+
+    const theme = chartTheme();
+    const chart = LC.createChart(stage, {
+      height: 300,
+      width: stage.clientWidth || 0,
+      layout: { background: { type: "solid", color: theme.background }, textColor: theme.text, attributionLogo: true },
+      grid: { vertLines: { visible: false }, horzLines: { color: theme.grid, style: LC.LineStyle?.Dotted ?? 1 } },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.14, bottom: 0.14 } },
+      timeScale: { borderVisible: false, rightOffset: 1, barSpacing: 26, minBarSpacing: 8, timeVisible: false },
+      localization: {
+        locale: "ko-KR",
+        dateFormat: "yyyy-MM-dd",
+        // 축과 tooltip이 모두 %다. 절대 지수 레벨은 시리즈마다 자릿수가 달라 한
+        // 좌표계에 겹칠 수 없다 — 그래서 이 그림의 값은 처음부터 %다.
+        priceFormatter: (value) => `${value > 0 ? "+" : ""}${Number(value).toFixed(1)}%`,
+      },
+      crosshair: { mode: LC.CrosshairMode?.Normal ?? 0 },
+      handleScroll: false,
+      handleScale: false,
+    });
+    const apis = series.map((row, index) => {
+      const api = chart.addSeries(LC.LineSeries, {
+        color: PALETTE[index % PALETTE.length],
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: true,
+      });
+      api.setData((row.points || []).map((point) => ({ time: point.time, value: finite(point.changePct) ?? 0 })));
+      return { api, row };
+    });
+
+    const tooltip = document.createElement("div");
+    tooltip.className = "briefing-price-tooltip";
+    tooltip.hidden = true;
+    stage.appendChild(tooltip);
+    chart.subscribeCrosshairMove((param) => {
+      const rect = stage.getBoundingClientRect();
+      const point = param?.point;
+      if (!point || point.x < 0 || point.y < 0 || point.x > rect.width || point.y > rect.height) {
+        tooltip.hidden = true;
+        return;
+      }
+      const rows = apis.map(({ api, row }) => {
+        const value = param.seriesData?.get(api);
+        if (!value) return "";
+        // %와 함께 그날 종가도 적는다. 그림은 %지만 독자가 확인하려는 것은 지수 레벨이다.
+        const close = (row.points || []).find((item) => item.time === String(param.time))?.close;
+        return `<div><span>${escapeHtml(row.label || row.ticker)}</span><b>${escapeHtml(signedPercent(value.value))}</b>${
+          close === undefined ? "" : `<small>${escapeHtml(formatNumber(close))}</small>`}</div>`;
+      }).filter(Boolean).join("");
+      if (!rows) {
+        tooltip.hidden = true;
+        return;
+      }
+      tooltip.innerHTML = `<strong>${escapeHtml(String(param.time || ""))}</strong>${rows}`;
+      const width = tooltip.offsetWidth || 180;
+      const height = tooltip.offsetHeight || 90;
+      tooltip.style.transform = `translate(${Math.min(Math.max(8, point.x + 14), Math.max(8, rect.width - width - 8))}px, ${
+        Math.min(Math.max(8, point.y - height - 12), Math.max(8, rect.height - height - 8))}px)`;
+      tooltip.hidden = false;
+    });
+    const stopAutoFit = fitChartWhenSized(chart, stage);
+    chartRecords.set(id, {
+      kind: "lightweight",
+      chart,
+      title,
+      element: stage,
+      snapshot,
+      cleanup: () => stopAutoFit?.(),
+    });
+    appendCaption(card, weeklyCaption(snapshot, "대표 지수의 주초 대비 등락률. 저장된 일봉 종가 기준이며 실시간 체결가가 아닙니다."));
+    return card;
+  }
+
+  function renderStoryShareBars(snapshot, title) {
+    const days = (snapshot.days || []).filter((row) => row.date);
+    if (!days.length) {
+      return unavailableCard(snapshot, title, "그 주 수집된 뉴스가 없어 이야기 비중을 그리지 못했습니다.");
+    }
+    const { card, stage } = cardShell(snapshot, title, "story-share");
+    card.classList.add("briefing-story-share-card");
+    const drivers = [...(snapshot.drivers || [])];
+    const otherLabel = snapshot.otherLabel || "그 외 이야기";
+    const rows = [...drivers, otherLabel];
+    const colorOf = (index) => index < drivers.length
+      ? PALETTE[index % PALETTE.length]
+      : "var(--folio-border-strong, #9aa4b2)";
+    const shareOf = (day, label) => label === otherLabel
+      ? finite(day.otherShare) || 0
+      : finite((day.shares || {})[label]) || 0;
+
+    // Plotly를 쓰지 않는다. 다섯 칸짜리 쌓은 막대라 라이브러리가 필요 없고, 축·글자가
+    // 앱 토큰을 그대로 쓰는 편이 히트맵보다 정직하다.
+    stage.classList.add("briefing-story-share-stage");
+    stage.innerHTML = `
+      <div class="briefing-story-share-bars">${days.map((day) => `
+        <div class="briefing-story-share-col">
+          <div class="briefing-story-share-stack" role="presentation">${rows.map((label, index) => {
+            const share = shareOf(day, label);
+            return share <= 0 ? "" : `<span style="height:${(share * 100).toFixed(2)}%;background:${colorOf(index)}" title="${
+              escapeHtml(label)} ${(share * 100).toFixed(1)}%"></span>`;
+          }).join("")}</div>
+          <div class="briefing-story-share-axis">
+            <b>${escapeHtml(String(day.date).slice(5).replace("-", "."))}</b>
+            <small>${escapeHtml(String(day.docCount))}건</small>
+          </div>
+        </div>`).join("")}
+      </div>
+      <div class="briefing-story-share-legend">${rows.map((label, index) => `
+        <span><i style="background:${colorOf(index)}" aria-hidden="true"></i>${escapeHtml(label)}</span>`).join("")}
+      </div>`;
+    // 색만으로 알리지 않는다. 그림을 못 읽는 환경에서도 같은 값을 말한다.
+    stage.setAttribute("role", "img");
+    stage.setAttribute("aria-label", `${title}: ${days.map((day) => `${day.date} ${rows.map((label) =>
+      `${label} ${(shareOf(day, label) * 100).toFixed(0)}%`).join(", ")}`).join(" / ")}`);
+
+    let note = "거래일별 수집 뉴스의 동인 비중입니다. 보도량의 이동이지 내용의 변화가 아닙니다.";
+    if (snapshot.smallSample) {
+      // 표본이 적으면 기사 한두 건이 비중을 수십 %p 움직인다. 그 사실을 숨기면
+      // 수집량 변동이 이야기의 변화처럼 읽힌다.
+      note += ` 표본이 적은 날이 있어(하루 ${snapshot.minConfidentSample || 12}건 미만) 비중이 흔들릴 수 있습니다.`;
+    }
+    appendCaption(card, weeklyCaption(snapshot, note));
+    return card;
+  }
+
+  /** 추천의 `variant`가 어떤 그림인지 정한다. 주간 두 종은 일간 렌더러로 그릴 수
+   *  없다 — 계약이 다르다(기간 버튼 없음, 값이 %, 막대). */
+  function renderRecommendation(snapshot, recommendation, comparison) {
+    if (recommendation.variant === "weekly_flow_chart") return renderWeeklyFlow(snapshot, recommendation.title);
+    if (recommendation.variant === "story_share_bars") return renderStoryShareBars(snapshot, recommendation.title);
+    if (recommendation.variant === "treemap_heatmap") {
+      const card = renderHeatmap(snapshot, recommendation.title, comparison);
+      // 주간 히트맵은 일간과 **같은 그림**이라 캡션이 없으면 하루 등락으로 읽힌다.
+      // `renderHeatmap` 자체는 일간 계약이므로 건드리지 않고 여기서 한 줄을 붙인다.
+      if (snapshot.range === "week") {
+        const basis = snapshot.changeBasis || {};
+        appendCaption(card, weeklyCaption(snapshot,
+          `구성종목의 주간 등락(${basis.startDate || "주초"} 종가 대비 ${basis.endDate || "주말"} 종가). `
+          + "상자 크기는 시가총액이고, 주초 종가가 없는 종목은 그리지 않습니다."));
+      }
+      return card;
+    }
+    return renderTrend(snapshot, recommendation.title, recommendation.variant, comparison);
+  }
+
   function renderHeatmap(snapshot, title, comparison) {
     // 구성 종목 유무만 먼저 본다. 노드는 폭을 잴 수 있는 렌더 시점에 만든다.
     if (!heatmapNodes(snapshot.rows || []).ids.length) {
@@ -1002,7 +1219,12 @@
     if (!needsHeatmap || !briefing.date) return {};
     try {
       const scope = String(briefing.marketScope || "").toLowerCase();
-      const query = scope === "us" || scope === "kr" ? `?market=${encodeURIComponent(scope)}` : "";
+      const params = new URLSearchParams();
+      if (SCOPE_MARKETS[scope]) params.set("market", scope);
+      // **종류가 빠지면 주간 카드에 그날 일간 히트맵이 그려진다.** 발행일과 시장이
+      // 같아 파일 이름이 종류로만 갈린다.
+      if (String(briefing.kind || "") === "weekly") params.set("kind", "weekly");
+      const query = params.toString() ? `?${params}` : "";
       const response = await fetch(`/api/briefings/${encodeURIComponent(briefing.date)}/visuals${query}`);
       if (!response.ok) return {};
       return (await response.json()).snapshots || {};
@@ -1180,13 +1402,14 @@
           series: [...stored.series].sort((a, b) => (a.ticker === preferred ? -1 : b.ticker === preferred ? 1 : 0)),
         };
       }
-      const card = recommendation.variant === "treemap_heatmap"
-        ? renderHeatmap(snapshot, recommendation.title, comparisons[snapshot.id])
-        : renderTrend(snapshot, recommendation.title, recommendation.variant, comparisons[snapshot.id]);
+      const card = renderRecommendation(snapshot, recommendation, comparisons[snapshot.id]);
       slot.append(card);
     }
 
-    for (const slot of slots.filter((candidate) => candidate.dataset.sectionRole === "market_flow" && candidate.children.length)) {
+    // 주간 지수 흐름도 Lightweight Charts로 그린다 — 같은 credit이 붙어야 한다.
+    for (const slot of slots.filter((candidate) =>
+      ["market_flow", "weekly_flow"].includes(candidate.dataset.sectionRole) && candidate.children.length
+    )) {
       const notice = document.createElement("p");
       notice.className = "briefing-visuals-attribution";
       notice.innerHTML = `가격 차트: <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™</a> · 데이터: 저장된 provider snapshot`;
@@ -1250,6 +1473,9 @@
     lightweightRows,
     sectionRole,
     sectionMarket,
+    renderRecommendation,
+    weeklyCaption,
+    signedPercent,
     preferredIndexTicker,
     buildSectionSlots,
     heatmapNodes,

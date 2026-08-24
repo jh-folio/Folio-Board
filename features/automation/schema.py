@@ -9,6 +9,10 @@ from features.common.research_library.rss.retention import (
 # 자동화 기본값은 네 시장(`all`)이다. 저장된 `both` 설정은 그대로 두 시장으로 남긴다.
 VALID_MARKET_SCOPES = {"us", "kr", "europe", "jp", "all", "both"}
 VALID_BRIEFING_TYPES = {"default", "market_focused", "concise"}
+# 브리핑 **종류**. `briefingType`(편집 강조점)과 직교한다 — 그쪽 세 값은 모두 "기존 섹션
+# 구성을 유지하라"고 지시하므로 골격이 다른 주간을 그 enum에 넣으면 계약이 자기 자신과
+# 모순된다. 이 항목이 없는 저장된 예약은 일간으로 읽는다(판올림 호환).
+VALID_BRIEFING_KINDS = {"daily", "weekly"}
 VALID_QUALITY_MODES = {"diagnose_only", "llm_section_improve", "strict"}
 
 # 시장 계약의 순서. 같은 집합이 늘 같은 순서로 저장돼야 화면과 파일 이름이 흔들리지 않는다.
@@ -107,6 +111,7 @@ def default_schedule(**overrides) -> dict:
         # 유럽·일본만 보는 사용자가 자동화를 켜면 안 보는 시장 둘이 나왔다.
         "markets": list(ALL_MARKETS),
         "briefingType": "default",
+        "kind": "daily",
         "qualityMode": "diagnose_only",
         "runPrerequisites": True,
         # 새 예약은 장이 서는 평일만. 주말 브리핑은 고르는 것이지 기본값이 아니다.
@@ -176,6 +181,7 @@ def normalize_schedule(raw: dict | None, *, index: int = 0) -> dict:
     row["time"] = _time(raw.get("time"), row["time"])
     row["markets"] = _markets(raw.get("markets", raw.get("marketScope")), row["markets"])
     row["briefingType"] = _choice(raw.get("briefingType"), VALID_BRIEFING_TYPES, "default")
+    row["kind"] = _choice(raw.get("kind"), VALID_BRIEFING_KINDS, "daily")
     row["qualityMode"] = _choice(raw.get("qualityMode"), VALID_QUALITY_MODES, "diagnose_only")
     row["runPrerequisites"] = bool(raw.get("runPrerequisites", True))
     row["days"] = _days(raw)

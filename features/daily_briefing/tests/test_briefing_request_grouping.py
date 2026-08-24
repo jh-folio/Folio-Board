@@ -159,3 +159,63 @@ def test_cli_mode_with_one_group_still_returns_a_bare_job(monkeypatch: pytest.Mo
 
     assert result["id"] == "job-one"
     assert "jobs" not in result
+
+
+def test_a_weekly_request_runs_once_for_every_market(briefing_app):
+    """주간에는 세션이 없다. 발행일이 하나이므로 시장마다 나눌 이유가 없다.
+
+    일간에서 발행일이 갈리는 이유는 시장마다 마감 시각이 달라 세션일→발행일 변환이
+    다르기 때문이다. 주간 창은 달력 7일이라 네 시장이 같은 발행일을 쓴다.
+    """
+    app, calls = briefing_app
+
+    result = app.api_create_briefing({"date": "2026-08-16", "markets": ["us", "kr"], "kind": "weekly"})
+
+    assert calls == [{"date": "2026-08-16", "markets": ["us", "kr"]}]
+    assert "reports" not in result
+
+
+def test_a_weekend_weekly_request_is_not_rejected_as_a_non_session(briefing_app):
+    """2026-08-16은 일요일이다. 일간 판정을 태우면 `not_a_session`으로 막힌다."""
+    app, calls = briefing_app
+
+    app.api_create_briefing({"date": "2026-08-16", "markets": ["us"], "kind": "weekly"})
+
+    assert calls == [{"date": "2026-08-16", "markets": ["us"]}]
+
+
+def test_a_future_week_is_refused(briefing_app):
+    from fastapi import HTTPException
+
+    app, calls = briefing_app
+
+    with pytest.raises(HTTPException) as excinfo:
+        app.api_create_briefing({"date": "2099-01-04", "markets": ["us"], "kind": "weekly"})
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail["markets"][0]["reason"] == "week_not_available"
+    assert calls == []
+
+
+def test_the_weekly_kind_reaches_the_builder(briefing_app, monkeypatch: pytest.MonkeyPatch):
+    app, _calls = briefing_app
+    seen = {}
+
+    def capture(date, **kwargs):
+        seen.update(kwargs)
+        return {"id": "r", "date": date}
+
+    monkeypatch.setattr(app, "build_briefing", capture)
+    app.api_create_briefing({"date": "2026-08-16", "markets": ["us"], "kind": "weekly"})
+
+    assert seen["kind"] == "weekly"
+
+
+def test_an_unknown_kind_falls_back_to_daily(briefing_app):
+    """모르는 값은 고장이지 선택이 아니다."""
+    app, calls = briefing_app
+
+    app.api_create_briefing({"date": "2026-08-07", "markets": ["us"], "kind": "monthly"})
+
+    # 일간 경로를 탔다 — 발행일 변환이 걸린다(08-07 세션 → 08-10 발행).
+    assert calls == [{"date": "2026-08-10", "markets": ["us"]}]

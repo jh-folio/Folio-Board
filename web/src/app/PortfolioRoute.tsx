@@ -23,7 +23,10 @@ type Tab = "holdings" | "targets" | "backtest";
 
 const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
   { id: "holdings", label: "보유·평가" },
-  { id: "targets", label: "목표 비중" },
+  // 목표 비중은 프리셋으로 할 수 있는 **여러 일 중 하나**다 — 백테스트와 비교
+  // 백테스트의 입력도 같은 프리셋이라, 탭 이름이 그 셋 중 하나만 가리키면
+  // 나머지 둘을 어디서 하는지 알 수 없다.
+  { id: "targets", label: "프리셋" },
   { id: "backtest", label: "백테스트" },
 ];
 
@@ -97,7 +100,7 @@ export function PortfolioRoute() {
 
       {tab === "targets" && (
         <section className="cockpit-panel" aria-labelledby="portfolio-targets-title">
-          <div className="cockpit-panel__head"><div><span>TARGETS</span><h2 id="portfolio-targets-title">목표 비중</h2></div></div>
+          <div className="cockpit-panel__head"><div><span>PRESETS</span><h2 id="portfolio-targets-title">프리셋</h2></div></div>
           <PortfolioTargets revision={revision} onChanged={() => { void load(); }} />
         </section>
       )}

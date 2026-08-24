@@ -10,7 +10,7 @@ Folio OS 0.2에서는 좌측 navigation, Home 빠른 실행, command palette에 
 
 - 프리셋 테마 선택 또는 자유 입력으로 보고서 생성
 - **Topic Planner**: 자유 주제를 해석해 보고서 유형·분석 축·검색어·후보 티커·데이터 갭을 만드는 리서치 계획(TopicPlan) 생성
-- **심층 모드**: 사용자가 켜면 Planner가 하위 질문을 만들고, 질문별 근거 커버리지와 라운드(최대 2회)를 evidence/sourceLedger에 기록
+- **심층 모드**: Planner가 하위 질문을 최대 12개(라운드당 6개) 만들고, 1차 근거가 충분하지 않을 때만 승인된 2차 질문을 실행한다. 질문별 커버리지와 실제 실행 라운드를 evidence/sourceLedger에 기록한다.
 - **Evidence Pack**: 분석 축별 자료 검색·근거 역할 분류(evidenceRole)·커버리지 계산, Source Ledger
 - **report_type별 템플릿**: 12종 유형 enum에 맞춰 분석 강조점을 달리하는 지침 결합
 - **Quality Gate / Quality Generation**: 생성 전 품질 목표와 자료 수집 루트, evidence coverage preflight를 컨텍스트에 주입하고, 생성된 보고서를 공통 `research_quality` 레이어로 평가하며, 선택한 `qualityMode`에 따라 weak section 탐지·LLM 섹션 개선·telemetry를 `qualityGeneration`에 저장
@@ -19,7 +19,7 @@ Folio OS 0.2에서는 좌측 navigation, Home 빠른 실행, command palette에 
 - FRED(미국 경제 지표) 및 BOK ECOS(한국은행 경제통계시스템) 거시 데이터 수집
 - 시장 내러티브 메모리에서 관련 항목 검색 및 참조
 - RSS/research-inbox 뉴스·자료 검색 및 참조
-- LLM 보고서 생성과 규칙 기반 fallback (LLM 없이도 전 과정 동작)
+- LLM 보고서 생성과 규칙 기반 fallback (일반 보고서). 딥 리서치는 검증된 모델 후보가 없으면 규칙 보고서를 저장하지 않고 실패 상태를 남긴다.
 - 사용자 추가 컨텍스트(userContext) 주입 — **관심 방향이지 사실/근거가 아님**
 - 보고서 자동 저장(같은 주제·같은 날 덮어쓰기), 목록 조회, 다시 열기, 삭제
 - 웹 UI 딥 리서치 탭은 저장 보고서를 **카드 피드**로 보여주고, 카드를 누르면 `#/deep-research/{reportId}`의 공통 `ReportReaderShell`이 열린다. 카드별 휴지통으로 삭제하며 기존 드롭다운 선택 방식은 폐기한다.
@@ -30,7 +30,7 @@ Folio OS 0.2에서는 좌측 navigation, Home 빠른 실행, command palette에 
 
 ```text
 사용자 질문 → 승인 계획/자료 preview → 사용자 승인 → live Evidence Pack(축별 근거)
-→ report_type 템플릿 결합 → LLM/규칙 보고서 → Quality Gate(자동 평가) → Quality Generation(선택 보강)
+→ report_type 템플릿 결합 → LLM 초안 → 구조·근거·깊이 검증 → 필요한 섹션만 최대 2회 보강
 → [선택] Personal Overlay(내 노트와 대조)
 ```
 
@@ -43,6 +43,8 @@ Collection 상세의 refresh는 외부 자료를 다시 resolve하고 스냅샷�
 ```text
 TopicPlan → deepResearch.subQuestions → 질문별 근거 수집 → questionCoverage/sourceLedger 라운드 기록
 ```
+
+딥 리서치 본문은 분석축·질문·근거 수에 따라 동적으로 배분하며 일반적으로 보이는 본문 12,000~16,000자(안전 상한 18,000자)를 목표로 한다. 각 근거 사용 섹션은 숨김 source ID 태그로 원장과 연결되고, 저장 전 구조·허용 출처·필수 자료·섹션 밀도를 검증한다. 초안과 채택된 보강 후보는 job 소유 checkpoint로 보관하므로 재시작 시 최신 검증 후보를 한 번만 원자 커밋할 수 있다.
 
 설계 원칙 (CLAUDE.md §5와 동일):
 - **2계층 분리**: 기본 보고서(Canonical)는 보편·자료 기반. 개인 해석은 `personalOverlay` 별도 필드에만. 기본 `markdown`은 overlay 생성으로 바뀌지 않는다.
@@ -203,7 +205,7 @@ POST   /api/export-obsidian/topic-report
 
 ```json
 {
-  "approvedRequest": {"schemaVersion": 1, "planRevision": 1, "...": "plan 응답 값"},
+  "approvedRequest": {"schemaVersion": 2, "planRevision": 2, "...": "plan 응답 값"},
   "approval": {"id": "apr_<uuid>", "token": "<43-char base64url>"},
   "execution": {
     "mode": "direct",
@@ -215,13 +217,13 @@ POST   /api/export-obsidian/topic-report
 
 ## 저장 JSON 주요 필드 (v2)
 
-`markdown`, `topicPlan`, `evidencePackSummary`, `evidenceItems`, `sourceLedger`, `checkpoints`, `dataGaps`, `marketTape`, `quality`, `qualityGeneration`, `personalOverlay`(기본 null), `generation`, `marketData`, `sources`, `deepResearch`, `researchResolution`, `marketStateResolution`, `executionProvenance`.
+`markdown`, `topicPlan`, `evidencePackSummary`, `materialResolution`, `depthPolicy`, `researchTraceSummary`, `sourceUsage`, `evidenceItems`, `sourceLedger`, `checkpoints`, `dataGaps`, `marketTape`, `quality`, `qualityGeneration`, `personalOverlay`(기본 null), `generation`, `marketData`, `sources`, `deepResearch`, `researchResolution`, `marketStateResolution`, `executionProvenance`.
 
 Step 6 Data Foundation Lite 이후 `checkpoints`/`evidenceItems`/`sourceLedger`/`dataGaps`/`marketTape`는 `features/common/research_schema/`와 `features/common/market_data/tape.py`의 공통 스키마를 사용한다. 기본 `markdown`은 구조화 필드 생성으로 바뀌지 않는다.
 Step 7 Research Quality 이후 기존 저장 보고서의 `quality`가 없거나 구버전이면 조회 시 공통 evaluator로 재평가해 최신 `sourceGrounding` 필드를 포함한다.
 Step 11 Quality Generation 이후 새 생성 보고서는 `qualityGeneration.mode/preflight/repairApplied/repairCount/repairType/weakSectionsBefore/weakSectionsAfter/qualityBefore/qualityAfter/telemetry/warnings`를 저장한다. 생성 전에는 Evidence Pack 축별 커버리지, challenging evidence, marketData/FRED/BOK 한계, Source & Data Notes를 품질 목표와 evidence coverage preflight로 주입한다. `llm_section_improve`는 sourceLedger/evidence/dataGaps 범위 안에서 약한 섹션만 LLM으로 최대 1회 재작성한다.
 
-심층 모드 보고서는 `topicPlan.deepResearch`, `evidencePackSummary.questionCoverage`, `evidencePackSummary.deepResearch`, `sourceLedger[].researchQuestionId`, `sourceLedger[].researchRound`를 함께 저장한다. 품질 평가는 `deep_question_coverage`와 `source_diversity` check를 추가로 계산한다.
+심층 모드 보고서는 `topicPlan.deepResearch`, `evidencePackSummary.questionCoverage`, `evidencePackSummary.deepResearch`, `sourceLedger[].researchQuestionId`, `sourceLedger[].researchRound`를 함께 저장한다. 독자 화면은 `researchTraceSummary`만 먼저 보여주고 전체 원장은 기본 접힘으로 표시한다. `quality` 점수·등급·상태와 candidate 비교값은 개발·자동 보강용 내부 지표이며 독자 화면에 직접 노출하지 않는다.
 
 ## 주의점
 

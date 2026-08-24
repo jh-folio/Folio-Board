@@ -40,8 +40,43 @@ KR_OUTPUT_SECTIONS = (
     "## 오늘의 결론",
 )
 
+# 주간 프롬프트는 일간과 **다른 규칙 집합**을 지킨다. 일간 규칙 아홉 개 중 세션 판정에
+# 관한 것들("미국장과 한국장의 관계", "브리핑 대상일별 분석 우선순위")은 주간에 성립하지
+# 않고, 대신 주간에만 필요한 규칙이 따로 있다 — 하루의 합으로 쓰지 말 것, 다음주 일정
+# 표를 기억으로 채우지 말 것.
+WEEKLY_PROMPT_REQUIRED_RULES = (
+    "주간 브리핑은 일간의 합이 아니다",
+    "자료 사용 우선순위와 웹 검색 보완",
+    "기사 발행일과 주간 구간을 구분하라",
+    "품질 기준을 먼저 만족시키며 작성하라",
+    "반대 조건을 반드시 포함한다",
+    "다음주 일정은 표를 그대로 쓴다",
+    "표에 없는 일정을 기억으로 채우지 않는다",
+    "이슈 중요도와 출처 다양성",
+    "특정 종목 매수·매도 조언처럼 쓰지 않는다",
+)
+
+WEEKLY_OUTPUT_SECTION_FRAGMENTS = (
+    "## 0. 지난주",
+    "## 1. 지난주",
+    "## 2. 지난주",
+    "## 3. 지난주",
+    "## 4. 이야기의 변화",
+    "## 5. 다음주",
+    "## 6. 다음주",
+    "## 이번 주 결론",
+    # 주간 본문에는 참고자료 섹션이 없다 — 출처는 `sources` 필드와 리더 패널이 단일
+    # 소유자다. 본문에도 두면 모델이 변형 헤딩으로 쓴 목록 + 코드가 덧붙인 목록이
+    # 겹쳐 두 번 보였다(2026-08-22 사용자 보고).
+    "## Source & Data Notes",
+)
+
 PROMPT_REQUIRED_RULES = (
     "하루를 하나의 이야기로 엮어라",
+    # 4시장 분리 때 시장별 프롬프트로 갈아타면서 이 기준이 legacy prompt.md에만 남아
+    # 조용히 사라졌다 — 기준 없는 모델이 보도량 상위의 니치 기업(Nebius·CoreWeave)을
+    # 미국장 주도 기업으로 올렸다. 계약에 있어야 다시 사라질 때 테스트가 잡는다.
+    "주도 기업 선정 기준",
     "자료 사용 우선순위와 웹 검색 보완",
     "품질 기준을 먼저 만족시키며 작성하라",
     "날짜와 시장 기준을 먼저 명확히 하라",
@@ -74,8 +109,23 @@ LEGACY_REPORT_FIELDS = (
 )
 
 
+def weekly_prompt_contract_errors(prompt_text):
+    """주간 프롬프트가 지켜야 할 것. 일간 검사를 그대로 태우지 않는다."""
+    text = str(prompt_text or "")
+    errors = [f"missing rule: {rule}" for rule in WEEKLY_PROMPT_REQUIRED_RULES if rule not in text]
+    errors += [
+        f"missing section: {section}" for section in WEEKLY_OUTPUT_SECTION_FRAGMENTS
+        if section not in text
+    ]
+    if "마감|장중" in text:
+        errors.append("weekly prompt must not ask for a session status in the title")
+    return errors
+
+
 def prompt_contract_errors(prompt_text):
     text = str(prompt_text or "")
+    if "주간 브리핑 전용" in text:
+        return weekly_prompt_contract_errors(text)
     errors = [f"missing rule: {rule}" for rule in PROMPT_REQUIRED_RULES if rule not in text]
     if "# US Market Briefing" in text and "# Korea Market Briefing" not in text:
         sections = US_OUTPUT_SECTIONS

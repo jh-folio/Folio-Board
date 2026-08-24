@@ -13,7 +13,10 @@ type ReportBodyProps = {
 
 function stripInlineReferenceSections(markdown = "") {
   const normalized = markdown.replace(/\r\n/g, "\n");
-  const referenceHeading = /^#{1,3}\s*(?:참고\s*자료|참고자료|Sources Used|Sources)\s*$/gim;
+  // 서버의 _SOURCE_HEADING_LOOSE_RE와 같은 안전-느슨 계약: 번호 접두·괄호 부연 허용,
+  // 자유 꼬리 불허("Sources of Uncertainty"는 분석 섹션이다). 정확 일치로 두면 모델이
+  // 변형 헤딩으로 쓴 목록이 본문에 남아 패널과 두 번 보인다.
+  const referenceHeading = /^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|Sources(?:\s+Used)?)\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$/gim;
   const match = referenceHeading.exec(normalized);
   if (!match || match.index === undefined) return markdown;
   return normalized.slice(0, match.index).trim();

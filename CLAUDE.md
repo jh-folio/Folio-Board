@@ -219,7 +219,7 @@ features/company_analysis/financial_quality_prompt.md
 | Smart Collections | `smart_collections` | Deep Research 안의 결정적 저장 필터·상태·snapshot 변화/recovery | metadata |
 | 포트폴리오 | `portfolio` | 보유 종목 직접 입력·revision 저장, 평가 요약·구성 분석·목표 비중·백테스트. 0.5.1에서 하위 탭 3개로 재연결. 스크린샷 가져오기는 0.5.0에서 뺐고 도크로 재설계 예정 | — |
 | 시장 내러티브 메모리 / Regime 추적 v2 | `market_memory` | 중기 내러티브 상태·taxonomy·momentum/confidence·thesis 연결 | source-grounded |
-| 워치리스트 | `watchlist_notes` | 워치리스트·상세 모달(기업 정보/차트/수집 뉴스) | — |
+| 워치리스트 | `watchlist_notes` | 워치리스트·상세(기업 정보/네이티브 차트/실적/수집 뉴스) | — |
 | Native Investment Notes | `investment_notes` | Obsidian 없이 운용되는 Folio 로컬 투자 노트와 `native_note_index` | hypothesis 입력 |
 | LLM/설정/웹검색 | `llm_settings` | API Key·웹검색 보완 | — |
 | Notion 내보내기 | `notion_export` | 보고서 → Notion DB | — |
@@ -230,7 +230,7 @@ features/company_analysis/financial_quality_prompt.md
 | Quality Generation | `common/quality_generation` | 생성 품질 목표·자료 루트·preflight·evidence coverage·생성 후 평가·약한 섹션 LLM 개선·telemetry | source-grounded |
 | AI Agent Mode | `agent_mode` | Codex/Claude/Antigravity CLI용 context pack·Direct Bridge·기존 저장소 writeback + 도크 Agent 대화 스레드(`/api/agent/threads`)·수정 제안 diff 승인 writeback(`/api/agent/proposals/{id}`) | source-grounded + Personal Overlay |
 | 투자 리뷰 | `investment_review` | regime/thesis/portfolio/checkpoints/obsidian을 묶은 투자 리뷰 홈 | Personal Overlay |
-| 현재 시장 위젯 | `market_widgets` | TradingView 기반 대시보드 Current Market 위젯 설정·허용 카탈로그. 0.5에서 Legacy 모드를 삭제해 화면에서는 쓰지 않으며, 설정 파일은 집중 종목 fallback으로만 read-only로 읽는다 | — |
+| 현재 시장 위젯 | `market_widgets` | 예전 TradingView Current Market 위젯 설정. 0.5에서 Legacy 모드를, 0.5.4에서 마지막 소비자였던 워치리스트 상세 위젯과 브리지(`public/tradingview-widgets.js`)를 삭제했다. 설정 파일은 집중 종목 fallback으로만 read-only로 읽는다 | — |
 | Data Source Reliability | `common/data_reliability` | 공식자료 우선순위·provider status·한국 데이터 보강 경로·Thesis evidence 확장·공식자료 semantic cache/fetch runtime | source-grounded |
 | Fast-Origin Signals | `common/research_library/signals` | 기존 KR RSS(연합인포맥스·연합뉴스)의 빠른 게시 headline을 metadata-only lead로 수집·표시. 자격증명 없이 기본 동작하며 lead는 evidence count/source ledger 제외 | lead (evidence 이전 단계) |
 | Change Intelligence | `common/change_intelligence` | 보고서/스냅샷 커밋 시 artifact-native ChangeBasis 비교로 changeSummary 생성. 추가 LLM 호출 없음 | source-grounded 파생 metadata |
@@ -423,6 +423,24 @@ features/company_analysis/financial_quality_prompt.md
 - **시장이나 요일을 하나도 안 고른 예약은 스스로 꺼진다.** 마지막 하나를 끄는 것도 선택이므로 막지 않는다 — 예전에는 그 클릭을 무시해 눌러도 아무 일이 없는 버튼으로 보였고, 서버는 빈 목록을 기본값으로 되돌려 끄겠다는 선택이 정반대로 저장됐다. 단 빈 목록과 읽을 수 없는 값(`marketScope: "bad"`)은 가른다 — 후자는 고장이라 기본값으로 되돌린다.
 - **사전작업(`runPrerequisites`)도 예약별이다.** 브리핑 전에 RSS 수집과 시장 메모리 갱신을 돌릴지이며, 값이 없으면 켠 것으로 읽는다. **화면이 보여주는 내러티브까지 만든다** — 규칙 기반 갱신은 `market_memory` 행과 regime 카운트만 바꾸고 시장 내러티브 탭이 읽는 `market_state_snapshots`를 만들지 않아서, 사전작업이 도는 날에도 화면은 며칠 전 해석 그대로였다(실측으로 스냅샷은 전부 사용자가 버튼을 누른 것이었다). 버튼과 같은 경로를 쓰고, 실패해도 브리핑을 막지 않는다. 0.5.2에서 화면 토글이 사라지고 값만 `true`로 박혀 있었다 — RSS 자동 수집을 끈 구성에서는 이것이 유일한 수집 경로다.
 - **예약마다 도는 요일을 고른다**(`briefingSchedules[].days`, 0=월 … 6=일). 예전에는 요일을 보지 않아 08:00 예약이 토·일에도 돌았고, 장이 열리지 않은 날 금요일 자료로 만든 브리핑이 매주 두 건씩 쌓였다. **거래일 판정으로 대신하지 않는다** — 그러면 주말 브리핑(주간 요약·다음주 프리뷰)을 만들 길이 막히고, 판정 대상이 직전 세션이라 공휴일이 끼면 꼬인다. 새 예약은 평일로 시작하고, 이 항목이 없는 저장된 예약은 매일로 읽는다(판올림으로 발행이 사라지면 안 된다).
+- **브리핑에는 종류가 있다**(`kind ∈ {daily, weekly}`, 0.5.4). `briefingType`(편집 강조점)과 직교한다 — 그쪽 세 값은 모두 "기존 섹션 구성을 유지하라"고 지시하므로 골격이 다른 주간을 그 enum에 넣으면 계약이 자기 자신과 모순된다. 저장된 예약·보고서에 값이 없으면 일간이다.
+  - **주간 저장 키는 `{발행일}.{시장}.weekly.json`이다.** 접미사가 없으면 일요일 실행이 `_scope_session_date()`가 돌려준 금요일 파일로 떨어져 그 주 금요일 일간 브리핑을 통째로 덮어쓴다. 이름 규칙을 아는 곳이 셋이다 — `schema.py::_scoped_file_stem()`, `archive.py` 정규식, `canonical_identity.BRIEFING_KIND_SUFFIXES`. 마지막 것을 빼먹으면 저장이 정체성 검증에서만 조용히 막힌다.
+  - **주간에는 세션이 없다.** 제목은 `{라벨} 주간 — {MM.DD}~{MM.DD}`이며 `마감`/`장중`을 붙이지 않고 세션 제목 정규화를 태우지 않는다. 자료 창은 발행일 기준 달력 7일(`P-6 … P`)이고 비어도 넓히지 않는다 — 넓히면 "지난주"가 거짓이 된다.
+  - **다음주 프리뷰는 시장 캘린더 표를 그대로 싣는다.** 프롬프트와 컨텍스트 양쪽이 "표에 없는 일정을 기억으로 채우지 말라"를 못박고 `confirmed`/`estimated`를 구분해 남긴다. 프롬프트에만 적으면 부탁이지 제한이 아니다.
+  - **주간은 시장 내러티브에 적재하지 않는다.** 같은 이슈를 일간이 이미 그 주에 넣었고, 다시 넣으면 한 사건이 두 번 세어져 regime 근거 카운트가 부푼다.
+  - **주간은 세션 시각자료 대신 주 단위 그림 셋을 싣는다**(`weekly_visuals.py`, 0.5.4). 하루 세션의 가격 계열과 그날 등락 히트맵을 한 주 보고서에 붙이면 특정 하루가 그 주를 대표하는 것처럼 읽힌다 — 그 결정은 그대로이고 주 단위 계열을 따로 만든다. **셋이 같은 `WeeklyWindow` 객체를 받는다**: 지수 흐름(주초 대비 %)은 `## 1. 지난주 … 흐름` 아래, 주간 히트맵(주초 종가 대비 주말 종가)은 그 다음, 이야기 비중 추이(거래일별 동인 비중)는 `## 2. 지난주 …을 움직인 핵심 변수` 아래다. 각자 경계를 계산하면 한 보고서 안에서 세 그림이 세 주를 말한다. 주초·주말은 달력이 아니라 **지수 계열이 실제로 가진 거래일**이고, 히트맵은 주말 스냅샷의 상자 크기·분류를 그대로 쓰며 주초 종가가 없는 종목은 그리지 않는다(0%로 두면 결측이 "안 움직였다"는 사실로 둔갑한다). 이야기 비중의 입력은 그 보고서가 쓴 자료 풀 그대로이며 대시보드처럼 세션 창으로 다시 고르지 않는다 — 세션 창은 이틀이라 이웃한 날의 창이 겹쳐 같은 기사가 두 막대에 들어간다. 사이드카는 `{발행일}.{시장}.weekly.visuals.json.gz`이고 조회 경로(`GET /api/briefings/{date}/visuals`)도 `kind`를 싣는다. 캡션은 필수이며(§12.4) 그림 선택은 코드가, 캡션은 템플릿이 한다.
+  - **시각자료 섹션 앵커는 네 시장을 모두 안다.** `briefing-visuals.js::sectionMarket()`이 미국·한국만 알던 시절 유럽장·일본장 브리핑은 슬롯이 하나도 만들어지지 않아 저장된 스냅샷 네 장이 화면에 아무것도 그리지 못했다(실측 2026-08-12~14 유럽·일본 6건 전부). 주간 헤딩은 `/지난주 .*흐름/`·`/지난주 .*핵심 변수/`로 잡고 **`지난주`를 빼지 않는다** — 빼면 일간 §2까지 걸려 일간 본문에 빈 슬롯이 생긴다.
+  - 프롬프트는 별도 파일 넷(`prompt_weekly_{us,kr,europe,jp}.md`)이고 출력 계약·프롬프트 계약도 갈린다. 규칙 fallback은 사실 목록과 캘린더 표만 싣고 **해석 문장이 비어 있다는 사실을 본문에 적는다** — 한 주의 이야기를 엮는 일은 LLM 산출물이고 규칙이 흉내 내면 근거 없는 문장이 남는다.
+  - **주간 본문에는 참고자료 섹션이 없다.** 출처는 `sources` 필드와 리더 패널이 단일 소유자다. 본문에도 두면 모델이 변형 헤딩(`## 7. 참고자료`)으로 쓴 목록을 정확 일치 검사가 놓쳐 코드가 두 번째 목록을 덧붙이고, 리더는 정확 일치하는 쪽만 떼어내 첫 목록이 남아 두 번 보였다(2026-08-22 사용자 보고). `append_briefing_sources(kind="weekly")`는 붙이지 않고 오히려 `strip_markdown_sources_section()`으로 떼어내며(뒤따르는 Source & Data Notes는 살린다), 프롬프트 골격과 `WEEKLY_OUTPUT_SECTION_FRAGMENTS`에서도 빠졌다. 일간 계약(본문 `## 참고자료` + 리더가 떼어내 패널 표시)은 그대로다. 헤딩 검사는 정확 일치가 아니라 안전-느슨 일치다(`_SOURCE_HEADING_LOOSE_RE` — 번호 접두·괄호 부연·끝 콜론만 허용, `## Sources of Uncertainty` 같은 자유 꼬리는 불허; 리더·app.js도 같은 패턴). Obsidian·Notion 내보내기는 markdown만 렌더링하므로 `export_markdown_with_sources()`가 내보내기 경계에서 `sources` 필드로 목록을 되붙인다(Canonical 불변). 리더 패널의 14건 캡은 제거했다 — 서버 선별(일간 24·주간 40)이 유일한 상한이다.
+  - **보고서의 정체성에도 종류가 들어간다.** 변화 감지의 `artifactId`(`{발행일}.{시장}.weekly`)와 `lineageId`(`briefing:{시장}:weekly`) 둘 다다. 빠뜨리면 `change_event_index`의 PK 충돌로 평일 주간이 그날 일간의 변화 이벤트를 덮어쓰고, `select_report_baseline`이 주간을 직전 일간과 — 그다음 일간을 그 주간과 — 비교한다. 뒤엣것은 **이미 있던 일간 Change Feed를 주간이 생긴 순간부터 망가뜨린다.**
+  - **리더의 액션(개인 해석·내보내기)도 종류를 싣는다.** 없으면 `resolve_briefing`·`_briefing_overlay_path`가 일간으로 떨어져, 주간을 열어 두고 누른 개인 해석이 그날 일간 보고서를 고친다. CLI 경로는 report id에 `{발행일}.weekly`로 싣는다.
+  - **자료가 없는 주는 CLI를 부르지 않는다**(`WeeklyWindowEmptyError`). 창을 넓히지 않으므로 0건이 될 수 있고, 그대로 보내면 최소 분량 계약에 걸려 재작성 1회 뒤 실패한다 — 수십 초짜리 CLI를 두 번 돌리고 아무것도 남기지 못한다. 규칙 경로는 비용이 없으므로 "자료 0건" 보고서를 그대로 낸다.
+  - 아카이브 카드 dedup 키와 화면 해시(`#/briefing/{date}/{scope}/{kind}`), 삭제 요청에 모두 종류가 들어간다. 빠지면 같은 날 두 보고서 중 하나가 조용히 사라지거나, 주간 카드의 삭제가 일간을 지운다.
+  - 스케줄러 중복 억제 키에도 종류가 들어간다. 같은 시장의 일간·주간 예약이 한 주기에 걸리면(일요일 아침) 뒤가 조용히 스킵된다.
+- **참고자료 티어 표가 시장을 안다**(0.5.4). 한국장 키워드 티어를 어느 시장 브리핑에서든 걸던 시절에는 유럽장·일본장 참고자료 상위 다섯 건이 전부 국내 매체였다 — 프롬프트는 같은 자리에서 "국내 매체 보도는 보조자료로 쓰세요"라고 지시하는데 목록이 정반대였다. `_HOME_MARKET_TIERS`가 시장별 고유 티어를 소유하고, 범위를 모르거나 종합이면 예전처럼 전부 켠다. 매체 적합도(`_publisher_fit_band`)는 **같은 티어 안의 저울**이며 거친 밴드 셋으로 두어 문서 점수를 덮어쓰지 않는다.
+- **`SOURCE_PROFILES`는 네 시장 모두에 전문성 값을 갖는다.** `us`/`kr` 둘뿐이던 시절 유럽·일본은 fallback으로 떨어져 매체 권위 점수가 무작동이었다. 새로 등재한 유럽·일본 매체는 `region: "regional"`이다 — `domestic`은 한국장 교차 확인 판정 전용이라, 주면 KR 이외 이슈에 교차 확인 보너스가 붙는다.
+- **`allow_full_text`는 소비자가 없는 죽은 설정이었다**(0.5.4에 제거). 본문 확보는 수집 시점에 정해진다. 실측하면 CNBC와 국내 매체는 본문이 거의 100%, Bloomberg·WSJ·Reuters는 5% 미만이며 그쪽은 전부 유료벽이다 — 유료 본문 우회가 금지이므로 추가할 피드가 없고, 국내 매체 비중을 더 줄이면 본문 있는 근거를 제목뿐인 근거로 바꾸는 거래가 된다. **설정과 실제가 어긋난 신호를 남겨 두면 다음 판단이 그것을 믿는다.**
+- **선별 개수 상한은 `features/daily_briefing/limits.py` 하나에서 나온다**(0.5.4). 예전에는 `limit=14`가 기본 인자 여섯 곳과 호출부 전부에 흩어져 있어 어느 하나를 고쳐도 나머지가 그대로였다. **참고자료는 프롬프트가 본 문서 전부**이며(`SOURCE_REF_LIMIT == CONTEXT_DOC_LIMIT`) 표시 개수 설정은 만들지 않는다 — 24건을 보고 14건만 보여주면 근거로 쓰였을 수 있는 열 건이 출처 목록에서 사라진다. 다시장 병합 상한은 고정값이 아니라 시장 수에서 산출한다(28로 두면 네 시장에서 뒤쪽 시장 출처가 통째로 빠진다).
 - **아카이브 카드는 항상 시장별 한 장이다.** 여러 시장을 함께 생성해도 접지 않는다 — 접힌 카드는 모든 시장을 이어 붙인 합본(실측 15,828자)으로 열려서, US+KR을 함께 예약하면 각 시장 보고서를 화면에서 읽을 수 없었다(2026-08-10 사용자 결정).
 - 시장별 독자용 제목은 세션일과 상태를 함께 쓴다(`US ... D-1 마감`, `Korea ... D 장중|마감`). 발행일은 별도 `publicationDate`/`KST 발행` 메타데이터로 표시하고 저장 키·기본 정렬 기준으로 유지한다. Agent/API/규칙 생성과 아카이브가 같은 계약을 사용해야 한다.
 - **화면의 날짜 선택은 발행일이 아니라 그 시장의 세션 기준일이다.** 한 브리핑 안에서 미국장은 발행일 D의 D-1 정규장을, 한국장은 D 장을 다루므로 변환은 시장마다 다르다: 미국장·유럽장은 `세션일 다음 거래일`, 한국장·일본장은 `세션일 그대로`. 변환은 `publication_date_for_session()` 하나가 담당한다. 저장 키·아카이브 정렬·기존 보고서는 계속 발행일 기준이라 호환이 깨지지 않는다.
@@ -431,6 +449,11 @@ features/company_analysis/financial_quality_prompt.md
 - **한국장 수치도 발행일이 아니라 세션일로 부른다**(`cached_korea_market_data(_scope_session_date("kr", windows))`). 차트는 세션일로 가는데 수치만 발행일로 가면 한 브리핑 안에서 날짜가 갈린다 — 월요일 08:03에 만든 금요일 브리핑에 지수는 금요일 종가가 들어갔는데(월요일 봉이 아직 없어 떨어졌다) 환율만 일요일 값이 들어갔다. 환율은 24시간 거래라 주말 봉이 잡힌다. 장이 열린 뒤 같은 요청을 하면 아직 마감도 안 한 당일 장중 값을 받는다. 규칙 생성과 Agent 생성 두 경로가 같다.
 - 한국장 핵심 수치는 `features/common/market_data/providers.py`의 provider 체인을 사용한다. 지금 체인은 yfinance 하나이며, KOSPI/KOSDAQ 종가 등락률이 없으면 추정하지 말고 한계를 명시한다.
 - **pykrx는 2026-08-12에 제거했다.** 1.2.x부터 지수 조회에 KRX 계정(`KRX_ID`/`KRX_PW`)을 요구해, 자격증명이 없는 설치에서는 매번 실패하고 조용히 yfinance로 떨어졌다(이 PC의 캐시 12건이 모두 그랬다). 사용자에게 API 키를 하나 더 받아 되살릴 만한 가치가 없다고 봤다. 히트맵 universe가 같은 이유로 이미 같은 결정을 했다(`kospi200_universe`). 실제로 잃은 것은 없다 — 투자자 수급·업종 등락·거래대금은 이미 모든 브리핑에서 비어 있었고, 이제 그 사실이 문서와 일치한다.
+- **주도 기업 선정 기준은 시장별 프롬프트가 소유하고 `PROMPT_REQUIRED_RULES`가 지킨다**(0.5.4). 4시장 분리 때 기준이 legacy `prompt.md`에만 남아 시장별 프롬프트에서 사라졌고, 기준 없는 모델이 보도량 상위의 니치 기업(Nebius·CoreWeave)과 SK hynix ADR을 미국장 주도 기업으로 올렸다. 절충은 자리 고정이 아니라 **점수**이고, 종합은 곱이 아니라 **합**이다(2026-08-22 사용자 결정) — 곱은 이야기 점수가 0인 대형주를 통째로 소멸시킨다. `prioritize_briefing_groups(market_scope=...)`가 `leaderScore = 이야기 점수(보도량·적합도 합) + 시장 영향력 점수`로 후보를 정렬하며, 영향력 점수는 시총 상위 구성종목에 **그날 최고 이야기 점수 × `MAJOR_IMPACT_WEIGHT`(0.5)**를 준다 — 고정 상수는 날마다 수십~수백으로 널뛰는 이야기 점수 스케일에 묻히거나 압도한다. 합이라 이야기가 충분히 큰 니치는 여전히 이기고, 이야기 0인 대형주도 후보에서 사라지지 않되 이야기 있는 니치를 넘어서지는 못한다(가산 상한이 최고점의 절반). 프롬프트는 두 축 종합으로 두 기업을 고르라고 지시하고, 컨텍스트는 순서가 종합 점수임을 명시하며 가산 근거(`시장 시총 상위`)를 줄에 붙인다. 티커 연결은 이름이 아니라 문서 회사 태그의 ticker로 한다.
+- **KR 집중 종목(concentration, 0.5.4)의 기본 모드 `shadow`는 관측 전용이다.** 규칙 선별·서명·감사만 계산해 telemetry(`concentrationControl`)에 남기고, 프롬프트 권위 주입(`render_concentration_context`)·출력 계약의 기업명 강제(`expectedLeadingCompanies`)·판정/보수 CLI 호출은 전부 `active`에서만 한다. shadow가 본문을 지배하면 규칙 선별과 모델 판단이 갈릴 때마다 재작성 1회 + 잡 실패가 된다(리뷰 4각도 수렴). active의 기업명 비교는 공백 제거·포함 일치다 — 띄어쓰기 하나로 45분짜리 CLI 두 번을 버리지 않는다. 보수 예산 소진은 실패가 아니라 생략이다.
+- **다시장 CLI 실행의 Source & Data Notes는 시장마다 하나다.** 계약이 합본에 하나만 요구하던 시절, 모델이 모든 시장을 합친 꼬리를 썼고 시장별 분리가 그 꼬리를 마지막 시장 파일에 몰아줬다 — 일본장 파일의 Notes에 한국장 문장이 들어가고 한국장 파일에는 Notes가 없었다(2026-08-24 실측). 필수 섹션 검사는 개수를 세므로 시장 수만큼 등재하면 강제된다. 참고자료도 시장별이다 — 합본에 붙이면 `has_sources`가 참이 되어 시장별 본문이 목록을 영영 못 받으므로, 분리 후 시장별로 떼고(`strip`) 그 시장의 선별 목록(`sourcesByMarket`)을 붙인다.
+- **예약의 `runPrerequisites`는 결측=켬이다.** 서버 schema 기본값·실행부(`cfg.get(..., True)`)·화면 저장 payload(`!== false`) 세 곳이 같은 계약을 가져야 한다 — 화면이 `Boolean()`으로 접던 시절 이 키가 생기기 전의 예약이 저장 한 번에 False로 굳어, 사전작업(시장 내러티브 갱신 포함)이 사용자가 끈 적 없이 꺼졌다(2026-08-24 실측).
+- KR 일간의 이슈 응집 정책(`coherence_policy`)은 규칙 생성과 Agent 생성 두 경로가 같이 켠다. 한쪽만 켜면 같은 날 두 경로가 다른 이슈 클러스터를 먹는다.
 - LLM 실패 시 규칙 기반 브리핑이 필요하다. 참고자료 섹션은 유지한다.
 - `select_briefing_docs()`의 fallback 경로에서 `market_windows`는 브리핑 날짜 기준 원본을 유지한다. 문서 날짜로 재계산하면 공휴일/주말에 `krPreviousSessionDate`가 틀린 날짜를 가리키는 버그가 발생한다.
 
@@ -467,6 +490,10 @@ features/company_analysis/financial_quality_prompt.md
 - Personal Overlay와 Quality 재평가는 **저장된 보고서에만** 동작한다(파일 기준). overlay 생성은 기본 `markdown`을 수정하지 않는다(Step 2 `with_overlay` 재사용).
 - 보고서는 승인된 `POST /api/topic-reports` SharedJob의 committing 단계에서 `data/topic-reports/`에 **자동 저장**된다. 공개 save route는 없으며, 명시적 proposal 승인만 기존 Canonical revision을 바꾼다. 저장 JSON에는 `topicPlan`/`researchResolution`/`executionProvenance`/`evidencePackSummary`/`sourceLedger`/`quality`/`personalOverlay`를 함께 둔다.
 - LLM이 없어도 규칙 fallback이 리서치 계획 요약·데이터 부족 경고·체크포인트·Source & Data Notes를 포함한 보고서를 만든다.
+- **딥 리서치(0.5.4+)는 LLM 전용 경로다.** `deep_pipeline.py`는 초기 생성이 규칙 fallback으로 떨어지면 후보 없이 실패를 보고한다 — 한 주의 질문을 후보·검증·제한 보수로 풀어내는 일은 규칙이 흉내 낼 수 없다. 일반(비딥) 테마보고서의 규칙 fallback은 그대로다.
+- 딥 후보는 `data/job-context/{job}/quality-candidate-{n}.json`(`quality_generation/candidate_store.py`, 원자 쓰기·해시 검증)에 체크포인트로 남고, 서버 재시작 시 `candidate_recovery.py`가 RUNNING 잡을 수락된 후보로 완성한다. **이 복구는 어떤 예외에도 기동을 막지 않는다** — 후보 하나가 깨져도 그 잡만 건너뛰고, 남은 잡은 기존 `failed_restart` 정리가 받는다.
+- 섹션 출처 태그(`<!-- folio-source-ids -->`)의 usage 키는 **정규화 헤딩**이다(`## 1. Executive Summary` → `Executive Summary`). 원문 키로 두면 검증 조회가 한 번도 맞지 않아 모든 보고서의 연결이 0이 된다(실측). 모르는 id·형식 오류 id는 **경고(major)**다 — id 하나 잘못 베낀 것으로 다 만든 보고서를 버리지 않는다. 자기참조(forbidden)만 차단(blocking)으로 남는다(§5 원칙 5). material sourceId는 티커의 `^ . =`를 `_`로 정규화해 태그 규칙과 어긋나지 않게 한다.
+- `researchTraceSummary`(사용 근거 요약)는 **딥 실행에만** 쓴다. 태그 계약이 없는 일반 보고서에 쓰면 근거 수십 건을 쓴 보고서가 "사용 근거 0건"이 된다. 딥 파이프라인의 후보·보수 이력은 `qualityGeneration.deep` 하위 키다 — Step 11 필드를 덮어쓰지 않는다.
 
 ### 포트폴리오
 
@@ -480,7 +507,8 @@ features/company_analysis/financial_quality_prompt.md
 - 백테스트 실행 결과는 자동 저장하지 않는다. 사용자가 결과 카드의 저장 버튼을 눌렀을 때만 저장한다.
 - 거래 내역 기반 원가 계산, 배당 현금흐름, 자동 리밸런싱 제안은 아직 범위 밖이다.
 - 저장은 additive `revision`을 가지며 `expectedRevision` 불일치 시 409와 최신본을 반환한다. 동시 수정은 사용자가 최신본과 다시 합친다.
-- **화면은 하위 탭 셋이다**(0.5.1): 보유·평가 / 목표 비중 / 백테스트. 빈도가 다르기 때문이다 — 세로로 쌓으면 매번 보는 것이 거의 안 쓰는 것에 밀린다. 저장 후 `revision`을 내려보내 시세·비중·목표 차이를 다시 받는다.
+- **화면은 하위 탭 셋이다**(0.5.1, 0.5.4에 이름 변경): 보유·평가 / **프리셋** / 백테스트.
+- **프리셋이 1급 시민이다**(0.5.4). 목표 비중은 프리셋으로 할 수 있는 여러 일 중 하나이고 백테스트·비교 백테스트의 입력도 같은 프리셋이라, 탭 이름이 그 셋 중 하나만 가리키면 나머지를 어디서 하는지 알 수 없다. `POST /api/portfolio/backtests/compare`는 예전부터 있었는데 **부르는 화면이 없었다** — 프리셋 2개 이상을 골라 지표 표와 겹친 시계열을 본다. 지표마다 나은 쪽 하나만 굵게 하고 동점이면 강조하지 않는다. **최대 낙폭은 음수로 오므로 `nearZero`(0에 가까울수록 낫다)로 비교한다** — "작을수록 좋다"로 두면 더 깊은 낙폭을 최선으로 강조한다. 빈도가 다르기 때문이다 — 세로로 쌓으면 매번 보는 것이 거의 안 쓰는 것에 밀린다. 저장 후 `revision`을 내려보내 시세·비중·목표 차이를 다시 받는다.
 - **목표는 프리셋이다.** `analytics.targetWeights`는 원래 포지션의 `targetWeight`만 봤고 프리셋과 서로 몰랐다. 그 값을 넣을 칸이 화면에 없어 `hasTargets`가 언제나 False였고 **목표와의 차이 표가 한 번도 뜨지 않았다**. `GET /analytics?presetId=`로 비교할 목표를 받는다. 프리셋에만 있고 아직 안 산 종목도 한 줄로 낸다.
 - `POST /presets/from-current`는 **지금 평가액 비중**을 목표로 삼는다. 예전에는 이미 설정된 `targetWeight`만 담아 실측으로 보유 3종목에서도 빈 프리셋이 나왔다.
 - 초기 공개 릴리즈에 실려 온 `.portfolio-donut-grid` 등 CSS 46개는 D1 프리미티브 이전 디자인(테두리 카드)이라 되살리지 않는다.
@@ -563,6 +591,7 @@ features/company_analysis/financial_quality_prompt.md
 - 결과는 보고서 JSON의 별도 `qualityGeneration` 필드에 저장한다. `qualityBefore`/`qualityAfter`/`repairApplied`/`repairCount`/`repairType`/`weakSectionsBefore`/`weakSectionsAfter`/`telemetry`/`preflight`/`warnings`를 포함하며, Canonical markdown은 품질 진단만으로 바꾸지 않는다.
 - 사용자 Obsidian 노트는 계속 hypothesis다. preflight나 repair에서 evidence count/source grounding으로 승격하지 않는다.
 - API는 `/api/quality-generation/preflight`, `/api/quality-generation/repair`, `/api/quality-generation/run`을 사용한다.
+- `call_budget.py`는 보고서 유형별 LLM 호출 상한(딥 리서치·KR 집중 종목)을, `candidate_store.py`는 잡별 후보 체크포인트(`data/job-context/{job}/quality-candidate-{n}.json`, `write_bytes_atomic`·소유자 검증·해시 검증)를 소유한다. 예산 소진은 선택 단계(보수·판정)의 생략이지 잡 실패가 아니다.
 
 ### 투자 리뷰 (Investment Review)
 
@@ -636,6 +665,20 @@ features/company_analysis/financial_quality_prompt.md
 - 초기 cockpit payload에는 외부 network 호출·chart series·iframe이 없고 차트/일정 상세는 lazy fetch한다. 네이티브 차트는 `GET /api/market/chart`와 기존 Lightweight Charts 전역을 재사용한다.
 - `무엇이 달라졌나` 패널 상단 `오늘의 이야기 비중`(`story_share.py`)은 그날 수집된 articles/rss 전체를 동인별로 묶은 보도량 비중이다(상위 4 + 그 외, 직전 거래일 %p 델타, 시장 토글 US/KR/EUROPE/JP). 규칙 계산 전용이고 브리핑과 독립이며, 비중 이동은 내용 변화가 아니라는 경고 문장을 UI에 고정한다. `GET /api/dashboard/story-share`는 10분 캐시, RSS 수집 시 무효화. **한 시장만 물어봐도 네 시장을 모두 계산해 캐시한다** — 인덱스 로드가 4.7초라 시장을 바꿀 때마다 그 값을 다시 치르고 있었다(시장당 6초). 문서를 한 번 읽어 온 김에 나머지를 채우면 첫 조회 8초·이후 전환 0초다. 날짜별 문서 선별과 문서별 동인 추론은 시장과 무관하므로 `_SharedWork`가 한 번만 계산한다. 내용의 변화 카드의 `Agent에게 묻기`는 dock을 열어 질문을 채울 뿐 자동 제출하지 않는다.
 - 기존 `/api/dashboard` 응답은 기존 consumer 호환을 위해 유지한다.
+- **이야기 비중의 비교 기준은 직전 5거래일 합산이다**(0.5.4). 하루끼리 비교하면 그날 수집량이 흔들리는 것만으로 비중이 수십 %p 움직인다. 날짜별 비중을 평균 내지 않고 창 전체를 하나의 분포로 세며, **문서는 한 번만 센다** — `select_briefing_docs`가 돌려주는 것이 세션 창(보통 이틀)이라 이웃 기준일의 창이 겹쳐 그대로 더하면 같은 기사가 두세 번 세어진다. 표본 부족 임계도 창 길이에 비례한다.
+- **동인 어휘표(`DRIVER_TERMS`)는 브리핑 동인 선정과 공유하므로 측정 없이 손대지 않는다.** 0.5.4에서 `금` 한 글자를 뺐다 — 한글 토큰은 단어 경계 없이 부분일치라 금리·금융·자금·세금을 전부 물었고, 실측으로 문서의 14.8%가 그 한 어휘만으로 원자재/유가에 들어와 있었다(실제 매칭은 금리 2,712건). 원자재/유가가 35.0% → 20.4%가 됐다. **한 글자 한글 어휘를 새로 넣지 않는다.** `크립토`를 새로 등재했다.
+- **의미 판정은 `llm`과 `agent` 두 모드에서 돈다**(0.5.4). Agent 산출물의 mode는 `agent`인데 예전에는 `llm`만 통과시켜 CLI 구성에서는 판정이 아예 돌지 않았고, `semantic.py`도 API 키만 봐서 이중으로 막혔다. 키가 없으면 Agent bridge로 같은 프롬프트를 보내되 **`serialize=False`로 부른다** — `_RUN_SEMAPHORE`는 재진입이 안 되고 브리핑 생성 잡이 커밋까지 그것을 쥐고 있어, 다시 잡으면 그 잡이 영원히 멈춘다.
+- **화면은 "정상 판정된 변화 없음"과 "아직 판정 못 함"을 가른다.** 예전에는 확정 판정이 아닌 것을 전부 미판정으로 세서, 판정이 멀쩡히 끝난 날에도 이미 연결된 Agent를 연결하라고 안내했다. 의미 비교는 브리핑 변화 단위에만 걸리므로 다른 아티팩트에 verdict가 없는 것은 정상이다.
+
+### 워치리스트 상세 (차트·실적)
+
+- 상세는 **재무·투자 지표(회사 소개 세 줄 접기·섹터·산업 포함) → 네이티브 차트(가격·등락 표시) → 실적(지난 발표 분기 목록 포함) → 수집 뉴스** 순이며, 데스크톱에서 차트·실적이 2컬럼으로 나란히 선다. **섹션 구분은 면이 아니라 구분선과 여백이 맡는다** — 네 섹션을 회색 상자(`surface--group`)로 감싸는 안을 먼저 시도했지만 면이 많아지니 오히려 항목이 서로 구분되지 않았다(2026-08-21 사용자 피드백). 섹션 머리는 같은 문법(굵은 제목 + 아래 헤어라인)이고, 면은 실적의 "다음 발표" 강조 상자 하나만 남는다. 간격은 `.watchlist-detail-grid`의 gap 하나가 소유한다 — 자식 margin이 더해지면 섹션 간격이 갈려 무엇이 한 묶음인지 읽히지 않는다(실측으로 그랬다). 모바일 1컬럼 규칙은 **기본 그리드 정의보다 뒤에** 있어야 한다(같은 특이도라 앞쪽 media 블록은 진다).
+- 재무·투자 지표는 `GET /api/market/fundamentals`(`features/common/market_data/fundamentals_service.py`) — yfinance `info`와 분기 손익계산서(매출·영업이익·순이익, 최근 5분기)를 차트와 같은 캐시 정책(1시간 TTL + 하루 stale-while-revalidate)으로 감싼다. **캐시 키에 스키마 버전이 들어간다** — 없으면 필드를 추가한 판올림 직후 TTL이 지날 때까지 옛 모양의 캐시가 내려와 새 화면이 조용히 비어 있다(실측). 각 지표에는 계산식 한 줄(주가 ÷ 주당순이익 등)을 붙이고, 분기 차트가 **이익/재무/안정성/현금흐름 네 세트**를 세그먼트로 전환한다(그리드라인·분기별 값 표 포함, 막대 스케일은 0 포함 — 적자를 0으로 접으면 "이익 없음"으로 읽힌다). **안정성(유동비율·부채비율)은 별도 탭의 선 차트다** — 금액 막대와 한 그림에 두면 축을 섞거나 밴드를 쌓아야 하는데 쌓아 보니 한 차트처럼 읽히지 않았다(2026-08-22 사용자 피드백). 선 스케일은 0을 강제하지 않고(29~35% 구간이 바닥에 눌린다), 비율의 증감은 %가 아니라 **%p**다. **부채비율은 부채총계(유동+비유동부채) ÷ 자본총계**다 — 이자부채(Total Debt)로 계산했더니 그 행이 최근 분기에만 있는 회사에서 선이 점 하나로 무너졌다(실측 HWM). 점이 1개뿐인 계열은 아예 그리지 않는다 — 선이 안 되는 외딴 점은 정보가 아니라 오독 거리다. 분기별 값 표는 뺐다 — 판독 패널·hover와 정보가 겹쳐 이중 표시였다(2026-08-22 사용자 피드백). **세트마다 자기 색 농담을 갖는다** — 이익=초록, 재무=네이비(`--folio-chart-1`), 현금흐름=골드, 안정성 선=의미색(초록/버건디). 첫 계열(규모 기준)은 공통 중립 잉크이고, 한 세트 안에 여러 색을 섞지 않는다. hover 상자·판독 패널은 기업분석 차트의 클래스를 재사용한다. 회사 소개는 provider 원문(영문) 그대로다 — LLM 번역을 붙였다가 뺐다(키가 있는 설치만 한국어가 되는 반쪽 기능은 없느니만 못하다). **가격은 차트가 말한다** — 머리에도 올려 봤지만 차트 종가와 신선도가 갈려 두 숫자가 모순처럼 읽혀 차트 하나만 남겼다(2026-08-22 사용자 결정). **모바일 그리드는 `minmax(0,1fr)`이다** — `1fr`은 min-content가 셀을 밀어내 nowrap 값 한 줄로 모달에 가로 스크롤이 생긴다(실측 +26px). 프로필의 섹터·산업 값은 문장형이라 지표 행의 nowrap을 물려받지 않는다. 결측은 `—`로 표시한다(삼성전자의 PER처럼 provider가 실제로 비워 둔다). **배당수익률은 이미 % 단위다** — fraction으로 오해해 100을 곱하면 도요타가 326%가 된다. 출처 문구는 모달 하단에 11px로 하나만 둔다(패널마다 반복하지 않고, "등급" 같은 내부 용어를 화면에 쓰지 않는다). **TradingView 임베드는 0.5.4에 전부 걷어냈다** — 이 모달이 브리지(`public/tradingview-widgets.js`)의 마지막 소비자였고, iframe 세 장은 앱 토큰을 따르지 않으며 종목 정보·펀더멘털 위젯은 제목줄·실적 패널·기업분석과 역할이 겹쳤다. Lightweight Charts의 `attributionLogo`와 `THIRD_PARTY_NOTICES.md`는 그대로 둔다.
+- 차트는 대시보드와 같은 `MarketChartFigure`다(그림 한 장만 갖고 종목 선택·설정 저장은 대시보드가 소유). 기간·유형은 이 화면 안에서만 살며 대시보드 설정을 건드리지 않는다. **이동평균(20·60·120·200일선) 토글이 있다** — 계산은 서버(`chart_service`)가 워밍업 구간(달력 320일)까지 받아서 한다. 화면이 받은 구간만으로 계산하면 1M(21봉) 차트에서 20일선이 끝 한두 점만 남는다. 분봉(1D)에는 붙이지 않고 토글도 숨긴다 — 일 단위 창을 분봉에 걸면 다른 지표가 된다. **선은 보조선이다** — 알파 0.55에 1px로 연하게 긋고, 색은 rgba로 직접 만든다(Lightweight Charts는 canvas에 그려 `color-mix()`를 못 읽는다). 토글은 유형·기간보다 한 단계 아래라 `btn--sm btn--text`로 낮추고(컨트롤 행 flex stretch에 늘어나지 않게 `align-self: center`), 범례는 버튼 밖 차트 위 오른쪽에 10.5px로 분리한다. 토글 상태는 저장하지 않는다(잠깐 겹쳐 보는 보조선이지 설정이 아니다). 차트 캐시 키에도 스키마 버전이 들어간다. **트레이드오프**: 준실시간·지표를 잃고 yfinance 지연 시세를 쓰며 freshness 라벨로 지연을 밝힌다.
+- 실적은 `GET /api/market/earnings`(`features/common/market_data/earnings_service.py`)이며 **상세를 열 때만** 부른다 — 티커당 provider 호출이라 카드 그리드에 걸면 종목 수만큼 네트워크가 된다. 차트·실적 요청은 상세 응답을 기다리지 않고 함께 시작한다(카드 표가 이미 티커를 안다).
+- **다음 발표일과 컨센서스는 제3자 예정치다.** 확정 배지를 붙이지 않고 IR 재확인을 함께 적는다. 숫자는 yfinance라 기업분석의 SEC 숫자와 등급이 다르며(§6 절대 규칙 6) 패널이 출처를 적어 그 차이를 숨기지 않는다.
+- **지난 분기의 매출 컨센서스는 어느 종목에도 없다.** provider가 다음 분기 것만 주므로 매출 서프라이즈는 재현할 수 없다. 빈칸이 아니라 "매출 컨센서스 없음"이라고 적는다 — 빈칸은 이 종목만 없는 것처럼 읽힌다.
+- **작년 동기간은 인덱스로 세지 않는다.** `earnings_history`가 4분기만 주므로 4칸 뒤를 보면 가장 최근 분기의 작년 동기가 늘 비어 있다. 손익계산서는 더 뒤까지 주므로 연도만 빼고 종료월이 같은 키를 찾는다. 분기 이름도 **종료월**로 부른다 — 회계연도가 달력과 다른 회사(LRCX는 6월 결산)에서 번호를 뽑으면 틀린다.
 
 ### 입력 기업 판단 (Company Resolution)
 

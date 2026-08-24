@@ -69,6 +69,8 @@ type BriefingSchedule = {
   time: string;
   markets: string[];
   briefingType: string;
+  // 브리핑 종류. `briefingType`(편집 강조점)과 직교하며, 없으면 일간이다.
+  kind?: string;
   qualityMode?: string;
   runPrerequisites: boolean;
   days?: number[];
@@ -200,8 +202,11 @@ function buildAutomationPayload(form: AutomationSettings): AutomationSettings {
       time: row.time || "08:00",
       markets: [...(row.markets || [])],
       briefingType: row.briefingType || "default",
+      kind: row.kind === "weekly" ? "weekly" : "daily",
       qualityMode: row.qualityMode || "diagnose_only",
-      runPrerequisites: Boolean(row.runPrerequisites),
+      // 결측=켬(서버 기본값과 같은 계약). Boolean()은 결측을 false로 굳혀
+      // 사전작업이 사용자가 끈 적 없이 꺼진다(2026-08-24 실측).
+      runPrerequisites: row.runPrerequisites !== false,
       // 요일을 고른 적 없는 예약은 키를 보내지 않는다. 서버가 `매일`로 읽어 판올림
       // 이전 동작을 지킨다 — 빈 배열을 보내면 영영 안 도는 예약이 된다.
       ...(row.days ? { days: [...row.days] } : {}),
@@ -238,10 +243,27 @@ const MARKET_CODE_BY_ID: Record<string, string> = Object.fromEntries(
 
 // 마감 시각이 전부 다르다 — 유럽 01:30 · 미국 05~06 · 일본 15:00 · 한국 15:30 (KST).
 // 사용자가 그걸 알아야 하는 화면은 만들지 않는다. 관심 시장에서 켠 것만 넣어 제안한다.
-const SCHEDULE_PROPOSALS: Array<{ label: string; time: string; markets: string[]; hint: string }> = [
+const SCHEDULE_PROPOSALS: Array<{
+  label: string; time: string; markets: string[]; hint: string; kind?: string; days?: number[];
+}> = [
   { label: "아침", time: "08:00", markets: ["us", "europe"], hint: "밤사이 해외장" },
   { label: "저녁", time: "18:00", markets: ["kr", "jp"], hint: "오늘 국내장" },
+  // 발행 요일은 자유 선택이다. 제안만 일요일이며 사용자가 요일 칩으로 옮길 수 있다.
+  {
+    label: "주말", time: "09:00", markets: ["us", "kr", "europe", "jp"],
+    hint: "지난주 요약과 다음주 일정", kind: "weekly", days: [6],
+  },
 ];
+
+// 예약이 만드는 브리핑의 종류. 화면 용어는 생성 화면(BriefingRoute)과 같아야 한다.
+const AUTOMATION_BRIEFING_KINDS: Record<string, string> = {
+  daily: "일간",
+  weekly: "주간 요약",
+};
+
+function scheduleKind(row: BriefingSchedule) {
+  return row.kind === "weekly" ? "weekly" : "daily";
+}
 
 function newScheduleId() {
   return `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -371,13 +393,13 @@ function BriefingSchedules({
     patch(row.id, { days: next, ...(next.length ? {} : { enabled: false }) });
   };
 
-  const add = (markets: string[], time: string) => {
+  const add = (markets: string[], time: string, kind = "daily", days = [0, 1, 2, 3, 4]) => {
     if (schedules.length >= MAX_SCHEDULES) return;
     onChange([...schedules, {
       id: newScheduleId(), enabled: true, time, markets,
-      briefingType: "default", qualityMode: "diagnose_only", runPrerequisites: true,
-      // 새 예약은 장이 서는 평일만. 주말 발행은 고르는 것이지 기본값이 아니다.
-      days: [0, 1, 2, 3, 4],
+      briefingType: "default", kind, qualityMode: "diagnose_only", runPrerequisites: true,
+      // 새 일간 예약은 장이 서는 평일만. 주말 발행은 고르는 것이지 기본값이 아니다.
+      days: [...days],
     }]);
   };
 
@@ -399,14 +421,27 @@ function BriefingSchedules({
                 onChange={(event) => patch(row.id, { time: event.currentTarget.value })}
               />
               <select
-                aria-label="브리핑 유형"
-                value={row.briefingType}
-                onChange={(event) => patch(row.id, { briefingType: event.currentTarget.value })}
+                aria-label="브리핑 종류"
+                value={scheduleKind(row)}
+                onChange={(event) => patch(row.id, { kind: event.currentTarget.value })}
               >
-                {Object.entries(AUTOMATION_BRIEFING_TYPES).map(([value, label]) => (
+                {Object.entries(AUTOMATION_BRIEFING_KINDS).map(([value, label]) => (
                   <option value={value} key={value}>{label}</option>
                 ))}
               </select>
+              {/* 편집 강조점은 일간 골격 위에서만 뜻이 있다. 주간은 섹션 구성이 달라
+                  이 셋("기존 섹션 구성을 유지")이 성립하지 않는다. */}
+              {scheduleKind(row) === "daily" && (
+                <select
+                  aria-label="브리핑 유형"
+                  value={row.briefingType}
+                  onChange={(event) => patch(row.id, { briefingType: event.currentTarget.value })}
+                >
+                  {Object.entries(AUTOMATION_BRIEFING_TYPES).map(([value, label]) => (
+                    <option value={value} key={value}>{label}</option>
+                  ))}
+                </select>
+              )}
               <ToggleSwitch
                 ariaLabel={`${row.time} 예약 사용`}
                 checked={row.enabled}
@@ -443,6 +478,11 @@ function BriefingSchedules({
                 </button>
               ))}
             </div>
+            {scheduleKind(row) === "weekly" && (
+              <p className="settings-hint">
+                고른 요일에 그 날짜까지의 지난 7일을 요약하고 다음주 일정을 붙입니다.
+              </p>
+            )}
             <div className="settings-theme-options" role="group" aria-label={`${row.time} 예약이 도는 요일`}>
               {WEEKDAY_CODES.map((day) => (
                 <button
@@ -481,7 +521,12 @@ function BriefingSchedules({
         <div className="schedule-proposals">
           <p className="settings-hint">아직 예약이 없습니다. 관심 시장의 마감 시각에 맞춰 제안합니다.</p>
           {proposals.map((row) => (
-            <button className="btn" type="button" key={row.time} onClick={() => add(row.markets, row.time)}>
+            <button
+              className="btn"
+              type="button"
+              key={`${row.time}-${row.kind || "daily"}`}
+              onClick={() => add(row.markets, row.time, row.kind || "daily", row.days || [0, 1, 2, 3, 4])}
+            >
               {row.label} {row.time} — {row.markets.map((m) => MARKET_CODES.find((c) => c.id === m)?.label).join(" · ")}
               <span>{row.hint}</span>
             </button>

@@ -183,11 +183,13 @@ Bridge는 shell 문자열을 실행하지 않고 adapter별 고정 argument list
 
 브리핑 context pack 생성:
 
-브리핑 task는 `marketScope: us | kr | both`와 `briefingType: default | market_focused | concise`를 전달할 수 있습니다. context pack과 writeback 모두 시장별 자료·이슈·세션 계약을 유지하며, 부분 시장 writeback은 저장된 반대편 시장을 보존하고 기존 Personal Overlay를 stale 처리합니다. 시장 내러티브는 `both` 결과에서만 누적합니다. `concise`도 섹션을 삭제하지 않고 시장당 최소 분량만 2,500자로 낮추며, 나머지 유형은 시장당 5,000자 계약을 유지합니다.
+브리핑 task는 `marketScope: us | kr | europe | jp | both | all | multi`, `briefingType: default | market_focused | concise`, `kind: daily | weekly`를 전달할 수 있습니다. context pack과 writeback 모두 시장별 자료·이슈·세션 계약을 유지하며, 부분 시장 writeback은 저장된 반대편 시장을 보존하고 기존 Personal Overlay를 stale 처리합니다. 시장 내러티브는 `both` 결과에서만 누적합니다. `concise`도 섹션을 삭제하지 않고 시장당 최소 분량만 2,500자로 낮추며, 나머지 유형은 시장당 5,000자 계약을 유지합니다.
 
 브리핑 context pack을 준비할 때 생성 당시 가격 series와 히트맵 사이드카 payload도 고정합니다. Agent가 Markdown 작성을 마친 뒤 writeback하면 같은 snapshot을 보고서와 `{date}.visuals.json`에 저장하므로 작성 시간 동안 시장 데이터가 바뀌어도 과거 보기가 흔들리지 않습니다.
 
-CLI 브리핑은 API 브리핑과 동일한 시장별 프롬프트(`features/daily_briefing/prompt_us.md`, `features/daily_briefing/prompt_kr.md`), 선별 context, evidence, quality preflight를 사용합니다. `outputContract`는 선택 시장별 `0~6 + 오늘의 결론 + Source & Data Notes`, 한 줄 결론, 가운뎃점 요약, 최소 분량과 코드가 계산한 정확한 `세션일 + 마감/장중` 제목을 요구합니다. 첫 CLI 결과가 이 계약을 충족하지 못하면 같은 context pack으로 한 번 자동 재작성하며, 두 번째 결과도 미달하면 writeback을 호출하지 않아 기존 저장 브리핑과 시각 snapshot을 덮어쓰지 않습니다.
+CLI 브리핑은 API 브리핑과 동일한 시장별 프롬프트(`features/daily_briefing/prompt_{us,kr,europe,jp}.md`, 주간은 `prompt_weekly_{us,kr,europe,jp}.md`), 선별 context, evidence, quality preflight를 사용합니다. `outputContract`는 선택 시장별 `0~6 + 오늘의 결론 + Source & Data Notes`, 한 줄 결론, 가운뎃점 요약, 최소 분량과 코드가 계산한 정확한 `세션일 + 마감/장중` 제목을 요구합니다. 첫 CLI 결과가 이 계약을 충족하지 못하면 같은 context pack으로 한 번 자동 재작성하며, 두 번째 결과도 미달하면 writeback을 호출하지 않아 기존 저장 브리핑과 시각 snapshot을 덮어쓰지 않습니다.
+
+주간은 계약이 갈립니다. 섹션 골격과 제목 규칙(`{라벨} 주간 — {MM.DD}~{MM.DD}`, 마감/장중 없음)이 다르고, 자료 창이 발행일 기준 달력 7일입니다. **그 창이 비면 CLI를 부르지 않고 `WeeklyWindowEmptyError`로 먼저 멈춥니다** — 최소 분량 계약에 걸려 재작성 1회를 더 돌린 뒤 실패하므로 수십 초짜리 실행을 두 번 낭비하고 아무것도 남기지 못합니다. 주간은 세션 시각자료를 만들지 않고 시장 내러티브에도 적재하지 않습니다.
 
 CLI writeback은 최종 Markdown의 주도 기업 ①·② 제목을 다시 해석해 사전 후보 회사 차트를 제거하고 해당 ticker의 생성 당시 차트로 교체합니다. 기업명을 해석할 수 없거나 가격 수집에 실패하면 다른 기업 차트를 순번만 맞춰 붙이지 않고 해당 차트를 생략하며 warning을 남깁니다. 지수와 히트맵 snapshot은 이 과정에서 다시 수집하거나 변경하지 않습니다.
 

@@ -32,6 +32,10 @@ def build_basis(artifact_kind: str, candidate: dict, *, native_context: dict | N
     return ADAPTERS[artifact_kind](candidate)
 
 
+# 의미 비교를 돌리는 생성 모드. `rules`는 LLM을 부르지 않으므로 제외한다.
+SEMANTIC_GENERATION_MODES = frozenset({"llm", "agent"})
+
+
 def decorate_candidate(artifact_kind: str, candidate: dict, *, data_dir: Path, native_context: dict | None = None, generation_provenance: bool = True) -> dict:
     if not generation_provenance:
         return dict(candidate)
@@ -46,10 +50,14 @@ def decorate_candidate(artifact_kind: str, candidate: dict, *, data_dir: Path, n
     if artifact_kind == "briefing":
         # 의미 비교는 브리핑 생성이라는 명시적 사용자 action의 연장에서만 실행한다.
         # 규칙 모드 생성은 LLM을 호출하지 않고 not_evaluated 게이트만 적용한다.
+        #
+        # **`agent`도 그 action이다.** Agent CLI 산출물의 mode는 `agent`인데
+        # (`agent_mode/schema.py::agent_generation`) 예전에는 `llm`만 통과시켜,
+        # CLI로 브리핑을 만드는 구성에서는 의미 판정이 아예 돌지 않았다.
         generation_mode = str((decorated.get("generation") or {}).get("mode") or "")
         evaluation = (
             evaluate_semantic_changes(summary)
-            if generation_mode == "llm"
+            if generation_mode in SEMANTIC_GENERATION_MODES
             else {"status": "not_evaluated", "verdicts": {}, "reason": "generation_rules_mode"}
         )
         summary = apply_semantic_verdicts(summary, evaluation)

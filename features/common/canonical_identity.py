@@ -17,9 +17,17 @@ SAFE_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
 # 새 시장의 저장이 정체성 검증에서만 조용히 막힌다.
 BRIEFING_MARKETS: Final = tuple(market.value.lower() for market in PRODUCT_MARKETS)
 _MARKET_ALT: Final = "|".join(BRIEFING_MARKETS)
-BRIEFING_ID_PATTERN: Final = re.compile(rf"(\d{{4}}-\d{{2}}-\d{{2}})(?:\.({_MARKET_ALT}))?")
+# 기본(일간) 외의 브리핑 종류 접미사. 권위는 `daily_briefing.schema.BRIEFING_KINDS`이며
+# `features/common`이 feature를 import하지 않기 위해 여기 한 줄로 다시 적는다 —
+# 둘이 어긋나면 `features/daily_briefing/tests/test_weekly_briefing.py`가 잡는다.
+# 여기 없는 종류는 저장이 정체성 검증에서만 조용히 막힌다.
+BRIEFING_KIND_SUFFIXES: Final = ("weekly",)
+_KIND_ALT: Final = "|".join(BRIEFING_KIND_SUFFIXES)
+BRIEFING_ID_PATTERN: Final = re.compile(
+    rf"(\d{{4}}-\d{{2}}-\d{{2}})(?:\.({_MARKET_ALT}))?(?:\.({_KIND_ALT}))?"
+)
 BRIEFING_FILE_PATTERN: Final = re.compile(
-    rf"(\d{{4}}-\d{{2}}-\d{{2}})(?:\.({_MARKET_ALT}))?\.json"
+    rf"(\d{{4}}-\d{{2}}-\d{{2}})(?:\.({_MARKET_ALT}))?(?:\.({_KIND_ALT}))?\.json"
 )
 
 
@@ -53,7 +61,22 @@ class CanonicalNotFoundError(Exception):
         return f"canonical report not found: {self.report_id}"
 
 
-def _briefing_identity(report_id: str, market_scope: str | None) -> tuple[str, str | None]:
+def split_briefing_id(report_id: str) -> tuple[str, str | None, str]:
+    """브리핑 report id를 `(발행일, 시장, 종류)`로 가른다.
+
+    id에 실려 오는 형태가 넷이다 — `{날짜}`, `{날짜}.{시장}`, `{날짜}.weekly`,
+    `{날짜}.{시장}.weekly`. 호출부마다 접미사를 손으로 떼면 종류가 조용히 사라져
+    주간 요청이 그날 **일간** 파일을 가리킨다. 패턴을 소유한 이 모듈이 대신 가른다.
+    못 읽는 id는 날짜 자리에 원문을 그대로 돌려준다(호출부가 404로 끝낸다).
+    """
+    match = BRIEFING_ID_PATTERN.fullmatch(str(report_id or "").strip())
+    if match is None:
+        return str(report_id or ""), None, "daily"
+    date_text, market, kind_suffix = match.groups()
+    return date_text, market, kind_suffix or "daily"
+
+
+def _briefing_identity(report_id: str, market_scope: str | None) -> tuple[str, str | None, str | None]:
     normalized_scope = str(market_scope or "").strip().lower() or None
     markets = ", ".join(BRIEFING_MARKETS)
     if normalized_scope in {"both", "all"}:
@@ -64,10 +87,10 @@ def _briefing_identity(report_id: str, market_scope: str | None) -> tuple[str, s
     match = BRIEFING_ID_PATTERN.fullmatch(report_id)
     if match is None:
         raise CanonicalIdentityError("briefing_id_invalid", f"briefing id must be YYYY-MM-DD[.{'|.'.join(BRIEFING_MARKETS)}]")
-    date_text, suffix = match.groups()
+    date_text, suffix, kind_suffix = match.groups()
     if suffix is not None and normalized_scope is not None and suffix != normalized_scope:
         raise CanonicalIdentityError("briefing_scope_mismatch", "briefing id suffix and scope differ")
-    return date_text, normalized_scope or suffix
+    return date_text, normalized_scope or suffix, kind_suffix
 
 
 def _read_report_id(folder: Path, filename: str) -> str | None:
@@ -92,8 +115,9 @@ def resolve_exact_report_path(
 ) -> Path:
     match report_kind:
         case ReportKind.BRIEFING:
-            date_text, scope = _briefing_identity(report_id, market_scope)
-            filename = f"{date_text}.{scope}.json" if scope is not None else f"{date_text}.json"
+            date_text, scope, kind_suffix = _briefing_identity(report_id, market_scope)
+            stem = f"{date_text}.{scope}" if scope is not None else date_text
+            filename = f"{stem}.{kind_suffix}.json" if kind_suffix else f"{stem}.json"
             candidate = safe_child_path(data_root / "briefings", filename)
             # Fixed folder plus validated date/scope.
             # codeql[py/path-injection]
@@ -140,6 +164,12 @@ def validate_report_identity(
                 raise CanonicalIdentityError("briefing_path_mismatch", "briefing date does not match exact path")
             if match.group(2) is not None and scope_value != match.group(2):
                 raise CanonicalIdentityError("briefing_scope_mismatch", "briefing scope does not match exact path")
+            # 파일 이름이 주간이라고 말하는데 본문이 일간이면 (또는 그 반대면) 그 보고서는
+            # 다음 읽기에서 자기 종류를 잘못 말한다. 접미사와 `kind`를 여기서 묶어 둔다.
+            path_kind = match.group(3) or "daily"
+            report_kind_value = str(report.get("kind") or "daily").strip().lower() or "daily"
+            if path_kind != report_kind_value:
+                raise CanonicalIdentityError("briefing_kind_mismatch", "briefing kind does not match exact path")
         case ReportKind.COMPANY_ANALYSIS:
             if report.get("id") != exact_path.stem:
                 raise CanonicalIdentityError("company_report_id_mismatch", "company report id does not match exact path")

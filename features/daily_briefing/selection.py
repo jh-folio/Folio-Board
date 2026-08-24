@@ -96,6 +96,13 @@ def session_doc_counts(docs, market_windows):
 # ---------------------------------------------------------------------------
 # 시장 동인(term) 매핑
 # ---------------------------------------------------------------------------
+# 시장 동인 어휘표. **브리핑 동인 선정과 대시보드 이야기 비중이 이 표를 공유한다** —
+# 한쪽을 고치면 다른 쪽도 같이 움직이므로 측정 없이 손대지 않는다.
+#
+# 한글 토큰은 `term_in_text`에서 단어 경계 없이 부분일치한다(영문·숫자만 경계를 갖는다).
+# 그래서 짧은 한글 어휘는 다른 낱말 안에 숨어 있는 것까지 잡는다 — 실측으로 `금` 하나가
+# 문서의 24.5%를 물었고 그중 실제 매칭은 금리 2,712 · 금융 1,052 · 기준금리 320 · 자금 ·
+# 세금 · 연금 · 임금이었다. 금값 기사는 거의 없었다. 한 글자 한글 어휘를 새로 넣지 않는다.
 DRIVER_TERMS = {
     "금리": [
         "fed", "fomc", "treasury", "yield", "rate", "bond",
@@ -111,7 +118,10 @@ DRIVER_TERMS = {
     ],
     "원자재/유가": [
         "oil", "crude", "wti", "brent", "energy", "gas", "gold",
-        "유가", "원유", "브렌트", "천연가스", "금", "원자재",
+        # `금` 한 글자는 금리·금융·자금·세금·연금·임금을 전부 물어 이 동인을 부풀렸다
+        # (실측: 문서의 14.8%가 그 한 어휘만으로 여기 들어왔고 대부분 금리 기사였다).
+        # 금값을 가리키는 표기만 남긴다. 영문은 `gold`가 이미 경계를 갖는다.
+        "유가", "원유", "브렌트", "천연가스", "원자재", "금값", "금 가격", "금시세", "귀금속",
     ],
     "수급": [
         "foreign buying", "foreign selling", "institution", "retail", "volume",
@@ -132,6 +142,12 @@ DRIVER_TERMS = {
     "지정학": [
         "geopolitical", "war", "conflict", "middle east", "taiwan",
         "지정학", "전쟁", "분쟁", "중동", "대만",
+    ],
+    # 2026 시장 보도에서 독립된 이야기인데 표에 없었다. 실측 334건(1.8%)이 걸리고
+    # 그중 80건은 어느 동인에도 속하지 못해 `그 외`로 빠져 있었다.
+    "크립토": [
+        "bitcoin", "ethereum", "crypto", "stablecoin", "digital asset",
+        "비트코인", "이더리움", "가상자산", "암호화폐", "스테이블코인",
     ],
 }
 
@@ -396,14 +412,78 @@ def derive_market_drivers(docs, market_windows, limit=4):
     return out[:limit]
 
 
-def prioritize_briefing_groups(groups, market_windows, limit=None):
+def group_ticker(group):
+    """묶음 회사의 티커. 회사 태그(name+ticker)를 단 문서에서 읽는다 — 이름 매칭으로
+    대형주 목록과 잇는 것은 표기가 달라 신뢰할 수 없다(정식명 vs 기사 표기)."""
+    name = str(group.get("company") or "")
+    if not name:
+        return ""
+    for doc in group.get("docs", []):
+        for company in doc.get("companies", []) or []:
+            if str(company.get("name") or "") == name and company.get("ticker"):
+                return str(company["ticker"]).upper()
+    return ""
+
+
+def _ticker_forms(symbol):
+    """provider 심볼과 기사 태그가 같은 종목을 다른 표기로 부른다 — 둘 다 담는다.
+
+    대형주 목록은 provider 심볼(`005930.KS`, `7203.T`, `ASML.AS`)인데 기사 회사 태그는
+    bare 코드(`005930`)나 SEC 표기(`ASML`)다. 접미사만 떼면 두 표기가 만난다. 이걸 안
+    하면 `isMajor`가 미국 밖에서 한 번도 참이 되지 않아, 니치가 두 자리를 차지하는
+    바로 그 문제(cf2128f가 고친 것)가 KR·유럽·일본에서 그대로 남는다(실측: 색인의
+    삼성전자 태그는 `005930`).
+    """
+    upper = str(symbol or "").upper()
+    if not upper:
+        return ()
+    root = upper.split(".", 1)[0]
+    return (upper,) if root == upper else (upper, root)
+
+
+def major_ticker_set(market_scope):
+    """그 범위의 시총 상위 구성종목 티커(표기 변형 포함). 못 읽으면 빈 집합.
+
+    종합 범위(`both`/`multi`/`all`)는 선택된 시장들의 **합집합**이다 — 예약 기본값이
+    미국+한국인데 종합이라는 이유로 빈 집합을 주면, 가장 흔한 구성에서 가중이 없다.
+    """
+    try:
+        from features.common.market_data.major_companies import major_company_symbols
+        from features.daily_briefing.schema import normalize_market_selection
+        from features.common.markets import MarketCode
+
+        markets = normalize_market_selection(market_scope)
+        codes = [MarketCode(market.upper()) for market in markets]
+        if not codes:
+            return frozenset()
+        return frozenset(
+            form for symbol in major_company_symbols(codes) for form in _ticker_forms(symbol)
+        )
+    except Exception:  # noqa: BLE001 - 가중일 뿐 브리핑을 막지 않는다
+        return frozenset()
+
+
+# 시장 영향력 축의 무게 — 시총 상위 구성종목은 **그날 최고 이야기 점수의 이 비율**을
+# 영향력 점수로 받는다. 종합은 곱이 아니라 **합**이다(2026-08-22 사용자 결정) — 곱은
+# 이야기 점수가 0인 대형주를 통째로 소멸시킨다. 고정 상수 대신 그날 최고점 기준으로
+# 스케일을 맞춘다 — 이야기 점수는 날마다 수십~수백으로 널뛴다.
+MAJOR_IMPACT_WEIGHT = 0.5
+
+
+def prioritize_briefing_groups(groups, market_windows, limit=None, market_scope=None):
     """주도 기업/섹터 그룹을 브리핑 모드에 맞게 재정렬한다.
 
     group_docs()는 일반 뉴스 검색용 점수라 주말에는 직전 정규장 자료가 계속
     상단을 차지할 수 있다. 주말/휴장 모드에서는 off_session_news 자료가 있는
     기업/섹터를 우선해 '다음 거래일 반영 후보' 중심으로 주도 기업 섹션을 만든다.
+
+    `market_scope`를 주면 **이야기 점수 + 시장 영향력 점수**의 종합으로 정렬한다.
+    보도량만으로 정렬하던 동안 니치 기업이 미국장 주도 기업 두 자리를 다 차지했다
+    (실측 Nebius·CoreWeave). 합이라 이야기가 충분히 큰 니치는 여전히 이기고, 이야기가
+    0인 대형주도 후보에서 소멸하지 않는다.
     """
     weekend_mode = bool(market_windows.get("weekendOrHolidayNewsMode"))
+    majors = major_ticker_set(market_scope) if market_scope else frozenset()
     out = []
     for group in groups or []:
         docs = list(group.get("docs") or [])
@@ -413,13 +493,19 @@ def prioritize_briefing_groups(groups, market_windows, limit=None):
         if weekend_mode:
             score += sum(briefing_doc_score(d, market_windows) for d in off_docs[:4]) * 1.2
             score += len(off_docs[:4]) * 30
+        is_major = bool(majors) and group_ticker(group) in majors
         out.append({
             **group,
             "docs": scored_docs,
             "briefingGroupScore": score,
+            "isMajor": is_major,
             "offSessionDocCount": len(off_docs),
         })
-    out.sort(key=lambda g: (g.get("briefingGroupScore", 0), g.get("score", 0)), reverse=True)
+    # 영향력 점수는 그날 최고 이야기 점수 기준으로 스케일을 맞춘 뒤 **더한다**.
+    top_story = max((g["briefingGroupScore"] for g in out), default=0.0)
+    for g in out:
+        g["leaderScore"] = g["briefingGroupScore"] + (MAJOR_IMPACT_WEIGHT * top_story if g["isMajor"] else 0.0)
+    out.sort(key=lambda g: (g.get("leaderScore", 0), g.get("briefingGroupScore", 0), g.get("score", 0)), reverse=True)
     return out[:limit] if limit else out
 
 

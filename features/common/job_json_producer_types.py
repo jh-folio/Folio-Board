@@ -17,6 +17,8 @@ class BriefingJobRequest:
     reports: dict[str, dict[str, JsonValue]]
     visuals: dict[str, dict[str, JsonValue]]
     terminal_result: TerminalResult
+    # 브리핑 종류. 기본은 일간이라 기존 호출부가 그대로 동작한다.
+    kind: Literal["daily", "weekly"] = "daily"
 
 
 @dataclass(frozen=True, slots=True)

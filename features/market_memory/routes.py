@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date as Date, datetime
+from datetime import date as Date
 from pathlib import Path
 from typing import Literal, Protocol, assert_never
 
@@ -18,9 +18,7 @@ from features.market_memory.attempt_store import (
 )
 from features.market_memory.http_service import (
     ManualSnapshotCommand,
-    MarketStateHttpRuntime,
     MarketStateHttpService,
-    MarketStateStorage,
 )
 from features.market_memory.manual_snapshot import (
     ManualSnapshotRepairRequiredError,
@@ -229,14 +227,10 @@ class MarketStateBoundary:
 def create_market_state_router(data_dir: Path) -> APIRouter:
     from features.agent_mode.bridge import submit_agent_task, submit_market_memory_update
     from features.llm_settings.client import default_generation_mode
-    from features.market_memory.llm_snapshot_backend import LlmManualSnapshotBackend
+    from features.market_memory.http_runtime import create_market_state_service
     from features.market_memory.service import run_llm_market_memory
 
-    storage = MarketStateStorage.from_data_dir(data_dir)
-    clock = lambda: datetime.now(UTC)
-    backend = LlmManualSnapshotBackend(storage.marketDbPath, clock)
-    runtime = MarketStateHttpRuntime(storage, clock, backend, lambda _boundary: None)
-    service = MarketStateHttpService(runtime)
+    service = create_market_state_service(data_dir)
     adapters = MarketStateRouteAdapters(
         modeResolver=default_generation_mode,
         snapshotJobSubmitter=lambda task, payload, adapter: submit_agent_task(task, payload, adapter=adapter),

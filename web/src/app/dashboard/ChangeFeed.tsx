@@ -36,7 +36,7 @@ export function changeEventRoute(event: ChangeEvent): string {
     if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       // Events written before the id carried a market only know their market from
       // the lineage; without this they all opened the combined view instead.
-      return `#/briefing/${date}/${briefingScope(id, event.lineageId)}`;
+      return `#/briefing/${date}/${briefingScope(id, event.lineageId)}/${briefingKind(id, event.lineageId)}`;
     }
     return "#/briefing";
   }
@@ -50,11 +50,31 @@ export function changeEventRoute(event: ChangeEvent): string {
 // 읽으면 유럽·일본 카드가 전부 통합 뷰를 열어 어느 브리핑이 바뀐 건지 사라진다.
 const BRIEFING_SCOPES = ["us", "kr", "europe", "jp"] as const;
 
+// 종류 접미사. 주간 변화 이벤트의 id는 `2026-08-23.us.weekly`이고 계보는
+// `briefing:us:weekly`다 — 이걸 모르면 시장 판정이 실패해 통합 뷰로 떨어지고,
+// 경로에 종류가 없어 같은 날 **일간** 보고서가 열린다.
+const BRIEFING_KINDS = ["weekly"] as const;
+
+function briefingKind(id: string, lineageId?: unknown): string {
+  const suffix = BRIEFING_KINDS.find((value) => id.endsWith(`.${value}`));
+  if (suffix) return suffix;
+  const fromLineage = new RegExp(`^briefing:[a-z]+:(${BRIEFING_KINDS.join("|")})$`)
+    .exec(String(lineageId || ""))?.[1];
+  return fromLineage || "daily";
+}
+
+/** 종류 접미사를 뗀 id. 시장은 그 앞에 붙는다. */
+function withoutKind(id: string): string {
+  const suffix = BRIEFING_KINDS.find((value) => id.endsWith(`.${value}`));
+  return suffix ? id.slice(0, -suffix.length - 1) : id;
+}
+
 function briefingScope(id: string, lineageId?: unknown): string {
-  const suffix = BRIEFING_SCOPES.find((scope) => id.endsWith(`.${scope}`));
+  const base = withoutKind(id);
+  const suffix = BRIEFING_SCOPES.find((scope) => base.endsWith(`.${scope}`));
   if (suffix) return suffix;
   // 시장이 id에 들어가기 전에 쓰인 이벤트는 lineage로만 시장을 안다.
-  const fromLineage = new RegExp(`^briefing:(${BRIEFING_SCOPES.join("|")})$`)
+  const fromLineage = new RegExp(`^briefing:(${BRIEFING_SCOPES.join("|")})(?::[a-z]+)?$`)
     .exec(String(lineageId || ""))?.[1];
   return fromLineage || "both";
 }
@@ -65,7 +85,7 @@ export function baselineRoute(event: ChangeEvent): string {
   const id = String(event.baselineRef?.id || "");
   const date = id.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
-  return `#/briefing/${date}/${briefingScope(id, event.lineageId)}`;
+  return `#/briefing/${date}/${briefingScope(id, event.lineageId)}/${briefingKind(id, event.lineageId)}`;
 }
 
 /** 카드 대표 항목: 의미 verdict가 강한 순 → 없으면 첫 변화 항목. */
@@ -149,19 +169,87 @@ function ChangeCard({ event }: { event: ChangeEvent }) {
   );
 }
 
+// 내용 변화로 세는 판정. 나머지는 "변화 없음"이거나 "아직 판정 못 함"이고, 그 둘은
+// 다른 말이다.
+const CONFIRMED_VERDICTS = new Set(["new_information", "reversal", "trend_development"]);
+// 판정이 **끝난** 결과. 보도량만 옮겨갔거나 새 정보가 없다는 것도 판정이다.
+const JUDGED_VERDICTS = new Set([...CONFIRMED_VERDICTS, "coverage_shift_only", "no_new_information"]);
+// 의미 비교는 브리핑 변화 단위에만 걸린다. 나머지 아티팩트는 verdict가 없는 것이
+// 정상이므로 미판정으로 세지 않는다.
+const SEMANTIC_ARTIFACT_KINDS = new Set(["briefing"]);
+/** 이 이벤트에 **판정할 것이 있었는가.**
+ *
+ * `baseline_created`·`insufficient_basis`·`no_material_change`는 `changedItems`가
+ * 비어 있다. 그런 건을 미판정으로 세면 처음 만든 브리핑이나 정말로 안 바뀐 날에도
+ * "판정하지 못했다"고 말하게 된다 — 없애려던 그 문구가 그대로 돌아온다.
+ *
+ * 자격은 **서버가 이미 표시해 둔 것**을 읽는다. 서버는 종류가 맞고 대표 기사 제목까지
+ * 있는 단위에만 `not_evaluated`를 붙인다(`semantic.py::apply_semantic_verdicts`).
+ * 화면이 종류만 보고 다시 판정하면, 제목이 없어 **영원히 판정될 수 없는** 옛 기록까지
+ * 미판정으로 세어 "다음 생성에서 함께 판정합니다"라는 지키지 못할 약속이 남는다.
+ */
+function hasJudgeableItems(event: ChangeEvent): boolean {
+  return (event.changedItems || []).some((item) => String(item.semanticVerdict || "") === "not_evaluated");
+}
+
+// 판정 엔진이 없어서 못 한 것인지(`semantic.py`의 사유), 호출이 실패했거나 아직 안 돈
+// 것인지를 가른다. 엔진 부재만 설정 안내를 받을 자격이 있다.
+const ENGINE_MISSING_REASONS = new Set(["llm_unavailable", "generation_rules_mode"]);
+
+/** 남은 미판정이 **판정 엔진이 없어서**인가.
+ *
+ * 예전에는 화면이 `/api/agent-bridge/settings`의 CLI 어댑터만 보고 판단했다. 그런데
+ * 판정은 LLM API 키를 먼저 쓰고 CLI는 그다음이라, 키만 넣고 CLI를 안 깐 설치에서는
+ * 엔진이 멀쩡한데도 "연결하세요"가 떴다 — 이번 릴리즈가 없애려던 바로 그 문구다.
+ * 이제 서버가 남긴 사유를 읽으므로 화면이 엔진 구성을 추측하지 않는다.
+ */
+export function engineMissing(events: ChangeEvent[]): boolean {
+  return events.some((event) => ENGINE_MISSING_REASONS.has(String(event.semanticEvaluation?.reason || "")));
+}
+
+/** 확인된 내용 변화와 **진짜** 미판정 건수.
+ *
+ * 예전에는 confirmed가 아닌 것을 전부 미판정으로 셌다. 그래서 `coverage_shift_only`나
+ * `no_new_information`처럼 **정상적으로 판정이 끝난** 날에도 "판정하지 못했다"고 말하고
+ * 이미 연결돼 있는 AI Agent를 연결하라고 안내했다.
+ */
+export function summarizeChangeEvents(events: ChangeEvent[]): {
+  confirmed: ChangeEvent[];
+  unjudged: number;
+} {
+  const confirmed: ChangeEvent[] = [];
+  let unjudged = 0;
+  for (const event of events) {
+    const verdict = String(primaryChangedItem(event)?.semanticVerdict || "");
+    if (CONFIRMED_VERDICTS.has(verdict)) {
+      confirmed.push(event);
+      continue;
+    }
+    if (JUDGED_VERDICTS.has(verdict)) continue;
+    if (!SEMANTIC_ARTIFACT_KINDS.has(String(event.artifactKind || ""))) continue;
+    // 판정할 단위가 없으면 미판정이 아니다 — 판정할 것이 없었을 뿐이다.
+    if (!hasJudgeableItems(event)) continue;
+    unjudged += 1;
+  }
+  return { confirmed, unjudged };
+}
+
+/** 빈 목록에서 할 말. 판정이 끝났으면 그렇게 말하고, 안내는 진짜 미판정에만 붙인다.
+ *
+ * 설정 안내는 **판정 엔진이 없다고 서버가 말한 경우에만** 붙인다. 이미 연결한 사람에게
+ * 연결하라고 하면 되어 있는 일을 다시 하게 만든다.
+ */
+export function emptyMessage(unjudged: number, missingEngine: boolean): string {
+  if (unjudged <= 0) return "아직 확인된 내용 변화가 없습니다.";
+  return missingEngine
+    ? `내용 변화를 판정하지 못한 기록이 ${unjudged}건 있습니다. 설정에서 AI를 연결하면 무엇이 달라졌는지 읽어 줍니다.`
+    : `내용 변화를 아직 판정하지 못한 기록이 ${unjudged}건 있습니다. 다음 브리핑 생성에서 함께 판정합니다.`;
+}
+
 export function ChangeFeed({ events }: { events: ChangeEvent[] }) {
   const [storyMarket, setStoryMarket] = useState<StoryMarket>("us");
-  // 의미 판정이 끝난 변화만 보여준다. `내용 미평가`(LLM 없이 생성)와 보도량
-  // 이동만 있는 건은 "무엇이 달라졌다"를 아직 말할 수 없다. 접어서라도 두면
-  // 사용자는 열어보고 아무 판단도 얻지 못한다 — 화면에서 뺀다.
-  const confirmed = events.filter((event) => {
-    const verdict = String(primaryChangedItem(event)?.semanticVerdict || "");
-    return verdict === "new_information" || verdict === "reversal" || verdict === "trend_development";
-  });
-  // 의미 판정은 LLM이 한다. LLM 없이 생성한 설치에서는 모든 건이 `not_evaluated`라
-  // 위 필터가 전부를 걸러낸다. 그때 "변화가 없다"고 쓰면 판정을 못 한 것을 변화가
-  // 없었던 것으로 바꿔 말하게 된다 — 판정을 못 했다는 사실 자체를 보여준다.
-  const unjudged = events.length - confirmed.length;
+  const { confirmed, unjudged } = summarizeChangeEvents(events);
+  const missingEngine = engineMissing(events);
   return (
     <section className="cockpit-panel cockpit-change-feed" aria-labelledby="cockpit-change-title">
       <div className="cockpit-panel__head">
@@ -185,11 +273,7 @@ export function ChangeFeed({ events }: { events: ChangeEvent[] }) {
       {confirmed.length ? <ol>
         {confirmed.map((event) => <ChangeCard event={event} key={eventKey(event)} />)}
       </ol> : (
-        <p className="cockpit-empty">
-          {unjudged > 0
-            ? `내용 변화를 판정하지 못한 기록이 ${unjudged}건 있습니다. 설정에서 AI Agent를 연결하면 무엇이 달라졌는지 읽어 줍니다.`
-            : "아직 확인된 내용 변화가 없습니다."}
-        </p>
+        <p className="cockpit-empty">{emptyMessage(unjudged, missingEngine)}</p>
       )}
 
     </section>

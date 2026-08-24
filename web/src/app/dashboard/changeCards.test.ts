@@ -36,7 +36,9 @@ describe("primaryChangedItem", () => {
 
 describe("baselineRoute", () => {
   it("기준 브리핑을 그 시장으로 연다", () => {
-    expect(baselineRoute(EVENT)).toBe("#/briefing/2026-08-01/us");
+    // 경로에 종류가 들어간다(0.5.4). 같은 날 일간과 주간이 나란히 저장되므로
+    // 종류 없이는 어느 쪽을 열지 정할 수 없다.
+    expect(baselineRoute(EVENT)).toBe("#/briefing/2026-08-01/us/daily");
   });
 
   it("기준이 없으면 빈 문자열", () => {

@@ -23,7 +23,7 @@ from features.common.research_library.signals.runtime import promote_kr_rss_lead
 from features.common.utils import kst_date, now_iso, read_json, write_json
 from features.common.market_scope import load_market_scope
 from features.daily_briefing.builder import build_briefing
-from features.daily_briefing.schema import market_selection_scope, normalize_market_selection
+from features.daily_briefing.schema import market_selection_scope, normalize_briefing_kind, normalize_market_selection
 from features.llm_settings.client import default_generation_mode
 from features.market_memory.digest import run_rss_market_memory_update
 from features.market_calendar.service import refresh_calendar
@@ -249,7 +249,51 @@ def market_memory_recently_run(*, now: dt.datetime | None = None, max_age_hours:
     return _elapsed(now, finished) < dt.timedelta(hours=max(1, int(max_age_hours or 12)))
 
 
-def _refresh_market_state_snapshot() -> dict:
+# 사전작업 스냅샷은 **전체 해석**이다. 예약이 고른 시장 집합과 무관하게 GLOBAL scope로
+# 만든다 — 화면의 시장 내러티브는 시장별 보고서가 아니라 하나의 해석이고, 그 안에서
+# `marketViews`로 미국장·한국장을 나눈다.
+PREREQUISITE_SNAPSHOT_SCOPE = "GLOBAL"
+
+
+def market_state_snapshot_recently_run(*, now: dt.datetime | None = None, max_age_hours: int = 12) -> bool:
+    """화면 스냅샷이 최근에 만들어졌는지 — **메모리 갱신 신선도와 따로 본다.**
+
+    예전에는 둘을 한 덩어리로 봤다. 규칙 갱신이 12시간 안에 돌았으면 스냅샷 갱신까지
+    통째로 건너뛰어서, 규칙 갱신은 신선한데 화면 해석만 며칠 전인 상태가 커버되지
+    않았다. 스냅샷은 자기 `as_of`로 신선도를 말할 수 있으므로 그것을 직접 읽는다.
+    """
+    from features.market_memory.snapshot import latest_market_state_snapshot_as_of
+
+    now = now or dt.datetime.now().astimezone()
+    try:
+        as_of = latest_market_state_snapshot_as_of(DATA_DIR / "market-memory.sqlite3")
+    except Exception:  # noqa: BLE001 - 못 읽으면 오래된 것으로 본다(다시 만드는 쪽이 안전하다)
+        return False
+    saved = _parse_iso(as_of or "")
+    if saved is None:
+        return False
+    return _elapsed(now, saved) < dt.timedelta(hours=max(1, int(max_age_hours or 12)))
+
+
+# 스냅샷 생성이 실패한 뒤 다시 시도하기까지 기다리는 시간. 없으면 어댑터가 죽어 있는
+# 동안 예약이 돌 때마다 수십 초짜리 CLI가 무한히 재시도된다 — 신선도 가드가 아끼려던
+# 비용을 실패 경로가 그대로 되돌려 놓는다.
+SNAPSHOT_RETRY_BACKOFF_HOURS = 6
+
+
+def market_state_snapshot_recently_failed(*, now: dt.datetime | None = None, runs: list[dict] | None = None) -> bool:
+    """마지막 스냅샷 시도가 최근에 **실패**했는지."""
+    now = now or dt.datetime.now().astimezone()
+    last = _last_run_for("marketStateSnapshot", list_runs(100) if runs is None else runs)
+    if not last or not _row_failed(last):
+        return False
+    finished = _parse_iso(str(last.get("finishedAt") or ""))
+    if finished is None:
+        return False
+    return _elapsed(now, finished) < dt.timedelta(hours=SNAPSHOT_RETRY_BACKOFF_HOURS)
+
+
+def _refresh_market_state_snapshot(*, memory_is_fresh: bool = False) -> dict:
     """화면용 시장 상태 스냅샷을 다시 만든다.
 
     **실패해도 올리지 않는다.** 브리핑이 오늘의 결과물이고 스냅샷은 그 앞의 준비다.
@@ -266,17 +310,60 @@ def _refresh_market_state_snapshot() -> dict:
         if mode == "llm_cli":
             # 버튼이 쓰는 것과 같은 2단계 작업(중기 메모리 → 화면 스냅샷)이다.
             # job_id 없이 부르면 동기로 돈다 — 사전작업은 브리핑보다 먼저 끝나야 한다.
-            from features.agent_mode.bridge import run_market_memory_update_task
+            #
+            # **메모리가 이미 신선하면 2단계를 다시 돌리지 않는다.** 그 경우 필요한 것은
+            # 화면 스냅샷 하나인데, 전체 작업을 부르면 가드가 방금 "최근이라 건너뛴다"고
+            # 판정한 중기 메모리 갱신을 CLI로 다시 돌린다 — 아끼려던 비용을 그대로 치른다.
+            from features.agent_mode.bridge import run_agent_task, run_market_memory_update_task
 
-            result = run_market_memory_update_task({"date": kst_date()})
-        else:
-            from features.market_memory.service import run_llm_market_state_snapshot
+            if memory_is_fresh:
+                result = run_agent_task("market_state_snapshot", {"date": kst_date()})
+            else:
+                result = run_market_memory_update_task({"date": kst_date()})
+            snapshot_id = str((result or {}).get("snapshotId") or "")
+            return {"ok": True, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "snapshotId": snapshot_id}
+        # API(LLM) 모드도 버튼과 **같은** attempt/watermark 라이프사이클을 탄다. 바로
+        # 저장하면 attempt 기록이 없는 스냅샷이 남아 reconcile이 복구할 근거를 잃는다.
+        from features.market_memory.attempt_store import AttemptScope
+        from features.market_memory.http_runtime import create_market_state_service
+        from features.market_memory.http_service import ManualSnapshotCommand
 
-            result = run_llm_market_state_snapshot(kst_date())
-        snapshot_id = str((result or {}).get("snapshotId") or "")
-        return {"ok": True, "mode": mode, "snapshotId": snapshot_id}
+        service = create_market_state_service(DATA_DIR)
+        result = service.run_manual(
+            ManualSnapshotCommand(AttemptScope(PREREQUISITE_SNAPSHOT_SCOPE), kst_date())
+        )
+        snapshot = result.get("snapshot") if isinstance(result, dict) else None
+        snapshot_id = str((snapshot or {}).get("id") or "") if isinstance(snapshot, dict) else ""
+        attempt = result.get("attempt") if isinstance(result, dict) else None
+        return {
+            "ok": True,
+            "mode": mode,
+            "scope": PREREQUISITE_SNAPSHOT_SCOPE,
+            "snapshotId": snapshot_id,
+            "attemptId": str((attempt or {}).get("attemptId") or "") if isinstance(attempt, dict) else "",
+        }
     except Exception as exc:  # noqa: BLE001 - 브리핑을 막지 않는다
-        return {"ok": False, "mode": mode, "errorType": type(exc).__name__}
+        return {"ok": False, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "errorType": type(exc).__name__}
+
+
+def _run_market_state_snapshot_step(*, memory_is_fresh: bool = False) -> dict:
+    """스냅샷 갱신을 실행하고 **결과를 실행 기록에 남긴다.**
+
+    기록이 없으면 실패가 어디에도 남지 않는다. 규칙 갱신을 건너뛴 경로는 `_append_run`을
+    부르지 않아서, 스냅샷이 며칠째 실패해도 자동화 화면에는 아무 흔적이 없었다 —
+    사용자는 사전작업이 도는 줄 알고 옛 해석을 계속 본다. 재시도 유예도 이 기록을 읽는다.
+    """
+    started = now_iso()
+    result = _refresh_market_state_snapshot(memory_is_fresh=memory_is_fresh)
+    if not result.get("skipped"):
+        _append_run({
+            "kind": "marketStateSnapshot",
+            "status": "done" if result.get("ok") else "failed",
+            "startedAt": started,
+            "finishedAt": now_iso(),
+            "result": result,
+        })
+    return result
 
 
 def run_briefing_prerequisites(
@@ -289,12 +376,33 @@ def run_briefing_prerequisites(
     # `force`는 사용자가 직접 "지금 실행"을 누른 경우다. 신선도 때문에 건너뛰면
     # 눌러도 아무 일이 없는 버튼이 된다. 예약 경로는 계속 신선도를 본다.
     if not force and market_memory_recently_run(now=now, max_age_hours=memory_max_age_hours):
-        prerequisites["marketMemory"] = {
+        # 규칙 갱신은 건너뛰지만 **화면 스냅샷은 따로 본다.** 한 덩어리로 스킵하면
+        # 규칙 갱신이 신선한 날에도 시장 내러티브 탭은 며칠 전 해석 그대로 남는다.
+        skipped = {
             "ok": True,
             "skipped": True,
             "reason": "recent",
             "maxAgeHours": int(memory_max_age_hours or 12),
         }
+        if market_state_snapshot_recently_run(now=now, max_age_hours=memory_max_age_hours):
+            skipped["stateSnapshot"] = {
+                "ok": True,
+                "skipped": True,
+                "reason": "recent",
+                "maxAgeHours": int(memory_max_age_hours or 12),
+            }
+        elif not force and market_state_snapshot_recently_failed(now=now):
+            # 방금 실패한 것을 예약마다 다시 시도하지 않는다. 조용히 건너뛰지도 않는다 —
+            # 건너뛴 사실이 결과에 남아야 왜 화면이 안 바뀌는지 알 수 있다.
+            skipped["stateSnapshot"] = {
+                "ok": False,
+                "skipped": True,
+                "reason": "recent_failure",
+                "retryAfterHours": SNAPSHOT_RETRY_BACKOFF_HOURS,
+            }
+        else:
+            skipped["stateSnapshot"] = _run_market_state_snapshot_step(memory_is_fresh=True)
+        prerequisites["marketMemory"] = skipped
     else:
         started = now_iso()
         try:
@@ -306,7 +414,7 @@ def run_briefing_prerequisites(
             # 사전작업이 도는 날에도 화면은 며칠 전 해석 그대로였다(실측: 스냅샷 이력이
             # 08-12, 08-07, 08-06으로 띄엄띄엄하고 그 시각에 자동화 기록이 없다 —
             # 전부 사용자가 버튼을 누른 것이었다).
-            snapshot = _refresh_market_state_snapshot()
+            snapshot = _run_market_state_snapshot_step()
             memory = {**memory, "stateSnapshot": snapshot} if isinstance(memory, dict) else memory
             _append_run({
                 "kind": "marketMemory",
@@ -369,11 +477,15 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             "droppedMarkets": dropped,
         }
     prerequisites = {}
-    if cfg.get("runPrerequisites"):
+    # 값이 없으면 켠 것으로 읽는다(§10 계약, schema 기본값과 동일). 결측을 끔으로
+    # 읽으면 이 키가 생기기 전의 예약이 조용히 사전작업을 잃는다.
+    if cfg.get("runPrerequisites", True):
         prerequisites = run_briefing_prerequisites()
     date = kst_date()
     generation_mode = default_generation_mode()
     scope_label = market_selection_scope(markets)
+    kind = str(cfg.get("kind") or "daily").strip().lower()
+    kind = normalize_briefing_kind(kind)
     if generation_mode == "llm_cli":
         briefing = submit_agent_task("briefing", {
             "date": date,
@@ -382,6 +494,7 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             "market_scope": scope_label,
             "markets": markets,
             "briefing_type": cfg.get("briefingType", "default"),
+            "kind": kind,
         })
     else:
         briefing = build_briefing(
@@ -391,6 +504,7 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             quality_mode=cfg.get("qualityMode", "diagnose_only"),
             markets=markets,
             briefing_type=cfg.get("briefingType", "default"),
+            kind=kind,
         )
     return {
         "date": date,
@@ -398,6 +512,7 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
         "scheduleId": cfg.get("id", ""),
         "marketScope": scope_label,
         "markets": markets,
+        "kind": kind,
         "droppedMarkets": dropped,
         "prerequisites": prerequisites,
         "briefing": briefing,
@@ -535,18 +650,22 @@ def run_due_automations(now: dt.datetime | None = None) -> dict:
         executed.append(run_automation_once("marketMemory"))
     # 스케줄마다 독립된 job이다. 같은 날 같은 시장 집합을 두 번 만들지 않도록,
     # 이번 주기에 이미 돈 집합은 건너뛴다(시각이 가까운 스케줄 둘이 같은 시장을 볼 때).
+    #
+    # **종류가 키에 들어간다.** 같은 시장의 일간 예약과 주간 예약이 한 주기에 걸리면
+    # (일요일 아침이 정확히 그 경우다) 뒤에 오는 쪽이 조용히 스킵돼, 사용자는 주간
+    # 예약을 켜 두고도 아무것도 받지 못한다.
     now_at = now or dt.datetime.now().astimezone()
     produced: set[tuple[str, ...]] = set()
     for schedule in settings.get("briefingSchedules") or []:
         if not schedule_due(schedule, settings=settings, now=now_at, runs=runs):
             continue
         markets, _ = markets_in_scope(schedule.get("markets") or [])
-        key = tuple(markets)
-        if key and key in produced:
+        key = (str(schedule.get("kind") or "daily"), *markets)
+        if markets and key in produced:
             continue
         outcome = run_automation_once("briefing", schedule=schedule)
         executed.append(outcome)
-        if key and outcome.get("ok"):
+        if markets and outcome.get("ok"):
             produced.add(key)
     return {"ok": True, "executed": executed}
 

@@ -19,6 +19,12 @@ AGGREGATE_SCOPES = frozenset({"all", "both", "multi"})
 SINGLE_MARKET_SCOPES = ("us", "kr", "europe", "jp")
 LEGACY_AGGREGATE_MARKETS = ("us", "kr")
 BRIEFING_TYPES = frozenset({"default", "market_focused", "concise"})
+# 브리핑의 **종류**다. `briefingType`(편집 강조점)과 직교한다 — 그쪽은 세 값 모두
+# "기존 섹션 구성을 유지하라"고 지시하므로 골격이 다른 주간 브리핑을 그 enum에 넣으면
+# 계약이 자기 자신과 모순된다. 저장된 기존 예약·보고서에 이 값이 없으면 `daily`다.
+BRIEFING_KINDS = frozenset({"daily", "weekly"})
+DEFAULT_BRIEFING_KIND = "daily"
+BRIEFING_KIND_TAGS = {"daily": "일간", "weekly": "주간"}
 US_SESSION_MODES = frozenset({"us_close", "us_intraday", "us_holiday", "us_off_session"})
 KR_SESSION_MODES = frozenset({"kr_close", "kr_intraday", "kr_holiday", "kr_off_session"})
 # 유럽은 한국시간 자정 이후 마감해 미국과 같은 모양이고(장중 모드 없음),
@@ -73,21 +79,28 @@ SESSION_STATUS_LABELS = {
 }
 
 
-def _scoped_file_stem(date, market_scope=None):
+def _scoped_file_stem(date, market_scope=None, kind=DEFAULT_BRIEFING_KIND):
+    """저장 파일의 이름 줄기. **종류가 다르면 파일도 달라야 한다.**
+
+    주간 브리핑에 접미사가 없으면 일요일 실행이 `{금요일}.{시장}.json`으로 떨어져
+    그 주 금요일 일간 브리핑을 통째로 덮어쓴다 — 발행일 하나로는 두 보고서를
+    구분할 수 없다. 일간은 접미사가 없어 기존 파일 이름이 그대로다.
+    """
     date_text = str(date or "").strip()
     scope = str(market_scope or "").strip().lower()
+    suffix = "" if normalize_briefing_kind(kind) == DEFAULT_BRIEFING_KIND else f".{normalize_briefing_kind(kind)}"
     if scope in SINGLE_MARKET_SCOPES:
-        return f"{date_text}.{scope}"
-    return date_text
+        return f"{date_text}.{scope}{suffix}"
+    return f"{date_text}{suffix}"
 
 
-def briefing_file_name(date, market_scope=None):
+def briefing_file_name(date, market_scope=None, kind=DEFAULT_BRIEFING_KIND):
     """Return a briefing report filename.
 
     The no-scope form is kept for legacy read compatibility.  New writes should
     pass ``us`` or ``kr`` and produce one file per market.
     """
-    return f"{_scoped_file_stem(date, market_scope)}.json"
+    return f"{_scoped_file_stem(date, market_scope, kind)}.json"
 
 
 def briefing_link_file_name(date):
@@ -101,14 +114,14 @@ def briefing_link_file_name(date):
     return f"{_scoped_file_stem(date)}.link.json"
 
 
-def visual_sidecar_file_name(date, market_scope=None):
+def visual_sidecar_file_name(date, market_scope=None, kind=DEFAULT_BRIEFING_KIND):
     """Large visual constituents are stored beside the dated/scoped report."""
-    return f"{_scoped_file_stem(date, market_scope)}.visuals.json"
+    return f"{_scoped_file_stem(date, market_scope, kind)}.visuals.json"
 
 
-def visual_sidecar_gzip_file_name(date, market_scope=None):
+def visual_sidecar_gzip_file_name(date, market_scope=None, kind=DEFAULT_BRIEFING_KIND):
     """Compressed visual sidecar used by schema v2 reports."""
-    return f"{_scoped_file_stem(date, market_scope)}.visuals.json.gz"
+    return f"{_scoped_file_stem(date, market_scope, kind)}.visuals.json.gz"
 
 
 def _normalize_enum(value, allowed, default):
@@ -122,6 +135,10 @@ def normalize_market_scope(value):
 
 def normalize_briefing_type(value):
     return _normalize_enum(value, BRIEFING_TYPES, "default")
+
+
+def normalize_briefing_kind(value):
+    return _normalize_enum(value, BRIEFING_KINDS, DEFAULT_BRIEFING_KIND)
 
 
 def briefing_type_instruction(value):
@@ -403,6 +420,7 @@ def normalize_briefing_contract(report):
     out.setdefault("visualRecommendations", [])
     out.setdefault("visualSnapshots", [])
     out.setdefault("issueCoverage", [])
+    out.setdefault("concentrationControl", {"version": 1, "mode": "off", "byMarket": {}})
     return out
 
 
@@ -429,12 +447,65 @@ def _effective_market_windows(report):
         return windows
 
 
+def _weekly_metadata(report, source, scope, report_date, briefing_type, report_scope):
+    """주간 보고서의 카드 메타. **세션을 되짚지 않는다.**
+
+    주간에는 세션일도 `마감`/`장중`도 없다. 창(`weekStart`~`weekEnd`)이 저장돼 있고
+    제목은 거기서 나온다 — 세션 판정을 태우면 발행일 기준 직전 세션이 끼어들어
+    일요일 주간 보고서가 금요일 마감이라고 말하게 된다.
+    """
+    from features.daily_briefing.weekly import WeeklyWindow, weekly_title
+
+    week_start = str(source.get("weekStart") or report.get("weekStart") or "")[:10]
+    week_end = str(source.get("weekEnd") or report.get("weekEnd") or "")[:10] or report_date
+    window = WeeklyWindow(
+        publication_date=report_date,
+        week_start=week_start or report_date,
+        week_end=week_end,
+        preview_start=str(source.get("previewStart") or report.get("previewStart") or "")[:10],
+        preview_end=str(source.get("previewEnd") or report.get("previewEnd") or "")[:10],
+    )
+    default_title = weekly_title(scope, window) if scope in SINGLE_MARKET_SCOPES else str(
+        source.get("title") or report.get("title") or ""
+    )
+    summary = source.get("summary") or report.get("summary") or _plain_excerpt(
+        source.get("markdown") or report.get("markdown")
+    )
+    return {
+        "id": f"{report_date}:{scope}:weekly",
+        "reportDate": report_date,
+        "reportScope": report_scope,
+        "marketScope": scope,
+        "kind": "weekly",
+        "briefingType": briefing_type,
+        "generatedAt": source.get("generatedAt") or report.get("generatedAt") or "",
+        # 날짜 필터가 걸리도록 구간 끝을 세션일 자리에 둔다. 주간에 세션은 없지만
+        # 아카이브의 날짜 질의는 이 두 값만 본다.
+        "sessionDate": window.week_end,
+        "sessionMode": "",
+        "weekStart": window.week_start,
+        "weekEnd": window.week_end,
+        "previewStart": window.preview_start,
+        "previewEnd": window.preview_end,
+        "publicationDate": report_date,
+        "title": default_title or str(source.get("title") or report.get("title") or ""),
+        "summary": _plain_excerpt(summary),
+        "tags": [MARKET_TAGS[scope], BRIEFING_KIND_TAGS["weekly"]],
+        "combinedGeneration": False,
+        "generationScope": "",
+        "generationMarkets": [],
+    }
+
+
 def briefing_market_metadata(report, market_scope, section=None):
     source = section if isinstance(section, dict) else {}
     report_date = str(report.get("date") or "").strip()
     scope = normalize_market_scope(market_scope)
     report_scope = normalize_market_scope(report.get("marketScope"))
     briefing_type = normalize_briefing_type(source.get("briefingType") or report.get("briefingType"))
+    kind = normalize_briefing_kind(source.get("kind") or report.get("kind"))
+    if kind == "weekly":
+        return _weekly_metadata(report, source, scope, report_date, briefing_type, report_scope)
     stored_market_windows = report.get("marketWindows") or {}
     market_windows = _effective_market_windows(report)
     raw_session_mode = source.get("sessionMode") or report.get("sessionMode")
@@ -482,6 +553,7 @@ def briefing_market_metadata(report, market_scope, section=None):
         "reportDate": report_date,
         "reportScope": report_scope,
         "marketScope": scope,
+        "kind": kind,
         "briefingType": briefing_type,
         "generatedAt": source.get("generatedAt") or report.get("generatedAt") or "",
         "sessionDate": session_date,
@@ -499,7 +571,7 @@ def briefing_market_metadata(report, market_scope, section=None):
 
 def enrich_briefing_sections(
     sections, *, report_date, report_scope, briefing_type, generated_at, report_summary="",
-    market_windows=None,
+    market_windows=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None,
 ):
     """시장별 섹션에 제목·세션일·세션모드를 붙인다.
 
@@ -511,14 +583,30 @@ def enrich_briefing_sections(
     창은 호출부가 이미 들고 있다 — 문서 선별(`select_briefing_docs`)이 돌려준 그 값이며,
     생성 시각(`as_of`) 기준으로 phase가 매겨져 있다.
     """
+    kind = normalize_briefing_kind(kind)
     report = {
         "date": report_date,
         "marketScope": report_scope,
         "briefingType": briefing_type,
+        "kind": kind,
         "generatedAt": generated_at,
         "summary": report_summary,
         "marketWindows": market_windows or {},
+        **({
+            "weekStart": str((weekly_window or {}).get("weekStart") or ""),
+            "weekEnd": str((weekly_window or {}).get("weekEnd") or ""),
+            "previewStart": str((weekly_window or {}).get("previewStart") or ""),
+            "previewEnd": str((weekly_window or {}).get("previewEnd") or ""),
+        } if kind == "weekly" else {}),
     }
+    carried = (
+        "marketScope", "briefingType", "kind", "generatedAt", "sessionDate",
+        "publicationDate", "title", "summary", "tags",
+        "weekStart", "weekEnd", "previewStart", "previewEnd",
+    ) if kind == "weekly" else (
+        "marketScope", "briefingType", "kind", "generatedAt", "sessionDate", "sessionMode",
+        "publicationDate", "title", "summary", "tags",
+    )
     enriched = {}
     for scope, raw in deepcopy(sections or {}).items():
         if scope not in SINGLE_MARKET_SCOPES or not isinstance(raw, dict):
@@ -526,9 +614,7 @@ def enrich_briefing_sections(
             continue
         section = deepcopy(raw)
         metadata = briefing_market_metadata(report, scope, section)
-        section.update({key: metadata[key] for key in (
-            "marketScope", "briefingType", "generatedAt", "sessionDate", "sessionMode", "publicationDate", "title", "summary", "tags",
-        )})
+        section.update({key: metadata[key] for key in carried})
         enriched[scope] = section
     return enriched
 
@@ -567,6 +653,22 @@ def briefing_scope_view(report, market_scope=None):
     out = normalize_briefing_contract(report)
     effective_market_windows = _effective_market_windows(out)
     scope = normalize_market_scope(market_scope or out.get("marketScope"))
+    report_kind = normalize_briefing_kind(out.get("kind"))
+    if scope in AGGREGATE_SCOPES and report_kind == "weekly":
+        # 주간 종합 뷰는 시장별 본문을 그대로 잇는다. 세션 제목 정규화도, 세션 기준
+        # 종합 제목도 주간에는 성립하지 않는다.
+        from features.daily_briefing.weekly import WeeklyWindow
+
+        window = WeeklyWindow(
+            publication_date=str(out.get("date") or ""),
+            week_start=str(out.get("weekStart") or out.get("date") or ""),
+            week_end=str(out.get("weekEnd") or out.get("date") or ""),
+            preview_start=str(out.get("previewStart") or ""),
+            preview_end=str(out.get("previewEnd") or ""),
+        )
+        out["publicationDate"] = str(out.get("date") or "")
+        out["title"] = f"Weekly Market Briefing — {window.label}"
+        return out
     if scope in AGGREGATE_SCOPES:
         report_date = str(out.get("date") or "")
         modes = {
@@ -593,6 +695,18 @@ def briefing_scope_view(report, market_scope=None):
     view = deepcopy(out)
     view["marketScope"] = scope
     metadata = briefing_market_metadata(out, scope, scoped)
+    if metadata.get("kind") == "weekly":
+        # 주간 본문은 세션 제목 정규화를 태우지 않는다. 그 정규화는 H1을
+        # `{라벨} — {세션일} {마감|장중}`으로 다시 쓰는 일이라, 주간 제목을 만나면
+        # 구간이 세션일로 바뀌어 보고서가 스스로를 잘못 소개하게 된다.
+        view["markdown"] = scoped.get("markdown", view.get("markdown", ""))
+        view["sources"] = scoped.get("sources", view.get("sources", []))
+        view["generation"] = scoped.get("generation", view.get("generation", {}))
+        view.update({key: metadata[key] for key in (
+            "kind", "weekStart", "weekEnd", "previewStart", "previewEnd",
+            "sessionDate", "publicationDate", "title", "summary", "tags",
+        )})
+        return view
     view["markdown"] = normalize_briefing_markdown_titles(
         scoped.get("markdown", view.get("markdown", "")),
         metadata["reportDate"],
@@ -604,7 +718,7 @@ def briefing_scope_view(report, market_scope=None):
     view["sources"] = scoped.get("sources", view.get("sources", []))
     view["generation"] = scoped.get("generation", view.get("generation", {}))
     view.update({key: metadata[key] for key in (
-        "sessionDate", "sessionMode", "publicationDate", "title", "summary", "tags",
+        "kind", "sessionDate", "sessionMode", "publicationDate", "title", "summary", "tags",
     )})
     return view
 

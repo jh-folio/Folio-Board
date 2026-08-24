@@ -90,6 +90,25 @@ def _validate_verdicts(raw: dict, items: list[dict]) -> dict[str, dict]:
     return verdicts
 
 
+def _cli_semantic_call():
+    """Agent CLI로 같은 판정 프롬프트를 보내는 호출자. 쓸 수 없으면 None.
+
+    **CLI 모드에서는 API 키가 없는 것이 정상이다.** 키만 보고 판정을 접으면 CLI로
+    브리핑을 만드는 구성에서는 의미 비교가 영원히 `not_evaluated`로 남는다 —
+    화면은 그것을 "판정하지 못했다"로 읽고 이미 연결된 Agent를 연결하라고 말한다.
+    """
+    from features.agent_mode.bridge import run_agent_prompt
+    from features.llm_settings.client import extract_json_object
+
+    def call(prompt: str, context: str) -> dict:
+        # 이 함수는 브리핑 생성 잡의 커밋 단계에서 불린다 — 그 잡이 이미
+        # `_RUN_SEMAPHORE`를 쥐고 있으므로 다시 잡으면 잡 스레드가 영원히 멈춘다.
+        result = run_agent_prompt(f"{prompt}\n\n{context}", serialize=False)
+        return extract_json_object(str(result.get("output") or ""))
+
+    return call
+
+
 def evaluate_semantic_changes(summary: dict, *, llm_call=None) -> dict:
     """변화 단위의 내용 분류. 실패는 not_evaluated일 뿐 예외를 밖으로 내지 않는다."""
     items = semantic_eligible_items(summary)
@@ -104,21 +123,30 @@ def evaluate_semantic_changes(summary: dict, *, llm_call=None) -> dict:
         )
 
         cfg = selected_llm_config()
-        if not cfg.get("apiKey"):
-            return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+        if cfg.get("apiKey"):
+            def llm_call(prompt: str, context: str) -> dict:
+                text, _response_id, _usage = request_llm_text(
+                    cfg, prompt, context,
+                    web_search=False, max_output_tokens=MAX_OUTPUT_TOKENS,
+                    json_mode=True, include_usage=True,
+                )
+                return extract_json_object(text)
 
-        def llm_call(prompt: str, context: str) -> dict:
-            text, _response_id, _usage = request_llm_text(
-                cfg, prompt, context,
-                web_search=False, max_output_tokens=MAX_OUTPUT_TOKENS,
-                json_mode=True, include_usage=True,
-            )
-            return extract_json_object(text)
+            provider, model = cfg.get("provider", ""), cfg.get("model", "")
+        else:
+            # 키가 없으면 CLI를 본다. 어느 쪽도 없을 때만 판정을 접는다.
+            from features.llm_settings.client import default_generation_mode
 
-        provider, model = cfg.get("provider", ""), cfg.get("model", "")
+            if default_generation_mode() != "llm_cli":
+                return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+            try:
+                llm_call = _cli_semantic_call()
+            except Exception:  # noqa: BLE001 - 어댑터를 못 고르면 판정만 접는다
+                return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+            provider, model = "agent_cli", ""
         try:
             raw = llm_call(SEMANTIC_PROMPT, json.dumps(_context_payload(items), ensure_ascii=False))
-        except (LlmRequestError, KeyError, TypeError, ValueError):
+        except (LlmRequestError, KeyError, TypeError, ValueError, OSError, RuntimeError):
             return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_failed"}
     else:
         provider, model = "injected", ""
@@ -157,6 +185,10 @@ def apply_semantic_verdicts(summary: dict, evaluation: dict) -> dict:
     result["changedItems"] = items
     result["semanticEvaluation"] = {
         "status": (evaluation or {}).get("status") or "not_evaluated",
+        # **왜 판정하지 못했는지를 함께 남긴다.** 이유가 없으면 화면은 판정 엔진이 없어서인지
+        # 호출이 실패해서인지 구분할 수 없어 어댑터를 스스로 뒤지게 되고, 그 추측이 API 키만
+        # 쓰는 설치에서 "AI Agent를 연결하세요"를 되살렸다(엔진은 이미 연결돼 있다).
+        "reason": (evaluation or {}).get("reason"),
         "provider": (evaluation or {}).get("provider"),
         "model": (evaluation or {}).get("model"),
         # wall-clock을 쓰면 동일 재생성이 canonical no-op이 아니게 된다(comparator와 같은 이유).

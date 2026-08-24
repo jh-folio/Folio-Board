@@ -211,6 +211,93 @@ def resolve_targets(
     return targets, errors
 
 
+@dataclass(frozen=True, slots=True)
+class WeeklyBriefingTarget:
+    """주간 브리핑 하나의 정체성.
+
+    **세션이 없다.** 그래서 `resolve_targets`의 거부 규칙(`session_not_available`,
+    `not_a_session`)을 태우지 않는다 — 주말 발행이 정상인 산출물을 "그날은 거래일이
+    아니다"로 막으면 주간 브리핑을 만들 길이 아예 없다. 대신 발행일이 미래이면
+    거부한다. 아직 오지 않은 주를 요약할 수는 없다.
+    """
+
+    market: str
+    publication_date: str
+    week_start: str
+    week_end: str
+    preview_start: str
+    preview_end: str
+    resolved_at: str
+
+    @property
+    def artifact_id(self) -> str:
+        """저장 키이자 라우트 키. `YYYY-MM-DD.market.weekly`."""
+        return f"{self.publication_date}.{self.market}.weekly"
+
+    def to_dict(self) -> dict:
+        return {
+            "market": self.market,
+            "kind": "weekly",
+            "publicationDate": self.publication_date,
+            "weekStart": self.week_start,
+            "weekEnd": self.week_end,
+            "previewStart": self.preview_start,
+            "previewEnd": self.preview_end,
+            "resolvedAt": self.resolved_at,
+            "artifactId": self.artifact_id,
+        }
+
+
+def resolve_weekly_targets(
+    markets: Iterable[str],
+    *,
+    publication_date: str = "",
+    now: dt.datetime | None = None,
+) -> tuple[list[WeeklyBriefingTarget], list[TargetError]]:
+    """주간 요청을 시장별 target으로 확정한다.
+
+    발행일을 주지 않으면 오늘이다. 시장마다 창이 같으므로 판정도 같지만, 실패를
+    시장별로 돌려주는 모양은 일간과 맞춘다 — 호출부가 두 경로를 다르게 다루지 않게 한다.
+    """
+    from features.daily_briefing.weekly import weekly_window
+
+    moment = _now(now).astimezone(KST)
+    resolved_at = moment.isoformat()
+    requested = _normalize_markets(markets)
+    if not requested:
+        return [], []
+    raw = str(publication_date or "").strip()[:10] or moment.date().isoformat()
+    try:
+        published = dt.date.fromisoformat(raw)
+    except ValueError:
+        return [], [
+            TargetError(market, "invalid_date", f"발행일을 읽을 수 없습니다: {publication_date!r}")
+            for market in requested
+        ]
+    if published > moment.date():
+        return [], [
+            TargetError(
+                market, "week_not_available",
+                f"{published.isoformat()}은 아직 오지 않은 날짜라 주간 브리핑을 만들 수 없습니다.",
+            )
+            for market in requested
+        ]
+    window = weekly_window(published.isoformat())
+    targets = [
+        WeeklyBriefingTarget(
+            market=market,
+            publication_date=window.publication_date,
+            week_start=window.week_start,
+            week_end=window.week_end,
+            preview_start=window.preview_start,
+            preview_end=window.preview_end,
+            resolved_at=resolved_at,
+        )
+        for market in requested
+    ]
+    return targets, []
+
+
 def briefing_title(target: BriefingTarget) -> str:
     """제목은 코드가 만든다. LLM이 시장·날짜·상태를 다시 정하지 못한다.
 

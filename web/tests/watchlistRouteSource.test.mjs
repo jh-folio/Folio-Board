@@ -25,11 +25,13 @@ test("Watchlist route preserves legacy visual class contracts", async () => {
   assert.match(source, /compact-item/);
 });
 
-test("Watchlist route integrates TradingView detail, isolated consultation, and Agent context", async () => {
+test("상세는 네이티브 차트·실적 패널과 대화·Agent 맥락을 함께 싣는다", async () => {
   const source = await readFile(new URL("../src/app/WatchlistRoute.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /FolioTradingViewWidgets\?\.renderWatchlistDetail/);
-  assert.match(source, /FolioTradingViewWidgets\?\.cleanup/);
+  // 위젯 브리지는 이 모달이 마지막 소비자였다. 되살아나면 iframe 세 장이 다시 쌓인다.
+  assert.doesNotMatch(source, /FolioTradingViewWidgets/);
+  assert.match(source, /<MarketChartFigure/);
+  assert.match(source, /<EarningsPanel/);
   assert.match(source, /surface: "watchlist_detail"/);
   assert.match(source, /ConsultationEntry/);
   assert.match(source, /setReactAgentContextScope/);

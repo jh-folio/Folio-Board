@@ -16,6 +16,9 @@ import type { ChangeEvent } from "./changeEvents";
 
 // `all`은 네 시장 생성 범위, `both`는 US/KR만 담은 예전 저장본이다.
 type MarketScope = "us" | "kr" | "europe" | "jp" | "all" | "both" | "multi";
+// 브리핑 종류. `briefingType`(편집 강조점)과 직교한다.
+type BriefingKind = "daily" | "weekly";
+type ArchiveKindFilter = "all" | BriefingKind;
 // 아카이브 필터의 `all`은 "시장 필터 없음"이라 생성 범위 `all`과 다른 말이다.
 type ArchiveMarketFilter = "all" | "aggregate" | MarketScope;
 const SINGLE_MARKETS = ["us", "kr", "europe", "jp"] as const;
@@ -48,6 +51,9 @@ type BriefingArchiveItem = {
   generatedAt?: string;
   sessionDate?: string;
   briefingType?: string;
+  kind?: BriefingKind;
+  weekStart?: string;
+  weekEnd?: string;
   tags?: string[];
   engine?: string;
   engineDetail?: string;
@@ -67,6 +73,9 @@ type Briefing = {
   sessionDate?: string;
   sessionMode?: string;
   marketScope?: string;
+  kind?: BriefingKind;
+  weekStart?: string;
+  weekEnd?: string;
   markdown?: string;
   generation?: { message?: string; mode?: string; generatedAt?: string };
   canonicalRevision?: unknown;
@@ -97,6 +106,7 @@ type OverlayResult = {
 type BriefingDetailRoute = {
   date: string;
   scope: MarketScope;
+  kind: BriefingKind;
 };
 
 const SCOPE_LABELS: Record<MarketScope, string> = {
@@ -117,6 +127,12 @@ const BRIEFING_TYPE_LABELS: Record<string, string> = {
   default: "기본",
   market_focused: "시황 중심",
   concise: "요약",
+};
+// 브리핑 **종류**. 편집 강조점(`유형`)과 다른 축이라 컨트롤을 따로 둔다 — 유형 셋은
+// 모두 "기존 섹션 구성을 유지"하라는 지시라 골격이 다른 주간을 거기 섞을 수 없다.
+const BRIEFING_KIND_LABELS: Record<BriefingKind, string> = {
+  daily: "일간",
+  weekly: "주간 요약",
 };
 const RECENT_BRIEFING_LIMIT = 20;
 
@@ -143,6 +159,7 @@ function stripTitleDate(title: string) {
 function archiveCardView(item: BriefingArchiveItem) {
   const date = displayDate(item);
   const scope = displayScope(item);
+  const kind = displayKind(item);
   const displayTitle = scope === "us"
     ? "US Market Briefing"
     : scope === "kr"
@@ -154,7 +171,7 @@ function archiveCardView(item: BriefingArchiveItem) {
   // 브리핑은 발행일과 세션일이 다르고 그 구분이 이 화면의 핵심이라 `KST 발행`을 남긴다.
   // 초 단위 생성 시각은 목록에서 쓸 일이 없어 뺀다 — 이 카드만 유독 길어지는 원인이었다.
   const publication = formatted ? `${listDate(item.reportDate || item.date)} KST 발행` : "발행일 미상";
-  return { date, scope, title, chips, engine: item.engine || "", engineDetail: item.engineDetail || "", foot: publication };
+  return { date, scope, kind, title, chips, engine: item.engine || "", engineDetail: item.engineDetail || "", foot: publication };
 }
 
 function sleep(ms: number) {
@@ -165,21 +182,45 @@ function normalizedScope(value?: string): MarketScope {
   return ALL_SCOPES.includes(value as MarketScope) ? (value as MarketScope) : "both";
 }
 
+function normalizedKind(value?: string): BriefingKind {
+  return value === "weekly" ? "weekly" : "daily";
+}
+
+/** 생성 직후 **리더가 열 범위.** 합본이 아니라 시장 하나를 연다.
+ *
+ * 보고서는 시장별로만 저장되는데(`{발행일}.{시장}[.weekly].json`) 여러 시장을 함께
+ * 만들면 응답의 `marketScope`가 `multi`/`all` 같은 합본이라, 리더가 그 범위에 머문 채
+ * 누르는 `내 노트와 연결`·내보내기가 저장된 적 없는 합본 파일을 가리켜 실패했다.
+ * 주간에는 legacy 합본 파일조차 있을 수 없어 항상 실패한다.
+ * 시장 하나로 열면 그 시장 파일을 정확히 집고, 옛 일간 합본만 있는 보고서는
+ * 서버의 단일 시장 경로가 알아서 legacy 파일로 되돌아간다.
+ * 다른 시장은 아카이브 카드에서 연다 — 카드는 원래 시장별 한 장이다.
+ */
+function readerScope(responseScope: string | undefined, generated: readonly SingleMarket[]): MarketScope {
+  const scope = normalizedScope(responseScope);
+  if (SINGLE_MARKETS.includes(scope as SingleMarket)) return scope;
+  return generated[0] ?? scope;
+}
+
 // 해시를 쓰는 쪽(setBriefingHash)과 읽는 쪽이 같은 scope 집합을 써야 한다. `multi`가
 // 빠져 있어 미국+일본 같은 조합으로 생성하면 주소만 바뀌고 리더가 열리지 않았다 —
 // 서버는 `multi`를 정식 scope로 저장·조회한다(features/daily_briefing/schema.py::MARKET_SCOPES).
 function readBriefingDetailRoute(): BriefingDetailRoute | null {
-  const match = window.location.hash.match(/^#\/?briefing\/(\d{4}-\d{2}-\d{2})(?:\/(us|kr|europe|jp|all|both|multi))?$/);
+  // 종류가 해시에 없으면 같은 날 두 보고서 중 어느 쪽을 열지 정할 수 없다 — 주간 카드를
+  // 눌러도 그날 일간 브리핑이 열린다.
+  const match = window.location.hash.match(
+    /^#\/?briefing\/(\d{4}-\d{2}-\d{2})(?:\/(us|kr|europe|jp|all|both|multi))?(?:\/(daily|weekly))?$/,
+  );
   if (!match) return null;
-  return { date: match[1], scope: normalizedScope(match[2]) };
+  return { date: match[1], scope: normalizedScope(match[2]), kind: normalizedKind(match[3]) };
 }
 
 function isBriefingHash() {
   return window.location.hash.replace(/^#\/?/, "").split("/")[0] === "briefing";
 }
 
-function setBriefingHash(date?: string, scope: MarketScope = "both") {
-  window.location.hash = date ? `#/briefing/${date}/${scope}` : "#/briefing";
+function setBriefingHash(date?: string, scope: MarketScope = "both", kind: BriefingKind = "daily") {
+  window.location.hash = date ? `#/briefing/${date}/${scope}/${kind}` : "#/briefing";
 }
 
 function splitReportTitle(markdown = "", fallback = "시장 브리핑") {
@@ -200,6 +241,10 @@ function displayDate(item: BriefingArchiveItem) {
 
 function displayScope(item: BriefingArchiveItem): MarketScope {
   return normalizedScope(item.marketScope || item.scope);
+}
+
+function displayKind(item: BriefingArchiveItem): BriefingKind {
+  return normalizedKind(item.kind);
 }
 
 /** 기간 판정은 서버와 같은 규칙이다 — 발행일과 세션일 중 **하나라도** 범위에 들면 통과한다
@@ -292,10 +337,12 @@ export function BriefingRoute() {
     });
   }
   const [briefingType, setBriefingType] = useState("default");
+  const [briefingKind, setBriefingKind] = useState<BriefingKind>("daily");
   const [briefingDate, setBriefingDate] = useState(() => todayIsoDate());
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveMarket, setArchiveMarket] = useState<ArchiveMarketFilter>("all");
   const [archiveType, setArchiveType] = useState("all");
+  const [archiveKind, setArchiveKind] = useState<ArchiveKindFilter>("all");
   const [archiveStart, setArchiveStart] = useState("");
   const [archiveEnd, setArchiveEnd] = useState("");
   const [archiveView, setArchiveView] = useState<ArchiveViewMode>("recent");
@@ -311,6 +358,7 @@ export function BriefingRoute() {
         q: archiveQuery,
         marketScope: archiveMarket,
         briefingType: archiveType,
+        kind: archiveKind,
         dateFrom: archiveStart,
         dateTo: archiveEnd,
       });
@@ -322,7 +370,7 @@ export function BriefingRoute() {
     } finally {
       setLoading(false);
     }
-  }, [archiveEnd, archiveMarket, archiveQuery, archiveStart, archiveType]);
+  }, [archiveEnd, archiveKind, archiveMarket, archiveQuery, archiveStart, archiveType]);
 
   useEffect(() => {
     loadArchive();
@@ -350,11 +398,11 @@ export function BriefingRoute() {
 
   useEffect(() => {
     let alive = true;
-    async function loadDetail(date: string, scope: MarketScope) {
+    async function loadDetail(date: string, scope: MarketScope, kind: BriefingKind) {
       setLoading(true);
       setError("");
       try {
-        const payload = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&marketScope=${encodeURIComponent(scope)}`);
+        const payload = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`);
         if (!alive) return;
         setBriefing(payload);
         setReactAgentContextScope("briefing", {
@@ -374,7 +422,7 @@ export function BriefingRoute() {
     }
 
     if (detailRoute) {
-      loadDetail(detailRoute.date, detailRoute.scope);
+      loadDetail(detailRoute.date, detailRoute.scope, detailRoute.kind);
     } else {
       setBriefing(null);
       setReactAgentContextScope("briefing", { surface: "briefing", viewId: "briefing", reportKind: "", reportId: "" });
@@ -387,13 +435,17 @@ export function BriefingRoute() {
   async function exportBriefing(target: "notion" | "obsidian") {
     const date = briefing?.date || detailRoute?.date || "";
     const scope = normalizedScope(briefing?.marketScope || detailRoute?.scope);
+    // **종류를 빼면 주간 보고서를 열어 두고 그날 일간을 내보낸다** — 주간의 저장 키는
+    // 발행일이라 같은 날 일간과 날짜가 겹친다. 일간이 없는 날이면 404가 된다.
+    const kind = normalizedKind(briefing?.kind || detailRoute?.kind);
     if (!date) return;
     setActionBusy(target);
     setActionStatus(target === "notion" ? "Notion에 내보내는 중..." : "Obsidian에 내보내는 중...");
     try {
+      const query = `marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`;
       const result = target === "notion"
-        ? await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-notion?marketScope=${encodeURIComponent(scope)}`, { marketScope: scope })
-        : await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-obsidian?marketScope=${encodeURIComponent(scope)}`, { marketScope: scope });
+        ? await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-notion?${query}`, { marketScope: scope, kind })
+        : await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-obsidian?${query}`, { marketScope: scope, kind });
       if (target === "notion") {
         setActionStatus(result.notionUrl ? `Notion 내보냄: ${result.title || result.notionUrl}` : "Notion에 내보냈습니다.");
       } else {
@@ -409,15 +461,20 @@ export function BriefingRoute() {
   async function generatePersonalOverlay() {
     const date = briefing?.date || detailRoute?.date || "";
     const scope = normalizedScope(briefing?.marketScope || detailRoute?.scope);
+    // 종류를 빼면 개인 해석이 그날 **일간** 보고서에 얹히고, 이어지는 재조회가 화면의
+    // 주간 보고서를 일간으로 바꿔치기한다.
+    const kind = normalizedKind(briefing?.kind || detailRoute?.kind);
     if (!date) return;
     setActionBusy("overlay");
     setActionStatus("개인 해석을 생성하는 중...");
     try {
-      const response = await postJson<OverlayResult | AgentJob>(`/api/briefings/${encodeURIComponent(date)}/personal-overlay?marketScope=${encodeURIComponent(scope)}`, {
+      const query = `marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`;
+      const response = await postJson<OverlayResult | AgentJob>(`/api/briefings/${encodeURIComponent(date)}/personal-overlay?${query}`, {
         marketScope: scope,
+        kind,
       });
       if (isAgentJob(response)) await pollAgentJob(response);
-      const updated = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&marketScope=${encodeURIComponent(scope)}`);
+      const updated = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&${query}`);
       setBriefing(updated);
       setActionStatus("개인 해석을 생성했습니다.");
     } catch (err) {
@@ -427,16 +484,20 @@ export function BriefingRoute() {
     }
   }
 
-  async function deleteBriefing(date: string, scope: MarketScope) {
+  async function deleteBriefing(date: string, scope: MarketScope, kind: BriefingKind = "daily") {
     if (!date) return;
-    if (!window.confirm(`${date} ${SCOPE_LABELS[scope]} 브리핑을 삭제할까요?`)) return;
-    setActionBusy(`delete-${date}-${scope}`);
+    if (!window.confirm(`${date} ${SCOPE_LABELS[scope]} ${BRIEFING_KIND_LABELS[kind]} 브리핑을 삭제할까요?`)) return;
+    setActionBusy(`delete-${date}-${scope}-${kind}`);
     try {
       // 통합 범위 삭제는 그 날짜 전체를 지운다. 시장 하나만 지울 때만 market을 붙인다.
       // `multi`도 통합이다 — 서버가 아는 단일 시장(us/kr/europe/jp)이 아니라서
       // `?market=multi`를 붙이면 400으로 되돌아왔다.
+      //
+      // **종류는 항상 붙인다.** 빼면 주간 카드의 삭제가 그날 일간 브리핑을 지운다.
       const isAggregate = scope === "both" || scope === "all" || scope === "multi";
-      const query = isAggregate ? "" : `?market=${encodeURIComponent(scope)}`;
+      const params = new URLSearchParams({ kind });
+      if (!isAggregate) params.set("market", scope);
+      const query = `?${params}`;
       const res = await fetch(`/api/briefings/${encodeURIComponent(date)}${query}`, { method: "DELETE" });
       // 응답을 보지 않으면 400·404가 성공처럼 보이고 목록만 그대로 다시 그려진다.
       if (!res.ok) throw new Error(res.status === 404 ? "삭제할 브리핑을 찾지 못했습니다." : "브리핑 삭제에 실패했습니다.");
@@ -458,6 +519,7 @@ export function BriefingRoute() {
         strictDate,
         markets: selectedMarkets,
         briefingType,
+        kind: briefingKind,
       });
       const jobs = splitJobs(response);
       if (jobs) {
@@ -466,26 +528,26 @@ export function BriefingRoute() {
         const finished = await Promise.all(jobs.map(pollAgentJob));
         await loadArchive();
         const date = finished[0]?.result?.date || finished[0]?.result?.artifactId || "";
-        if (date) setBriefingHash(date, marketScope);
+        if (date) setBriefingHash(date, readerScope(marketScope, selectedMarkets), briefingKind);
         return;
       }
       if (isAgentJob(response)) {
         const done = await pollAgentJob(response);
         const date = done.result?.date || done.result?.artifactId || targetDate || "";
         await loadArchive();
-        if (date) setBriefingHash(date, marketScope);
+        if (date) setBriefingHash(date, readerScope(marketScope, selectedMarkets), briefingKind);
         return;
       }
       const reports = splitReports(response);
       if (reports) {
         await loadArchive();
         const first = reports[0];
-        if (first?.date) setBriefingHash(first.date, normalizedScope(first.marketScope || marketScope));
+        if (first?.date) setBriefingHash(first.date, readerScope(first.marketScope || marketScope, selectedMarkets), briefingKind);
         return;
       }
       const date = response.date || targetDate || "";
       await loadArchive();
-      if (date) setBriefingHash(date, normalizedScope(response.marketScope || marketScope));
+      if (date) setBriefingHash(date, readerScope(response.marketScope || marketScope, selectedMarkets), briefingKind);
     } catch (err) {
       setError(err instanceof Error ? err.message : "브리핑 생성에 실패했습니다.");
     } finally {
@@ -507,9 +569,10 @@ export function BriefingRoute() {
         if (scope !== "all" && scope !== "both" && scope !== "multi") return false;
       } else if (archiveMarket !== "all" && scope !== archiveMarket) return false;
       if (archiveType !== "all" && type !== archiveType) return false;
+      if (archiveKind !== "all" && displayKind(item) !== archiveKind) return false;
       return archiveDateInRange(item, archiveStart, archiveEnd);
     });
-  }, [archiveEnd, archiveMarket, archiveStart, archiveType, items]);
+  }, [archiveEnd, archiveKind, archiveMarket, archiveStart, archiveType, items]);
   const visibleGroups = useMemo(() => {
     const sorted = [...filteredItems].sort((a, b) => String(displayDate(b) || b.generatedAt || "").localeCompare(String(displayDate(a) || a.generatedAt || "")));
     if (archiveView === "recent") {
@@ -544,7 +607,7 @@ export function BriefingRoute() {
       <div className="react-briefing-route" data-briefing-route>
         {error && <p className="react-dashboard-error">{error}</p>}
         <ReportReaderShell
-          eyebrow="DAILY BRIEFING"
+          eyebrow={detailRoute.kind === "weekly" ? "WEEKLY BRIEFING" : "DAILY BRIEFING"}
           title={readerTitle}
           meta={`${formatArchiveDate(publicationDate)} KST 발행`}
           agentContext={{
@@ -652,30 +715,47 @@ export function BriefingRoute() {
               </div>
             </div>
             <label className="gen-option quality-option">
-              <span>유형</span>
-              <select value={briefingType} onChange={(event) => setBriefingType(event.currentTarget.value)}>
-                {Object.entries(BRIEFING_TYPE_LABELS).map(([value, label]) => (
+              <span>종류</span>
+              <select
+                value={briefingKind}
+                onChange={(event) => setBriefingKind(event.currentTarget.value as BriefingKind)}
+              >
+                {Object.entries(BRIEFING_KIND_LABELS).map(([value, label]) => (
                   <option value={value} key={value}>{label}</option>
                 ))}
               </select>
             </label>
+            {/* 편집 강조점은 일간 골격 위에서만 뜻이 있다. 주간은 섹션 구성이 달라
+                이 셋("기존 섹션 구성을 유지")이 성립하지 않는다. */}
+            {briefingKind === "daily" && (
+              <label className="gen-option quality-option">
+                <span>유형</span>
+                <select value={briefingType} onChange={(event) => setBriefingType(event.currentTarget.value)}>
+                  {Object.entries(BRIEFING_TYPE_LABELS).map(([value, label]) => (
+                    <option value={value} key={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           <div className="brief-gen-actionbar">
             <button className="btn btn--primary" type="button" onClick={() => generateBriefing()} disabled={generating}>
-              {generating ? "생성 중" : "오늘 브리핑 생성"}
+              {generating ? "생성 중" : briefingKind === "weekly" ? "이번 주 요약 생성" : "오늘 브리핑 생성"}
             </button>
             <span className="brief-gen-alt">또는</span>
-            {/* 발행일이 아니라 시장 세션일이다. 미국장 8/3 세션은 8/4에 발행되므로
-                예전 라벨("브리핑 날짜")은 어느 장을 받게 되는지 알 수 없었다. */}
+            {/* 일간은 발행일이 아니라 시장 세션일이다(미국장 8/3 세션은 8/4에 발행).
+                주간에는 세션이 없어 이 값이 곧 발행일이고, 지난 7일이 그 구간이다. */}
             <input
               type="date"
               value={briefingDate}
               onChange={(event) => setBriefingDate(event.currentTarget.value)}
-              aria-label={`${SCOPE_LABELS[marketScope]} 기준일`}
-              title={`${SCOPE_LABELS[marketScope]} 세션 기준일`}
+              aria-label={briefingKind === "weekly" ? "주간 발행일" : `${SCOPE_LABELS[marketScope]} 기준일`}
+              title={briefingKind === "weekly"
+                ? "이 날짜까지의 지난 7일을 요약하고 다음주 일정을 붙입니다"
+                : `${SCOPE_LABELS[marketScope]} 세션 기준일`}
             />
             <button className="btn" type="button" onClick={() => generateBriefing(briefingDate)} disabled={generating || !briefingDate}>
-              이 기준일로 생성
+              {briefingKind === "weekly" ? "이 날짜까지 요약" : "이 기준일로 생성"}
             </button>
           </div>
         </section>
@@ -707,6 +787,19 @@ export function BriefingRoute() {
             <option value="europe">유럽장</option>
             <option value="jp">일본장</option>
             <option value="aggregate">종합 보고서</option>
+          </select>
+        </label>
+        <label className="find-bar__field">
+          <span>종류</span>
+          <select
+            aria-label="브리핑 종류"
+            value={archiveKind}
+            onChange={(event) => setArchiveKind(event.currentTarget.value as ArchiveKindFilter)}
+          >
+            <option value="all">전체</option>
+            {Object.entries(BRIEFING_KIND_LABELS).map(([value, label]) => (
+              <option value={value} key={value}>{label}</option>
+            ))}
           </select>
         </label>
         <label className="find-bar__field">
@@ -746,6 +839,7 @@ export function BriefingRoute() {
             setArchiveQuery("");
             setArchiveMarket("all");
             setArchiveType("all");
+            setArchiveKind("all");
             setArchiveStart("");
             setArchiveEnd("");
             setArchiveView("recent");
@@ -774,13 +868,13 @@ export function BriefingRoute() {
             </div>
             {group.rows.map((item) => {
               const view = archiveCardView(item);
-              const deleting = actionBusy === `delete-${view.date}-${view.scope}`;
+              const deleting = actionBusy === `delete-${view.date}-${view.scope}-${view.kind}`;
               return (
-                <div className="briefing-archive-card-wrap" key={item.id || `${view.date}-${view.scope}`}>
+                <div className="briefing-archive-card-wrap" key={item.id || `${view.date}-${view.scope}-${view.kind}`}>
                   <button
                     type="button"
                     className={`briefing-archive-card is-${view.scope}`}
-                    onClick={() => view.date && setBriefingHash(view.date, view.scope)}
+                    onClick={() => view.date && setBriefingHash(view.date, view.scope, view.kind)}
                   >
                     <span className="briefing-archive-card-meta">
                       <span className="briefing-archive-market">{MARKET_BADGE[view.scope]}</span>
@@ -798,8 +892,8 @@ export function BriefingRoute() {
                     type="button"
                     className="btn btn--icon briefing-archive-card-delete"
                     disabled={deleting}
-                    onClick={() => deleteBriefing(view.date, view.scope)}
-                    aria-label={`${view.date} 브리핑 삭제`}
+                    onClick={() => deleteBriefing(view.date, view.scope, view.kind)}
+                    aria-label={`${view.date} ${BRIEFING_KIND_LABELS[view.kind]} 브리핑 삭제`}
                     data-tooltip="삭제"
                     data-tooltip-pos="bottom"
                   >

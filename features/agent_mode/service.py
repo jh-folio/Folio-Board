@@ -29,11 +29,24 @@ from features.common.quality_generation.preflight_enrichment import build_prefli
 from features.common.quality_generation.prompt_hints import render_prompt_hints
 from features.common.quality_generation.quality_targets import render_quality_target_context
 from features.common.quality_generation.schema import normalize_quality_mode
+from features.daily_briefing.limits import (
+    ISSUE_COVERAGE_LIMIT,
+    source_ref_limit,
+)
 from features.daily_briefing.source_window import scope_session_documents
+from features.daily_briefing.weekly_visuals import collect_weekly_visuals
+from features.daily_briefing.weekly import (
+    calendar_preview,
+    render_calendar_preview,
+    weekly_documents,
+    weekly_title,
+    weekly_window as build_weekly_window,
+)
 from features.daily_briefing.service import (
     MARKET_LABELS,
     resolve_briefing_by_session,
     append_briefing_sources,
+    strip_markdown_sources_section,
     briefing_checkpoint_headings,
     briefing_sources_from_headlines,
     build_llm_context,
@@ -59,8 +72,14 @@ from features.daily_briefing.issue_selection import (
     public_issue_coverage,
     session_modes_from_windows,
 )
+from features.daily_briefing.concentration.runtime import (
+    finalize_concentration,
+    prepare_concentration,
+    render_concentration_context,
+)
 from features.daily_briefing.builder import _scope_session_date
 from features.daily_briefing.schema import (
+    DEFAULT_BRIEFING_KIND,
     briefing_expected_titles,
     briefing_file_name,
     MARKET_TAGS,
@@ -70,6 +89,7 @@ from features.daily_briefing.schema import (
     briefing_scope_view,
     enrich_briefing_sections,
     merge_briefing_report,
+    normalize_briefing_kind,
     normalize_briefing_type,
     normalize_market_scope,
     split_market_markdown,
@@ -123,8 +143,10 @@ from features.topic_report.topic_config import get_topic_config
 from features.topic_report.planner import apply_deep_research_plan, build_topic_plan
 from features.topic_report.service import save_topic_report
 from features.llm_settings.client import bok_api_key, fred_api_key
+from features.common.canonical_identity import split_briefing_id
 from features.personal_overlay import schema as overlay_schema
 from features.personal_overlay.service import (
+    _briefing_overlay_path,
     _build_context as overlay_build_context,
     _gather_hypotheses,
     read_prompt as read_overlay_prompt,
@@ -257,15 +279,22 @@ def _briefing_headlines(groups):
     return headlines
 
 
+class WeeklyWindowEmptyError(ValueError):
+    """주간 창에 자료가 하나도 없다. CLI를 부르기 전에 멈춘다."""
+
+
 def _write_pack(pack: dict, owner_job_id: str | None) -> Path:
     if owner_job_id is None:
         return A.write_pack(pack)
     return A.write_pack(pack, owner_job_id=owner_job_id)
 
 
-def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality_mode="diagnose_only", market_scope="both", briefing_type="default", markets=None, owner_job_id: str | None = None) -> tuple[dict, Path]:
+def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality_mode="diagnose_only", market_scope="both", briefing_type="default", markets=None, kind=DEFAULT_BRIEFING_KIND, owner_job_id: str | None = None) -> tuple[dict, Path]:
     generated_at = now_iso()
     date = date or kst_date()
+    kind = normalize_briefing_kind(kind)
+    ref_limit = source_ref_limit(kind)
+    week = build_weekly_window(date) if kind == "weekly" else None
     quality_mode = normalize_quality_mode(quality_mode)
     requested_markets = normalize_market_selection(
         markets if markets is not None else market_scope
@@ -287,9 +316,12 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     # 시장이 공유했다. 한 pack이 여러 시장을 담을 수 있으므로(같은 발행일 그룹) 풀은
     # 시장별 창의 합집합이고, 시장 태그 필터가 그다음을 좁힌다.
     scope_docs = {
-        target: scope_session_documents(
-            all_documents, target, market_windows, today=today,
-            session_date=_scope_session_date(target, market_windows),
+        target: (
+            weekly_documents(all_documents, week) if week is not None
+            else scope_session_documents(
+                all_documents, target, market_windows, today=today,
+                session_date=_scope_session_date(target, market_windows),
+            )
         )
         for target in requested_markets
     }
@@ -303,17 +335,48 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             seen_keys.add(key)
             session_pool.append(row)
     # 창이 비면 예전 풀로 되돌아간다. 창을 좁히는 변경이 브리핑을 지우면 안 된다.
-    docs = session_pool or docs
+    # 주간은 되돌아가지 않는다 — 창을 넓히면 "지난주"라는 말이 거짓이 된다.
+    docs = session_pool if week is not None else (session_pool or docs)
+    if week is not None:
+        source_date = f"{week.week_start}~{week.week_end}"
+        if not docs:
+            # **자료가 없으면 CLI를 부르지 않는다.** 주간은 창이 비어도 넓히지 않으므로
+            # 수집이 한 주 내내 꺼져 있었으면 여기가 0건이다. 그대로 pack을 만들면 CLI가
+            # 근거 없이 쓰고, 출력 계약의 최소 분량에 걸려 재작성 1회 뒤 실패한다 —
+            # 한 번에 수십 초가 걸리는 CLI를 두 번 돌리고 아무것도 남기지 못한다
+            # (2026-08-12에 같은 모양으로 45분을 버린 기록이 이 모듈에 남아 있다).
+            raise WeeklyWindowEmptyError(
+                f"{week.week_start}~{week.week_end} 구간에 수집된 자료가 없습니다. "
+                "RSS 수집 상태를 확인한 뒤 다시 만드세요."
+            )
     for doc in docs:
         doc["marketSessionDate"] = infer_market_session_date(doc, market_windows)
     scoped_docs = documents_for_scope(docs, market_scope)
-    groups = prioritize_briefing_groups(group_docs(scoped_docs), market_windows, limit=6)
+    groups = prioritize_briefing_groups(group_docs(scoped_docs), market_windows, limit=6, market_scope=market_scope)
     session_modes = session_modes_from_windows(market_windows)
     # 시장별 문서를 한 번만 고른다. 아래 동인·참고자료·시각자료가 모두 이것을 쓴다.
     market_docs = {
         target: documents_for_scope(scope_docs.get(target) or docs, target)
         for target in requested_markets
     }
+    concentration_by_market = {}
+    effective_groups_by_market = {}
+    for target in requested_markets:
+        target_groups = prioritize_briefing_groups(
+            group_docs(market_docs[target]), market_windows, limit=6, market_scope=target,
+        )
+        effective_groups, control = prepare_concentration(
+            target_groups,
+            market_scope=target,
+            kind=kind,
+            # Agent pack preparation normally runs while bridge._RUN_SEMAPHORE is held.
+            agent_serialize=False,
+        )
+        effective_groups_by_market[target] = effective_groups
+        if control:
+            concentration_by_market[target] = control
+    if requested_markets == ["kr"]:
+        groups = effective_groups_by_market["kr"]
     # **동인과 참고자료는 시장마다 다르다.** 예전에는 합쳐진 풀로 한 번만 만들어 네 시장
     # 보고서가 같은 동인과 같은 참고자료를 실었다. 동인에는 시장을 붙여야 저장 시
     # `_single_market_briefing`의 필터가 그 시장 것만 남긴다 — 시장이 비어 있으면
@@ -323,17 +386,22 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     sources_by_market = {}
     for target in requested_markets:
         target_docs = market_docs[target]
-        target_issues = build_issue_coverage(target_docs, target.upper(), market_windows, limit=10)
+        # builder와 같은 계약 — KR 일간만 응집 분해를 켠다. 한쪽만 켜면 같은 날
+        # 두 생성 경로가 다른 이슈 클러스터를 먹는다.
+        target_issues = build_issue_coverage(
+            target_docs, target.upper(), market_windows, limit=ISSUE_COVERAGE_LIMIT,
+            coherence_policy=(target == "kr" and week is None),
+        )
         issue_coverage_raw.extend(target_issues)
         for driver in derive_market_drivers(target_docs, market_windows, limit=4):
             market_drivers.append({**driver, "market": target})
         target_sources = prioritized_source_refs(
-            target_docs, market_windows, limit=14, issue_coverage=target_issues,
+            target_docs, market_windows, limit=ref_limit, issue_coverage=target_issues, market_scope=target,
         ) or briefing_sources_from_headlines(
-            _briefing_headlines(prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6)),
-            limit=14,
+            _briefing_headlines(prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6, market_scope=target)),
+            limit=ref_limit,
         )
-        sources_by_market[target] = source_refs(target_sources, limit=14)
+        sources_by_market[target] = source_refs(target_sources, limit=ref_limit)
     visual_scope_results = {}
     for target in requested_markets:
         target_docs = market_docs[target]
@@ -341,10 +409,23 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 세션 기준일은 빌더와 같은 규칙을 쓴다. 여기서 따로 고르면 Agent 경로만
             # 유럽·일본에 한국 세션일을 찍는다.
             "marketSessionDate": _scope_session_date(target, market_windows),
-            "groups": prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6),
+            "groups": effective_groups_by_market[target],
         }
     try:
-        visual_result = collect_briefing_visuals(date, market_scope, visual_scope_results)
+        if week is not None:
+            # 세션 스냅샷은 싣지 않고(§builder와 같은 규칙) 주 단위 계열을 만든다.
+            # **pack 단계에서 만든다** — A·B·C는 본문 내용이 아니라 창·지수·자료 풀에서
+            # 나오므로 CLI 답을 기다릴 이유가 없고, 규칙 경로와 같은 계약이 된다.
+            # 문서 풀은 **중복 제거된 것**을 넘긴다. 시장별 리스트를 이어 붙이면 주간
+            # 풀이 시장 수만큼 복제돼 이야기 비중의 표본 수가 N배로 부풀고, 표본 부족
+            # 경고(MIN_CONFIDENT_SAMPLE)가 조용히 사라진다 — 규칙 경로는 한 번만 넘긴다.
+            visual_result = collect_weekly_visuals(
+                week, market_scope,
+                documents=docs,
+                markets=requested_markets,
+            )
+        else:
+            visual_result = collect_briefing_visuals(date, market_scope, visual_scope_results, markets=list(visual_scope_results))
     except Exception:
         visual_result = {
             "visualRecommendations": [], "visualSnapshots": [], "sidecar": {},
@@ -367,6 +448,15 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     memories = list_briefing_memories(MARKET_MEMORY_DB_PATH, limit=12)
     prev_briefing = load_prev_briefing(date)
     prev_checklist = extract_prev_checklist((prev_briefing or {}).get("markdown", ""))
+    calendar_block = ""
+    if week is not None:
+        # 여러 시장이 한 pack에 실릴 수 있으므로 시장별 표를 이어 붙인다. 시장 라벨을
+        # 함께 적지 않으면 어느 표가 어느 시장 것인지 모델이 알 수 없다.
+        blocks = []
+        for target in requested_markets:
+            preview = calendar_preview(MARKET_MEMORY_DB_PATH, target, week)
+            blocks.append(f"### {MARKET_TAGS[target]}\n\n{render_calendar_preview(preview, week)}")
+        calendar_block = "\n\n".join(blocks)
     context, used_docs = build_llm_context(
         date,
         source_date,
@@ -382,6 +472,15 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         briefing_type=briefing_type,
         issue_coverage=issue_coverage_raw,
         session_modes=session_modes,
+        kind=kind,
+        weekly_window=week.to_dict() if week is not None else None,
+        calendar_block=calendar_block,
+        # shadow는 관측 전용이다(README 계약) — 프롬프트 권위 주입은 active만.
+        concentration_context="\n\n".join(
+            render_concentration_context(control)
+            for control in concentration_by_market.values()
+            if control and control.get("mode") == "active"
+        ),
     )
     target_block = render_quality_target_context(
         "briefing",
@@ -400,24 +499,37 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     hint_block = render_prompt_hints(quality_preflight)
     if hint_block:
         context = "\n\n".join([context, hint_block])
-    sources = prioritized_source_refs(scoped_docs, market_windows, limit=14, issue_coverage=issue_coverage_raw) or briefing_sources_from_headlines(_briefing_headlines(groups), limit=14)
+    sources = prioritized_source_refs(
+        scoped_docs, market_windows, limit=ref_limit, issue_coverage=issue_coverage_raw, market_scope=market_scope,
+    ) or briefing_sources_from_headlines(_briefing_headlines(groups), limit=ref_limit)
     session_counts = session_doc_counts(scoped_docs, market_windows)
     draft = {
         "date": date,
         "generatedAt": generated_at,
-        "title": f"Daily Market Briefing — {date.replace('-', '.')}",
+        "title": (
+            f"Weekly Market Briefing — {week.label}" if week is not None
+            else f"Daily Market Briefing — {date.replace('-', '.')}"
+        ),
         "summary": (
-            f"{source_date}에 수집된 최신 자료를 바탕으로 "
-            f"{', '.join(MARKET_TAGS[key] for key in requested_markets)}의 "
-            "시장 반응, 핵심 이슈, 주도 기업을 정리했습니다."
+            (
+                f"{source_date} 구간의 자료를 바탕으로 "
+                f"{', '.join(MARKET_TAGS[key] for key in requested_markets)}의 "
+                "지난주 흐름과 다음주 일정을 정리했습니다."
+            ) if week is not None else (
+                f"{source_date}에 수집된 최신 자료를 바탕으로 "
+                f"{', '.join(MARKET_TAGS[key] for key in requested_markets)}의 "
+                "시장 반응, 핵심 이슈, 주도 기업을 정리했습니다."
+            )
         ),
         "marketScope": market_scope,
+        "kind": kind,
+        **(week.to_dict() if week is not None else {}),
         "generationMarkets": list(requested_markets),
         "briefingType": briefing_type,
-        "prompt": read_briefing_prompt(requested_markets),
-        "promptPath": briefing_prompt_path_label(requested_markets),
+        "prompt": read_briefing_prompt(requested_markets, kind),
+        "promptPath": briefing_prompt_path_label(requested_markets, kind),
         "headlines": _briefing_headlines(groups),
-        "sources": source_refs(sources, limit=14),
+        "sources": source_refs(sources, limit=ref_limit),
         "marketSnapshot": market_snapshot,
         "koreaMarketData": korea_market_data,
         "marketWindows": market_windows,
@@ -442,6 +554,14 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             for d in market_drivers
         ],
         "issueCoverage": public_issue_coverage(issue_coverage_raw),
+        "concentrationControl": {
+            "version": 1,
+            "mode": next(
+                (str((row.get("leaderDecision") or {}).get("mode") or "shadow") for row in concentration_by_market.values()),
+                "off",
+            ),
+            "byMarket": deepcopy(concentration_by_market),
+        },
         "briefings": {},
         "visualRecommendations": visual_result.get("visualRecommendations", []),
         "visualSnapshots": visual_result.get("visualSnapshots", []),
@@ -462,9 +582,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     pack = A.build_pack(
         task_type="briefing",
         artifact_type="briefing",
-        artifact_id=date,
+        artifact_id=f"{date}.weekly" if week is not None else date,
         title=draft["title"],
-        prompt=read_briefing_prompt(requested_markets),
+        prompt=read_briefing_prompt(requested_markets, kind),
         context=context,
         output_contract=briefing_output_contract(
             market_scope,
@@ -472,15 +592,32 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 계약 대상은 실제 시장 목록이다. 범위 이름만 넘기면 `multi` 같은 조합에서
             # 프롬프트와 검사가 서로 다른 시장을 본다.
             markets=requested_markets,
-            expected_titles=briefing_expected_titles(
-                date,
-                market_scope,
-                market_windows=market_windows,
-                session_modes=session_modes,
+            expected_titles=(
+                {target: weekly_title(target, week) for target in requested_markets}
+                if week is not None
+                else briefing_expected_titles(
+                    date,
+                    market_scope,
+                    market_windows=market_windows,
+                    session_modes=session_modes,
+                )
             ),
+            kind=kind,
+            # shadow는 관측 전용 — 이름 강제는 active만. shadow에서 강제하면 규칙
+            # 선별과 모델 판단이 갈릴 때마다 재작성 1회 + 잡 실패가 된다.
+            expected_leading_companies={
+                target: [
+                    str(signature.get("subject") or "")
+                    for candidate in (control.get("leaderDecision") or {}).get("finalPair") or []
+                    for signature in control.get("signatures") or []
+                    if signature.get("candidateId") == candidate
+                ]
+                for target, control in concentration_by_market.items()
+                if control.get("mode") == "active"
+            },
         ),
-        write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{date}.json")},
-        save_target=str(BRIEFINGS_DIR / f"{date}.json"),
+        write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json")},
+        save_target=str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json"),
         draft_artifact=draft,
         sources=sources,
         market_tape=market_tape,
@@ -491,6 +628,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 시장별 참고자료. 저장할 때 각 시장 섹션에 붙는다 — 하나로 합치면 네 시장
             # 보고서가 같은 참고자료를 싣는다.
             "sourcesByMarket": sources_by_market,
+            "concentrationByMarket": deepcopy(concentration_by_market),
         },
     )
     return pack, _write_pack(pack, owner_job_id)
@@ -498,11 +636,13 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
 
 def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = True) -> dict:
     draft = dict(pack.get("draftArtifact") or {})
-    date = draft.get("date") or pack.get("artifactId") or kst_date()
+    date = draft.get("date") or str(pack.get("artifactId") or "").removesuffix(".weekly") or kst_date()
     market_scope = normalize_market_scope(draft.get("marketScope", "both"))
     draft["marketScope"] = market_scope
+    kind = normalize_briefing_kind(draft.get("kind"))
+    ref_limit = source_ref_limit(kind)
     contract = pack.get("outputContract") or briefing_output_contract(
-        market_scope, draft.get("briefingType", "default")
+        market_scope, draft.get("briefingType", "default"), kind=kind
     )
     violations = briefing_contract_violations(markdown, contract)
     if violations:
@@ -514,6 +654,12 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         "visualSnapshots": [],
         "warnings": list(leader_subjects.get("warnings") or []),
     }
+    if kind == "weekly":
+        # 주간 그림(A·B·C)은 pack 단계에서 이미 만들어 draft에 실려 있고, 본문에서
+        # 기업을 다시 읽어 맞출 세션 차트가 없다. `replace_leading_company_visuals`는
+        # `leading_company` 행만 갈아끼우므로 주간 스냅샷은 그대로 남는다.
+        aligned_visuals["warnings"] = []
+        visual_scope_results = {}
     if visual_scope_results:
         try:
             aligned_visuals = collect_briefing_visuals(
@@ -528,8 +674,19 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
                 "leading_company_visual_alignment_failed"
             )
     draft = replace_leading_company_visuals(draft, aligned_visuals)
-    sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=14)
-    markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=14)
+    sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=ref_limit)
+    # 저장된 pack의 시장 목록이 권위다(아래 requested_scopes와 같은 규칙).
+    generation_scopes = list(
+        normalize_market_selection(draft.get("generationMarkets") or market_scope)
+    )
+    if len(generation_scopes) <= 1:
+        markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=ref_limit, kind=kind)
+    else:
+        # 다시장 합본에는 여기서 붙이지 않는다 — 합본에 목록이 하나라도 있으면
+        # has_sources가 참이 되어 시장별 본문이 참고자료를 영영 못 받고, 분리가
+        # 그 하나를 마지막 시장 파일에 준다(2026-08-24 kr+jp 실측). 시장별 처리는
+        # 아래 집중 종목 마무리 뒤에 한다.
+        markdown = str(markdown or "").strip()
     generation = A.agent_generation(
         len(sources),
         message="LLM CLI 브리핑 생성 완료: Agent CLI / context pack 기반",
@@ -538,18 +695,49 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     # 일반 라벨 목록("내일 확인할 체크포인트" 등)은 네 시장 프롬프트 어디에도 없어
     # Agent 생성 브리핑은 체크포인트가 항상 0건이었고, 통합 본문에 한 번 부르면
     # 시장별 파일이 남의 체크포인트를 갖는다.
-    checkpoint_scopes = list(
-        normalize_market_selection(draft.get("generationMarkets") or market_scope)
-    )
+    checkpoint_scopes = generation_scopes
     market_markdowns = split_market_markdown(markdown, market_scope)
+    concentration_by_market = deepcopy((pack.get("internal") or {}).get("concentrationByMarket") or {})
+    for scope, control in list(concentration_by_market.items()):
+        scoped_markdown = str((market_markdowns.get(scope) or {}).get("markdown") or "")
+        repaired_markdown, concentration_by_market[scope] = finalize_concentration(
+            scoped_markdown,
+            control,
+            agent_serialize=False,
+        )
+        if repaired_markdown != scoped_markdown:
+            markdown = markdown.replace(scoped_markdown, repaired_markdown, 1)
+    if concentration_by_market:
+        market_markdowns = split_market_markdown(markdown, market_scope)
+    if len(generation_scopes) > 1 and market_markdowns:
+        # **시장별 본문이 각자 참고자료·Notes를 소유한다.** 모델이 쓴 목록은 시장을
+        # 구분하지 않으므로 떼어내고, 일간은 그 시장의 선별 목록(sourcesByMarket)을
+        # 붙인다(규칙 생성과 같은 계약). 주간은 본문에 목록을 두지 않는다(§10).
+        scoped_sources = (pack.get("internal") or {}).get("sourcesByMarket") or {}
+        parts = []
+        for scope_key, section in market_markdowns.items():
+            scoped_markdown = strip_markdown_sources_section(str(section.get("markdown") or ""))
+            if kind != "weekly" and scope_key in scoped_sources:
+                scoped_markdown = append_briefing_sources(
+                    scoped_markdown, scoped_sources.get(scope_key) or sources, limit=ref_limit, kind=kind,
+                )
+            parts.append(scoped_markdown)
+        markdown = "\n\n".join(part for part in parts if part).strip()
+        market_markdowns = split_market_markdown(markdown, market_scope)
+    if concentration_by_market:
+        draft["concentrationControl"] = {
+            "version": 1,
+            "mode": str((draft.get("concentrationControl") or {}).get("mode") or "shadow"),
+            "byMarket": concentration_by_market,
+        }
     scope_checkpoints = {
         scope: checkpoints_from_markdown(
             (market_markdowns.get(scope) or {}).get("markdown", ""),
             artifact_type="briefing",
             artifact_id=date,
-            headings=briefing_checkpoint_headings([scope]),
+            headings=briefing_checkpoint_headings([scope], kind),
             scope="market",
-            topic="Daily Market Briefing",
+            topic="Weekly Market Briefing" if kind == "weekly" else "Daily Market Briefing",
         )
         for scope in checkpoint_scopes
     }
@@ -586,6 +774,13 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         generated_at=draft.get("generatedAt", ""),
         report_summary=draft.get("summary", ""),
         market_windows=draft.get("marketWindows"),
+        kind=kind,
+        weekly_window={
+            "weekStart": draft.get("weekStart", ""),
+            "weekEnd": draft.get("weekEnd", ""),
+            "previewStart": draft.get("previewStart", ""),
+            "previewEnd": draft.get("previewEnd", ""),
+        } if kind == "weekly" else None,
     )
     # 시장별 참고자료를 그 시장 섹션에 붙인다. `briefing_scope_view`가 섹션의 것을
     # 먼저 읽으므로, 없으면 합본 목록으로 떨어져 네 시장이 같은 자료를 싣게 된다.
@@ -612,7 +807,9 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         )
     except Exception:
         briefing["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}
-    if persist and market_scope == "both":
+    # 주간은 내러티브에 적재하지 않는다(§builder와 같은 규칙). 같은 이슈를 일간이 이미
+    # 그 주에 넣었고, 다시 넣으면 한 사건이 두 번 세어져 regime 근거 카운트가 부푼다.
+    if persist and kind != "weekly" and market_scope == "both":
         try:
             for entry in build_memory_from_briefing(briefing, (pack.get("internal") or {}).get("groups") or []):
                 upsert_memory(MARKET_MEMORY_DB_PATH, entry)
@@ -636,14 +833,16 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         scoped_briefing["checkpoints"] = scope_checkpoints.get(scope, [])
         # 저장 키는 그 시장의 세션일이다(§builder와 같은 규칙). 두 경로가 다른 키를 쓰면
         # 같은 세션이 생성 엔진에 따라 다른 파일이 된다.
-        session_key = _scope_session_date(scope, draft.get("marketWindows")) or date
+        # 주간의 저장 키는 발행일이다(§builder와 같은 규칙). 세션일로 옮기면 일요일
+        # 실행이 금요일 파일로 떨어져 그 주 금요일 일간 브리핑을 덮어쓴다.
+        session_key = date if kind == "weekly" else (_scope_session_date(scope, draft.get("marketWindows")) or date)
         scoped_briefing["date"] = session_key
-        save_path = BRIEFINGS_DIR / briefing_file_name(session_key, scope)
+        save_path = BRIEFINGS_DIR / briefing_file_name(session_key, scope, kind)
         existing = read_json(save_path, None)
-        if existing is None:
+        if existing is None and kind != "weekly":
             # 옛 키로 저장된 같은 세션을 잇는다. personalOverlay가 사라지면 안 된다.
             existing = resolve_briefing_by_session(session_key, scope)
-        if existing is None:
+        if existing is None and kind != "weekly":
             legacy = read_json(BRIEFINGS_DIR / briefing_file_name(date), None)
             existing = briefing_scope_view(legacy, scope) if isinstance(legacy, dict) else None
         scoped_briefing = merge_briefing_report(scoped_briefing, existing, scope)
@@ -655,7 +854,7 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
                 visuals[scope] = scoped_sidecar
                 if persist:
                     write_visual_sidecar(
-                        BRIEFINGS_DIR / visual_sidecar_gzip_file_name(session_key, scope),
+                        BRIEFINGS_DIR / visual_sidecar_gzip_file_name(session_key, scope, kind),
                         scoped_sidecar,
                         scope,
                     )
@@ -987,10 +1186,15 @@ def write_topic_report_from_markdown(pack: dict, markdown: str, *, persist: bool
     return save_topic_report(report) if persist else report
 
 
-def _load_canonical_for_overlay(report_kind: str, report_id: str) -> tuple[dict, Path, str]:
+def _load_canonical_for_overlay(report_kind: str, report_id: str, market_scope: str = "both") -> tuple[dict, Path, str]:
     kind = str(report_kind or "").strip().lower()
     if kind == "briefing":
-        path = BRIEFINGS_DIR / f"{report_id}.json"
+        # 규칙 경로와 **같은 해석기**로 파일을 찾는다. 예전에는 여기서 report id에
+        # `.json`만 붙였는데, 주간 id(`{발행일}.weekly`)는 시장이 빠져 있어 저장된 적이
+        # 없는 이름이 된다 — 주간 보고서는 시장별로만 저장된다. 그래서 CLI 모드의 주간
+        # 개인 해석이 언제나 FileNotFoundError로 끝났다.
+        date_text, scope_from_id, kind_from_id = split_briefing_id(report_id)
+        path = _briefing_overlay_path(date_text, scope_from_id or market_scope, kind_from_id)
         canonical = read_json(path, None)
         return canonical, path, "briefing"
     if kind in {"analysis", "company_analysis"}:
@@ -1006,8 +1210,8 @@ def _load_canonical_for_overlay(report_kind: str, report_id: str) -> tuple[dict,
     raise ValueError("report_kind must be briefing, analysis, or topic_report")
 
 
-def prepare_personal_overlay_pack(report_kind: str, report_id: str, *, owner_job_id: str | None = None) -> tuple[dict, Path]:
-    canonical, path, kind = _load_canonical_for_overlay(report_kind, report_id)
+def prepare_personal_overlay_pack(report_kind: str, report_id: str, *, market_scope: str = "both", owner_job_id: str | None = None) -> tuple[dict, Path]:
+    canonical, path, kind = _load_canonical_for_overlay(report_kind, report_id, market_scope)
     if not canonical:
         raise FileNotFoundError(f"Report not found: {report_kind}/{report_id}")
     hypotheses = _gather_hypotheses(kind, canonical)
@@ -1426,6 +1630,8 @@ def prepare_pack(task_type: str, **kwargs) -> tuple[dict, Path]:
             # 전부로 풀린다. 그래서 한국·일본 예약이 미국장·유럽장까지 만들었다
             # (실측 2026-08-13 18:18에 파일 넷이 한꺼번에 쓰였다).
             markets=kwargs.get("markets"),
+            # 브리핑 종류. 없으면 일간이라 기존 호출부가 그대로 동작한다.
+            kind=kwargs.get("kind", DEFAULT_BRIEFING_KIND),
             owner_job_id=owner_job_id,
         )
     if task_type == "company_analysis":
@@ -1449,7 +1655,13 @@ def prepare_pack(task_type: str, **kwargs) -> tuple[dict, Path]:
             owner_job_id=owner_job_id,
         )
     if task_type == "personal_overlay":
-        return prepare_personal_overlay_pack(kwargs.get("report_kind") or "", kwargs.get("report_id") or "", owner_job_id=owner_job_id)
+        return prepare_personal_overlay_pack(
+            kwargs.get("report_kind") or "",
+            kwargs.get("report_id") or "",
+            # 시장을 버리면 주간 보고서를 찾을 수 없다 — 저장 키에 시장이 들어 있다.
+            market_scope=kwargs.get("market_scope") or "both",
+            owner_job_id=owner_job_id,
+        )
     if task_type == "thesis_delta":
         return prepare_thesis_delta_pack(kwargs.get("ticker") or "", period=kwargs.get("period") or "90d", evidence_limit=kwargs.get("limit") or 12, owner_job_id=owner_job_id)
     if task_type == "market_memory_llm":

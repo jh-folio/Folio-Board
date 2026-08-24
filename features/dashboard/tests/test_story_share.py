@@ -55,7 +55,9 @@ def test_delta_is_percentage_points_against_previous_session():
         + _docs_for("2026-07-31", ["Fed rate hike odds", "Rate cut bets rise", "Nvidia AI chip news"])
     )
     payload = build_story_share(docs, "2026-08-04", "us")
-    assert payload["previousDate"] == "2026-08-03"
+    # 비교 기준은 직전 **N거래일**이다(0.5.4). 하루만 보면 그날 수집량이 흔들리는 것만으로
+    # 비중이 수십 %p 움직인다. 8/3은 그 창 안에 들어 있다.
+    assert "2026-08-03" in payload["previousDates"]
     by_label = {row["label"]: row for row in payload["items"]}
     semis = by_label.get("반도체/AI")
     assert semis is not None

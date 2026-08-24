@@ -93,7 +93,7 @@ class DeepSubQuestion(StrictModel):
 class DeepResearchPlan(StrictModel):
     enabled: bool
     maxRounds: Literal[2]
-    subQuestions: list[DeepSubQuestion] = Field(max_length=8)
+    subQuestions: list[DeepSubQuestion] = Field(max_length=12)
     falsificationTriggers: list[str]
     requiredOutputs: list[str]
 
@@ -105,6 +105,10 @@ class DeepResearchPlan(StrictModel):
             raise ValueError("fixed_required_outputs")
         if len({question.id for question in self.subQuestions}) != len(self.subQuestions):
             raise ValueError("duplicate_subquestion_id")
+        if sum(question.round == 1 for question in self.subQuestions) > 6:
+            raise ValueError("too_many_round_1_questions")
+        if sum(question.round == 2 for question in self.subQuestions) > 6:
+            raise ValueError("too_many_round_2_questions")
         if not self.enabled and self.subQuestions:
             raise ValueError("disabled_deep_questions")
         return self

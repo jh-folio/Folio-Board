@@ -1,0 +1,14 @@
+[
+  {
+    "id": "same_article_distinct_company_events",
+    "left": {"subject": "SK하이닉스", "sector": "반도체", "catalysts": ["ai_investment", "hbm_contract"], "mechanisms": ["supply"], "outcomes": ["profitability"], "evidenceIds": ["doc-a:claim-1"]},
+    "right": {"subject": "삼성전자", "sector": "반도체", "catalysts": ["ai_investment", "foundry_order"], "mechanisms": ["utilization"], "outcomes": ["share"], "evidenceIds": ["doc-a:claim-2"]},
+    "expectedIndependent": true
+  },
+  {
+    "id": "different_words_same_driver",
+    "left": {"subject": "SK하이닉스", "sector": "반도체", "catalysts": ["hbm_contract"], "mechanisms": ["supply"], "outcomes": ["profitability"], "evidenceIds": ["doc-a:claim-1"]},
+    "right": {"subject": "삼성전자", "sector": "반도체", "catalysts": ["hbm_contract"], "mechanisms": ["supply"], "outcomes": ["profitability"], "evidenceIds": ["doc-b:claim-1"]},
+    "expectedIndependent": false
+  }
+]

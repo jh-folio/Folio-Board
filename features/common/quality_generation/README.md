@@ -57,3 +57,9 @@ Generated reports store:
   }
 }
 ```
+
+
+## 호출 예산과 후보 저장소 (0.5.4)
+
+- `call_budget.py` — 보고서 유형별 LLM 호출 상한. 딥 리서치(`deep_research_budget`)와 KR 집중 종목(`kr_briefing_budget`)이 쓴다. 예산 소진은 선택 단계(보수·판정)의 생략이지 잡 실패가 아니다.
+- `candidate_store.py` — 잡별 딥 리서치 후보 체크포인트. `data/job-context/{job}/quality-candidate-{n}.json`에 원자 쓰기(`write_bytes_atomic`)로 남기고, 읽을 때 소유자(잡 id)와 본문 해시를 검증한다. 서버 재시작 시 `features/topic_report/candidate_recovery.py`가 RUNNING 잡을 수락된 후보로 완성한다 — 이 복구는 어떤 예외에도 기동을 막지 않는다.

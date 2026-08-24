@@ -94,6 +94,7 @@ def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y")
 
         result_tickers[symbol] = {
             "label": label,
+            "asOfDate": str(hist.index[-1])[:10],
             "last": round(last, 4),
             "changes": {
                 "1d": _pct(prev, last),

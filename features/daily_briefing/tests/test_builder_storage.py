@@ -178,3 +178,90 @@ def test_projection_follows_the_report_store_not_the_real_data_dir(tmp_path):
     # 실제 경로에서는 기존 DB를 그대로 쓴다.
     real_report = builder.BRIEFINGS_DIR / "2026-08-01.us.json"
     assert projection_db_for_report(real_report, default_db) == default_db
+
+
+def _weekly_scope_result(scope):
+    label = {"us": "US", "kr": "Korea", "europe": "Europe", "jp": "Japan"}[scope]
+    return {
+        **_scope_result(scope),
+        "kind": "weekly",
+        "markdown": f"# {label} Market Briefing 주간 — 08.17~08.23\n\n{scope} weekly body",
+        "sessionMode": "",
+        "marketSessionDate": "2026-08-23",
+    }
+
+
+def test_a_weekly_briefing_never_overwrites_that_week_s_daily_report():
+    """**이번 릴리즈에서 가장 위험했던 충돌.**
+
+    일요일(08-23) 실행의 세션일은 금요일(08-21)이다. 종류 접미사가 없으면 주간
+    보고서가 그 주 금요일 일간 브리핑 파일로 떨어져 통째로 덮어쓴다.
+    """
+    visuals = {"visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": []}
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # 그 주 금요일 일간 브리핑이 이미 저장돼 있다.
+        (root / "2026-08-21.us.json").write_text(
+            json.dumps({"date": "2026-08-21", "marketScope": "us", "markdown": "# 금요일 일간"}),
+            encoding="utf-8",
+        )
+        patches = [
+            patch.object(builder, "BRIEFINGS_DIR", root),
+            *_build_patches(visuals),
+        ]
+        # 세션일이 금요일로 떨어지는 상황을 그대로 재현한다.
+        patches.append(patch.object(builder, "_scope_session_date", return_value="2026-08-21"))
+        patches.append(
+            patch.object(builder, "_scope_result", side_effect=lambda scope, *a, **k: _weekly_scope_result(scope))
+        )
+        for item in patches:
+            item.start()
+        try:
+            result = builder.build_briefing(
+                "2026-08-23", persist=True, markets=["us"], kind="weekly", llm_override=False,
+            )
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
+        assert result["kind"] == "weekly"
+        assert result["weekStart"] == "2026-08-17" and result["weekEnd"] == "2026-08-23"
+        # 발행일 + 종류 접미사로 저장된다. 세션일 파일이 아니다.
+        assert (root / "2026-08-23.us.weekly.json").exists()
+        assert not (root / "2026-08-21.us.weekly.json").exists()
+        # 금요일 일간 브리핑은 그대로다.
+        friday = json.loads((root / "2026-08-21.us.json").read_text(encoding="utf-8"))
+        assert friday["markdown"] == "# 금요일 일간"
+
+        weekly = json.loads((root / "2026-08-23.us.weekly.json").read_text(encoding="utf-8"))
+        assert weekly["kind"] == "weekly"
+        assert weekly["date"] == "2026-08-23"
+        assert weekly["markdown"].startswith("# US Market Briefing 주간 — 08.17~08.23")
+        # 단일 시장 저장본은 `_single_market_briefing`이 섹션을 비우고 최상위로 올린다.
+        assert weekly["title"] == "US Market Briefing 주간 — 08.17~08.23"
+
+
+def test_a_weekly_briefing_does_not_accumulate_market_memory():
+    """같은 이슈를 일간이 이미 그 주에 넣었다. 다시 넣으면 근거 카운트가 부푼다."""
+    visuals = {"visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": []}
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        saved = []
+        patches = [
+            patch.object(builder, "BRIEFINGS_DIR", root),
+            *_build_patches(visuals),
+            patch.object(builder, "upsert_memory", side_effect=lambda *a, **k: saved.append(a)),
+            patch.object(builder, "build_memory_from_briefing", return_value=[{"id": "m1"}]),
+            patch.object(builder, "_scope_result", side_effect=lambda scope, *a, **k: _weekly_scope_result(scope)),
+        ]
+        for item in patches:
+            item.start()
+        try:
+            builder.build_briefing(
+                "2026-08-23", persist=True, markets=["us", "kr"], kind="weekly", llm_override=False,
+            )
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
+        assert saved == []

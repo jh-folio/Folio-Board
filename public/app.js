@@ -67,7 +67,8 @@ function sourceLink(item) {
 
 function markdownSourceSection(value) {
   const text = String(value || "");
-  const match = text.match(/^#{1,3}\s*(참고\s*자료|참고자료|sources used|sources)\s*$/im);
+  // ReportBody·서버와 같은 안전-느슨 헤딩 계약(번호 접두·괄호 부연 허용, 자유 꼬리 불허).
+  const match = text.match(/^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$/im);
   return match ? text.slice(match.index) : "";
 }
 
@@ -88,7 +89,10 @@ function briefingSources(briefing) {
   };
   (briefing?.sources || []).forEach(add);
   (briefing?.headlines || []).forEach((headline) => (headline.sources || []).forEach(add));
-  return rows.slice(0, 14);
+  // 서버가 이미 종류별 상한(일간 24·주간 40)으로 선별했다. 여기서 14로 다시 자르면
+  // 프롬프트가 본 근거의 절반이 어느 화면에도 보이지 않는다 — "참고자료는 프롬프트가
+  // 본 문서 전부"(2026-08-20 결정)를 패널이 마지막에 배반하고 있었다.
+  return rows;
 }
 
 function renderSourcePanel(sources) {

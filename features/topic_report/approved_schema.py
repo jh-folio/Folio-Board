@@ -117,8 +117,8 @@ class DegradedConfirmation(StrictModel):
 
 
 class ApprovedRequest(StrictModel):
-    schemaVersion: Literal[1]
-    planRevision: Literal[1]
+    schemaVersion: Literal[1, 2]
+    planRevision: Literal[1, 2]
     asOfDate: str
     qualityMode: Literal["diagnose_only"]
     question: str = Field(min_length=1, max_length=500)
@@ -132,6 +132,12 @@ class ApprovedRequest(StrictModel):
     topicPlan: TopicPlanV1
     degradedConfirmation: DegradedConfirmation | None
     planHash: str = Field(pattern=_HASH.pattern)
+
+    @model_validator(mode="after")
+    def validate_revision_pair(self) -> "ApprovedRequest":
+        if self.schemaVersion != self.planRevision:
+            raise ValueError("schema_plan_revision_mismatch")
+        return self
 
     @field_validator("asOfDate")
     @classmethod
