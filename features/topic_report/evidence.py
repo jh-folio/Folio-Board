@@ -118,6 +118,11 @@ def build_evidence_pack(
 
     search_docs(queries: list[str], limit) / search_memories(keywords, limit)는
     호출자가 주입한다 (service의 기존 검색 재사용 + 테스트 용이성).
+
+    커버리지는 **검색이 찾아낸 자료**로 센다. 예전에는 그 축/질문 이름으로 새로
+    admit된 항목만 셌는데, 전역 중복 제거 때문에 앞선 질문이 같은 문서를 먼저
+    가져가면 뒤 축은 자료가 있는데도 0건으로 기록됐다 — 그리고 그 0건이 "로컬
+    자료가 부족합니다"라는 데이터 갭이 되어 보고서 본문의 한계 서술로 실렸다.
     """
     axes = plan.get("analysisAxes") or []
     seen_keys: set[str] = set()
@@ -167,15 +172,52 @@ def build_evidence_pack(
         items.append(item)
         return True
 
+    def _sweep(
+        queries: list[str],
+        *,
+        axis_key: str = "",
+        research_question_id: str = "",
+        research_round: int = 0,
+        limit: int = 5,
+    ) -> set[str]:
+        """한 축/질문의 검색어로 자료를 훑고, 그 검색이 닿은 문서 키를 돌려준다.
+
+        이미 다른 축이 admit한 문서도 covered에 넣는다. 커버리지는 "이 축에 쓸
+        자료가 팩 안에 있는가"를 뜻해야 하며, admit 순서에 좌우되면 안 된다.
+        """
+        try:
+            docs = search_docs(queries, limit=limit * 2)
+        except Exception:
+            docs = []
+        covered: set[str] = set()
+        for doc in docs:
+            if len(covered) >= limit:
+                break
+            key = _admission_key(doc)
+            if not key or key in covered:
+                continue
+            covered.add(key)
+            _add_doc(
+                doc,
+                axis_key,
+                queries,
+                research_question_id=research_question_id,
+                research_round=research_round,
+            )
+        return covered
+
     question_coverage: dict[str, dict] = {}
     deep_meta = plan.get("deepResearch") or {}
     subquestions = list(deep_meta.get("subQuestions") or []) if deep_research else []
     round_stats: list[dict] = []
     round_1_gap_reasons: list[str] = []
     round_2_reason = "not_applicable"
+    axis_hits: dict[str, set[str]] = {str(axis.get("key", "")): set() for axis in axes}
+
+    def _axis_queries(axis: dict) -> list[str]:
+        return list(axis.get("searchQueries") or []) or list(plan.get("searchQueries") or [])[:2]
 
     if subquestions:
-        axis_counts = {axis.get("key", ""): 0 for axis in axes}
         by_round = {
             round_no: [question for question in subquestions if int(question.get("round") or 1) == round_no]
             for round_no in (1, 2)
@@ -188,32 +230,24 @@ def build_evidence_pack(
                 qid = str(question.get("id") or "")
                 axis_key = str(question.get("axisKey") or "")
                 queries = list(question.get("searchQueries") or []) or list(plan.get("searchQueries") or [])[:2]
-                added = 0
-                try:
-                    docs = search_docs(queries, limit=limit_per_axis * 2)
-                except Exception:
-                    docs = []
-                searched += len(docs)
-                for doc in docs:
-                    if _add_doc(
-                        doc,
-                        axis_key,
-                        queries,
-                        research_question_id=qid,
-                        research_round=round_no,
-                    ):
-                        added += 1
-                        selected += 1
-                        if axis_key in axis_counts:
-                            axis_counts[axis_key] += 1
-                    if added >= limit_per_axis:
-                        break
+                before = len(items)
+                covered = _sweep(
+                    queries,
+                    axis_key=axis_key,
+                    research_question_id=qid,
+                    research_round=round_no,
+                    limit=limit_per_axis,
+                )
+                searched += len(covered)
+                selected += len(items) - before
+                if axis_key in axis_hits:
+                    axis_hits[axis_key] |= covered
                 question_coverage[qid] = {
                     "question": question.get("question", ""),
                     "axisKey": axis_key,
                     "round": round_no,
-                    "count": added,
-                    "level": _coverage_level(added),
+                    "count": len(covered),
+                    "level": _coverage_level(len(covered)),
                     "executed": True,
                 }
                 executed_ids.append(qid)
@@ -225,13 +259,25 @@ def build_evidence_pack(
             })
 
         execute_round(1, by_round[1])
+
+        # 축별 검색 — 딥 모드에서도 반드시 돈다. 예전에는 하위 질문 검색만 돌아서
+        # 질문이 배정되지 않은 축은 자기 검색어("term premium fiscal supply" 등)를
+        # 한 번도 쓰지 못한 채 "자료 없음"으로 기록됐다.
+        for axis in axes:
+            axis_key = str(axis.get("key", ""))
+            axis_hits[axis_key] = axis_hits.get(axis_key, set()) | _sweep(
+                _axis_queries(axis),
+                axis_key=axis_key,
+                limit=limit_per_axis,
+            )
+
         for question in by_round[1]:
             coverage = question_coverage.get(str(question.get("id") or ""), {})
             if coverage.get("level") in {"none", "low"}:
                 round_1_gap_reasons.append(f"low_question_coverage:{question.get('id', '')}")
         for axis in axes:
-            axis_key = axis.get("key", "")
-            if _coverage_level(axis_counts.get(axis_key, 0)) in {"none", "low"}:
+            axis_key = str(axis.get("key", ""))
+            if _coverage_level(len(axis_hits.get(axis_key, ()))) in {"none", "low"}:
                 round_1_gap_reasons.append(f"low_axis_coverage:{axis_key}")
         challenging_count = sum(item.get("evidenceRole") == "challenging" for item in items)
         if challenging_count == 0:
@@ -251,28 +297,16 @@ def build_evidence_pack(
                     "level": "not_executed",
                     "executed": False,
                 }
-        for axis in axes:
-            axis_key = axis.get("key", "")
-            count = axis_counts.get(axis_key, 0)
-            axis_coverage[axis_key] = {"label": axis.get("label", ""), "count": count, "level": _coverage_level(count)}
     else:
         # 1) 축별 검색 — planner가 만든 axis searchQueries 사용
         for axis in axes:
-            axis_key = axis.get("key", "")
-            queries = list(axis.get("searchQueries") or [])
-            if not queries:
-                queries = list(plan.get("searchQueries") or [])[:2]
-            added = 0
-            try:
-                docs = search_docs(queries, limit=limit_per_axis * 2)
-            except Exception:
-                docs = []
-            for doc in docs:
-                if _add_doc(doc, axis_key, queries):
-                    added += 1
-                if added >= limit_per_axis:
-                    break
-            axis_coverage[axis_key] = {"label": axis.get("label", ""), "count": added, "level": _coverage_level(added)}
+            axis_key = str(axis.get("key", ""))
+            axis_hits[axis_key] = _sweep(_axis_queries(axis), axis_key=axis_key, limit=limit_per_axis)
+
+    for axis in axes:
+        axis_key = str(axis.get("key", ""))
+        count = len(axis_hits.get(axis_key, ()))
+        axis_coverage[axis_key] = {"label": axis.get("label", ""), "count": count, "level": _coverage_level(count)}
 
     # 2) 주제 전체 검색 — 축에 안 잡힌 일반 근거 보충
     try:

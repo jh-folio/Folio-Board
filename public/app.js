@@ -124,9 +124,28 @@ function inlineMarkdown(text) {
   return parts.join("").replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
 }
 
+// 딥 리서치 본문에는 섹션별 근거 연결용 숨김 태그가 붙는다. 이 렌더러는 모든 텍스트를
+// escape하므로 HTML 주석이 주석으로 사라지지 않고 글자 그대로 화면에 남는다(사용자 보고).
+//
+// **태그 이름을 특정하지 않고 주석 전체를 지운다.** `folio-source-ids`만 지우던 때
+// 모델이 `<!-- sources: ev_015 -->`라는 새 이름을 스스로 만들어 22개를 썼고, 그것이
+// 그대로 화면에 보였다. 리더 본문에서 HTML 주석이 읽을 내용인 경우는 없다.
+// 저장된 보고서에도 이미 들어 있으므로 렌더 경계에서 지운다 — Canonical 본문은 그대로 둔다.
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+// 주석을 막으면 모델은 본문에 `[macro_T5YIE, ev_019]`처럼 쓴다(실측 18곳). 독자에게
+// 내부 식별자는 아무 뜻이 없다. 항목이 **전부** 근거 ID일 때만 지워 일반 대괄호는 남긴다.
+const INLINE_SOURCE_ID = /\s*\[(?:(?:ev|market|macro)_[A-Za-z0-9_.-]+)(?:\s*,\s*(?:ev|market|macro)_[A-Za-z0-9_.-]+)*\]/g;
+
+function stripSourceIdTags(value) {
+  return String(value || "")
+    .replace(HTML_COMMENT, "")
+    .replace(INLINE_SOURCE_ID, "");
+}
+
 function renderMarkdown(value) {
-  const normalized = String(value || "")
+  const normalized = stripSourceIdTags(value)
     .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n");
   const lines = normalized.split(/\n/);
   const html = [];

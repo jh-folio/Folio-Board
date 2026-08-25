@@ -551,7 +551,7 @@ def test_briefing_contract_rejects_title_that_uses_publication_date_instead_of_s
     assert any("US Market Briefing — 2026.08.03 마감" in item for item in violations)
 
 
-def test_run_agent_task_retries_invalid_briefing_once_before_writeback():
+def test_run_agent_task_does_not_retry_invalid_briefing_or_writeback():
     with TemporaryDirectory() as tmp:
         pack = {
             "taskType": "briefing",
@@ -568,20 +568,17 @@ def test_run_agent_task_retries_invalid_briefing_once_before_writeback():
         with (
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
-            patch.object(bridge, "_invoke_agent_cli", side_effect=[invalid, _valid_briefing_output()]) as invoke,
+            patch.object(bridge, "_invoke_agent_cli", return_value=invalid) as invoke,
             patch.object(bridge.agent_service, "writeback_pack", return_value={"date": "2099-12-31", "title": "Test Briefing"}) as writeback,
             patch.object(bridge.schema, "update_pack_status"),
         ):
-            result = bridge.run_agent_task("briefing", {}, job_id="retry-job")
-        assert result["date"] == "2099-12-31"
-        assert invoke.call_count == 2
-        assert writeback.call_count == 1
-        correction_prompt = invoke.call_args_list[1].args[1]
-        assert "필수 제목 누락" in correction_prompt
-        assert "축약하지" in correction_prompt
+            with pytest.raises(RuntimeError, match="출력 계약을 충족하지 못했습니다"):
+                bridge.run_agent_task("briefing", {}, job_id="retry-job")
+        assert invoke.call_count == 1
+        writeback.assert_not_called()
 
 
-def test_run_agent_task_never_writes_briefing_after_two_invalid_outputs():
+def test_run_agent_task_never_writes_briefing_after_invalid_output():
     with TemporaryDirectory() as tmp:
         pack = {
             "taskType": "briefing",
@@ -604,7 +601,7 @@ def test_run_agent_task_never_writes_briefing_after_two_invalid_outputs():
         ):
             with pytest.raises(RuntimeError, match="출력 계약을 충족하지 못했습니다"):
                 bridge.run_agent_task("briefing", {}, job_id="retry-fail-job")
-        assert invoke.call_count == 2
+        assert invoke.call_count == 1
         writeback.assert_not_called()
 
 

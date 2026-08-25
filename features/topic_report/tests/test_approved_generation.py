@@ -510,3 +510,90 @@ def test_confirmed_zero_skips_all_external_engines(tmp_path: Path, monkeypatch: 
     assert outcome.fallbackReason == "confirmed_zero_evidence"
     assert outcome.generationMode == "rules"
     assert outcome.report["researchResolution"] == preview.model_dump(mode="json")
+
+
+# ------------------------------------------- 초안 재시도 (draft guard)
+
+def _deep_markdown(*, drop_tail: int = 0, filler: int = 8) -> str:
+    from features.topic_report.report_contract import REPORT_HEAD_SECTIONS, REPORT_TAIL_SECTIONS
+
+    body = "기대 심리가 지표에 반영되는 경로를 단계로 풀어 설명한 문장이다. " * filler
+    tails = list(REPORT_TAIL_SECTIONS)[: len(REPORT_TAIL_SECTIONS) - drop_tail]
+    names = [*REPORT_HEAD_SECTIONS, "분석축", *tails]
+    return "\n\n".join(["# 제목", *(f"## {name}\n\n{body}" for name in names)])
+
+
+def test_a_broken_draft_is_rewritten_once_instead_of_losing_the_whole_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 딥 실행에서 값비싼 것은 쓰기가 아니라 그 앞이다(근거 팩·웹 조회·축 브리프·논지).
+    # 실측으로 마지막 쓰기 한 번이 어긋나 9분치 작업이 통째로 버려졌다.
+    seen: list[str] = []
+
+    def cli(_prompt, context, **_kwargs):
+        seen.append(context)
+        broken = len(seen) == 1
+        return EngineOutput(
+            markdown=_deep_markdown(drop_tail=2) if broken else _deep_markdown(filler=200),
+            adapter="codex", provider="external_agent", model="", responseId="",
+        )
+
+    monkeypatch.setattr(generation, "_materials", fake_materials)
+    monkeypatch.setattr(generation, "_read_prompt", lambda: "Approved prompt")
+    monkeypatch.setattr(generation, "attempt_cli", cli)
+
+    outcome = generation.build_approved_report(
+        prepared_input(tmp_path, "cli"), job_id="job-draft-guard", clock=lambda: NOW,
+    )
+
+    guard = outcome.report["draftGuard"]
+    assert "draft_sections_missing" in guard["problems"]
+    assert guard["retried"] is True and guard["outcome"] == "retry_better"
+    assert len(seen) == 2
+    # 재시도 컨텍스트에만 교정 지시가 붙는다. 실패한 초안 자체는 돌려주지 않는다.
+    assert "다시 작성 요청" not in seen[0]
+    assert "고정 섹션이 빠졌습니다" in seen[1]
+    assert "Source & Data Notes" in outcome.report["markdown"]
+
+
+def test_a_healthy_draft_is_not_rewritten(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def cli(_prompt, _context, **_kwargs):
+        calls["n"] += 1
+        return EngineOutput(
+            markdown=_deep_markdown(filler=200), adapter="codex",
+            provider="external_agent", model="", responseId="",
+        )
+
+    monkeypatch.setattr(generation, "_materials", fake_materials)
+    monkeypatch.setattr(generation, "_read_prompt", lambda: "Approved prompt")
+    monkeypatch.setattr(generation, "attempt_cli", cli)
+
+    outcome = generation.build_approved_report(
+        prepared_input(tmp_path, "cli"), job_id="job-draft-ok", clock=lambda: NOW,
+    )
+    assert calls["n"] == 1
+    assert outcome.report["draftGuard"] == {"problems": [], "retried": False, "outcome": ""}
+
+
+def test_a_worse_retry_is_discarded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 나쁜 초안이라도 없는 것보다 낫다.
+    outputs = [_deep_markdown(drop_tail=1, filler=200), _deep_markdown(drop_tail=3)]
+
+    def cli(_prompt, _context, **_kwargs):
+        return EngineOutput(
+            markdown=outputs.pop(0), adapter="codex",
+            provider="external_agent", model="", responseId="",
+        )
+
+    monkeypatch.setattr(generation, "_materials", fake_materials)
+    monkeypatch.setattr(generation, "_read_prompt", lambda: "Approved prompt")
+    monkeypatch.setattr(generation, "attempt_cli", cli)
+
+    outcome = generation.build_approved_report(
+        prepared_input(tmp_path, "cli"), job_id="job-draft-worse", clock=lambda: NOW,
+    )
+    assert outcome.report["draftGuard"]["outcome"] in {"retry_worse", "retry_no_gain"}
+    assert "반론과 리스크" in outcome.report["markdown"]

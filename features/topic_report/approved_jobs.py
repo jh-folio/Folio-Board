@@ -33,7 +33,7 @@ from features.topic_report.approval_submission import (
     SubmissionRequest,
 )
 from features.topic_report.approved_generation import ApprovedGenerationInput, build_approved_report
-from features.topic_report.deep_pipeline import run_deep_pipeline
+from features.topic_report.deep_pipeline import DeepResearchGenerationError, run_deep_pipeline
 from features.common.quality_generation.candidate_store import CandidateStore
 from features.topic_report.service import _stable_topic_id
 
@@ -90,6 +90,31 @@ class SharedSubmissionJobs(SubmissionJobs):
                 planHash=self._metadata.planHash,
             )
         return self._journal_metadata(job_id)
+
+
+def _failure_detail(exc: BaseException) -> str:
+    """무엇을 어겼는지 코드로만. 본문은 담지 않는다."""
+    if not isinstance(exc, DeepResearchGenerationError):
+        return ""
+    codes = [code for code in getattr(exc, "defects", []) if code]
+    return (f"{exc}: " + ",".join(codes))[:200] if codes else str(exc)[:200]
+
+
+def _failure_code(exc: BaseException) -> ErrorCode:
+    """실패 원인을 잡 상태로 드러낸다.
+
+    실패 결과는 `FailedProjection`(status/errorCode) 고정 계약이라 자유 필드를 실을 수
+    없다. 그래서 원인은 ErrorCode로 말해야 한다 — 딥 파이프라인이 산출물을 계약 위반으로
+    되돌린 것(`deep_initial_candidate_invalid` 등)과 진짜 내부 오류를 `internal_error`
+    하나로 뭉뚱그리면, 사용자는 CLI를 몇 분 돌리고도 무엇이 문제인지 알 수 없다.
+    """
+    if isinstance(exc, DeepResearchGenerationError):
+        # 엔진이 결과를 못 내서 규칙으로 떨어진 것과, 결과가 계약을 어긴 것은 사용자가
+        # 할 일이 다르다. 하나로 뭉뚱그리면 어느 쪽인지 알 수 없다.
+        if "engine_failed" in str(exc):
+            return ErrorCode.ADAPTER_FAILED
+        return ErrorCode.VALIDATION_FAILED
+    return ErrorCode.INTERNAL_ERROR
 
 
 class ApprovedTopicJobs:
@@ -249,7 +274,7 @@ class ApprovedTopicJobs:
                 self._cancelled(job_id)
                 return
             producer.workspace.commit(bundle, self.store, self.lifecycle)
-        except Exception:  # noqa: BROAD_EXCEPT_OK -- worker boundary terminalizes every failure.
+        except Exception as exc:  # noqa: BROAD_EXCEPT_OK -- worker boundary terminalizes every failure.
             current = self.store.get(job_id)
             if current is not None and current.status is JobStatus.CANCEL_REQUESTED:
                 if bundle is not None:
@@ -267,11 +292,18 @@ class ApprovedTopicJobs:
                 return
             if bundle is not None:
                 JobJsonProducers(self.data_dir, clock=self.clock).workspace.discard(bundle)
+            detail = _failure_detail(exc)
+            if detail:
+                # terminalize 전에 적는다 — 그 뒤에는 비공개 pack이 지워져 근거가 사라진다.
+                try:
+                    self.store.update_runtime(job_id, {"failureDetail": detail})
+                except Exception:  # noqa: BLE001 - 진단 기록이 종료를 막지 않는다
+                    pass
             self.lifecycle.terminalize(
                 self.store,
                 job_id,
                 JobStatus.FAILED,
-                error_code=ErrorCode.INTERNAL_ERROR,
+                error_code=_failure_code(exc),
             )
 
     def compatibility(self, job: SharedJob) -> dict[str, JsonValue]:

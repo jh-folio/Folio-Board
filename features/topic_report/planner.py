@@ -12,10 +12,14 @@ import re
 from copy import deepcopy
 
 from features.topic_report.topic_schema import (
+    DEEP_MAX_QUESTIONS,
+    DEEP_MAX_ROUND_1_QUESTIONS,
+    DEEP_MAX_ROUND_2_QUESTIONS,
     EXPECTED_SECTIONS_V2,
     LEGACY_REPORT_TYPE_MAP,
     REPORT_TYPE_LABELS,
     normalize_report_type,
+    compose_sections,
     normalize_topic_plan,
 )
 
@@ -165,6 +169,11 @@ _STOPWORDS = {
     # 질문 문장에서 흔히 딸려오는 서술어. 검색어가 되면 아무 기사나 물어온다.
     "존재함", "가능성", "무엇인지", "파악해볼", "검토해서", "바라보는", "맞으면서", "자라고",
     "오르던", "최근", "이번", "여러", "다수", "가장", "내내", "대로", "반대로", "때문",
+    # 접속·지시어. FTS가 토큰을 OR로 풀기 때문에 검색어에 남으면 아무 문서나 걸린다.
+    "또는", "그리고", "하지만", "가운데", "위해", "따라", "통해", "각각", "어떤", "이런", "그런",
+    # 사건을 가리키는 껍데기 말. 축 라벨에서 그대로 검색어가 되면 아무 기사나 걸린다
+    # (실측: "기대 심리 사례" → 조폐공사·SK하이닉스 심리).
+    "사례", "국면", "시기", "상황", "경우", "관점", "측면", "요인",
 }
 
 # 조사. `의`가 빠져 있어 `반도체의`가 검색어로 살아남았다.
@@ -299,13 +308,26 @@ def _term(word: str) -> str:
     return clean
 
 
+# 벌거벗은 숫자 토큰. `2021`, `2022`, `2021~2022`처럼 단위 없는 숫자만으로 이뤄진 말이다.
+_BARE_NUMBER = re.compile(r"^[0-9]+(?:[~\-–][0-9]+)?$")
+
+
+def _drop_bare_numbers(text: str) -> str:
+    """검색어에서 단위 없는 숫자를 뺀다. 남는 말이 없으면 원문을 그대로 둔다."""
+    tokens = str(text or "").split()
+    kept = [token for token in tokens if not _BARE_NUMBER.fullmatch(token.strip(".,"))]
+    # 숫자를 빼고 나면 검색할 말이 없는 질의(예: "2021 2022")는 손대지 않는다 —
+    # 어차피 아래 `_usable_query`가 걸러낸다.
+    return " ".join(kept) if len(kept) >= 2 else str(text or "")
+
+
 def _usable_query(text: str) -> str:
     """검색어로 쓸 만한 형태인가.
 
     한 단어짜리(`피크`)와 질문 전문은 버린다. 전자는 전력망 기사를, 후자는 토큰이
     OR로 풀려 그날 시장 기사 아무거나 물어온다. 둘 다 실제로 확인한 결과다.
     """
-    clean = " ".join(str(text or "").split())
+    clean = " ".join(_drop_bare_numbers(str(text or "")).split())
     if not clean or len(clean) > _QUERY_MAX:
         return ""
     return clean if len(clean.split()) >= 2 else ""
@@ -327,7 +349,7 @@ def _axis_queries(subject: str, axis_label: str, keywords: list[str]) -> list[st
         term for term in (_term(w) for w in re.findall(r"[A-Za-z가-힣]{2,}", axis_label))
         if term and term not in _STOPWORDS
     ][:2]
-    base = subject or " ".join(keywords[:2])
+    base = _drop_bare_numbers(subject or " ".join(keywords[:2]))
     queries = []
     for term in axis_terms[:2]:
         query = _usable_query(f"{base} {term}")
@@ -338,6 +360,73 @@ def _axis_queries(subject: str, axis_label: str, keywords: list[str]) -> list[st
         if fallback:
             queries.append(fallback)
     return queries[:3]
+
+
+# 사용자가 질문에서 직접 나열한 항목. 줄머리 기호나 번호로 적은 것들이다.
+_QUESTION_PART = re.compile(r"^\s*(?:[-*•·]|\d+[.)])\s*(.+?)\s*$", re.MULTILINE)
+_PART_MAX_LENGTH = 60
+
+
+def question_parts(topic: str, limit: int = 6) -> list[str]:
+    """사용자가 질문에 직접 적어 준 사례·구간 목록.
+
+    "- 2021~2022 인플레이션 사례" 처럼 나열한 것은 **이 보고서가 다뤄야 할 대상**이지
+    참고 사항이 아니다. 실측으로 이걸 무시했더니 플래너가 표준 거시 축으로 갈아치웠고,
+    2021~2022 사례가 보고서에서 통째로 사라졌다(본문에 '2021' 0회).
+    """
+    parts: list[str] = []
+    for raw in _QUESTION_PART.findall(str(topic or "")):
+        text = " ".join(str(raw).split()).strip(" .·")
+        if not text or len(text) > _PART_MAX_LENGTH:
+            continue
+        if len(_label_keywords(text, limit=2)) < 1 or text in parts:
+            continue
+        parts.append(text)
+        if len(parts) >= limit:
+            break
+    return parts
+
+
+def _covers(part: str, axes: list[dict]) -> bool:
+    """이 항목이 이미 어떤 축으로 들어가 있는가.
+
+    연도·사건명처럼 그 항목을 구별짓는 말이 축 라벨에 들어 있으면 덮인 것으로 본다.
+    """
+    tokens = [token for token in _label_keywords(part, limit=6) if len(token) >= 2]
+    if not tokens:
+        return True
+    for axis in axes:
+        label = str((axis or {}).get("label") or "")
+        hits = sum(1 for token in tokens if token in label)
+        if hits >= min(2, len(tokens)):
+            return True
+    return False
+
+
+def ensure_question_axes(plan: dict, topic: str, *, limit: int = 6) -> dict:
+    """질문이 명시한 항목을 분석축으로 올린다. 축은 곧 본문 섹션이다."""
+    out = dict(plan or {})
+    parts = question_parts(topic)
+    if not parts:
+        return out
+    axes = [dict(axis) for axis in out.get("analysisAxes") or []]
+    subject = topic_subject(topic) or str(out.get("topicLabel") or "")
+    keywords = _label_keywords(topic, limit=6)
+    added: list[dict] = []
+    for index, part in enumerate(parts):
+        if _covers(part, axes + added):
+            continue
+        added.append({
+            "key": f"asked_{index + 1}",
+            "label": part[:60],
+            "questions": [f"{part}에서 무엇이 확인되며, 그것이 이 질문에 어떤 답을 주는가?"],
+            "searchQueries": _axis_queries(subject, part, keywords),
+        })
+    if not added:
+        return out
+    # 사용자가 든 사례를 앞에 둔다. 뒤로 밀면 상한에 잘려 사라진다.
+    out["analysisAxes"] = (added + axes)[:limit]
+    return out
 
 
 def _data_gaps(report_type: str, regions: list[str]) -> list[str]:
@@ -409,13 +498,61 @@ def build_rule_plan(topic: str, *, user_context: str = "") -> dict:
         "searchQueries": search_queries,
         "memoryQueries": [k.lower() for k in keywords],
         "candidateTickers": tickers,
-        "expectedSections": list(EXPECTED_SECTIONS_V2),
+        # 본문 섹션은 분석축이 정한다. 축이 곧 이 보고서가 답해야 할 것들이므로,
+        # 그것을 가중치 15%짜리 섹션 하나에 밀어 넣지 않고 각각 자기 자리를 준다.
+        "expectedSections": compose_sections(axis["label"] for axis in axes),
         "dataGapsLikely": _data_gaps(report_type, regions),
     }
-    return normalize_topic_plan(plan, topic=label, topic_label=subject or label)
+    return normalize_topic_plan(ensure_question_axes(plan, label), topic=label, topic_label=subject or label)
 
 
-def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: int = 12) -> dict:
+def _question_queries(
+    question: str,
+    *,
+    subject: str,
+    base_queries: list[str],
+    index: int,
+    used_heads: set[str] | None = None,
+) -> list[str]:
+    """하위 질문의 검색어. 질문마다 달라야 한다.
+
+    예전에는 연구질문 전부에 `base_queries[:2]`를 그대로 줬다. 같은 질의 + 전역
+    중복 제거라 앞 질문이 결과를 다 먹고 뒤 질문은 0건이 됐고, 그 0건이 "이 질문은
+    로컬 근거가 부족합니다"라는 데이터 갭으로 보고서에 실렸다 — 자료가 없어서가
+    아니라 같은 검색을 반복해서 생긴 0건이다.
+    """
+    keywords = _label_keywords(question, limit=6)
+    out: list[str] = []
+    for size in (3, 2):
+        own = _usable_query(" ".join(keywords[:size]))
+        if own:
+            out.append(own)
+            break
+    if subject and keywords:
+        paired = _usable_query(f"{subject} {keywords[0]}")
+        if paired and paired not in out:
+            out.append(paired)
+    usable_base = [q for q in (base_queries or []) if q]
+    if usable_base:
+        offset = index % len(usable_base)
+        for query in usable_base[offset:] + usable_base[:offset]:
+            if query not in out:
+                out.append(query)
+            if len(out) >= 4:
+                break
+    # 규칙 계획의 연구질문은 "{주제}의 현재 상황은?", "{주제}가 시장에 작동하는
+    # 경로는?"처럼 주제어가 지배해서 뽑히는 키워드가 같다. 앞선 질문이 이미 쓴
+    # 검색어가 선두면 뒤로 미뤄, 첫 질의만이라도 서로 다르게 만든다.
+    taken = used_heads or set()
+    if len(out) > 1 and out[0] in taken:
+        for position, query in enumerate(out):
+            if query not in taken:
+                out = [query] + out[:position] + out[position + 1:]
+                break
+    return out[:4]
+
+
+def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: int = DEEP_MAX_QUESTIONS) -> dict:
     """Attach bounded deep-research subquestions to a normalized TopicPlan.
 
     The base TopicPlan remains compatible with existing consumers. Deep metadata
@@ -424,9 +561,11 @@ def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: 
     """
     out = deepcopy(plan if isinstance(plan, dict) else {})
     max_rounds = max(1, min(2, int(max_rounds or 2)))
-    max_questions = max(3, min(12, int(max_questions or 12)))
+    max_questions = max(3, min(DEEP_MAX_QUESTIONS, int(max_questions or DEEP_MAX_QUESTIONS)))
     axes = out.get("analysisAxes") or []
     base_queries = list(out.get("searchQueries") or [])[:3]
+    subject = str(out.get("topicLabel") or "").strip()
+    round_caps = {1: DEEP_MAX_ROUND_1_QUESTIONS, 2: DEEP_MAX_ROUND_2_QUESTIONS}
 
     subquestions: list[dict] = []
 
@@ -435,7 +574,7 @@ def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: 
         normalized_round = max(1, min(max_rounds, int(round_no or 1)))
         if not text or len(subquestions) >= max_questions:
             return
-        if sum(int(row.get("round") or 1) == normalized_round for row in subquestions) >= 6:
+        if sum(int(row.get("round") or 1) == normalized_round for row in subquestions) >= round_caps.get(normalized_round, 6):
             return
         if any(q["question"] == text for q in subquestions):
             return
@@ -451,15 +590,28 @@ def apply_deep_research_plan(plan: dict, *, max_rounds: int = 2, max_questions: 
             "searchQueries": search_queries[:4],
         })
 
-    for question in out.get("researchQuestions") or []:
-        add_question(question, round_no=1, queries=base_queries)
+    used_heads: set[str] = set()
+    for index, question in enumerate(out.get("researchQuestions") or []):
+        queries = _question_queries(
+            question,
+            subject=subject,
+            base_queries=base_queries,
+            index=index,
+            used_heads=used_heads,
+        )
+        if queries:
+            used_heads.add(queries[0])
+        add_question(question, round_no=1, queries=queries)
 
-    for axis in axes:
-        axis_key = axis.get("key", "")
-        queries = list(axis.get("searchQueries") or []) or base_queries
-        questions = axis.get("questions") or [f"{axis.get('label', '')}에 대한 핵심 근거는 무엇인가?"]
-        for question in questions[:2]:
-            add_question(question, axis_key=axis_key, round_no=1, queries=queries)
+    # 축은 너비 우선으로 채운다. 축 하나씩 두 질문을 다 넣으면 앞 축이 상한을 먹고
+    # 뒤 축은 질문을 하나도 못 받는다 — 실제로 축 5개 중 1~2개만 검색됐다.
+    for slot in (0, 1):
+        for axis in axes:
+            axis_key = axis.get("key", "")
+            queries = list(axis.get("searchQueries") or []) or base_queries
+            questions = axis.get("questions") or [f"{axis.get('label', '')}에 대한 핵심 근거는 무엇인가?"]
+            if slot < len(questions[:2]):
+                add_question(questions[slot], axis_key=axis_key, round_no=1, queries=queries)
 
     if max_rounds >= 2:
         topic = out.get("topicLabel") or out.get("topic") or "이 주제"
@@ -539,6 +691,9 @@ _PLANNER_PROMPT = """당신은 투자 리서치 플래너입니다. 사용자의
 규칙:
 - reportType은 다음 중 하나만: {report_types}
 - 사용자 컨텍스트는 관심 방향 파악에만 쓰고, 그 전제를 사실로 간주하지 마세요.
+- **사용자가 질문에서 직접 든 사례·구간·항목(연도, 사건, 국면)은 반드시 각각 하나의 분석축이 된다.**
+  표준 거시 축으로 갈아치우지 마라. 축이 곧 보고서의 본문 섹션이므로, 축에서 빠지면 보고서에서 사라진다.
+- 질문이 "A는 B에 어떤 영향을 주고 C에 어떤 어려움을 주는가" 형태면 B와 C 각각이 축이 되어야 한다.
 - analysisAxes는 3~5개. 각 축에 key(영문 snake_case), label(한국어), questions(1~2개), searchQueries(1~3개, 한국어+영어 혼합)를 넣으세요.
 - topicLabel은 40자 이내의 짧은 주제어입니다. 질문 문단을 그대로 옮기지 마세요.
 - searchQueries는 로컬 뉴스 검색용 2~5어절 구문입니다. 질문 전문이나 한 단어짜리는 넣지 마세요.
@@ -618,7 +773,9 @@ def refine_plan_with_llm(
         raw = extract_json_object(text)
         if not isinstance(raw, dict):
             return rule_plan, "parse_failed"
-        refined = normalize_topic_plan(raw, topic=topic, topic_label=topic_subject(topic) or topic)
+        refined = normalize_topic_plan(
+            ensure_question_axes(raw, topic), topic=topic, topic_label=topic_subject(topic) or topic
+        )
         # LLM이 비워버린 핵심 필드는 규칙 계획으로 보강 (계획이 후퇴하지 않게)
         for key in ("searchQueries", "memoryQueries", "candidateTickers", "analysisAxes", "dataGapsLikely"):
             if not refined.get(key):

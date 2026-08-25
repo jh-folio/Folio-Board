@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import os
 import urllib.error
 from dataclasses import dataclass
 
 from features.agent_mode import bridge as agent_bridge
 from features.agent_mode import schema as agent_schema
 from features.common.research_schema.evidence import evidence_items_from_list
-from features.llm_settings.client import LlmRequestError, request_llm_text, selected_llm_config, use_llm_analysis
+from features.llm_settings.client import (
+    LlmRequestError,
+    request_llm_text,
+    selected_llm_config,
+    use_llm_analysis,
+    use_web_search_for_analysis,
+)
 from features.topic_report.approved_schema import ApprovedRequest
+from features.topic_report.axis_analysis import AxisCall
 from features.topic_report.data_fetcher import fetch_topic_market_data
-from features.topic_report.macro_data import fetch_macro_data
+from features.topic_report.macro_data import fetch_macro_data, resolve_fred_series
 from features.topic_report.topic_config import get_topic_config
 
 
@@ -43,6 +51,12 @@ def _topic(approved: ApprovedRequest) -> dict:
     topic["theme_axes"] = [axis.label for axis in approved.topicPlan.analysisAxes]
     topic["search_keywords"] = list(approved.topicPlan.searchQueries)
     topic["memory_keywords"] = list(approved.topicPlan.memoryQueries)
+    # 계획이 요청한 거시 시리즈를 실제로 받아온다. 예전에는 requiredMacroData를 계획에
+    # 적어 화면에 보여주기까지 하고서 custom 고정값 3종(FEDFUNDS/UNRATE/DGS10)만 조회했다.
+    topic["fred_series"] = resolve_fred_series(
+        approved.topicPlan.requiredMacroData,
+        fallback=topic.get("fred_series"),
+    )
     return topic
 
 
@@ -101,7 +115,7 @@ def attempt_direct(prompt: str, context: str, *, max_output_tokens: int = 9000, 
             config,
             prompt,
             context,
-            web_search=False,
+            web_search=use_web_search_for_analysis(),
             max_output_tokens=max_output_tokens,
             timeout_seconds=timeout_seconds,
             include_usage=True,
@@ -145,17 +159,30 @@ def attempt_cli(
         evidence_items=evidence_items,
     )
     pack_path = agent_schema.write_pack(pack, owner_job_id=job_id)
+    # 팩 안의 웹 검색 허가를 겉 지시가 덮지 않도록 같은 말을 밖에서도 한다.
+    web_search_enabled = use_web_search_for_analysis()
+    boundary = (
+        "Use its approved plan, evidence, and context boundaries. If the pack contains a "
+        "`## 웹 검색 사용` section, follow it: you may search the web within the listed sources "
+        "and must cite the URL for anything found there."
+        if web_search_enabled
+        else "Use only its approved plan, evidence, and context boundaries."
+    )
     agent_prompt = "\n".join(
         [
             "Write the final Folio OS Topic Report from this approved context pack.",
             f"Read the UTF-8 pack at: {pack_path}",
-            "Use only its approved plan, evidence, and context boundaries.",
+            boundary,
             "Return final Markdown only and do not write files.",
         ]
     )
     try:
         result = agent_bridge.run_agent_prompt(
-            agent_prompt, adapter=adapter, job_id=job_id, timeout=int(timeout_seconds or 0),
+            agent_prompt,
+            adapter=adapter,
+            job_id=job_id,
+            timeout=int(timeout_seconds or 0),
+            web_search=web_search_enabled,
         )
     except RuntimeError as error:
         message = str(error).casefold()
@@ -189,3 +216,72 @@ __all__ = [
     "attempt_cli",
     "attempt_direct",
 ]
+
+
+def configured_editor_call(approved: ApprovedRequest, *, requested_mode: str, adapter: str, job_id: str) -> AxisCall:
+    """리서치 에디터 호출. 축 분석과 같은 엔진이되 세 가지가 다르다.
+
+    - 출력이 보고서 전문이라 토큰 한도가 훨씬 크다(축 브리프는 2,500이면 족하다).
+    - JSON이 아니라 Markdown을 받는다.
+    - **웹 검색을 끈다.** 에디터는 사실을 더할 수 없다. 검색을 열어 두면 계약이
+      금지한 새 수치를 가져올 통로가 생기고, 그러면 편집본이 통째로 버려진다.
+    """
+
+    def invoke(prompt: str, context: str) -> str:
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            raise RuntimeError("external_editor_disabled_in_tests")
+        if requested_mode == "direct":
+            config = selected_llm_config()
+            if not use_llm_analysis() or not config.get("apiKey"):
+                raise EngineUnavailableError("api")
+            text, _response_id = request_llm_text(
+                config,
+                prompt,
+                context,
+                web_search=False,
+                max_output_tokens=16_000,
+                timeout_seconds=max(120, int(os.environ.get("TOPIC_EDITOR_API_TIMEOUT_SECONDS", "600"))),
+            )
+            return str(text or "")
+        result = agent_bridge.run_agent_prompt(
+            prompt + "\n\n" + context,
+            adapter=adapter,
+            job_id=job_id,
+            timeout=max(120, int(os.environ.get("TOPIC_EDITOR_CLI_TIMEOUT_SECONDS", "1200"))),
+            web_search=False,
+        )
+        return str(result.get("output") or "")
+
+    return invoke
+
+
+def configured_axis_call(approved: ApprovedRequest, *, requested_mode: str, adapter: str, job_id: str) -> AxisCall:
+    """축별 분석 호출. 보고서 본문 생성과 같은 엔진을 쓰되 팩 없이 프롬프트만 보낸다."""
+
+    def invoke(prompt: str, context: str) -> str:
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            raise RuntimeError("external_axis_analysis_disabled_in_tests")
+        if requested_mode == "direct":
+            config = selected_llm_config()
+            if not use_llm_analysis() or not config.get("apiKey"):
+                raise EngineUnavailableError("api")
+            text, _response_id = request_llm_text(
+                config,
+                prompt,
+                context,
+                web_search=False,
+                max_output_tokens=2_500,
+                json_mode=True,
+                timeout_seconds=max(60, int(os.environ.get("TOPIC_AXIS_API_TIMEOUT_SECONDS", "240"))),
+            )
+            return str(text or "")
+        result = agent_bridge.run_agent_prompt(
+            prompt + "\n\n" + context,
+            adapter=adapter,
+            job_id=job_id,
+            timeout=max(60, int(os.environ.get("TOPIC_AXIS_CLI_TIMEOUT_SECONDS", "600"))),
+            web_search=use_web_search_for_analysis(),
+        )
+        return str(result.get("output") or "")
+
+    return invoke

@@ -56,19 +56,78 @@ EVIDENCE_ROLE_DEFAULT = "neutral"
 TIME_HORIZON_DEFAULT = "1~2 quarters"
 
 # 설계 §9 보고서 구조 (v2 공통 섹션)
-EXPECTED_SECTIONS_V2 = [
+# 딥리서치 하위 질문 상한. 라운드1은 "연구질문 + 분석축 전체"를 담아야 한다 —
+# 6으로 두면 축이 5개일 때 첫 축만 질문을 받고 나머지 축은 질문 없이 남는다.
+# 이 값을 계획 생성기(planner)와 승인 계약(approved_plan_schema)이 함께 읽는다.
+DEEP_MAX_QUESTIONS = 12
+DEEP_MAX_ROUND_1_QUESTIONS = 10
+DEEP_MAX_ROUND_2_QUESTIONS = 6
+
+# 보고서 골격은 **머리·꼬리 고정 + 본문 자유**다.
+#
+# 예전에는 11개 섹션 전체가 고정이었고 헤딩이 하나만 달라도 보고서를 통째로 버렸다.
+# 그런데 유형별 템플릿 9개는 전부 같은 골격 안에서 강조점만 바꿀 뿐이고, 계획이 다른
+# 구성을 선언할 통로도 없었다(승인 계약이 정확 일치를 요구했다). 그 결과 주제와 맞지
+# 않는 섹션은 건너뛸 수 없어 얇게 채워졌고(실측: 결론이 예산의 24%), 분석축 5개가
+# 가중치 15%짜리 섹션 하나에 밀려 들어가 축당 400자를 받았다.
+#
+# 머리와 꼬리는 서식이 아니라 계약이다 — 꼬리의 반론·시나리오·체크포인트는 §5 원칙 3
+# (확증편향 방지)의 집행 장치이고, 체크포인트 추출·품질 평가·리더가 **이름으로** 찾는다.
+# 가운데는 주제가 정한다: 계획의 분석축이 그대로 본문 섹션이 된다.
+REPORT_HEAD_SECTIONS = (
     "Executive Summary",
     "질문 정의와 분석 범위",
     "핵심 데이터 대시보드",
-    "현재 상황",
-    "작동 경로",
-    "수혜/피해 자산과 기업",
+)
+REPORT_TAIL_SECTIONS = (
     "반론과 리스크",
     "시나리오",
     "앞으로 확인할 체크포인트",
     "결론",
     "Source & Data Notes",
-]
+)
+BODY_SECTION_MIN = 2
+BODY_SECTION_MAX = 8
+BODY_SECTION_MAX_LENGTH = 40
+DEFAULT_BODY_SECTIONS = ("현재 상황", "작동 경로", "수혜/피해 자산과 기업")
+_RESERVED_SECTIONS = frozenset(REPORT_HEAD_SECTIONS) | frozenset(REPORT_TAIL_SECTIONS)
+
+
+def compose_sections(body_sections) -> list[str]:
+    """머리 + 본문 + 꼬리."""
+    return [*REPORT_HEAD_SECTIONS, *normalize_body_sections(body_sections), *REPORT_TAIL_SECTIONS]
+
+
+def body_sections(sections) -> list[str]:
+    """전체 섹션 목록에서 가운데(본문)만 떼어낸다."""
+    rows = [str(item or "").strip() for item in sections or []]
+    return [row for row in rows if row and row not in _RESERVED_SECTIONS]
+
+
+def normalize_body_sections(values, fallback=DEFAULT_BODY_SECTIONS) -> list[str]:
+    """본문 섹션 이름 위생. 예약 이름·중복·과한 길이를 걸러낸다.
+
+    이름이 곧 헤딩이므로 번호 접두(`1. `)와 `#`은 떼어낸다 — 계획이 그대로 헤딩이
+    되면 `## 1. 1. 현재 상황`이 된다.
+    """
+    out: list[str] = []
+    for raw in values or []:
+        label = re.sub(r"^#+\s*", "", str(raw or "")).strip()
+        label = re.sub(r"^\d+\.\s*", "", label).strip()
+        if not label or len(label) > BODY_SECTION_MAX_LENGTH:
+            continue
+        if label in _RESERVED_SECTIONS or label in out:
+            continue
+        out.append(label)
+        if len(out) >= BODY_SECTION_MAX:
+            break
+    if len(out) < BODY_SECTION_MIN:
+        return list(fallback)
+    return out
+
+
+# 기존 소비자 호환 기본값. 계획이 본문을 정하지 않았을 때의 골격이다.
+EXPECTED_SECTIONS_V2 = compose_sections(DEFAULT_BODY_SECTIONS)
 
 
 def normalize_report_type(value, default: str = REPORT_TYPE_DEFAULT) -> str:
@@ -148,6 +207,14 @@ def _normalized_label(value: str) -> str:
     return topic_subject(value) or value[:_TOPIC_LABEL_MAX]
 
 
+def _expected_sections(plan: dict, axes: list) -> list[str]:
+    """본문 섹션은 계획이 정한다. 없으면 분석축 라벨에서, 그것도 없으면 기본 골격."""
+    declared = body_sections(_str_list(plan.get("expectedSections"), limit=16))
+    if declared:
+        return compose_sections(declared)
+    return compose_sections(str((axis or {}).get("label") or "") for axis in axes or [])
+
+
 def normalize_topic_plan(plan: dict | None, *, topic: str = "", topic_label: str = "") -> dict:
     """TopicPlan을 스키마에 맞게 강제 정규화한다. 누락 필드는 빈 값으로 보장."""
     plan = plan if isinstance(plan, dict) else {}
@@ -173,6 +240,6 @@ def normalize_topic_plan(plan: dict | None, *, topic: str = "", topic_label: str
         "searchQueries": _str_list(plan.get("searchQueries"), limit=12),
         "memoryQueries": _str_list(plan.get("memoryQueries"), limit=10),
         "candidateTickers": _ticker_map(plan.get("candidateTickers")),
-        "expectedSections": _str_list(plan.get("expectedSections"), limit=12) or list(EXPECTED_SECTIONS_V2),
+        "expectedSections": _expected_sections(plan, axes),
         "dataGapsLikely": _str_list(plan.get("dataGapsLikely"), limit=8),
     }

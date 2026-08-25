@@ -8,18 +8,28 @@ from collections.abc import Callable
 from features.agent_mode import bridge as agent_bridge
 from features.common.quality_generation.call_budget import deep_research_budget
 from features.common.quality_generation.candidate_store import CandidateStore
+from features.common.research_quality.schema import grade_from_score, status_from_score
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
 from features.llm_settings.client import request_llm_text, selected_llm_config
 from features.topic_report.approved_generation import ApprovedGenerationInput, ApprovedGenerationOutcome
 from features.topic_report.candidate_pipeline import candidate_improves, repairable_sections
 from features.topic_report.evaluation import evaluate_report
-from features.topic_report.report_contract import split_sections, validate_deep_report
+from features.topic_report.report_contract import (
+    REPORT_HEAD_SECTIONS,
+    REPORT_TAIL_SECTIONS,
+    split_sections,
+    validate_deep_report,
+)
 from features.topic_report.research_trace import build_research_trace_summary
 from features.topic_report.section_repair import merge_section_patches, parse_patch_response
 
 
 class DeepResearchGenerationError(RuntimeError):
-    pass
+    """딥 실행이 산출물을 되돌린 이유. `defects`에 결함 코드만 담는다."""
+
+    def __init__(self, message: str, defects: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.defects = list(defects or [])
 
 
 RepairCall = Callable[[int, str], str]
@@ -101,13 +111,66 @@ def _quality(report: dict, markdown: str) -> dict:
 
 
 def _validate(report: dict) -> dict:
+    plan = report.get("topicPlan") or {}
     return validate_deep_report(
         str(report.get("markdown") or ""),
         source_ledger=list(report.get("sourceLedger") or []),
         depth_policy=dict(report.get("depthPolicy") or {}),
         material_resolution=dict(report.get("materialResolution") or {}),
         internal_score=int((report.get("quality") or {}).get("score") or 0),
+        expected_sections=list(plan.get("expectedSections") or []) or None,
+        research_questions=list(plan.get("researchQuestions") or []) or None,
+        quote_sources=list((report.get("webLookup") or {}).get("speakerSources") or []),
     )
+
+
+# 계약 결함의 무게를 점수 상한으로 옮긴다. 잘 쓴 문장은 없는 근거를 대신하지 못한다.
+_CONTRACT_CEILINGS = ((70, 69), (40, 89))
+_CONTRACT_MANY_MAJOR = (3, 79)
+
+
+def apply_contract_ceiling(quality: dict, validation: dict) -> dict:
+    """계약이 잡은 결함을 품질 점수에 반영한다.
+
+    결함은 이미 셌는데 점수가 그것을 읽지 않으면, 사용자는 무엇이 비었는지 모른 채
+    A를 본다(실측: 결함 14건에 93점/A/pass — 근거 없는 섹션 7개, 분량 미달,
+    본문 구성 불일치를 전부 안고서).
+    """
+    row = dict(quality or {})
+    defects = [d for d in (validation or {}).get("defects") or [] if isinstance(d, dict)]
+    if not defects or not row:
+        return row
+    severities = [int(d.get("severity") or 0) for d in defects]
+    ceiling = 100
+    reasons: list[str] = []
+    for threshold, cap in _CONTRACT_CEILINGS:
+        hits = [d for d, sev in zip(defects, severities, strict=False) if sev >= threshold]
+        if hits:
+            ceiling = min(ceiling, cap)
+            codes = sorted({str(d.get("code") or "") for d in hits})[:4]
+            reasons.append(f"심각도 {threshold} 이상 결함 {len(hits)}건(" + ", ".join(codes) + ")")
+    major_count = sum(1 for sev in severities if sev >= 40)
+    if major_count >= _CONTRACT_MANY_MAJOR[0]:
+        ceiling = min(ceiling, _CONTRACT_MANY_MAJOR[1])
+        reasons.append(f"주요 결함 {major_count}건")
+    score = int(row.get("score") or 0)
+    row["contractCeiling"] = {"applied": score > ceiling, "ceiling": ceiling, "reasons": reasons}
+    if score > ceiling:
+        row["score"] = ceiling
+        row["grade"] = grade_from_score(ceiling)
+        row["status"] = status_from_score(ceiling)
+        row["warnings"] = [
+            *list(row.get("warnings") or []),
+            f"생성 계약 결함으로 점수를 {ceiling}점으로 제한했습니다: " + "; ".join(reasons),
+        ][:12]
+    return row
+
+
+def _missing_fixed_sections(markdown: str) -> list[str]:
+    """빠진 고정 섹션 이름. 진단 문자열이 200자를 넘지 않게 두 개까지만."""
+    written = {str(row.get("heading") or "") for row in split_sections(markdown)}
+    missing = [name for name in (*REPORT_HEAD_SECTIONS, *REPORT_TAIL_SECTIONS) if name not in written]
+    return [f"missing={'/'.join(missing[:2])}"] if missing else []
 
 
 def run_deep_pipeline(
@@ -131,7 +194,20 @@ def run_deep_pipeline(
         provenance={"pass": 0, "engine": outcome.finalEngine}, report=report,
     )
     if not validation["valid"]:
-        raise DeepResearchGenerationError("deep_initial_candidate_invalid")
+        # 초안 재시도 결과를 함께 싣는다. 실패한 잡은 보고서를 저장하지 않으므로
+        # `draftGuard`가 정확히 필요한 순간에 사라진다 — 다시 쓰게 했는데도 같은 계약을
+        # 어긴 것인지, 아예 재시도가 돌지 않은 것인지 구분되지 않는다.
+        guard = report.get("draftGuard") or {}
+        raise DeepResearchGenerationError(
+            "deep_initial_candidate_invalid",
+            [
+                *[str(row.get("code") or "") for row in validation.get("defects") or [] if row.get("category") == "blocking"],
+                *([f"draft_retry={guard.get('outcome') or 'none'}"] if guard.get("retried") else ["draft_retry=skipped"]),
+                # 어느 고정 섹션이 없었는지. 모델이 제목을 바꿔 쓴 것인지 중간에 멈춘
+                # 것인지는 이것으로만 갈린다.
+                *_missing_fixed_sections(str(report.get("markdown") or "")),
+            ],
+        )
     budget = deep_research_budget()
     budget.claim("initial")
     best_report, best_validation, selected_index = report, validation, 0
@@ -164,6 +240,7 @@ def run_deep_pipeline(
             break
         best_report, best_validation, selected_index = candidate_report, candidate_validation, pass_no
         accepted_repairs += 1
+    best_report["quality"] = apply_contract_ceiling(best_report.get("quality") or {}, best_validation)
     best_report["sourceLedger"] = best_validation.get("sourceLedger") or best_report.get("sourceLedger") or []
     best_report["researchTraceSummary"] = build_research_trace_summary(
         best_report["sourceLedger"], best_report.get("dataGaps") or [],

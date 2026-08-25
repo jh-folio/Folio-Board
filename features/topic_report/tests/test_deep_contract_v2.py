@@ -39,13 +39,15 @@ def test_deep_plan_accepts_six_questions_per_round() -> None:
     assert len(plan.subQuestions) == 12
 
 
-def test_deep_plan_rejects_more_than_six_in_one_round() -> None:
+def test_deep_plan_rejects_more_than_ten_round_1_questions() -> None:
+    # 라운드1은 "연구질문 + 분석축 전체"를 담아야 해서 상한이 10이다. 6이던 시절에는
+    # 축이 5개일 때 첫 축만 질문을 받고 나머지 축은 검색조차 되지 않았다.
     with pytest.raises(ValidationError, match="too_many_round_1_questions"):
         DeepResearchPlan.model_validate(
             {
                 "enabled": True,
                 "maxRounds": 2,
-                "subQuestions": [_question(i, 1) for i in range(1, 8)],
+                "subQuestions": [_question(i, 1) for i in range(1, 12)],
                 "falsificationTriggers": FALSIFICATION_TRIGGERS,
                 "requiredOutputs": REQUIRED_OUTPUTS,
             }

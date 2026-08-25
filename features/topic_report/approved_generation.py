@@ -14,6 +14,8 @@ from features.common.research_schema.data_gaps import data_gaps_from_messages
 from features.common.research_schema.source_ledger import source_ledger_from_items
 from features.topic_report.approval_store import utc_z
 from features.topic_report.approved_generation_support import (
+    configured_editor_call,
+    configured_axis_call,
     EngineFailedError,
     EngineOutput,
     EngineUnavailableError,
@@ -25,8 +27,29 @@ from features.topic_report.approved_generation_support import (
 )
 from features.topic_report.approved_research import PreparedResearch
 from features.topic_report.approved_schema import ApprovedRequest
+from features.topic_report.axis_analysis import axis_brief_summary, axis_evidence, build_axis_briefs
+from features.topic_report.draft_guard import better_draft, draft_problems, retry_directive
+from features.topic_report.editor import edit_report, editor_summary
+from features.topic_report.thesis import select_thesis, thesis_summary
+from features.topic_report.web_lookup import (
+    MAX_LOOKUPS,
+    lookup_axis,
+    lookup_summary,
+    assign_source_ids,
+    needs_web_lookup,
+    render_lookup,
+    web_source_items,
+)
 from features.topic_report.evaluation import evaluate_report
 from features.topic_report.evidence import evidence_pack_summary
+from features.common.web_search_scope import (
+    audit_urls,
+    load_source_scope,
+    render_scope_instruction,
+    render_web_search_directive,
+)
+from features.llm_settings.client import use_web_search_for_analysis
+from features.topic_report.data_fetcher import market_data_to_markdown
 from features.topic_report.depth_policy import build_depth_policy
 from features.topic_report.material_requirements import (
     material_gap_messages,
@@ -102,7 +125,91 @@ def build_approved_report(
         subquestion_count=len(approved.topicPlan.deepResearch.subQuestions),
         evidence_count=len(evidence_items),
         report_type=approved.topicPlan.reportType,
+        sections=list(approved.topicPlan.expectedSections),
     )
+    # 웹 검색 범위는 축별 분석보다 **먼저** 정한다. 축 패스도 같은 허가·목록을 받아야
+    # 하고, 예외를 삼키는 블록 안에서 이름을 처음 쓰면 NameError가 보이지 않는다
+    # (실측: 그 때문에 축별 분석이 통째로 건너뛰어졌다).
+    source_scope = load_source_scope() if use_web_search_for_analysis() else None
+    web_directive = (
+        render_scope_instruction(source_scope) + "\n\n" + render_web_search_directive(source_scope)
+        if source_scope is not None
+        else ""
+    )
+    # 웹 조회 — **찾기와 쓰기를 분리한다.** 브리프 호출에 "필요하면 검색도 하라"를 얹는
+    # 방식은 네 번 시도해 모두 실패했다(웹에서 온 URL 0~1건). 그건 쓰기 과제라 모델이
+    # 팩에 근거가 있으면 충분하다고 판단한다. 같은 어댑터에 순수한 찾기 과제를 주면
+    # 곧바로 검색한다(실측: 닛케이 12.4%, 31,458.42, URL 2건).
+    web_lookups: list[dict] = []
+    if approved.deepResearch and source_scope is not None and not command.preview.zeroEvidence.required:
+        subquestions = list(approved.topicPlan.deepResearch.subQuestions)
+        axis_call = configured_axis_call(
+            approved, requested_mode=command.requestedMode, adapter=command.adapter, job_id=job_id
+        )
+        for axis in approved.topicPlan.analysisAxes:
+            if len(web_lookups) >= MAX_LOOKUPS:
+                break
+            axis_key = axis.key
+            questions = [q.question for q in subquestions if q.axisKey == axis_key] or list(axis.questions)
+            local = axis_evidence(axis_key, {q.id for q in subquestions if q.axisKey == axis_key}, rows)
+            if not needs_web_lookup(
+                {"key": axis_key, "label": axis.label}, questions, len(local), as_of=approved.asOfDate
+            ):
+                continue
+            try:
+                web_lookups.append(
+                    lookup_axis(
+                        {"key": axis_key, "label": axis.label},
+                        questions,
+                        approved.topicPlan.topic,
+                        render_scope_instruction(source_scope),
+                        axis_call,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
+                continue
+    web_lookups = assign_source_ids(web_lookups)
+    web_facts = render_lookup(web_lookups)
+
+    # 축별 분석 — 하위 질문에 실제로 답하게 하고, 그 결과가 본문 섹션의 뼈대가 된다.
+    # 한 축이 실패해도 보고서를 죽이지 않는다(그 축은 status로 남고 본문은 근거로 쓴다).
+    axis_briefs: list[dict] = []
+    if approved.deepResearch and not command.preview.zeroEvidence.required:
+        try:
+            axis_briefs = build_axis_briefs(
+                approved.topicPlan.model_dump(mode="json"),
+                rows,
+                run_call=configured_axis_call(
+                    approved,
+                    requested_mode=command.requestedMode,
+                    adapter=command.adapter,
+                    job_id=job_id,
+                ),
+                material_context=market_data_to_markdown(market_data)[:4000],
+                web_directive="\n\n".join(part for part in (web_directive, web_facts) if part),
+            )
+        except Exception:
+            axis_briefs = []
+
+    # 핵심 논지 — 축별 발견을 **하나의 판단**으로 모은다. 이 단계가 없으면 본문이
+    # 축을 병렬로 늘어놓고 끝나고(실측: 인플레 → 금리 → 엔캐리 → 정책 → 한국 시장),
+    # 중심이 없으니 꼬리 섹션 넷이 같은 말을 되풀이한다.
+    thesis: dict = {}
+    if axis_briefs:
+        try:
+            thesis = select_thesis(
+                approved.topicPlan.model_dump(mode="json"),
+                axis_briefs,
+                run_call=configured_axis_call(
+                    approved,
+                    requested_mode=command.requestedMode,
+                    adapter=command.adapter,
+                    job_id=job_id,
+                ),
+                material_context=market_data_to_markdown(market_data)[:2000],
+            )
+        except Exception:  # noqa: BLE001 - 논지 선정 실패가 보고서를 죽이지 않는다
+            thesis = {}
     prompt = _read_prompt()
     if prompt:
         prompt = compose_prompt(prompt, approved.topicPlan.reportType)
@@ -116,49 +223,100 @@ def build_approved_report(
         approved.asOfDate,
         data_gaps=gap_messages,
         topic_plan=approved.topicPlan.model_dump(mode="json"),
+        axis_briefs=axis_briefs,
+        thesis=thesis,
     )
     if approved.deepResearch:
         context = "\n\n".join([
             context,
             "## Deep Research generation contract",
             f"Visible Markdown target: {depth_policy['recommendedMinChars']}~{depth_policy['recommendedMaxChars']} characters; safety max {depth_policy['safetyMaxChars']}.",
-            f"Section character budgets: {depth_policy['sectionBudgets']}",
-            "Write all 11 required H2 sections exactly once and in the approved order.",
+            f"Section character budgets (treat each as a floor, not a ceiling — fill at least 70%): {depth_policy['sectionBudgets']}",
+            "Section list (write each exactly once, in this order, as H2): "
+            + " | ".join(approved.topicPlan.expectedSections),
+            "Body section titles come from the approved plan — do not rename, merge, or drop them.",
+            # 한 사례가 두 섹션을 먹는 것을 막는다. 실측으로 전이 경로 섹션이 2021~2022와
+            # 2024년 8월을 예시로 끌어와 전개했는데, 그 둘은 바로 뒤에 각자 2,000자 넘는
+            # 섹션을 갖고 있었다. 축 브리프끼리 서로를 모르므로 본문 계약이 함께 말해야 한다.
+            "Each body section owns its own subject. When another section's case is needed to make "
+            "a point, cite its conclusion in one line and move on — do not re-tell its sequence, "
+            "figures, or narrative. Redundancy across sections is a defect, not thoroughness.",
             "At the end of every evidence-bearing H2 section add one hidden tag like <!-- folio-source-ids: ev_001, market_SPY, macro_DGS10 -->.",
             "Use only source IDs present in the supplied evidence/material context. Never use userContext as a source.",
             f"Material resolution: {material_resolution}",
         ])
+    if source_scope is not None:
+        # 허용 목록만 주면 금지문으로 읽힌다. 쓰라는 지시를 함께 준다.
+        context = "\n\n".join([
+            context,
+            render_scope_instruction(source_scope),
+            render_web_search_directive(source_scope),
+        ])
+    if web_facts:
+        context = "\n\n".join([context, web_facts])
     context = "\n\n".join([context, render_market_state_projection(command.marketState)])
     attempted = "none" if command.preview.zeroEvidence.required else "api" if command.requestedMode == "direct" else "cli"
     fallback_reason = "confirmed_zero_evidence" if attempted == "none" else None
     output: EngineOutput | None = None
-    if attempted == "api":
-        try:
-            supports_deep_options = "timeout_seconds" in inspect.signature(attempt_direct).parameters
-            output = (
-                attempt_direct(prompt, context, max_output_tokens=14_000, timeout_seconds=600)
-                if approved.deepResearch and supports_deep_options
-                else attempt_direct(prompt, context)
-            )
-        except EngineUnavailableError:
-            fallback_reason = "engine_unavailable"
-        except EngineFailedError:
-            fallback_reason = "engine_failed"
-    elif attempted == "cli":
-        try:
-            cli_args = {
-                "adapter": command.adapter,
-                "job_id": job_id,
-                "approved": approved,
-                "evidence_items": evidence_items,
-            }
-            if approved.deepResearch:
-                cli_args["timeout_seconds"] = 1800
-            output = attempt_cli(prompt, context, **cli_args)
-        except EngineUnavailableError:
-            fallback_reason = "engine_unavailable"
-        except EngineFailedError:
-            fallback_reason = "engine_failed"
+
+    def _generate(extra: str = "") -> EngineOutput | None:
+        """쓰기 호출 하나. 재시도가 같은 경로를 타야 컨텍스트가 갈리지 않는다."""
+        nonlocal fallback_reason
+        full = "\n\n".join([context, extra]) if extra else context
+        if attempted == "api":
+            try:
+                supports_deep_options = "timeout_seconds" in inspect.signature(attempt_direct).parameters
+                return (
+                    attempt_direct(prompt, full, max_output_tokens=14_000, timeout_seconds=600)
+                    if approved.deepResearch and supports_deep_options
+                    else attempt_direct(prompt, full)
+                )
+            except EngineUnavailableError:
+                fallback_reason = "engine_unavailable"
+            except EngineFailedError:
+                fallback_reason = "engine_failed"
+            return None
+        if attempted == "cli":
+            try:
+                cli_args = {
+                    "adapter": command.adapter,
+                    "job_id": job_id,
+                    "approved": approved,
+                    "evidence_items": evidence_items,
+                }
+                if approved.deepResearch:
+                    cli_args["timeout_seconds"] = 1800
+                return attempt_cli(prompt, full, **cli_args)
+            except EngineUnavailableError:
+                fallback_reason = "engine_unavailable"
+            except EngineFailedError:
+                fallback_reason = "engine_failed"
+        return None
+
+    output = _generate()
+    # 초안이 못 쓸 물건이면 **쓰기만** 한 번 더 시킨다. 딥 실행에서 값비싼 것은 쓰기가
+    # 아니라 그 앞이다(근거 팩·웹 조회·축 브리프·논지 선정). 실측으로 같은 질문 4회 중
+    # 2회가 못 쓸 초안이었고, 그중 한 번은 9분을 쓰고 아무것도 남기지 못했다.
+    draft_guard_note: dict = {}
+    if approved.deepResearch and output is not None:
+        problems = draft_problems(output.markdown, min_chars=depth_policy["recommendedMinChars"])
+        draft_guard_note = {"problems": problems, "retried": False, "outcome": ""}
+        if problems:
+            retry = _generate(retry_directive(
+                problems,
+                min_chars=int(depth_policy["recommendedMinChars"]),
+                sections=list(approved.topicPlan.expectedSections),
+            ))
+            draft_guard_note["retried"] = True
+            if retry is not None:
+                chosen, reason = better_draft(
+                    output.markdown, retry.markdown, min_chars=depth_policy["recommendedMinChars"],
+                )
+                draft_guard_note["outcome"] = reason
+                if chosen == retry.markdown:
+                    output = retry
+            else:
+                draft_guard_note["outcome"] = "retry_unavailable"
     markdown = output.markdown if output is not None else build_rule_report(
         topic,
         market_data,
@@ -180,9 +338,32 @@ def build_approved_report(
     )
     generation_mode = "llm_api" if output is not None and attempted == "api" else "llm_cli" if output is not None else "rules"
     mode = "generate" if output is not None else "fallback"
+    # 리서치 에디터 — 분석가가 사실을 정하고 에디터는 전달 방식을 정한다.
+    # 한 호출이 두 역할을 겸하면 안전한 쪽으로 기운다(실측: 문단마다 유보 표현,
+    # 꼬리 섹션 넷의 반복, 파월·월러 발언의 익명화). 금지는 코드가 집행하며
+    # 계약을 어긴 편집본은 통째로 버리고 초안을 쓴다.
+    edit_result: dict = {}
+    if approved.deepResearch and output is not None:
+        edit_result = edit_report(
+            markdown,
+            run_call=configured_editor_call(
+                approved,
+                requested_mode=command.requestedMode,
+                adapter=command.adapter,
+                job_id=job_id,
+            ),
+            thesis=thesis,
+            section_budgets=depth_policy.get("sectionBudgets"),
+        )
+        markdown = str(edit_result.get("markdown") or markdown)
+
     material_items = material_source_items(material_resolution, market_data, macro_data)
+    # 웹에서 찾은 사실도 원장에 올린다. 계약이 "제공된 source ID만 쓰라"고 하므로,
+    # 등재하지 않으면 모델은 그것을 인용할 자격이 없는 자료로 본다(실측: 사실 12건을
+    # 찾아 놓고 본문에 쓴 것은 1건).
+    web_items = web_source_items(web_lookups)
     source_ledger = source_ledger_from_items(
-        [*evidence_items, *material_items], artifact_type="topic_report", limit=140,
+        [*evidence_items, *material_items, *web_items], artifact_type="topic_report", limit=160,
     )
     source_ledger, source_usage = apply_section_usage(markdown, source_ledger)
     data_gaps = data_gaps_from_messages(
@@ -251,6 +432,41 @@ def build_approved_report(
         "marketTape": market_tape,
         "quality": quality,
         "qualityPreflight": quality_preflight,
+        "axisAnalysis": axis_brief_summary(axis_briefs) if axis_briefs else None,
+        "coreThesis": thesis_summary(thesis) if thesis else None,
+        "editorPass": editor_summary(edit_result) if edit_result else None,
+        "draftGuard": draft_guard_note or None,
+        "webLookup": lookup_summary(web_lookups) if web_lookups else None,
+        # 웹 검색을 켰다면 무엇을 봤는지 남긴다. 목록 밖 도메인이 있으면 그대로 기록해
+        # 다음에 목록을 고칠 근거로 쓴다 — 조용히 지우지 않는다.
+        "webSearchAudit": (
+            {
+                "requested": True,
+                "engine": generation_mode,
+                # 웹 근거가 **쓰였는지**는 태그로 잰다. URL 인쇄 여부로 재면 본문에 그대로
+                # 서술된 사실도 0건으로 나온다(실측: CPI 7.0%·6.5%가 본문에 있는데 fromWeb=1).
+                "citedSourceIds": sorted(
+                    {
+                        source_id
+                        for ids in source_usage["sectionUsage"].values()
+                        for source_id in ids
+                        if str(source_id).startswith("web_")
+                    }
+                ),
+                "availableSourceIds": [str(item.get("sourceId") or "") for item in web_items],
+                # URL 인쇄는 독자가 검증할 수 있는가의 문제라 따로 센다.
+                "printedUrls": sorted(
+                    {
+                        row["url"]
+                        for row in audit_urls(markdown, source_scope)["allowed"]
+                        if row["url"] not in {str(item.get("url") or "") for item in evidence_items}
+                    }
+                ),
+                **audit_urls(markdown, source_scope),
+            }
+            if source_scope is not None
+            else {"requested": False}
+        ),
         "researchResolution": command.preview.model_dump(mode="json"),
         "marketStateResolution": command.marketState.resolution,
         "generation": {

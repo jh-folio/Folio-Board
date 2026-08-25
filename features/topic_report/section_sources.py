@@ -5,7 +5,19 @@ import re
 
 
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-_TAG = re.compile(r"<!--\s*folio-source-ids:\s*(.*?)-->", re.IGNORECASE | re.DOTALL)
+# 태그 이름도 모델이 바꿔 쓴다. 실측으로 한 보고서가 `<!-- sources: ev_015 -->`를 22개
+# 썼고, 정확한 이름만 읽던 파서가 하나도 못 읽어 근거 연결이 1.00에서 0.38로 떨어졌다.
+# 뜻이 같은 표기를 형식 하나로 버리지 않는다 — 정본 이름은 `folio-source-ids`다.
+SOURCE_TAG_NAMES = ("folio-source-ids", "folio-sources", "source-ids", "sources")
+_TAG = re.compile(
+    r"<!--\s*(?:" + "|".join(SOURCE_TAG_NAMES) + r")\s*:\s*(.*?)-->",
+    re.IGNORECASE | re.DOTALL,
+)
+# 근거 ID만으로 이뤄진 대괄호 묶음. 일반 대괄호(각주, 강조)를 삼키지 않도록
+# 항목 전부가 알려진 접두사를 가질 때만 인용으로 본다.
+_INLINE_CITATION = re.compile(
+    r"\[((?:(?:ev|market|macro)_[A-Za-z0-9_.\-]+)(?:\s*,\s*(?:ev|market|macro)_[A-Za-z0-9_.\-]+)*)\]"
+)
 _SOURCE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,79}$")
 
 
@@ -26,8 +38,14 @@ def parse_section_source_ids(markdown: str) -> tuple[dict[str, list[str]], list[
         body_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         body = text[match.end():body_end]
         ids: list[str] = []
-        for tag in _TAG.findall(body):
-            for raw in tag.split(","):
+        # 모델은 숨김 주석 대신 본문에 `[macro_DGS10, ev_019]`처럼 쓰기도 한다.
+        # 형식이 달라도 인용은 인용이다 — 세지 않으면 연결이 실제보다 낮게 나온다.
+        for tag in _TAG.findall(body) + _INLINE_CITATION.findall(body):
+            # 구분자는 쉼표만이 아니다. 모델이 `ev_020 ev_021`처럼 공백으로 쓰면 예전에는
+            # 통째로 한 토큰이 되어 malformed로 떨어졌고, 그 섹션은 근거 연결이 0이 됐다
+            # (실측: 한 보고서에서 11개 섹션 중 4개가 "연결 없음", linkage 0.56). 뜻은
+            # 분명한데 형식 하나로 근거를 잃을 이유가 없다.
+            for raw in re.split(r"[,\s]+", tag):
                 source_id = raw.strip()
                 if not source_id:
                     continue

@@ -26,6 +26,43 @@ def _pct(first, last):
     return (last / first - 1.0) * 100.0
 
 
+# `history_period`가 뜻하는 거래일 수. 통계·상관관계는 계속 이 창에서만 계산한다 —
+# 창을 늘리면 "1년 상관계수 -0.939" 같은 기존 해석의 의미가 조용히 바뀐다.
+_WINDOW_TRADING_DAYS = {
+    "1mo": 21, "3mo": 63, "6mo": 126, "1y": 252, "2y": 504, "3y": 756, "5y": 1260, "10y": 2520,
+}
+_HISTORY_QUARTERS = 28
+
+
+def _window_length(history_period: str, available: int) -> int:
+    want = _WINDOW_TRADING_DAYS.get(str(history_period or "").lower(), 252)
+    return max(2, min(available, want))
+
+
+def _quarterly_closes(dated: list[tuple[str, float]]) -> list[list]:
+    """분기마다 마지막 종가 하나. 오래된 것부터.
+
+    과거 국면(2021~2022년 긴축, 2024년 8월 엔캐리 청산)과 지금을 비교하려면 시계열이
+    그때까지 닿아야 한다. 일봉을 그대로 실으면 티커 하나가 수천 줄이므로 분기 단위
+    궤적으로 압축한다.
+
+    **행은 tuple이 아니라 list다.** 이 값은 보고서 JSON에 그대로 실리고, 정규화
+    직렬화기(`common/canonical_json.py`)는 JSON 타입만 받는다 — tuple을 넣으면
+    보고서를 다 만들어 놓고 저장 직전에 `assert_never`로 죽는다(실측: 잡이 진행률
+    90%에서 `internal_error`로 끝났다).
+    """
+    picked: dict[str, list] = {}
+    for date_text, close in reversed(dated):  # 최신부터 — 분기의 첫 등장이 그 분기 마지막 값
+        try:
+            year, month = int(date_text[:4]), int(date_text[5:7])
+        except Exception:
+            continue
+        key = f"{year}Q{(month - 1) // 3 + 1}"
+        picked.setdefault(key, [key, close])
+    rows = [picked[key] for key in sorted(picked, reverse=True)][:_HISTORY_QUARTERS]
+    return list(reversed(rows))
+
+
 def _percentile_rank(series: list[float], value: float) -> float | None:
     """Return the percentile rank of value within series (0–100)."""
     if not series or value is None:
@@ -34,7 +71,11 @@ def _percentile_rank(series: list[float], value: float) -> float | None:
     return round(below / len(series) * 100, 1)
 
 
-def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y") -> dict:
+def fetch_topic_market_data(
+    tickers: dict[str, str],
+    history_period: str = "3y",
+    long_period: str = "10y",
+) -> dict:
     """
     Fetch prices + enriched statistics for a set of tickers.
 
@@ -53,7 +94,9 @@ def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y")
 
     for symbol, label in tickers.items():
         try:
-            hist = yf.Ticker(symbol).history(period=history_period, interval="1d", auto_adjust=False)
+            # 긴 구간을 한 번만 받는다. 요청 비용은 같고, 과거 국면 비교용 시계열이
+            # 없어서 못 하던 분석이 가능해진다.
+            hist = yf.Ticker(symbol).history(period=long_period, interval="1d", auto_adjust=False)
         except Exception:
             result_tickers[symbol] = {"label": label, "error": "market_data_unavailable"}
             continue
@@ -61,11 +104,19 @@ def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y")
             result_tickers[symbol] = {"label": label, "error": "no price data"}
             continue
 
-        closes = [_safe_float(x) for x in hist["Close"].tolist()]
-        closes = [x for x in closes if x is not None]
-        if len(closes) < 2:
+        dated: list[tuple[str, float]] = []
+        for index_value, raw_close in zip(hist.index.tolist(), hist["Close"].tolist(), strict=False):
+            close = _safe_float(raw_close)
+            if close is not None:
+                dated.append((str(index_value)[:10], close))
+        if len(dated) < 2:
             result_tickers[symbol] = {"label": label, "error": "insufficient data"}
             continue
+        quarterly = _quarterly_closes(dated)
+        # 통계·상관관계는 예전과 같은 창(history_period)에서만 계산한다.
+        window = _window_length(history_period, len(dated))
+        dated_window = dated[-window:]
+        closes = [close for _, close in dated_window]
 
         raw_closes[symbol] = closes
         last = closes[-1]
@@ -94,7 +145,7 @@ def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y")
 
         result_tickers[symbol] = {
             "label": label,
-            "asOfDate": str(hist.index[-1])[:10],
+            "asOfDate": dated[-1][0],
             "last": round(last, 4),
             "changes": {
                 "1d": _pct(prev, last),
@@ -113,6 +164,8 @@ def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y")
                 "annualVolatility20d": vol_20d,
                 "dataPoints": len(closes),
             },
+            "quarterlyHistory": quarterly,
+            "historyStart": dated[0][0],
         }
 
     # Compute pairwise correlations on daily returns
@@ -152,6 +205,7 @@ def fetch_topic_market_data(tickers: dict[str, str], history_period: str = "3y")
         "ok": True,
         "asOf": dt.datetime.now(tz=KST).isoformat(),
         "period": history_period,
+        "longPeriod": long_period,
         "tickers": result_tickers,
         "correlations": correlations,
     }
@@ -206,6 +260,22 @@ def market_data_to_markdown(data: dict) -> str:
             f"| {fmt(st.get('high52w'), 2)} | {fmt(st.get('low52w'), 2)} "
             f"| {prank} | {vol} |"
         )
+
+    history_lines = []
+    for sym, d in data.get("tickers", {}).items():
+        rows = d.get("quarterlyHistory") or []
+        if d.get("error") or len(rows) < 4:
+            continue
+        body = " | ".join(f"{period} {value:g}" for period, value in rows)
+        history_lines.append(f"- {sym} {d.get('label', '')}: {body}")
+    if history_lines:
+        lines += [
+            "",
+            f"**분기별 종가 추이 (최대 {data.get('longPeriod', '')})** — 과거 국면과 현재 수준을 비교할 때 쓰세요. "
+            "각 분기의 마지막 거래일 종가입니다.",
+            "",
+            *history_lines,
+        ]
 
     if data.get("correlations"):
         lines += ["", "**주요 상관관계 (일별 수익률 기준)**", ""]

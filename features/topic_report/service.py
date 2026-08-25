@@ -39,11 +39,15 @@ from features.llm_settings.client import (
 from features.topic_report.data_fetcher import fetch_topic_market_data, market_data_to_markdown
 from features.topic_report.evaluation import evaluate_report
 from features.topic_report.evidence import build_evidence_pack, evidence_pack_summary
-from features.topic_report.macro_data import fetch_macro_data, macro_data_to_markdown
+from features.topic_report.axis_analysis import render_axis_briefs
+from features.topic_report.thesis import render_thesis
+from features.topic_report.evidence_text import select_bodies
+from features.topic_report.macro_data import fetch_macro_data, macro_data_to_markdown, resolve_fred_series
 from features.topic_report.planner import apply_deep_research_plan, build_topic_plan
 from features.topic_report.source_ledger import build_source_ledger
 from features.topic_report.templates import compose_prompt
 from features.topic_report.topic_config import PRESET_TOPICS, get_topic_config
+from features.topic_report.topic_schema import body_sections
 from features.topic_report.report_rules import build_rule_report
 from features.common.generation_engine import engine_detail, engine_label
 from features.common.workspace import data_dir
@@ -64,23 +68,28 @@ def _read_prompt() -> str:
 
 
 def _search_docs(query_keywords: list[str], limit: int = 12) -> list[dict]:
-    """Search research-inbox for topic-relevant documents (RSS + articles first)."""
+    """Search research-inbox for topic-relevant documents (RSS + articles first).
+
+    질의는 이어 붙이지 않고 하나씩 검색해 RRF로 합친다. 이어 붙이면 FTS5가 토큰을
+    OR로 풀어 어느 한 단어만 스친 문서가 상위로 온다. 보도자료는 근거에서 뺀다.
+    """
     try:
         from features.common.research_library.indexing.service import load_index
+        from features.common.research_library.search.filters import drop_press_releases
+        from features.common.research_library.search.multi_query import fuse_search_results
         from features.common.research_library.search.service import search_documents
         index = load_index()
-        query = " ".join(query_keywords[:6])
-        docs = search_documents(index, query=query, limit=limit * 2, scope="news")
-        if len(docs) < 5:
-            docs += search_documents(index, query=query, limit=limit, scope="all")
-        seen = set()
-        unique = []
-        for d in docs:
-            key = d.get("url") or d.get("path") or d.get("title")
-            if key and key not in seen:
-                seen.add(key)
-                unique.append(d)
-        return unique[:limit]
+        queries = [str(q).strip() for q in (query_keywords or [])[:6] if str(q).strip()]
+        if not queries:
+            return []
+
+        def run_one(query: str, per_query_limit: int) -> list[dict]:
+            docs = search_documents(index, query=query, limit=per_query_limit, scope="news")
+            if len(docs) < 5:
+                docs = docs + search_documents(index, query=query, limit=per_query_limit, scope="all")
+            return drop_press_releases(docs)
+
+        return fuse_search_results(queries, run_one, limit=limit, per_query_limit=max(limit, 12))
     except Exception:
         return []
 
@@ -136,16 +145,50 @@ def _build_llm_context(
     date: str,
     data_gaps: list | None = None,
     topic_plan: dict | None = None,
+    axis_briefs: list | None = None,
+    thesis: dict | None = None,
 ) -> str:
     axes = topic.get("theme_axes") or topic.get("report_sections", [])
-    lines = [
+    body_headings = body_sections((topic_plan or {}).get("expectedSections") or [])
+    asked = str((topic_plan or {}).get("topic") or "").strip()
+    research_questions = [str(q).strip() for q in ((topic_plan or {}).get("researchQuestions") or []) if str(q).strip()]
+    lines = []
+    if asked:
+        # 사용자가 실제로 친 질문. 40자로 줄인 주제어가 제목·검색을 지배하는 동안 원문은
+        # 컨텍스트 한 줄로 밀려 있었고, 보고서가 질문의 절반(정책이 겪는 어려움)과
+        # 사례 하나(2021~2022)를 통째로 빠뜨렸다(실측: 본문에 '2021' 0회).
+        lines += [
+            "=" * 60,
+            "## 이 보고서가 반드시 답해야 할 질문 (사용자 원문)",
+            asked,
+            "",
+            "- 이 질문의 **모든 부분**에 답해야 한다. 사용자가 든 사례·구간은 각각 본문에서 다룬다.",
+            "- 질문에 없는 주제로 옮겨 가지 마라. 더 흥미로운 주제가 보여도 질문이 우선이다.",
+            "- 결론은 이 질문에 **사용자가 쓴 말로** 답한다.",
+            "",
+        ]
+        if research_questions:
+            lines += [
+                "이 질문을 나눈 하위 질문 (본문에서 모두 답할 것):",
+                *[f"- {question}" for question in research_questions],
+                "",
+            ]
+    lines += [
         f"보고서 주제: {topic['label']} ({topic.get('description', '')})",
         f"보고서 날짜: {date}",
         "",
-        "[분석 축] — '지금 어떤 상황인가' 섹션에서 아래 축을 순서대로 다루세요:",
+        "[분석 축] — 이 보고서가 답해야 할 것들:",
         *[f"- {s}" for s in axes],
         "",
     ]
+    if body_headings:
+        # 본문 섹션은 계획이 정한다. 모델이 제목을 바꾸면 검증이 결함으로 잡으므로
+        # 여기서 정확한 문구를 준다.
+        lines += [
+            "[본문 섹션] — 아래 제목을 그대로, 순서대로 `##` 헤더로 쓰고 각각 그 질문에 답하세요:",
+            *[f"- {heading}" for heading in body_headings],
+            "",
+        ]
 
     if user_context and user_context.strip():
         lines += [
@@ -190,10 +233,15 @@ def _build_llm_context(
         lines.append("")
 
     if docs:
+        # 저장된 기사 본문을 관련도 상위부터 예산 안에서 함께 싣는다. 스니펫 400자만
+        # 보내던 시절 모델이 받은 것은 보유 본문의 13%였다.
+        bodies = select_bodies(list(docs))
         lines += [
             "=" * 60,
             f"## 관련 뉴스·자료 ({len(docs)}건, RSS + research-inbox)",
             "아래 자료에 없는 수치나 사실은 추정임을 명시하세요.",
+            "관련도 상위 자료에는 저장된 기사 본문을 함께 실었습니다. 본문 앞에 사이트 메뉴 같은"
+            " 군더더기가 섞일 수 있으니 기사 내용만 사용하세요.",
             "",
         ]
         for i, d in enumerate(docs, 1):
@@ -210,12 +258,16 @@ def _build_llm_context(
                 meta += f" | 역할={role}"
             if axis:
                 meta += f" | 분석축={axis}"
-            lines.append(
+            block = (
                 f"{meta}\n"
                 f"제목: {title}\n"
                 f"요약: {summary}\n"
                 f"URL: {url or '(local)'}\n"
             )
+            body = bodies.get(evidence_id, "")
+            if body:
+                block += f"본문: {body}\n"
+            lines.append(block)
     else:
         lines += [
             "=" * 60,
@@ -243,9 +295,19 @@ def _build_llm_context(
         for question in (deep.get("subQuestions") or [])[:12]:
             lines.append(f"- R{question.get('round', 1)} · {question.get('question', '')}")
         lines += [
+            "- 위 하위 질문들은 본문 섹션 안에서 **답해져야** 합니다. 커버리지만 적고 넘어가지 마세요.",
             "- 산출물에는 시나리오(기본/우호/악화), 반대 논지, 반증 조건, 정량 근거표를 포함하세요.",
             "",
         ]
+
+    brief_block = render_axis_briefs(axis_briefs or [])
+    if brief_block:
+        lines.append(brief_block)
+
+    # 논지는 축 블록 뒤다. 재료보다 프레임이 뒤에 와야 프레임이 이긴다.
+    thesis_block = render_thesis(thesis or {})
+    if thesis_block:
+        lines.append(thesis_block)
 
     return "\n".join(lines)
 
@@ -362,6 +424,11 @@ def generate_topic_report(
             topic["theme_axes"] = [axis["label"] for axis in topic_plan["analysisAxes"]]
         if topic_plan.get("reportType"):
             topic["report_type"] = topic_plan["reportType"]
+        # 계획이 요청한 거시 시리즈를 실제로 조회한다 (허용 목록으로 거른 뒤).
+        topic["fred_series"] = resolve_fred_series(
+            topic_plan.get("requiredMacroData"),
+            fallback=topic.get("fred_series"),
+        )
         # 명시 customTickers가 없을 때만 planner 후보 티커로 기본 티커를 보강
         if not custom_tickers and topic_plan.get("candidateTickers"):
             merged = dict(topic_plan["candidateTickers"])

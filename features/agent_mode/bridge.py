@@ -378,7 +378,25 @@ def _agent_prompt(pack_path: Path, pack: dict) -> str:
     return "\n".join(lines)
 
 
-def _adapter_command(adapter: dict, prompt: str = "", model_override: str = "") -> list[str]:
+# 어댑터별 웹 검색 인자. 확인된 것만 넣는다 — 지원하지 않는 어댑터에 조용히 넘기면
+# "설정은 켜져 있는데 아무 일도 안 하는" 상태가 다시 생긴다.
+#
+# codex: `tools.web_search`는 모델 쪽 도구라 `--sandbox read-only`와 함께 쓸 수 있다(실측).
+# claude: `--allowedTools WebSearch`로 도구를 허용한다.
+# antigravity: 확인된 방법이 없다.
+WEB_SEARCH_ARGS: dict[str, list[str]] = {
+    "codex": ["-c", "tools.web_search=true"],
+    "claude": ["--allowedTools", "WebSearch"],
+}
+
+
+def adapter_supports_web_search(adapter_id: str) -> bool:
+    return str(adapter_id or "").strip().lower() in WEB_SEARCH_ARGS
+
+
+def _adapter_command(
+    adapter: dict, prompt: str = "", model_override: str = "", *, web_search: bool = False
+) -> list[str]:
     from features.agent_mode.setup import configured_model
 
     executable = adapter["executable"]
@@ -402,6 +420,8 @@ def _adapter_command(adapter: dict, prompt: str = "", model_override: str = "") 
         ]
         if model:
             command.extend(["--model", model])
+        if web_search:
+            command.extend(WEB_SEARCH_ARGS["codex"])
         command.append("-")
         return command
     if adapter["id"] == "claude":
@@ -415,6 +435,8 @@ def _adapter_command(adapter: dict, prompt: str = "", model_override: str = "") 
         ]
         if model:
             command.extend(["--model", model])
+        if web_search:
+            command.extend(WEB_SEARCH_ARGS["claude"])
         return command
     raise ValueError(f"Unsupported adapter: {adapter['id']}")
 
@@ -522,13 +544,26 @@ def _prompt_needs_file_read(prompt: str) -> bool:
     return "Agent Context Pack" in prompt
 
 
-def _invoke_agent_cli(selected: dict, prompt: str, timeout: int, job_id: str = "", model_override: str = "") -> str:
+def _invoke_agent_cli(
+    selected: dict,
+    prompt: str,
+    timeout: int,
+    job_id: str = "",
+    model_override: str = "",
+    *,
+    web_search: bool = False,
+) -> str:
     is_antigravity = selected.get("id") == "antigravity"
     if is_antigravity and _AGY_FILE_READS_BLOCKED and _prompt_needs_file_read(prompt):
         # 이미 거부당한 것을 알고 있다. 팩을 만들고 수 분을 버린 뒤 같은 곳에서
         # 실패하게 두지 않는다.
         raise RuntimeError(AGY_PERMISSION_HELP)
-    command = _adapter_command(selected, prompt, model_override=model_override)
+    command = _adapter_command(
+        selected,
+        prompt,
+        model_override=model_override,
+        web_search=bool(web_search) and adapter_supports_web_search(selected.get("id", "")),
+    )
     proc = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -606,9 +641,14 @@ def _briefing_correction_prompt(base_prompt: str, violations: list[str], contrac
     ])
 
 
+def _used_web_search(selected: dict, requested: bool) -> bool:
+    """요청했고 그 어댑터가 실제로 지원할 때만 참. 화면이 이 값을 그대로 말한다."""
+    return bool(requested) and adapter_supports_web_search(selected.get("id", ""))
+
+
 def run_agent_prompt(
     prompt: str, *, adapter: str = "", model: str = "", timeout: int = 0, job_id: str = "",
-    serialize: bool = True,
+    serialize: bool = True, web_search: bool = False,
 ) -> dict:
     """단일 프롬프트를 Agent CLI로 실행하고 텍스트 결과만 돌려준다(파일 쓰기 없음).
 
@@ -622,12 +662,16 @@ def run_agent_prompt(
     effective_timeout = timeout or max(30, int(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", 300)))
     if not serialize:
         selected = _select_adapter(adapter)
-        output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, model_override=model)
-        return {"output": output, "adapter": selected["id"]}
+        output = _invoke_agent_cli(
+            selected, prompt, effective_timeout, job_id, model_override=model, web_search=web_search
+        )
+        return {"output": output, "adapter": selected["id"], "webSearch": _used_web_search(selected, web_search)}
     with _RUN_SEMAPHORE:
         selected = _select_adapter(adapter)
-        output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, model_override=model)
-    return {"output": output, "adapter": selected["id"]}
+        output = _invoke_agent_cli(
+            selected, prompt, effective_timeout, job_id, model_override=model, web_search=web_search
+        )
+    return {"output": output, "adapter": selected["id"], "webSearch": _used_web_search(selected, web_search)}
 
 
 def run_agent_task(

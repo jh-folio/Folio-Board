@@ -16,7 +16,7 @@ from features.common.research_schema.data_gaps import data_gap_rows
 _WEIGHTS = {
     "topic_answered": 12,
     "scope_defined": 7,
-    "data_coverage": 11,
+    "data_coverage": 14,
     "source_coverage": 10,
     "numeric_support": 10,
     "counterargument_present": 12,
@@ -25,7 +25,7 @@ _WEIGHTS = {
     "source_grounding": 10,
     "hallucination_risk": 7,
     "personal_bias_risk": 5,
-    "deep_question_coverage": 6,
+    "deep_question_coverage": 8,
     "source_diversity": 4,
 }
 
@@ -265,6 +265,42 @@ def evaluate_report(
 
     total = sum(scores[k] * _WEIGHTS[k] for k in _WEIGHTS) / sum(_WEIGHTS.values())
     score_100 = int(round(total * 100))
+
+    # 근거가 하나도 없는 분석 축이 있으면 점수에 상한을 건다.
+    #
+    # 가중 평균만으로는 이런 보고서가 A-로 통과한다 — 실제로 분석축 5개 중 3개가
+    # 0건이고 본문이 그 사실을 "팩에 자료가 없다"고 반복해 적은 보고서가 87점/A-/pass를
+    # 받았다. 잘 쓴 문장은 없는 근거를 대신하지 못하고, 등급이 통과라고 말하면 사용자는
+    # 무엇이 비었는지 보지 못한다. 축 하나가 통째로 비는 것은 감점이 아니라 결격이다.
+    ceiling = 100
+    ceiling_reasons: list[str] = []
+    if axis_coverage:
+        empty_axes = [c for c in axis_coverage.values() if c.get("level") == "none"]
+        empty_ratio = len(empty_axes) / len(axis_coverage)
+        if empty_ratio >= 0.5:
+            ceiling = min(ceiling, 59)
+        elif empty_axes:
+            ceiling = min(ceiling, 74)
+        if empty_axes:
+            labels = ", ".join(str(c.get("label") or "") for c in empty_axes if c.get("label"))
+            ceiling_reasons.append(
+                f"근거가 0건인 분석 축 {len(empty_axes)}/{len(axis_coverage)}개({labels[:80]})"
+            )
+    if deep_enabled and question_coverage:
+        executed = [c for c in question_coverage.values() if c.get("level") != "not_executed"]
+        empty_questions = [c for c in executed if c.get("level") == "none"]
+        if executed and len(empty_questions) / len(executed) >= 0.34:
+            ceiling = min(ceiling, 69)
+            ceiling_reasons.append(
+                f"근거가 0건인 심층 하위 질문 {len(empty_questions)}/{len(executed)}개"
+            )
+    if score_100 > ceiling:
+        warnings.append(
+            f"자료 커버리지 결격으로 점수를 {ceiling}점으로 제한했습니다: {'; '.join(ceiling_reasons)}"
+        )
+        suggested.append("빈 축의 검색어를 넓히거나 해당 주제의 자료를 research-inbox에 보강한 뒤 인덱스를 갱신하세요.")
+        score_100 = ceiling
+
     grade = grade_from_score(score_100)
     return {
         "score": score_100,
@@ -281,6 +317,7 @@ def evaluate_report(
         "sourceGrounding": grounding["level"],
         "hallucinationRisk": risk_level(scores["hallucination_risk"]),
         "personalBiasRisk": "low" if scores["personal_bias_risk"] >= 0.8 else "elevated",
+        "coverageCeiling": {"applied": ceiling < 100, "ceiling": ceiling, "reasons": ceiling_reasons},
         "checks": {k: round(v, 2) for k, v in scores.items()},
         "sourceGroundingDetail": grounding,
         "warnings": list(dict.fromkeys(warnings))[:10],

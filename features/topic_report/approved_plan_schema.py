@@ -5,7 +5,16 @@ from typing import Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from features.topic_report.approved_schema import StrictModel, normalize_text, normalize_tickers
-from features.topic_report.topic_schema import EXPECTED_SECTIONS_V2
+from features.topic_report.topic_schema import (
+    DEEP_MAX_QUESTIONS,
+    DEEP_MAX_ROUND_1_QUESTIONS,
+    DEEP_MAX_ROUND_2_QUESTIONS,
+    BODY_SECTION_MAX,
+    BODY_SECTION_MIN,
+    EXPECTED_SECTIONS_V2,
+    REPORT_HEAD_SECTIONS,
+    REPORT_TAIL_SECTIONS,
+)
 
 
 FALSIFICATION_TRIGGERS = [
@@ -93,7 +102,7 @@ class DeepSubQuestion(StrictModel):
 class DeepResearchPlan(StrictModel):
     enabled: bool
     maxRounds: Literal[2]
-    subQuestions: list[DeepSubQuestion] = Field(max_length=12)
+    subQuestions: list[DeepSubQuestion] = Field(max_length=DEEP_MAX_QUESTIONS)
     falsificationTriggers: list[str]
     requiredOutputs: list[str]
 
@@ -105,9 +114,9 @@ class DeepResearchPlan(StrictModel):
             raise ValueError("fixed_required_outputs")
         if len({question.id for question in self.subQuestions}) != len(self.subQuestions):
             raise ValueError("duplicate_subquestion_id")
-        if sum(question.round == 1 for question in self.subQuestions) > 6:
+        if sum(question.round == 1 for question in self.subQuestions) > DEEP_MAX_ROUND_1_QUESTIONS:
             raise ValueError("too_many_round_1_questions")
-        if sum(question.round == 2 for question in self.subQuestions) > 6:
+        if sum(question.round == 2 for question in self.subQuestions) > DEEP_MAX_ROUND_2_QUESTIONS:
             raise ValueError("too_many_round_2_questions")
         if not self.enabled and self.subQuestions:
             raise ValueError("disabled_deep_questions")
@@ -131,7 +140,10 @@ class TopicPlanV1(StrictModel):
     searchQueries: list[str] = Field(max_length=12)
     memoryQueries: list[str] = Field(max_length=10)
     candidateTickers: dict[str, str]
-    expectedSections: list[str] = Field(max_length=12)
+    # 머리 3 + 본문 최대 8 + 꼬리 5. 12로 두면 축이 4개만 돼도 계획이 거부된다.
+    expectedSections: list[str] = Field(
+        max_length=len(REPORT_HEAD_SECTIONS) + BODY_SECTION_MAX + len(REPORT_TAIL_SECTIONS)
+    )
     dataGapsLikely: list[str] = Field(max_length=8)
     deepResearch: DeepResearchPlan
 
@@ -164,7 +176,25 @@ class TopicPlanV1(StrictModel):
         return normalize_tickers(value)
 
     @model_validator(mode="after")
-    def validate_fixed_sections(self) -> Self:
-        if self.expectedSections != EXPECTED_SECTIONS_V2:
-            raise ValueError("fixed_expected_sections")
+    def validate_section_shape(self) -> Self:
+        """머리·꼬리는 고정, 본문은 계획이 정한다.
+
+        예전에는 전체 목록의 정확 일치를 요구해서, 플래너가 주제에 맞는 구성을 제안해도
+        사용자가 계획 화면에서 고쳐도 승인이 거부됐다. 머리·꼬리를 고정하는 건 서식이
+        아니라 계약이다 — 꼬리의 반론·시나리오·체크포인트·Source Notes는 확증편향 방지와
+        추적성의 집행 장치이고, 체크포인트 추출·품질 평가·리더가 이름으로 찾는다.
+        """
+        head, tail = list(REPORT_HEAD_SECTIONS), list(REPORT_TAIL_SECTIONS)
+        sections = list(self.expectedSections)
+        if sections[: len(head)] != head:
+            raise ValueError("fixed_head_sections")
+        if sections[-len(tail):] != tail:
+            raise ValueError("fixed_tail_sections")
+        body = sections[len(head): -len(tail)]
+        if not BODY_SECTION_MIN <= len(body) <= BODY_SECTION_MAX:
+            raise ValueError("body_section_count_out_of_range")
+        if len(set(body)) != len(body):
+            raise ValueError("duplicate_body_section")
+        if set(body) & (set(head) | set(tail)):
+            raise ValueError("reserved_body_section")
         return self

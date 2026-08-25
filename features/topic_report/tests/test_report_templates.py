@@ -36,12 +36,21 @@ def test_compose_prompt_appends_template():
     assert T.compose_prompt("", "macro_analysis")
 
 
-def test_prompt_md_has_v2_required_sections():
+def test_prompt_md_declares_the_fixed_head_and_tail():
+    """프롬프트가 강제하는 건 **머리·꼬리**다.
+
+    본문 섹션은 계획이 정하므로 프롬프트에 이름이 박혀 있으면 안 된다 — 박혀 있던 시절
+    12개 보고서 유형이 전부 같은 골격을 썼고, 주제와 안 맞는 섹션은 건너뛸 수 없어
+    얇게 채워졌다.
+    """
+    from features.topic_report.topic_schema import REPORT_HEAD_SECTIONS, REPORT_TAIL_SECTIONS
+
     path = os.path.join(_ROOT, "features", "topic_report", "prompt.md")
     with open(path, encoding="utf-8") as fh:
         prompt = fh.read()
-    for required in ("반론과 리스크", "수혜/피해 자산과 기업", "Source & Data Notes", "시나리오", "체크포인트"):
-        assert required in prompt, f"prompt.md에 '{required}' 섹션 누락"
+    for required in (*REPORT_HEAD_SECTIONS, *REPORT_TAIL_SECTIONS):
+        assert required in prompt, f"prompt.md에 필수 섹션 '{required}' 누락"
+    assert "[본문 섹션]" in prompt, "본문 섹션을 입력에서 받는다는 지시 누락"
     assert "사실로 간주하지" in prompt, "userContext 비사실 원칙 누락"
 
 
@@ -108,3 +117,17 @@ def _run_all():
 
 if __name__ == "__main__":
     sys.exit(0 if _run_all() else 1)
+
+
+def test_prompt_does_not_tell_the_model_to_be_brief():
+    """분량 계약과 정면으로 충돌하던 문구를 되살리지 않는다.
+
+    프롬프트가 12,000~16,000자를 요구하면서 같은 문서에서 "각 섹션을 간결하게라도 모두
+    완성하는 것이 우선"이라고 적고 있었다. 실측으로 모든 섹션이 예산의 20~60%만 채웠다.
+    """
+    path = os.path.join(_ROOT, "features", "topic_report", "prompt.md")
+    with open(path, encoding="utf-8") as fh:
+        prompt = fh.read()
+    assert "간결하게라도" not in prompt
+    assert "길이보다" not in prompt
+    assert "최소 70%" in prompt, "섹션 예산이 하한이라는 지시가 있어야 한다"

@@ -102,3 +102,47 @@ def test_valid_section_repair_can_be_selected_without_touching_other_sections(tm
     assert result.report["executionProvenance"]["selectedCandidateIndex"] == 1
     assert "보강 분석" in result.report["markdown"]
     assert "## 작동 경로" in result.report["markdown"]
+
+
+# ------------------------------------------------- 계약 결함이 점수를 누른다
+
+def test_contract_defects_cap_the_quality_score():
+    # 실측: 결함 14건인 보고서가 93점/A/pass를 받았다. 계약은 제대로 잡았는데
+    # 점수가 그것을 읽지 않아 사용자에게는 A로 보였다.
+    from features.topic_report.deep_pipeline import apply_contract_ceiling
+
+    quality = {"score": 93, "grade": "A", "status": "pass"}
+    validation = {"defects": [
+        {"code": "low_source_linkage", "severity": 70},
+        {"code": "below_recommended_length", "severity": 45},
+        {"code": "body_sections_differ", "severity": 45},
+        {"code": "unlinked_section", "severity": 35},
+    ]}
+    out = apply_contract_ceiling(quality, validation)
+    assert out["score"] == 69 and out["status"] != "pass"
+    assert out["contractCeiling"]["applied"] is True
+    assert any("low_source_linkage" in reason for reason in out["contractCeiling"]["reasons"])
+    assert any("계약 결함" in warning for warning in out["warnings"])
+
+
+def test_three_major_defects_block_an_a_grade():
+    from features.topic_report.deep_pipeline import apply_contract_ceiling
+
+    validation = {"defects": [{"code": f"c{n}", "severity": 45} for n in range(3)]}
+    assert apply_contract_ceiling({"score": 95, "grade": "A"}, validation)["score"] == 79
+
+
+def test_a_clean_report_keeps_its_score():
+    from features.topic_report.deep_pipeline import apply_contract_ceiling
+
+    assert apply_contract_ceiling({"score": 92}, {"defects": []})["score"] == 92
+    # 경미한 결함 하나로 점수를 깎지 않는다.
+    light = apply_contract_ceiling({"score": 92}, {"defects": [{"code": "unlinked_section", "severity": 35}]})
+    assert light["score"] == 92 and light["contractCeiling"]["applied"] is False
+
+
+def test_a_score_already_below_the_ceiling_is_left_alone():
+    from features.topic_report.deep_pipeline import apply_contract_ceiling
+
+    out = apply_contract_ceiling({"score": 40, "grade": "F"}, {"defects": [{"code": "x", "severity": 70}]})
+    assert out["score"] == 40 and out["contractCeiling"]["applied"] is False

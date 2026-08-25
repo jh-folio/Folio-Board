@@ -198,3 +198,110 @@ def _run_all():
 
 if __name__ == "__main__":
     sys.exit(0 if _run_all() else 1)
+
+
+def _axis_aware_search(hits_by_query):
+    """검색어별로 다른 결과를 주는 가짜 검색. 실제 인덱스처럼 축마다 다른 자료를 낸다."""
+
+    def search(queries, limit=12):
+        out = []
+        for query in queries:
+            for doc in hits_by_query.get(query, []):
+                if doc not in out:
+                    out.append(doc)
+        return out[:limit]
+
+    return search
+
+
+def test_deep_mode_still_searches_every_axis():
+    """하위 질문이 배정되지 않은 축도 자기 검색어로 근거를 찾아야 한다.
+
+    예전에는 딥 모드에서 하위 질문 검색만 돌아 질문 없는 축이 0건으로 남았고,
+    그 0건이 "로컬 자료가 부족합니다"라는 데이터 갭이 되어 본문 한계 서술이 됐다.
+    """
+    plan = {
+        "topicLabel": "금리",
+        "searchQueries": ["공통 질의"],
+        "analysisAxes": [
+            {"key": "axis_a", "label": "축 A", "questions": [], "searchQueries": ["축A 전용 질의"]},
+            {"key": "axis_b", "label": "축 B", "questions": [], "searchQueries": ["축B 전용 질의"]},
+        ],
+        "deepResearch": {
+            "enabled": True,
+            "maxRounds": 1,
+            # 질문은 axis_a에만 달려 있다. axis_b는 질문이 없다.
+            "subQuestions": [
+                {"id": "dq_01", "question": "질문", "axisKey": "axis_a", "round": 1, "searchQueries": ["축A 전용 질의"]},
+            ],
+        },
+    }
+    hits = {
+        "축A 전용 질의": [
+            {"title": "A1", "url": "http://x/a1", "date": "2026-06-10"},
+            {"title": "A2", "url": "http://x/a2", "date": "2026-06-10"},
+        ],
+        "축B 전용 질의": [
+            {"title": "B1", "url": "http://x/b1", "date": "2026-06-10"},
+            {"title": "B2", "url": "http://x/b2", "date": "2026-06-10"},
+        ],
+        "공통 질의": [],
+    }
+    pack = E.build_evidence_pack(
+        plan,
+        search_docs=_axis_aware_search(hits),
+        search_memories=_search_memories,
+        date="2026-06-11",
+        deep_research=True,
+    )
+    assert pack["axisCoverage"]["axis_b"]["count"] == 2, "질문 없는 축도 검색돼야 한다"
+    assert {item["title"] for item in pack["items"]} == {"A1", "A2", "B1", "B2"}
+    assert not any("축 B" in gap for gap in pack["dataGaps"])
+
+
+def test_coverage_counts_material_even_when_another_question_admitted_it():
+    """앞 질문이 같은 문서를 먼저 가져가도 뒤 질문의 커버리지는 0이 아니다."""
+    shared = [{"title": "공유 문서", "url": "http://x/shared", "date": "2026-06-10"}]
+    plan = {
+        "topicLabel": "금리",
+        "searchQueries": ["공통 질의"],
+        "analysisAxes": [{"key": "axis_a", "label": "축 A", "questions": [], "searchQueries": ["공통 질의"]}],
+        "deepResearch": {
+            "enabled": True,
+            "maxRounds": 1,
+            "subQuestions": [
+                {"id": "dq_01", "question": "첫 질문", "axisKey": "", "round": 1, "searchQueries": ["공통 질의"]},
+                {"id": "dq_02", "question": "둘째 질문", "axisKey": "", "round": 1, "searchQueries": ["공통 질의"]},
+            ],
+        },
+    }
+    pack = E.build_evidence_pack(
+        plan,
+        search_docs=_axis_aware_search({"공통 질의": shared}),
+        search_memories=_search_memories,
+        date="2026-06-11",
+        deep_research=True,
+    )
+    assert pack["totalDocs"] == 1, "문서 자체는 한 번만 들어간다"
+    assert pack["questionCoverage"]["dq_02"]["count"] == 1, "뒤 질문도 그 자료를 근거로 쓸 수 있다"
+
+
+def test_every_axis_gets_a_subquestion():
+    plan = P.build_rule_plan("기대심리가 국채금리와 통화정책 전망에 미치는 영향")
+    deep = P.apply_deep_research_plan(plan)["deepResearch"]
+    covered = {q["axisKey"] for q in deep["subQuestions"] if q["axisKey"]}
+    assert covered == {axis["key"] for axis in plan["analysisAxes"]}
+
+
+def test_research_questions_get_distinct_queries():
+    plan = P.build_rule_plan("기대심리가 국채금리와 통화정책 전망에 미치는 영향")
+    deep = P.apply_deep_research_plan(plan)["deepResearch"]
+    generic = [q for q in deep["subQuestions"] if not q["axisKey"] and q["round"] == 1]
+    heads = [q["searchQueries"][0] for q in generic]
+    assert len(set(heads)) == len(heads), "질문마다 첫 검색어가 달라야 한다"
+
+
+def test_round_two_questions_survive_the_axis_questions():
+    plan = P.build_rule_plan("기대심리가 국채금리와 통화정책 전망에 미치는 영향")
+    deep = P.apply_deep_research_plan(plan)["deepResearch"]
+    assert [q for q in deep["subQuestions"] if q["round"] == 2], "반증 질문이 상한에 밀려 사라지면 안 된다"

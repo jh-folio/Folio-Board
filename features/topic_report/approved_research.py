@@ -13,6 +13,8 @@ from features.agent_mode.market_state_context import (
 )
 from features.common.jcs import JsonValue
 from features.common.research_library.indexing.research_index import hybrid_search
+from features.common.research_library.search.filters import drop_press_releases
+from features.common.research_library.search.multi_query import fuse_search_results
 from features.market_memory.attempt_store import AttemptStore
 from features.market_memory.market_state_ref import MarketStateRefQuery
 from features.smart_collections.integration import resolve_approved_collection
@@ -45,18 +47,40 @@ def _search_index(
     queries: list[str],
     limit: int,
     allowed_doc_ids: set[str] | None,
+    cache: dict | None = None,
 ) -> list[EvidenceRow]:
-    query = " ".join(str(item).strip() for item in queries if str(item).strip())
-    if not query:
-        return []
-    rows = hybrid_search(
-        data_dir / "research-index.sqlite3",
-        query,
-        limit=limit,
-        scope_prefixes=_NEWS_PREFIXES,
-        allowed_doc_ids=allowed_doc_ids,
+    """질의별로 검색해 RRF로 합친다.
+
+    예전에는 질의를 공백으로 이어 붙여 한 번만 검색했다. FTS5가 토큰을 OR로 풀기
+    때문에 어느 한 토큰만 스친 문서가 상위로 올라왔고, 그래서 축 전용 검색어가
+    자기 몫의 자료를 데려오지 못했다. 보도자료는 근거에서 뺀다 — 발행처가 1곳뿐인
+    정기 공시가 주제 리서치의 상위 근거로 올라오는 것을 실제로 봤다.
+    """
+
+    memo = cache if cache is not None else {}
+
+    def run_one(query: str, per_query_limit: int) -> list[EvidenceRow]:
+        # 하위 질문과 축이 같은 검색어를 공유한다(공통 질의는 돌려 쓰고, 축 검색어는
+        # 그 축의 질문과 같다). 팩 하나를 만드는 동안 같은 질의를 여러 번 돌리지 않는다.
+        key = (query, per_query_limit)
+        if key not in memo:
+            rows = hybrid_search(
+                data_dir / "research-index.sqlite3",
+                query,
+                limit=per_query_limit,
+                scope_prefixes=_NEWS_PREFIXES,
+                allowed_doc_ids=allowed_doc_ids,
+            )
+            memo[key] = drop_press_releases([dict(row) for row in rows])
+        return [dict(row) for row in memo[key]]
+
+    cap = max(0, int(limit or 0))
+    return fuse_search_results(
+        [str(item).strip() for item in queries if str(item).strip()],
+        run_one,
+        limit=cap,
+        per_query_limit=max(cap, 12),
     )
-    return [dict(row) for row in rows]
 
 
 def _search_memory(data_dir: Path, keywords: list[str], limit: int) -> list[EvidenceRow]:
@@ -133,6 +157,7 @@ def prepare_approved_research(
     approved: ApprovedRequest,
 ) -> PreparedResearch:
     base = resolve_approved_collection(collections, approved)
+    query_cache: dict = {}
     return admit_research(
         approved,
         base,
@@ -141,6 +166,7 @@ def prepare_approved_research(
             queries,
             limit,
             allowed,
+            query_cache,
         ),
         search_memories=lambda keywords, limit: _search_memory(data_dir, keywords, limit),
     )

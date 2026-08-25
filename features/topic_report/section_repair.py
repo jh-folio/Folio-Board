@@ -7,6 +7,10 @@ from features.topic_report.report_contract import canonical_heading, split_secti
 
 
 _NESTED_H2 = re.compile(r"^##\s+", re.MULTILINE)
+# 보수 응답의 `replacementBody`에는 원래 본문에 있던 숨김 태그가 그대로 딸려 온다.
+# 지우지 않고 새 태그를 덧붙이면 한 섹션에 태그가 둘이 되고, 렌더러가 escape하는 순간
+# 사용자 화면에 두 줄이 그대로 보인다(실측: 11개 섹션 보고서에 태그 17개).
+_SOURCE_TAG = re.compile(r"<!--\s*folio-source-ids:[\s\S]*?-->", re.IGNORECASE)
 
 
 def parse_patch_response(value: str) -> list[dict]:
@@ -35,7 +39,7 @@ def merge_section_patches(markdown: str, patches: list[dict], *, allowed_section
     replacements = {}
     for patch in patches:
         heading = canonical_heading(str(patch.get("heading") or "").removeprefix("## "))
-        body = str(patch.get("replacementBody") or "").strip()
+        body = _SOURCE_TAG.sub("", str(patch.get("replacementBody") or "")).strip()
         source_ids = [str(item).strip() for item in patch.get("sourceIds") or [] if str(item).strip()]
         if heading not in allowed_sections or heading not in {row["heading"] for row in sections} or not body:
             raise ValueError("patch_outside_allowed_sections")
