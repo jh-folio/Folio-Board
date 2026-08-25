@@ -188,3 +188,86 @@ def test_rule_fallback_does_not_claim_a_web_search_attempt(monkeypatch):
     }
     generation_service.analyze_company("HWM", web_search_override=None, runtime=no_web)
     assert recorded["allowed"] is False
+
+
+# --------------------------------------------- 초안 가드 / 웹 조회 배선
+
+def _draft(*, drop=()):
+    from features.company_analysis.style import REQUIRED_SECTION_HEADINGS
+
+    names = [n for n in REQUIRED_SECTION_HEADINGS if n not in drop]
+    return "\n\n".join(f"## {n}\n\n본문입니다." for n in names)
+
+
+def test_a_draft_missing_sections_is_rewritten_once(monkeypatch):
+    # 실측 4건 중 3건이 계약과 다른 제목을 썼고 두 섹션이 통째로 빠졌다. 보수 패스는
+    # 섹션 3개를 손볼 뿐이라 골격이 어긋난 초안을 되살리지 못한다.
+    seen: list[str] = []
+
+    def llm(*_args, **kwargs):
+        seen.append(str(kwargs.get("web_facts") or ""))
+        broken = len(seen) == 1
+        return ({"markdown": _draft(drop=("어떻게 접근할까",)) if broken else _draft(),
+                 "usedDocs": [], "webSearch": False}, "ok")
+
+    runtime = {**_RUNTIME, "generate_llm_company_analysis": llm, "use_web_search_for_analysis": lambda: False}
+    report = generation_service.analyze_company("HWM", runtime=runtime)
+
+    guard = report["draftGuard"]
+    assert guard["missing"] == ["어떻게 접근할까"]
+    assert guard["retried"] is True and guard["outcome"] == "retry_better"
+    assert len(seen) == 2
+    assert "다시 작성 요청" not in seen[0] and "다시 작성 요청" in seen[1]
+    assert "어떻게 접근할까" in report["markdown"]
+
+
+def test_a_healthy_draft_is_not_rewritten():
+    calls = {"n": 0}
+
+    def llm(*_args, **_kwargs):
+        calls["n"] += 1
+        return ({"markdown": _draft(), "usedDocs": [], "webSearch": False}, "ok")
+
+    runtime = {**_RUNTIME, "generate_llm_company_analysis": llm, "use_web_search_for_analysis": lambda: False}
+    report = generation_service.analyze_company("HWM", runtime=runtime)
+    assert calls["n"] == 1
+    assert report["draftGuard"] == {"missing": [], "retried": False, "outcome": ""}
+
+
+def test_a_worse_retry_keeps_the_first_draft():
+    # 나쁜 초안이라도 없는 것보다 낫다.
+    drafts = [_draft(drop=("어떻게 접근할까",)), _draft(drop=("어떻게 접근할까", "밸류에이션"))]
+
+    def llm(*_args, **_kwargs):
+        return ({"markdown": drafts.pop(0), "usedDocs": [], "webSearch": False}, "ok")
+
+    runtime = {**_RUNTIME, "generate_llm_company_analysis": llm, "use_web_search_for_analysis": lambda: False}
+    report = generation_service.analyze_company("HWM", runtime=runtime)
+    assert report["draftGuard"]["outcome"] == "retry_no_gain"
+    assert "밸류에이션" in report["markdown"]
+
+
+def test_web_lookup_feeds_the_ledger_and_the_context():
+    import json
+
+    payload = {"facts": [{"statement": "2026 2분기 매출 $8.7B", "url": "https://investor.x/q2"}],
+               "quotes": [{"who": "Tim Archer, CEO", "when": "2026-08", "what": "수요 견조", "url": "https://investor.x/call"}]}
+    seen: list[str] = []
+
+    def llm(*_args, **kwargs):
+        seen.append(str(kwargs.get("web_facts") or ""))
+        return ({"markdown": _draft(), "usedDocs": [], "webSearch": True}, "ok")
+
+    runtime = {
+        **_RUNTIME,
+        "generate_llm_company_analysis": llm,
+        "use_web_search_for_analysis": lambda: True,
+        "configured_lookup_call": lambda **_k: (lambda _p, _c: json.dumps(payload, ensure_ascii=False)),
+    }
+    report = generation_service.analyze_company("HWM", runtime=runtime)
+
+    # 찾아온 사실이 원장에 등재돼야 본문이 인용할 자격을 갖는다.
+    web_ids = [row["sourceId"] for row in report["sourceLedger"] if str(row["sourceId"]).startswith("web_")]
+    assert web_ids == ["web_001", "web_002"]
+    assert "[web_001]" in seen[0]
+    assert report["webLookup"]["speakerSources"] == [{"sourceId": "web_002", "role": "CEO", "name": "Archer"}]

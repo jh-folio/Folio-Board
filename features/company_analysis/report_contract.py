@@ -129,6 +129,17 @@ def validate_company_report(
     if linkage is not None and linkage < MIN_SOURCE_LINKAGE:
         defects.append(defect("evidence", "low_source_linkage", 70))
 
+    # 품질 평가가 찾는 것을 계약도 본다. 네 건 모두 같은 자리에서 점수를 잃었는데
+    # 재료가 없어서가 아니라 쓰라고 한 적이 없어서였다.
+    visible = visible_markdown(text)
+    if not any(marker in visible for marker in _SCOPE_MARKERS):
+        defects.append(defect("structure", "scope_undefined", 40, section=REQUIRED_SECTION_HEADINGS[0]))
+    scenario_body = next(
+        (body for heading, body in by_heading.items() if _SCENARIO_SECTION in heading), "",
+    )
+    if scenario_body and not any(word in scenario_body for word in _CONDITION_WORDS):
+        defects.append(defect("depth", "scenario_not_conditional", 35, section=_SCENARIO_SECTION))
+
     # 문체 — 재는 것은 둘뿐이다.
     hedges = hedge_stats(text)
     if hedges["per1000"] > HEDGE_DENSITY_LIMIT:
@@ -150,6 +161,52 @@ def validate_company_report(
             "majorDefectCount": sum(1 for row in defects if int(row.get("severity") or 0) >= 40),
         },
     }
+
+
+# 품질 평가가 찾는 것들. 네 건 모두 같은 자리에서 점수를 잃었는데, 재료가 없어서가
+# 아니라 **쓰라고 한 적이 없어서**다(실측: 범위 선언 0/4건, 시나리오 조건어 0회).
+_SCOPE_MARKERS = ("분석 범위", "질문 정의", "포함 범위", "제외 범위")
+# 품질 평가기(`research_quality/evaluator.py`)가 세는 낱말 그대로다. 여기서 넓히면
+# 계약은 통과시키고 점수는 안 오르는 표현이 생기고, 아래 예시가 그런 말을 가르치면
+# 모델은 시킨 대로 쓰고도 벌을 받는다(실제로 `밑돌면`으로 쓸 뻔했다).
+_CONDITION_WORDS = ("넘으면", "아래로", "위로", "이상", "이하", "돌파", "하회", "상회", "되면", "라면", "초과", "미만")
+_SCENARIO_SECTION = "성장 전망과 체크포인트"
+
+
+def render_quality_requirements() -> str:
+    """생성 컨텍스트에 실을 서술 요구. 원칙이 아니라 **어디에 무엇을** 쓸지 지시한다."""
+    return "\n".join([
+        "## 이 보고서가 반드시 담아야 할 것",
+        "",
+        f"1. **분석 범위** — `{REQUIRED_SECTION_HEADINGS[0]}` 안에 이 보고서가 다루는 것과",
+        "   **다루지 않는 것**을 한 문단으로 밝힙니다. 예: \"이 분석은 본업 수익성과 밸류에이션을",
+        "   다루며, 소송·규제 리스크의 법률적 판단과 단기 수급은 다루지 않습니다.\"",
+        f"2. **조건형 시나리오** — `{_SCENARIO_SECTION}`의 시나리오는 **숫자로 된 조건**으로 씁니다.",
+        "   \"업황이 좋아지면\"이 아니라 \"분기 매출총이익률이 45%를 하회하면\", \"수주잔고가",
+        "   $10B를 넘으면\"처럼 관측 가능한 값과 방향을 함께 적습니다.",
+        "3. **섹션은 자기 몫만** — 다른 섹션이 맡은 이야기를 여기서 다시 전개하지 마세요.",
+        "   필요하면 결론 한 줄만 빌려 쓰고 넘어갑니다.",
+    ])
+
+
+def render_section_retry(missing: list[str]) -> str:
+    """골격이 어긋난 초안을 다시 쓰게 하는 지시.
+
+    실패한 초안을 되돌려 주지 않는다 — 앵커가 되어 같은 실수를 되풀이한다. 무엇이
+    빠졌는지와 써야 할 제목만 짚는다.
+    """
+    if not missing:
+        return ""
+    return "\n".join([
+        "## 다시 작성 요청",
+        "직전 산출물이 아래 섹션을 빠뜨렸거나 다른 제목으로 썼습니다. 같은 자료로 처음부터",
+        "다시 쓰되, **아래 아홉 개 제목을 이 순서대로 H2(`## `)로 하나씩 모두** 쓰세요.",
+        "제목을 바꾸거나 번호를 붙이거나 합치지 마세요.",
+        "",
+        *[f"- {name}" for name in REQUIRED_SECTION_HEADINGS],
+        "",
+        "이번에 빠진 것: " + ", ".join(missing),
+    ])
 
 
 def render_source_contract(source_ledger: list[dict] | None) -> str:
@@ -211,6 +268,8 @@ __all__ = [
     "hedgiest_section",
     "apply_report_ceiling",
     "missing_sections",
+    "render_quality_requirements",
+    "render_section_retry",
     "render_source_contract",
     "source_required_sections",
     "validate_company_report",

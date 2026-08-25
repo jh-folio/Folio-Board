@@ -27,9 +27,20 @@ HEDGE_PHRASES = (
 HEDGE_DENSITY_LIMIT = 2.5
 HEDGE_REPEAT_MIN = 10
 HEDGE_REPEAT_DENSITY = 1.5
-# 발언에 붙는 직함. 사람 이름은 원문이 영문이고 본문은 한국어라 대조할 수 없다
-# ("Jerome H. Powell" vs "파월"). 직함은 두 표기에 함께 남는다.
-SPEAKER_ROLE_WORDS = ("의장", "총재", "이사", "장관", "위원", "대표", "사장", "CEO")
+# 발언에 붙는 직함. 중앙은행 인사는 원문이 영문이고 본문은 한국어라 이름을 대조할 수
+# 없어("Jerome H. Powell" vs "파월") 직함이 유일한 실마리다.
+#
+# `CFO`는 **넣지 않는다.** 기업분석 본문에서 그 세 글자는 대부분 영업현금흐름이다
+# (실측: `CFO/영업이익 92.1%`, `장기부채/CFO 161.9%`). 직함으로 세면 재무표만 있어도
+# 귀속이 통과한다. 기업 임원은 본문이 라틴 이름을 그대로 쓰는 편이라 이름으로 잡는다.
+SPEAKER_ROLE_WORDS = (
+    "의장", "총재", "이사", "장관", "위원", "대표", "사장", "회장", "부사장",
+    "최고경영자", "최고재무책임자", "CEO",
+)
+# 라틴 이름에서 성(姓)만 뽑는다. 본문이 이름 전체를 옮겨 적지 않아도 성은 남는다.
+# 첫 글자 **뒤에 소문자**가 와야 이름이다 — 그 조건이 없으면 `Colette Kress·CFO`의
+# 성이 `CFO`가 되고, 재무표의 영업현금흐름만 있어도 귀속이 통과한다.
+_LATIN_NAME = re.compile(r"[A-Z][a-z][a-zA-Z'\-]*")
 
 
 def canonical_heading(value: str) -> str:
@@ -134,6 +145,21 @@ def sections_citing(markdown: str, source_ids) -> dict:
     return out
 
 
+def speaker_identity(who: str) -> dict:
+    """화자 문자열에서 본문과 대조할 실마리를 뽑는다.
+
+    두 갈래를 함께 본다 — 직함은 한국어로 옮겨 적어도 남고(파월 **의장**), 라틴 이름은
+    기업 임원 인용에서 본문이 그대로 옮겨 적는 편이다(실측: `Tim Archer와 CFO Doug
+    Bettinger`). 어느 하나라도 본문에 있으면 화자를 밝힌 것으로 본다.
+    """
+    text = str(who or "")
+    role = next((word for word in SPEAKER_ROLE_WORDS if word in text), "")
+    names = _LATIN_NAME.findall(text)
+    # 성이 이름보다 뒤에 온다. 중간 이름·이니셜은 버린다.
+    name = names[-1] if names else ""
+    return {"role": role, "name": name}
+
+
 def unattributed_speech(markdown: str, quote_sources) -> list[str]:
     """인용한 발언 근거 중 본문이 화자를 밝히지 않은 것.
 
@@ -149,10 +175,11 @@ def unattributed_speech(markdown: str, quote_sources) -> list[str]:
     missing = []
     for row in rows:
         source_id = str(row.get("sourceId") or "")
-        role = str(row.get("role") or "")
-        if source_id not in tagged or not role:
+        clues = [str(row.get(key) or "") for key in ("role", "name")]
+        clues = [clue for clue in clues if clue]
+        if source_id not in tagged or not clues:
             continue
-        if role not in visible:
+        if not any(clue in visible for clue in clues):
             missing.append(source_id)
     return missing
 
@@ -169,6 +196,7 @@ __all__ = [
     "hedge_stats",
     "hedgiest_section",
     "sections_citing",
+    "speaker_identity",
     "split_sections",
     "tagged_source_ids",
     "unattributed_speech",

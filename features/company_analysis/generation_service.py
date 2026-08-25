@@ -5,9 +5,15 @@ from features.common.change_intelligence.service import decorate_candidate
 from features.common.company_lookup import infer_requested_company
 from features.common.quality_generation.preflight import preflight_from_context
 from features.common.research_schema.source_ledger import source_ledger_from_items
+from features.company_analysis import web_lookup as company_web
 from features.company_analysis.depth_policy import build_depth_policy
-from features.company_analysis.report_contract import validate_company_report
-from features.common.web_search_scope import audit_urls, load_source_scope
+from features.company_analysis.engine_calls import configured_lookup_call
+from features.company_analysis.report_contract import (
+    missing_sections,
+    render_section_retry,
+    validate_company_report,
+)
+from features.common.web_search_scope import audit_urls, load_source_scope, render_scope_instruction
 from features.common.research_library.indexing.service import load_index
 from features.common.research_library.search.service import search_documents
 from features.common.utils import now_iso
@@ -24,7 +30,7 @@ from features.company_analysis.service import (
     read_company_analysis_prompt,
 )
 from features.company_analysis.style import analysis_prompt_path, normalize_analysis_style
-from features.llm_settings.client import selected_llm_config
+from features.llm_settings.client import selected_llm_config, use_web_search_for_analysis
 
 
 def analyze_company(query, web_search_override=None, llm_override=None, analysis_style="beginner", *, runtime: dict | None = None):
@@ -38,6 +44,8 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
     rule_fn = runtime.get("build_rule_report", build_rule_report)
     sources_fn = runtime.get("company_analysis_sources", company_analysis_sources)
     llm_config_fn = runtime.get("selected_llm_config", selected_llm_config)
+    lookup_call_fn = runtime.get("configured_lookup_call", configured_lookup_call)
+    web_search_enabled_fn = runtime.get("use_web_search_for_analysis", use_web_search_for_analysis)
     analysis_style = normalize_analysis_style(analysis_style)
     index = load_index_fn()
     # 회사를 먼저 해석하고 그 회사의 표기들로 찾는다. 원문 문자열 하나로 찾으면
@@ -67,11 +75,59 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
     source_ledger = source_ledger_from_items(
         selected or docs, artifact_type="company_analysis", limit=60,
     )
-    llm_result, llm_status = llm_fn(
-        query, docs, web_search_override=web_search_override, llm_override=llm_override,
-        materials=materials, quality_preflight=preflight, analysis_style=analysis_style,
-        depth_policy=depth_policy, source_ledger=source_ledger,
-    )
+    # 웹 조회 — **찾기와 쓰기를 분리한다.** 로컬 색인은 보관 기간상 약 3개월이라 뉴스가
+    # 거의 없는 종목은 구조적으로 못 채운다(실측: 로컬 문서 11/5/2/0건, 문서 0건인
+    # 회사는 데이터 갭 6개가 전부 "실적발표·컨퍼런스콜·리포트 없음"이었다).
+    # 자료가 넉넉하면 부르지 않으므로 대부분의 실행에서 호출이 늘지 않는다.
+    web_row: dict = {}
+    early_gaps = resolve_company_analysis_gaps(materials, web_search_allowed=False)
+    if web_search_enabled_fn() and company_web.needs_web_lookup(
+        document_count=len(docs), data_gaps=early_gaps
+    ):
+        try:
+            web_row = company_web.assign_source_ids(
+                company_web.lookup_company(
+                    company,
+                    render_scope_instruction(load_source_scope(company)),
+                    lookup_call_fn(),
+                )
+            )
+        except Exception:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
+            web_row = {}
+    web_items = company_web.web_source_items(web_row) if web_row else []
+    if web_items:
+        source_ledger = [*source_ledger, *web_items]
+    web_facts = company_web.render_lookup(web_row) if web_row else ""
+
+    def _generate(extra: str = ""):
+        return llm_fn(
+            query, docs, web_search_override=web_search_override, llm_override=llm_override,
+            materials=materials, quality_preflight=preflight, analysis_style=analysis_style,
+            depth_policy=depth_policy, source_ledger=source_ledger,
+            web_facts="\n\n".join(part for part in (web_facts, extra) if part),
+        )
+
+    llm_result, llm_status = _generate()
+    # 초안이 고정 9섹션을 어기면 **쓰기만** 한 번 더 시킨다. 실측 4건 중 3건이 계약과
+    # 다른 제목을 썼고 두 섹션이 통째로 빠졌는데, 보수 패스는 섹션 3개를 손볼 뿐이라
+    # 골격이 어긋난 초안을 되살리지 못한다. 앞의 자료 수집·웹 조회는 재사용된다.
+    draft_guard: dict = {}
+    if llm_result and llm_result.get("markdown"):
+        missing = missing_sections(str(llm_result["markdown"]))
+        draft_guard = {"missing": missing, "retried": False, "outcome": ""}
+        if missing:
+            retry, retry_status = _generate(render_section_retry(missing))
+            draft_guard["retried"] = True
+            if retry and retry.get("markdown"):
+                still = missing_sections(str(retry["markdown"]))
+                if len(still) < len(missing):
+                    llm_result, llm_status = retry, retry_status
+                    draft_guard["outcome"] = "retry_better"
+                else:
+                    # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
+                    draft_guard["outcome"] = "retry_no_gain"
+            else:
+                draft_guard["outcome"] = "retry_unavailable"
     # 설정이 아니라 실제 결과로 기록한다. 설정만 보면 CLI 모드·LLM 실패·자료 없음처럼
     # 웹 검색이 한 번도 돌지 않은 경로에서도 official_web_search가 "시도함"으로 남는다.
     gaps = resolve_company_analysis_gaps(
@@ -89,6 +145,8 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
         "qualityPreflight": preflight,
         "depthPolicy": depth_policy,
         "sourceLedger": source_ledger,
+        "webLookup": company_web.lookup_summary(web_row) if web_row else None,
+        "draftGuard": draft_guard or None,
     }
     if llm_result:
         generation = {
@@ -124,6 +182,7 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
         str(report.get("markdown") or ""),
         depth_policy=depth_policy,
         source_ledger=source_ledger,
+        quote_sources=company_web.speaker_sources(web_row) if web_row else [],
     )
     return decorate_candidate(
         "company_analysis", report, data_dir=DATA_DIR,

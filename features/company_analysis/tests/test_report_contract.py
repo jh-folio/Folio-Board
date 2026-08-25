@@ -216,3 +216,44 @@ def test_the_source_block_lists_the_ids_and_the_sections_that_need_them():
     assert "[ev_001]" in text and "folio-source-ids" in text
     assert "실적과 재무 품질" in text  # 어느 섹션에 달아야 하는지 함께 말한다
     assert render_source_contract([]) == ""  # 인용할 것이 없으면 지시하지 않는다
+
+
+# --------------------------------------------------- 품질 평가가 찾는 것
+
+def test_a_report_without_a_scope_statement_is_flagged():
+    # 실측: 저장된 4건 모두 분석 범위 선언이 없어 `scope_defined` 0.30이었다.
+    # 재료가 없어서가 아니라 쓰라고 한 적이 없어서다.
+    assert "scope_undefined" in _codes(validate_company_report(_report()))
+
+    scoped = _report().replace(
+        "## 핵심 판단\n",
+        "## 핵심 판단\n\n이 분석의 **분석 범위**는 본업 수익성과 밸류에이션이며 소송 리스크는 다루지 않습니다.\n",
+        1,
+    )
+    assert "scope_undefined" not in _codes(validate_company_report(scoped))
+
+
+def test_scenarios_without_numeric_conditions_are_flagged():
+    vague = _report().replace(
+        "## 성장 전망과 체크포인트\n\n" + _FILLER,
+        "## 성장 전망과 체크포인트\n\n업황이 좋아지면 실적이 개선됩니다.",
+        1,
+    )
+    assert "scenario_not_conditional" in _codes(validate_company_report(vague))
+
+    concrete = _report().replace(
+        "## 성장 전망과 체크포인트\n\n" + _FILLER,
+        "## 성장 전망과 체크포인트\n\n분기 매출총이익률이 45%를 하회하면 판단이 약해집니다.",
+        1,
+    )
+    assert "scenario_not_conditional" not in _codes(validate_company_report(concrete))
+
+
+def test_the_requirements_block_says_where_to_write_each_thing():
+    # 원칙이 아니라 어디에 무엇을 쓸지 지시한다.
+    from features.company_analysis.report_contract import render_quality_requirements
+
+    text = render_quality_requirements()
+    assert "핵심 판단" in text and "다루지 않는 것" in text
+    assert "45%를 하회하면" in text  # 조건을 예시로 보여준다
+    assert "자기 몫만" in text  # 섹션 간 중복 방지
