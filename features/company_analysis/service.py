@@ -427,11 +427,27 @@ def _doc_context_text(doc, min_content_chars: int = 1000, max_file_chars: int = 
     if not raw_path:
         return content or str(doc.get("summary") or "")
     try:
+        # `documents.path`는 **자료 폴더 기준** 상대 경로다(`indexing/service.py::
+        # workspace_relative()`). 여기만 앱 폴더(`ROOT`)를 기준으로 이어 붙이고 경계까지
+        # 앱 폴더로 재던, `FOLIO_HOME`이 체크아웃 밖일 때 저장된 원문을 한 건도 못 읽는다.
+        # `except Exception`이 삼켜서 터지지는 않지만, 10-K 원문 대신 스니펫·요약으로
+        # 조용히 내려앉아 보고서가 얇아진다 — 실패했다는 사실이 어디에도 안 남는다.
+        # 기본값에서는 자료 폴더가 곧 앱 폴더라 동작이 같다.
+        from features.common.workspace import workspace_root
+
+        base = workspace_root()
         path = Path(raw_path)
         if not path.is_absolute():
-            path = ROOT / path
+            path = base / path
         resolved = path.resolve()
-        resolved.relative_to(ROOT)
+        for root in (base.resolve(), ROOT.resolve()):
+            try:
+                resolved.relative_to(root)
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"document path is outside the workspace: {resolved}")
         if not resolved.exists() or not resolved.is_file():
             return content or str(doc.get("summary") or "")
         if resolved.stat().st_size > max_file_chars * 4:

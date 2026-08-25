@@ -184,25 +184,61 @@ def write_pack(pack: dict, owner_job_id: str | None = None) -> Path:
     return path
 
 
-def read_pack(path: str | Path) -> dict:
+def _allowed_pack_roots() -> tuple[Path, ...]:
+    """팩을 읽어도 되는 위치. 경계는 유지하고 목록만 갖는다.
+
+    `ROOT`(체크아웃)만으로는 부족하다. 사용자 자료는 `FOLIO_HOME`을 따라 체크아웃 밖에
+    있을 수 있고(§`features/common/workspace.py`), 그러면 워크스페이스의 팩이 전부
+    경계 밖으로 판정된다. 실측: FolioOS_Sites가 이 체크아웃을 런타임으로 쓰고
+    `FOLIO_HOME`만 자기 workspace로 돌린 인스턴스에서, 예약 사전작업의 시장 상태
+    스냅샷이 매번 `ValueError`로 죽어 `market_state_snapshots`가 며칠간 갱신되지
+    않았다 — 화면은 며칠 전 해석 그대로였다.
+
+    **왜 이 경로만 죽었나**: 예약 사전작업은 `job_id` 없이 도는 non-durable 경로라
+    팩이 `agent-context/`에 쌓인다. 브리핑 생성은 durable job이라 `job-context/`에
+    들어가 이미 뚫려 있던 두 번째 허용 경로에 걸렸다. 그래서 브리핑은 멀쩡한데
+    사전작업만 실패했다.
+
+    `CONTEXT_DIR`은 import 시점에 한 번 잡히므로(`DATA_DIR = data_dir()`) 여기서
+    다시 판정해 옮기기 직후에도 맞는 값을 쓴다.
+    """
+    from features.common.jobs import data_root
+    from features.common.workspace import data_dir as current_data_dir
+
+    roots = [ROOT, CONTEXT_DIR, current_data_dir() / "agent-context", data_root() / "job-context"]
+    resolved: list[Path] = []
+    for root in roots:
+        try:
+            candidate = Path(root).resolve()
+        except OSError:
+            continue
+        if candidate not in resolved:
+            resolved.append(candidate)
+    return tuple(resolved)
+
+
+def _resolved_pack_path(path: str | Path, *, strict: bool = True) -> Path:
+    """허용 루트 안에 있는 팩 경로. 밖이면 `ValueError`."""
     p = Path(path)
     if not p.is_absolute():
         p = ROOT / p
-    resolved = p.resolve()
-    try:
-        resolved.relative_to(ROOT)
-    except ValueError:
-        from features.common.jobs import data_root
+    resolved = p.resolve(strict=False) if not strict else p.resolve()
+    for root in _allowed_pack_roots():
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return resolved
+    raise ValueError(f"pack path is outside the allowed roots: {resolved}")
 
-        resolved.relative_to((data_root() / "job-context").resolve())
+
+def read_pack(path: str | Path) -> dict:
+    resolved = _resolved_pack_path(path)
     return json.loads(resolved.read_text(encoding="utf-8"))
 
 
 def update_pack_status(path: str | Path, *, status: str, result: dict | None = None) -> dict:
-    p = Path(path)
-    if not p.is_absolute():
-        p = ROOT / p
-    resolved = p.resolve(strict=False)
+    resolved = _resolved_pack_path(path, strict=False)
     pack = read_pack(resolved)
     pack["status"] = status
     pack["updatedAt"] = now_iso()
