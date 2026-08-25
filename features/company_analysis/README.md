@@ -22,6 +22,55 @@
 - 웹 검색 보완 ON/OFF
 - 자동 preflight, evidence coverage, 품질 평가 결과 저장
 
+## 산출물 계약 — 0.5.6
+
+프롬프트로 부탁한 것과 산출물이 지킨 것은 다르다. 지금까지 기업분석은 계약을
+**프롬프트에만** 두고 결과를 확인하지 않았다 — `style.py::REQUIRED_SECTION_HEADINGS`에
+9개 섹션이 정의돼 있지만 그것을 쓰는 함수는 `validate_prompt_structure(prompt)`
+하나뿐이었고, 그것은 프롬프트 파일을 검사할 뿐 생성된 보고서를 보지 않았다.
+
+실측(저장된 4건): SpaceX·LAM은 `어떻게 접근할까`와 `자료 한계와 참고자료`가 통째로
+없었고, 섹션 길이가 2~3배로 흔들렸으며(실적 1,818~4,366자), 숨김 근거 태그가 **0개**라
+`source_grounding`이 0.08~0.42로 네 건 모두 최하위 항목이었다. 보수 패스는 한 번도
+돌지 않았다(`repairCount: 0`).
+
+### 검증 (`report_contract.py`)
+
+- `section_missing`(60) — 계약이 요구하는 9섹션 중 없는 것. 제목이 다르면 없는 것이다.
+- `thin_section`(35) / `below_recommended_length`(45) / `above_safety_length`(45) — 분량.
+- `unlinked_section`(35) / `unknown_source_tag`(40) / `low_source_linkage`(70) — 근거 연결.
+- `hedge_overuse`(40) / `hedge_repetition`(35) / `speech_unattributed`(40) — 문체.
+- **어느 결함도 산출물을 되돌리지 않는다.** 기업분석에는 딥 리서치 같은 후보·재시도
+  구조가 없어, 차단하면 사용자가 아무것도 받지 못한다. 점수 상한과 보수 대상 지정으로만 쓴다.
+- **재지 못한 것을 만점으로 보고하지 않는다.** 계약이 자기 섹션을 하나도 못 찾으면
+  `sourceLinkage`는 `None`이다 — 1.0으로 두면 옛 제목을 쓴 보고서가 근거 연결 만점이 된다.
+
+### 분량 (`depth_policy.py`)
+
+- **목표 분량이 확보한 자료를 따라간다.** 기본 11,000자 + 보조자료 1건당 250자(최대 12건)
+  + SEC 숫자 1,000 + 공시 서술 1,000, 상한 17,000. 고정 하한을 두면 자료가 0건인 회사에서
+  모델이 없는 이야기로 칸을 채운다 — 딥 리서치에서 에디터가 초안을 +141% 늘려 근거 없는
+  산문이 채워진 것과 같은 실패다.
+- 섹션 예산은 **채워야 할 하한**이다. 쓸 말이 없으면 줄이지 말고 무엇을 확인하지
+  못했는지를 그 자리에 쓴다.
+- 컨텍스트에는 **숫자로** 준다(`render_length_contract`). "충실히 쓰세요"는 지침이고
+  숫자는 과제다 — 이 세션에서 세 번 확인했다(웹 검색 허가 4회 실패 → 찾기 과제 1회 성공,
+  유보 압축 원칙 3회 실패 → "21회 이하로" 1회 성공).
+
+### 근거 인용
+
+- `render_source_contract`가 인용 가능한 ID 목록과 태그 형식을 함께 준다. 규칙만 주면
+  무엇을 인용할지 알 수 없다.
+- 원장은 `source_ledger_from_items(selectedDocs, artifact_type="company_analysis")`이며
+  보고서 JSON의 `sourceLedger`에 저장된다.
+- `어떻게 접근할까`와 `자료 한계와 참고자료`는 면제다 — 판단을 적는 자리와 데이터 메모는
+  근거를 인용하는 자리가 아니다.
+
+### 점수 상한
+
+`apply_report_ceiling`이 `common/research_quality/contract_ceiling.py`를 부른다(딥 리서치와
+같은 눈금). 심각도 70 이상이면 69점, 40 이상이면 89점, 주요 결함 3건 이상이면 79점이다.
+
 ## 자료 우선순위
 
 ```text

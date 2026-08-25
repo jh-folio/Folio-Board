@@ -16,6 +16,8 @@ from features.common.utils import normalize, now_iso, read_json, write_json
 from features.company_analysis import financial_engine
 from features.company_analysis.dart_client import build_dart_summary
 from features.company_analysis.filing_items import select_analysis_items, select_filing_keyword_excerpts
+from features.company_analysis.depth_policy import render_length_contract
+from features.company_analysis.report_contract import render_source_contract
 from features.company_analysis.style import analysis_prompt_path, read_analysis_prompt
 from features.company_analysis.report_rules import (
     _fcf_series,
@@ -767,7 +769,10 @@ def _context_search_instruction(company: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_llm_company_analysis(query, docs, web_search_override=None, llm_override=None, materials=None, quality_preflight=None, analysis_style="beginner"):
+def generate_llm_company_analysis(
+    query, docs, web_search_override=None, llm_override=None, materials=None,
+    quality_preflight=None, analysis_style="beginner", *, depth_policy=None, source_ledger=None,
+):
     cfg = selected_llm_config()
     llm_on = use_llm_analysis() if llm_override is None else bool(llm_override)
     if not llm_on:
@@ -811,6 +816,11 @@ def generate_llm_company_analysis(query, docs, web_search_override=None, llm_ove
     hint_block = render_prompt_hints(quality_preflight)
     if hint_block:
         context = "\n\n".join([context, hint_block])
+    # 분량과 근거 인용은 프롬프트가 아니라 **이 요청의 숫자와 목록**으로 준다.
+    # 원칙은 안 움직이고 숫자로 된 과제만 움직인다(딥 리서치에서 세 번 확인).
+    for block in (render_length_contract(depth_policy or {}), render_source_contract(source_ledger)):
+        if block:
+            context = "\n\n".join([context, block])
     web_search = use_web_search_for_analysis() if web_search_override is None else bool(web_search_override)
     if web_search:
         context = "\n\n".join([context, company_external_search_context(materials)])

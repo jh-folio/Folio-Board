@@ -481,6 +481,8 @@ features/company_analysis/financial_quality_prompt.md
 - **분기 자료**: companyfacts 분기 행은 이미 컨텍스트 표(`Recent Quarter`)에 들어간다. 차트는 연간만 읽고 있어서 `분기 흐름` 차트를 따로 만든다(최근 8개 기간, **전년 동기 대비** — 분기는 계절성이 있어 직전 분기와 비교하면 오해한다). 10-Q 서술은 `rankedQuarterlyFiling`으로 붙는다. 10-Q는 Item 번호 체계가 10-K와 달라(`Item 2` = MD&A) `_ITEM_PATTERNS`·`_ITEM_EQUIVALENTS`에 따로 등재돼 있다.
 - **차트 계약**: 값이 하나도 없는 계열은 그리지도 **부제에서 약속하지도** 않는다(`_present_subtitle`). 마진처럼 단위가 다른 계열은 오른쪽 축으로 분리한다 — 금액 축에 얹으면 0에 붙어 사라진다. 기간 구간이 hover 대상이고 그 기간의 모든 계열과 증감을 그림 밖 고정 상자에 보여준다.
 
+- **기업분석도 산출물 계약을 갖는다**(0.5.6). 계약을 프롬프트에만 두고 결과를 확인하지 않으면 지켜지지 않는다 — `REQUIRED_SECTION_HEADINGS` 9개가 정의돼 있었지만 그것을 쓰는 함수는 프롬프트 파일 검사 하나뿐이었고, 실측 4건 중 3건이 계약과 다른 제목을 쓰며 두 섹션을 통째로 빠뜨렸다. `company_analysis/report_contract.py`가 섹션 누락·분량·근거 연결·문체를 결함으로 잡고 `depth_policy.py`가 섹션 예산을 정한다. **목표 분량은 확보한 자료를 따라간다** — 고정 하한을 두면 자료가 0건인 회사에서 없는 이야기로 칸을 채운다. **어느 결함도 산출물을 되돌리지 않는다**(후보·재시도 구조가 없어 차단하면 사용자가 아무것도 받지 못한다). 숨김 근거 태그가 0개여서 `source_grounding`이 0.08~0.42였으므로, 인용 가능한 ID 목록과 태그 형식을 생성 컨텍스트에 함께 싣는다. 계약 결함 상한은 딥 리서치와 같은 눈금(`common/research_quality/contract_ceiling.py`)을 쓴다.
+
 ### 테마분석 (Topic Report v2)
 
 - 파이프라인: Topic Planner → Evidence Pack → report_type 템플릿 결합 → LLM/규칙 보고서 → Quality Gate → (선택) Personal Overlay.

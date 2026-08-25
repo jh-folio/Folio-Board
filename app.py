@@ -186,6 +186,7 @@ from features.daily_briefing.visuals import load_current_visuals, load_visual_si
 from features.company_analysis.report_rules import build_rule_report
 from features.company_analysis.generation_service import analyze_company as generate_company_analysis
 from features.company_analysis.data_gap_resolver import resolve_company_analysis_gaps
+from features.company_analysis.report_contract import apply_report_ceiling as apply_company_report_ceiling
 from features.company_analysis.style import analysis_prompt_path, normalize_analysis_style
 from features.company_analysis.service import (
     analysis_status_message,
@@ -798,6 +799,7 @@ def api_analyze(request: Request):
     try:
         preflight = report.pop("qualityPreflight", None)
         report = apply_quality_loop("company_analysis", report, mode=quality_mode, preflight=preflight)
+        report = apply_company_report_ceiling(report)
     except Exception:
         report["quality"] = {"status": "warn", "warnings": ["quality evaluation failed"]}
     # 생성한 보고서를 자동 저장한다(같은 기업·같은 날은 최신본으로 덮어씀).

@@ -4,6 +4,9 @@ from __future__ import annotations
 from features.common.change_intelligence.service import decorate_candidate
 from features.common.company_lookup import infer_requested_company
 from features.common.quality_generation.preflight import preflight_from_context
+from features.common.research_schema.source_ledger import source_ledger_from_items
+from features.company_analysis.depth_policy import build_depth_policy
+from features.company_analysis.report_contract import validate_company_report
 from features.common.web_search_scope import audit_urls, load_source_scope
 from features.common.research_library.indexing.service import load_index
 from features.common.research_library.search.service import search_documents
@@ -54,9 +57,20 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
             "rankedFilingOk": bool(materials.get("rankedFiling", {}).get("ok")),
         },
     })
+    # 분량과 근거 인용은 계약이다. 지금까지는 프롬프트에만 있고 산출물을 아무도 확인하지
+    # 않아, 섹션이 통째로 빠지고(실측 4건 중 3건) 근거 태그가 0개였다.
+    sec_facts_ok = bool(materials.get("secFacts", {}).get("ok"))
+    ranked_filing_ok = bool(materials.get("rankedFiling", {}).get("ok"))
+    depth_policy = build_depth_policy(
+        document_count=len(docs), sec_facts_ok=sec_facts_ok, ranked_filing_ok=ranked_filing_ok,
+    )
+    source_ledger = source_ledger_from_items(
+        selected or docs, artifact_type="company_analysis", limit=60,
+    )
     llm_result, llm_status = llm_fn(
         query, docs, web_search_override=web_search_override, llm_override=llm_override,
         materials=materials, quality_preflight=preflight, analysis_style=analysis_style,
+        depth_policy=depth_policy, source_ledger=source_ledger,
     )
     # 설정이 아니라 실제 결과로 기록한다. 설정만 보면 CLI 모드·LLM 실패·자료 없음처럼
     # 웹 검색이 한 번도 돌지 않은 경로에서도 official_web_search가 "시도함"으로 남는다.
@@ -73,6 +87,8 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
             "rankedParagraphs": len(materials.get("rankedFiling", {}).get("paragraphs", [])),
         },
         "qualityPreflight": preflight,
+        "depthPolicy": depth_policy,
+        "sourceLedger": source_ledger,
     }
     if llm_result:
         generation = {
@@ -101,6 +117,14 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
             "sources": sources_fn(materials, materials.get("selectedDocs", docs[:10])[:14]),
         }
         report["analysisInputs"].update({"topTags": top_tags, "recent": recent})
+    # 프롬프트로 부탁한 계약을 산출물에서 확인한다. 어느 결함도 보고서를 되돌리지
+    # 않는다 — 기업분석에는 후보·재시도 구조가 없어 차단하면 사용자가 아무것도 받지
+    # 못한다. 점수 상한과 보수 대상 지정으로만 쓴다.
+    report["contractValidation"] = validate_company_report(
+        str(report.get("markdown") or ""),
+        depth_policy=depth_policy,
+        source_ledger=source_ledger,
+    )
     return decorate_candidate(
         "company_analysis", report, data_dir=DATA_DIR,
         native_context={"materials": materials}, generation_provenance=True,
