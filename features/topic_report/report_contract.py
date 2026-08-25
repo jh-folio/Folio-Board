@@ -4,7 +4,21 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from features.topic_report.depth_policy import visible_character_count, visible_markdown
+from features.common.report_prose import (
+    HEDGE_DENSITY_LIMIT,
+    HEDGE_PHRASES,
+    HEDGE_REPEAT_DENSITY,
+    HEDGE_REPEAT_MIN,
+    SOURCE_ID_RE as _SOURCE_ID_RE,
+    SPEAKER_ROLE_WORDS,
+    defect as _defect,
+    sections_citing,
+    split_sections,
+    unattributed_speech,
+    visible_character_count,
+    visible_markdown,
+)
+from features.common import report_prose as _prose
 from features.topic_report.section_sources import (
     SOURCE_TAG_NAMES,
     _INLINE_CITATION,
@@ -18,7 +32,6 @@ from features.topic_report.topic_schema import (
 )
 
 
-_HEADING = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SENTENCE = re.compile(r"(?:다\.|[.!?。！？])\s+|[\r\n]+")
 # 설명 단계를 소제목으로 굳힌 흔적. 초심자 서술을 4단계로 지시했더니 모델이 모든 본문
 # 섹션에 같은 `###` 소제목 네 개를 달아 보고서가 서식이 됐다.
@@ -37,22 +50,6 @@ def _source_required(sections: list[str]) -> list[str]:
     return [heading for heading in sections if heading not in _SOURCE_EXEMPT]
 
 
-def split_sections(markdown: str) -> list[dict]:
-    text = str(markdown or "")
-    matches = list(_HEADING.finditer(text))
-    rows = []
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        rows.append({
-            "heading": canonical_heading(match.group(1)),
-            "rawHeading": match.group(1).strip(),
-            "body": text[match.end():end].strip(),
-        })
-    return rows
-
-
-def _defect(category: str, code: str, severity: int, *, section: str = "", fixable: bool = True) -> dict:
-    return {"category": category, "code": code, "severity": severity, "section": section, "fixable": fixable}
 
 
 # 질문을 구별짓는 말. 연도·사건명처럼 다른 말로 바꾸기 어려운 것을 고른다.
@@ -110,100 +107,18 @@ def unanswered_questions(text: str, research_questions) -> list[str]:
     return missing
 
 
-# 유보 표현. 제안서 §13 Rule 3의 목록에 실측에서 실제로 나온 것을 더했다.
-HEDGE_PHRASES = (
-    "수 있다", "수 있으", "수 있는", "가능성이 있다", "가능성을 배제",
-    "단정하기 어렵", "판단하기 어렵", "확인하기 어렵",
-    "함께 봐야", "함께 볼", "점검해야", "구분해야", "주의해야",
-    "것으로 보인다", "보이지만",
-)
 # 유보가 있어야 마땅한 자리는 세지 않는다. 데이터 한계 서술이 그 섹션의 일이다.
 _HEDGE_EXEMPT_SECTIONS = ("Source & Data Notes",)
-# 이 밀도를 넘으면 판단이 아니라 회피다. 실측 기준: 문제로 지적된 보고서가
-# 천자당 3.07~3.34회였고 그중 `수 있다` 하나가 23회였다.
-HEDGE_DENSITY_LIMIT = 2.5
-HEDGE_REPEAT_MIN = 10
-HEDGE_REPEAT_DENSITY = 1.5
-# 발언에 붙는 직함. 사람 이름은 원문이 영문이고 본문은 한국어라 대조할 수 없다
-# ("Jerome H. Powell" vs "파월"). 직함은 두 표기에 함께 남는다.
-SPEAKER_ROLE_WORDS = ("의장", "총재", "이사", "장관", "위원", "대표", "사장", "CEO")
-
-
-_SOURCE_ID_RE = re.compile(r"(?:ev|market|macro|web)_[A-Za-z0-9_.\-]+")
 
 
 def hedge_stats(markdown: str) -> dict:
-    """유보 표현의 밀도와 한 표현의 쏠림. 둘 다 봐야 한다 —
-    총량이 적어도 한 표현만 스무 번 나오면 글이 같은 자리에서 계속 멈춘다."""
-    body = "".join(
-        str(row.get("body") or "")
-        for row in split_sections(visible_markdown(markdown))
-        if not any(name in str(row.get("heading") or "") for name in _HEDGE_EXEMPT_SECTIONS)
-    )
-    length = len(body)
-    counts = {phrase: body.count(phrase) for phrase in HEDGE_PHRASES}
-    counts = {phrase: count for phrase, count in counts.items() if count}
-    total = sum(counts.values())
-    top = max(counts.items(), key=lambda row: row[1], default=("", 0))
-    per_1000 = (total / length * 1000) if length else 0.0
-    return {
-        "chars": length,
-        "total": total,
-        "per1000": round(per_1000, 2),
-        "topPhrase": top[0],
-        "topCount": top[1],
-        "topPer1000": round(top[1] / length * 1000, 2) if length else 0.0,
-    }
+    """딥 리서치의 면제 섹션을 적용한 유보 통계."""
+    return _prose.hedge_stats(markdown, exempt=_HEDGE_EXEMPT_SECTIONS)
 
 
 def hedgiest_section(markdown: str) -> str:
     """유보 표현이 가장 몰린 섹션. 보수가 손댈 자리를 가리킨다."""
-    best, best_count = "", 0
-    for row in split_sections(visible_markdown(markdown)):
-        heading = str(row.get("heading") or "")
-        if any(name in heading for name in _HEDGE_EXEMPT_SECTIONS):
-            continue
-        body = str(row.get("body") or "")
-        count = sum(body.count(phrase) for phrase in HEDGE_PHRASES)
-        if count > best_count:
-            best, best_count = heading, count
-    return best
-
-
-def sections_citing(markdown: str, source_ids) -> dict:
-    """근거 ID별로 그것을 인용한 첫 섹션."""
-    wanted = {str(source_id) for source_id in source_ids or []}
-    out: dict = {}
-    for row in split_sections(str(markdown or "")):
-        found = set(_SOURCE_ID_RE.findall(str(row.get("body") or "")))
-        for source_id in wanted & found:
-            out.setdefault(source_id, str(row.get("heading") or ""))
-    return out
-
-
-def unattributed_speech(markdown: str, quote_sources) -> list[str]:
-    """인용한 발언 근거 중 본문이 화자를 밝히지 않은 것.
-
-    실측: 파월·월러 발언 4건을 찾아 원장에 올렸고 본문이 그 태그를 달았는데,
-    문장은 전부 "연준은 ~라고 설명했다"였고 이름은 0회였다. 누가 말했는지가 사라지면
-    그것은 발언이 아니라 기관 입장이다.
-    """
-    rows = [row for row in quote_sources or [] if isinstance(row, dict) and row.get("sourceId")]
-    if not rows:
-        return []
-    visible = visible_markdown(markdown)
-    tagged = set()
-    for match in re.finditer(r"<!--(.*?)-->", markdown or "", re.DOTALL):
-        tagged.update(_SOURCE_ID_RE.findall(match.group(1)))
-    missing = []
-    for row in rows:
-        source_id = str(row.get("sourceId") or "")
-        role = str(row.get("role") or "")
-        if source_id not in tagged or not role:
-            continue
-        if role not in visible:
-            missing.append(source_id)
-    return missing
+    return _prose.hedgiest_section(markdown, exempt=_HEDGE_EXEMPT_SECTIONS)
 
 
 def validate_deep_report(
@@ -337,4 +252,21 @@ def validate_deep_report(
     }
 
 
-__all__ = ["canonical_heading", "split_sections", "validate_deep_report"]
+# 이 모듈이 계약의 창구다. 공용 도구(`common/report_prose.py`)에서 온 이름도 여기서
+# 함께 내보내, 소비자가 어느 쪽에서 가져올지 헷갈리지 않게 한다.
+__all__ = [
+    "HEDGE_DENSITY_LIMIT",
+    "HEDGE_PHRASES",
+    "HEDGE_REPEAT_DENSITY",
+    "HEDGE_REPEAT_MIN",
+    "SPEAKER_ROLE_WORDS",
+    "canonical_heading",
+    "hedge_stats",
+    "hedgiest_section",
+    "question_keywords",
+    "sections_citing",
+    "split_sections",
+    "unanswered_questions",
+    "unattributed_speech",
+    "validate_deep_report",
+]

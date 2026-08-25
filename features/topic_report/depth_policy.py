@@ -1,19 +1,15 @@
 """Dynamic length and section-density policy for Topic Reports."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from features.common.report_prose import visible_character_count, visible_markdown
 from features.topic_report.topic_schema import (
     EXPECTED_SECTIONS_V2,
     REPORT_HEAD_SECTIONS,
     REPORT_TAIL_SECTIONS,
     body_sections,
 )
-
-
-# 태그 이름을 특정하지 않는다. 모델이 새 이름을 만들어 쓰면 분량 계산에 주석이 섞인다.
-_SOURCE_TAG = re.compile(r"<!--.*?-->", re.DOTALL)
 
 # 머리·꼬리의 분량 비중은 고정이고, 남은 몫을 본문 섹션이 나눠 갖는다.
 # 본문이 기본 3개일 때 예전 고정 가중치와 같은 값이 나오도록 총합을 맞춰 뒀다
@@ -26,13 +22,9 @@ _ORDINARY_TAIL_WEIGHTS = (9, 8, 7, 6, 4)
 _ORDINARY_BODY_WEIGHT = 40
 
 
-def visible_markdown(markdown: str) -> str:
-    text = str(markdown or "").replace("\r\n", "\n").replace("\r", "\n")
-    return _SOURCE_TAG.sub("", text).strip()
-
-
-def visible_character_count(markdown: str) -> int:
-    return len(visible_markdown(markdown))
+# `visible_markdown`·`visible_character_count`는 `features/common/report_prose.py`가
+# 소유한다. 기업분석도 같은 것을 쓰므로 기능 폴더에 두면 다른 기능이 이 모듈을
+# import하게 된다(§13). 여기서는 이름만 그대로 내보낸다.
 
 
 def _section_weights(sections: list[str], *, deep: bool) -> list[int]:
