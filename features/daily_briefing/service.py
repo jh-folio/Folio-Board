@@ -7,6 +7,7 @@ from features.common.canonical_report_io import safe_child_path
 from features.common.dataframe_ops import top_records
 from features.common.utils import normalize, kst_date, doc_brief_text
 from features.common.market_calendar import briefing_market_windows, doc_market_bucket, doc_analysis_priority
+from features.common.research_library.search.filters import is_press_release
 from features.daily_briefing.issue_selection import (
     canonical_publisher,
     diversify_ranked_documents,
@@ -52,6 +53,11 @@ from features.daily_briefing.selection import (
     derive_market_drivers,
     is_us_market_close_article,
     market_connection_score,
+)
+from features.daily_briefing.source_integrity import (
+    attach_source_ids,
+    reconcile_source_ledger,
+    source_manifest_prompt,
 )
 from features.llm_settings.client import (
     request_claude,
@@ -205,7 +211,7 @@ def is_news_document(doc):
     # 브리핑은 "그날 시장에서 이슈가 된 뉴스"를 교차 보도량으로 고른다. 기업이 스스로 낸
     # 보도자료는 보도 매체가 1곳뿐이라 이슈로 뜨지 않으면서 클러스터링만 흐리므로 제외한다.
     # 같은 문서는 워치리스트·기업분석 검색에서는 그대로 쓰인다.
-    if str(doc.get("sourceType") or doc.get("source_type") or "").strip() == "press_release":
+    if is_press_release(doc):
         return False
     rel = str(doc.get("path", "")).replace("\\", "/").lower()
     if rel.startswith("research-inbox/rss/"):
@@ -291,25 +297,30 @@ def markdown_has_sources(markdown):
 # 허용하지 않는다 — `\b[^\n]*$`로 두면 "## Sources of Uncertainty" 같은 진짜 분석
 # 섹션까지 참고자료로 오인해 Canonical 본문에서 잘라낸다.
 _SOURCE_HEADING_LOOSE_RE = re.compile(
-    r"(?im)^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$"
+    r"(?im)^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)"
+    r"\s*(?:[—-]\s*(?:미국장|한국장|유럽장|일본장))?\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$"
 )
 
 
 def strip_markdown_sources_section(markdown):
-    """본문에서 참고자료 섹션(다음 `##` 헤딩 전까지)을 떼어낸다. 뒤따르는 섹션은 남긴다."""
+    """본문의 모든 참고자료 섹션을 떼어내고 다른 섹션은 보존한다."""
     text = str(markdown or "")
-    match = _SOURCE_HEADING_LOOSE_RE.search(text)
-    if not match:
-        return text
-    rest = text[match.end():]
-    # 꼬리 탐색도 h3까지 본다 — h1·h2만 보면 `### 참고 자료` 뒤의 다른 h3 섹션까지
-    # 참고자료에 딸려 삭제된다.
-    next_heading = re.search(r"(?m)^#{1,3}\s", rest)
-    tail = rest[next_heading.start():] if next_heading else ""
-    head = text[:match.start()].rstrip()
-    # 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게 한다.
-    head = re.sub(r"(?:\n\s*---\s*)+$", "", head).rstrip()
-    return f"{head}\n\n{tail.lstrip()}".strip() if tail.strip() else head
+    while True:
+        match = _SOURCE_HEADING_LOOSE_RE.search(text)
+        if not match:
+            return text.strip()
+        rest = text[match.end():]
+        # 꼬리 탐색도 h3까지 본다 — h1·h2만 보면 `### 참고 자료` 뒤의 다른 h3 섹션까지
+        # 참고자료에 딸려 삭제된다.
+        next_heading = re.search(r"(?m)^#{1,3}\s", rest)
+        tail = rest[next_heading.start():] if next_heading else ""
+        head = text[:match.start()].rstrip()
+        # 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게 한다.
+        head = re.sub(r"(?:\n\s*---\s*)+$", "", head).rstrip()
+        reduced = f"{head}\n\n{tail.lstrip()}".strip() if tail.strip() else head
+        if reduced == text:
+            return text.strip()
+        text = reduced
 
 
 def export_markdown_with_sources(unit):
@@ -338,11 +349,13 @@ def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT, kind=DEFA
     단일 소유자다 — 본문에도 두면 모델이 쓴 목록과 코드가 붙인 목록이 겹쳐 두 번 보인다.
     일간은 기존 계약(본문 `## 참고자료` + 리더가 떼어내 패널로 표시)을 유지한다.
     """
-    markdown = str(markdown or "").strip()
+    # 참고자료는 코드가 단독 소유한다. 모델이 쓴 목록을 보존하면 실제 사용 출처와
+    # 저장 ledger가 갈리고, 변형 heading에서는 목록이 중복된다.
+    markdown = strip_markdown_sources_section(str(markdown or "").strip())
     if is_weekly(kind):
-        return strip_markdown_sources_section(markdown)
+        return markdown
     sources = source_refs(sources or [], limit=limit)
-    if not markdown or markdown_has_sources(markdown) or not sources:
+    if not markdown or not sources:
         return markdown
     return f"{markdown}\n\n---\n\n## 참고자료\n\n{source_lines(sources, limit=limit)}"
 
@@ -358,7 +371,7 @@ def source_refs(docs, limit=SOURCE_REF_LIMIT):
         rows.append(d)
         if len(rows) >= limit:
             break
-    return rows
+    return attach_source_ids(rows, limit=limit)
 
 
 _REF_TIER_RANK = {
@@ -1203,6 +1216,8 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
     hint_block = render_prompt_hints(quality_preflight)
     if hint_block:
         context = "\n\n".join([context, hint_block])
+    candidate_sources = source_refs(used_docs, limit=source_ref_limit(kind))
+    context = "\n\n".join([context, source_manifest_prompt(candidate_sources)])
     web_search = use_web_search_for_briefing() if web_search_override is None else bool(web_search_override)
     web_status = "web_search" if web_search else "local_only"
     try:
@@ -1215,7 +1230,12 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
             text, response_id, usage = request_openai(cfg, prompt, context, web_search=web_search, include_usage=True)
         if not text:
             return None, "empty_response"
-        text = reader_facing_briefing_markdown(strip_llm_citation_markers(text))
+        text, resolved_sources, generation_evidence, claim_ledger = reconcile_source_ledger(
+            strip_llm_citation_markers(text),
+            candidate_sources,
+            limit=source_ref_limit(kind),
+        )
+        text = reader_facing_briefing_markdown(text)
         if kind != WEEKLY:
             # 주간 제목은 세션 정규화를 태우지 않는다. 그 정규화가 H1을 세션일 제목으로
             # 다시 쓰므로, 태우면 구간이 사라지고 계약 검사가 바로 걸린다.
@@ -1230,7 +1250,9 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
             "markdown": text,
             "provider": cfg["provider"],
             "model": cfg["model"],
-            "usedDocs": used_docs,
+            "usedDocs": resolved_sources,
+            "generationEvidence": generation_evidence,
+            "claimLedger": claim_ledger,
             "responseId": response_id,
             "webSearch": web_search,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=max_tokens),
@@ -1376,7 +1398,40 @@ def _rule_checkpoints(market_drivers, leaders):
     return "\n".join(f"- {p}" for p in points[:6])
 
 
-def build_prompt_markdown(date, source_date, docs, groups, headlines, market_drivers=None, market_windows=None, market_snapshot=None, korea_market_data=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None):
+def _rule_leader_sections(market_label, leaders, leader_groups, company_reaction_note):
+    if not leaders:
+        return """## 3. 오늘의 기업 신호
+
+**한 줄 결론:** 직접 근거가 충분한 개별 주도 기업을 억지로 채우지 않습니다.
+
+· 기업별 직접 기사 근거 부족
+· 업종 또는 시장 단위 흐름을 우선
+· 다음 거래일 가격·수급 확인 필요
+
+오늘 자료만으로 별도 기업 섹션을 만들 만큼 직접 근거가 충분한 종목은 확인되지 않았습니다. 핵심 변수와 업종 흐름은 앞 절에서 다루고, 개별 기업 판단은 후속 기사와 가격·수급 반응을 기다립니다."""
+    sections = []
+    for index, leader in enumerate(leaders[:2]):
+        ordinal = "①" if index == 0 else "②"
+        number = 3 + index
+        comparison = "핵심 촉매와 섹터·밸류체인 파급" if index == 0 else "첫 번째 기업과 다른 촉매·전달 경로"
+        digest = group_digest(leader_groups[index]) if index < len(leader_groups) else "직접 근거 요약이 제한적입니다."
+        sections.append(f"""## {number}. {market_label}을 주도한 기업 {ordinal} — {leader}
+
+**한 줄 결론:** {leader}의 직접 근거와 고유한 전달 경로를 확인합니다.
+
+· 주가·수급 반응
+· {comparison}
+· 후속 확인 조건
+
+{digest}
+
+{leader}은 오늘 수집 자료에서 직접 확인된 기업 신호입니다. {company_reaction_note}
+
+**기업 {ordinal} 인사이트:** 단기 주가 반응보다 촉매가 이익 추정치와 투자자 포지셔닝을 실제로 바꾸는지가 핵심입니다.""")
+    return "\n\n".join(sections)
+
+
+def build_prompt_markdown(date, source_date, docs, groups, headlines, market_drivers=None, market_windows=None, market_snapshot=None, korea_market_data=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, leading_companies=None):
     market_windows = market_windows or briefing_market_windows(date)
     market_scope = normalize_market_scope(market_scope)
     briefing_type = normalize_briefing_type(briefing_type)
@@ -1399,7 +1454,7 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
         else f"Daily Market Briefing — {date.replace('-', '.')}"
     )
     weekend_mode = bool(market_windows.get("weekendOrHolidayNewsMode"))
-    leaders = choose_leaders(groups)
+    leaders = list(leading_companies)[:2] if leading_companies is not None else choose_leaders(groups)
     top_groups = groups[:4]
 
     # 시장 흐름 섹션 수치 앵커: 스냅샷이 있으면 실제 지수/자산가격 수치를 제시한다.
@@ -1483,6 +1538,7 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
         if weekend_mode
         else "관련 뉴스가 실적 기대, 밸류체인 파급력, 업종 내 상대강도 중 어디로 연결되는지 확인해야 합니다. 영향이 한 시장에만 머물렀다면 수급·정책·실적 중 어느 요인이 더 컸는지 구분해야 합니다."
     )
+    leader_sections = _rule_leader_sections(market_label, leaders, leader_groups, company_reaction_note)
     conclusion_character = (
         f"최근 흐름과 새 자료에서는 {market_subjects}가 시장을 설명하는 핵심 축이었습니다."
         if weekend_mode
@@ -1527,33 +1583,7 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
 
 {driver_insight}
 
-## 3. {market_label}을 주도한 기업 ① — {leaders[0]}
-
-**한 줄 결론:** {leaders[0]} 관련 반응이 섹터와 밸류체인으로 확산됐는지 확인합니다.
-
-· 주가·수급 반응
-· 핵심 촉매
-· 섹터·밸류체인 파급
-
-{group_digest(leader_groups[0])}
-
-{leaders[0]}은 오늘 수집 자료에서 시장의 반복된 관심을 설명하는 핵심 축으로 나타났습니다. {company_reaction_note}
-
-**기업 ① 인사이트:** {leaders[0]}을 볼 때 핵심은 단기 주가 반응보다 이 뉴스가 관련 업종의 이익 추정치와 투자자 포지셔닝을 바꾸는지입니다. 후속 기사, 거래대금, 동종 기업의 상대강도가 함께 따라오는지가 지속성 판단의 기준입니다.
-
-## 4. {market_label}을 주도한 기업 ② — {leaders[1]}
-
-**한 줄 결론:** {leaders[1]}이 첫 번째 기업과 같은 메시지인지 차별화를 보여주는지 판단합니다.
-
-· 주가·수급 반응
-· 첫 번째 기업과의 공통점 또는 차이
-· 후속 확인 조건
-
-{group_digest(leader_groups[1])}
-
-{leaders[1]}은 첫 번째 주도 기업과 같은 테마를 강화하거나, 반대로 시장 내부의 차별화를 보여주는 대상으로 볼 수 있습니다. {company_reaction_note}
-
-**기업 ② 인사이트:** {leaders[1]}은 오늘 시장이 한 방향으로만 움직이지 않았을 가능성을 보여줍니다. 첫 번째 기업과 같은 메시지를 준다면 테마 확산을, 다른 메시지를 준다면 시장 내부의 선별 장세를 의심해야 합니다.
+{leader_sections}
 
 ## 5. 일반 투자자 관점
 

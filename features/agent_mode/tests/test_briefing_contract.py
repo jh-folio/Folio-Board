@@ -37,7 +37,7 @@ def test_briefing_output_contract_matches_api_prompt_for_each_scope():
     assert both["minimumCharacters"] == 10000
     assert both["minimumOneLineConclusions"] == 14
     assert both["minimumMiddleDotBullets"] == 36
-    assert both["retryOnViolation"] == 1
+    assert both["retryOnViolation"] == 0
 
     us = briefing_output_contract("us")
     assert any("미국장 시장 흐름" in row for row in us["requiredSections"])

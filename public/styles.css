@@ -14689,8 +14689,9 @@ main.page {
   .topicrpt-plan-grid { grid-template-columns: 1fr; }
 }
 
-/* 좁은 화면 히트맵은 섹터부터 보여준다. 어디까지 들어왔고 어떻게 나가는지를
-   여기서 말한다 — Plotly 자체 pathbar는 18px짜리 빈 띠라 나갈 방법이 안 보였다. */
+/* 히트맵은 넓은 화면에서도 눌러서 들어간다(섹터 → 산업 → 종목). 어디까지 들어왔고
+   어떻게 나가는지를 여기서 말한다 — Plotly 자체 pathbar는 18px짜리 빈 띠라 나갈
+   방법이 안 보였다. */
 .briefing-heatmap-path {
   display: flex;
   align-items: center;

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from features.daily_briefing.concentration.history import canonical_company_id
+
 
 _CONCEPTS = {
     "ai_investment": ("ai", "데이터센터", "인공지능"),
@@ -53,6 +55,8 @@ def build_signature(group: dict, index: int = 0) -> dict:
     candidate_key = ticker or re.sub(r"[^0-9A-Za-z가-힣]+", "-", company).strip("-").lower() or str(index)
     return {
         "candidateId": f"kr-company-{candidate_key}",
+        "canonicalId": canonical_company_id(company, ticker),
+        "ticker": ticker,
         "subject": company,
         "sector": str((group.get("sectors") or [group.get("sector") or ""])[0] or ""),
         "catalysts": _keys(text, _CONCEPTS),

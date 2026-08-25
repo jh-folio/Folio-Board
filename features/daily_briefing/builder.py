@@ -24,6 +24,7 @@ from features.daily_briefing.limits import (
     merged_source_limit,
     source_ref_limit,
 )
+from features.daily_briefing.claim_integrity import enforce_claim_integrity
 from features.daily_briefing.source_window import scope_session_documents
 from features.daily_briefing.weekly import (
     build_weekly_rules_markdown,
@@ -40,7 +41,7 @@ from features.common.quality_generation.schema import normalize_quality_mode
 from features.common.research_library.indexing.service import IMPACT_TERMS, build_index, load_index
 from features.common.research_library.search.service import group_docs
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
-from features.common.research_schema.data_gaps import data_gaps_from_messages
+from features.common.research_schema.data_gaps import data_gap_applies_to, data_gaps_from_messages
 from features.common.utils import kst_date, now_iso, read_json, write_json
 from features.daily_briefing.issue_selection import (
     build_issue_coverage,
@@ -267,7 +268,9 @@ def _scope_result(
     ref_limit = source_ref_limit(kind)
     scoped_docs = documents_for_scope(docs, scope)
     groups, drivers = _scope_groups_and_drivers(scoped_docs, market_windows, scope)
-    groups, concentration_control = prepare_concentration(groups, market_scope=scope, kind=kind)
+    groups, concentration_control = prepare_concentration(
+        groups, market_scope=scope, kind=kind, report_date=date, reports_dir=BRIEFINGS_DIR,
+    )
     # shadow는 관측 전용이다 — 프롬프트 권위 주입은 active만(agent 경로와 같은 계약).
     concentration_context = (
         render_concentration_context(concentration_control)
@@ -322,7 +325,9 @@ def _scope_result(
             record_call(concentration_control, "generation")
     if llm_result:
         sources = source_refs(llm_result.get("usedDocs", []), limit=ref_limit)
-        markdown = append_briefing_sources(llm_result["markdown"], sources, limit=ref_limit, kind=kind)
+        markdown = llm_result["markdown"]
+        generation_evidence = deepcopy(llm_result.get("generationEvidence") or {})
+        claim_ledger = deepcopy(llm_result.get("claimLedger") or {})
         generation = {
             "mode": "llm", "status": llm_status, "provider": llm_result.get("provider", ""),
             "model": llm_result.get("model", ""), "responseId": llm_result.get("responseId", ""),
@@ -346,6 +351,17 @@ def _scope_result(
                 memory_context=render_market_memory_context(MARKET_MEMORY_DB_PATH),
             )
         else:
+            decision = concentration_control.get("leaderDecision") or {}
+            by_candidate = {
+                row.get("candidateId"): row for row in concentration_control.get("signatures") or []
+            }
+            qualified_leaders = None
+            if concentration_control.get("mode") == "active":
+                qualified_leaders = [
+                    str(by_candidate[candidate].get("subject") or "")
+                    for candidate in decision.get("finalPair") or []
+                    if candidate in by_candidate and str(by_candidate[candidate].get("subject") or "")
+                ][:2]
             markdown = build_prompt_markdown(
                 date,
                 source_date,
@@ -360,11 +376,23 @@ def _scope_result(
                 briefing_type=briefing_type,
                 issue_coverage=issues,
                 session_modes=session_modes,
+                leading_companies=qualified_leaders,
             )
         generation = {
             "mode": "rules", "status": llm_status, "provider": selected_llm_config().get("provider", ""),
             "model": "", "sourceCount": len(sources),
         }
+        generation_evidence = {
+            "version": 1,
+            "status": "rules",
+            "candidateSourceCount": len(sources),
+            "usedSourceCount": len(sources),
+            "externalSourceCount": 0,
+            "errors": [],
+        }
+        claim_ledger = {"version": 1, "claims": [], "validation": {"status": "not_applicable", "reasonCodes": []}}
+    markdown, claim_ledger = enforce_claim_integrity(markdown, sources, claim_ledger)
+    markdown = append_briefing_sources(markdown, sources, limit=ref_limit, kind=kind)
     if kind != "weekly":
         # 주간 제목은 세션 제목이 아니다. 정규화를 태우면 구간이 세션일로 바뀐다.
         markdown = normalize_briefing_markdown_titles(
@@ -394,6 +422,8 @@ def _scope_result(
         "groups": groups,
         "documents": scoped_docs,
         "concentrationControl": concentration_control,
+        "generationEvidence": generation_evidence,
+        "claimLedger": claim_ledger,
     }
 
 
@@ -466,6 +496,10 @@ def _single_market_briefing(briefing, scope, checkpoints=None):
     scoped["issueCoverage"] = [
         deepcopy(item) for item in (briefing.get("issueCoverage") or [])
         if str(item.get("market") or "").lower() in {scope, "both", ""}
+    ]
+    scoped["dataGaps"] = [
+        deepcopy(item) for item in (briefing.get("dataGaps") or [])
+        if data_gap_applies_to(item, scope)
     ]
     control = deepcopy(briefing.get("concentrationControl") or {})
     scoped["concentrationControl"] = {
@@ -649,32 +683,37 @@ def build_briefing(
     # 붙어서, 체크포인트가 0건인 보고서가 아무 표시 없이 나갔다.
     for scope in requested_scopes:
         if not scope_checkpoints[scope]:
-            gaps.append(f"{MARKET_LABELS.get(scope, scope)}: 체크포인트 섹션을 찾지 못했습니다.")
+            gaps.append({"market": scope, "category": "checkpoint", "message": f"{MARKET_LABELS.get(scope, scope)}: 체크포인트 섹션을 찾지 못했습니다."})
     if not checkpoints:
-        gaps.append("브리핑에서 구조화 가능한 체크포인트 섹션을 찾지 못했습니다.")
+        gaps.append({"market": "both", "category": "checkpoint", "message": "브리핑에서 구조화 가능한 체크포인트 섹션을 찾지 못했습니다."})
     # 주간은 자기 창의 자료 수를 본다. 일간 세션 풀을 보면 그 주에 한 건도 없어도
     # 세션 풀이 차 있다는 이유로 "자료가 없습니다"가 붙지 않는다.
     if not (weekly_pool if weekly_pool is not None else docs):
-        gaps.append("브리핑 입력 뉴스 자료가 없습니다.")
+        gaps.append({"market": "both", "message": "브리핑 입력 뉴스 자료가 없습니다."})
     if not (market_snapshot or {}).get("ok"):
-        gaps.append("미국/글로벌 시장 스냅샷을 불러오지 못했습니다.")
+        gaps.append({"market": "both", "category": "market_data", "message": "미국/글로벌 시장 스냅샷을 불러오지 못했습니다."})
     if not (korea_market_data or {}).get("ok"):
-        gaps.append("한국장 시장 수치를 불러오지 못했습니다.")
+        gaps.append({"market": "kr", "category": "market_data", "message": "한국장 시장 수치를 불러오지 못했습니다."})
     for issue in issue_coverage:
         if issue.get("marketImpactStatus") == "unavailable":
-            gaps.append(f"{issue.get('market', '')} issue {issue.get('issueId', '')}: 시장 반응 데이터가 없습니다.")
+            gaps.append({"market": str(issue.get("market") or "").lower(), "category": "market_data", "message": f"{issue.get('market', '')} issue {issue.get('issueId', '')}: 시장 반응 데이터가 없습니다."})
     # 시장이 통째로 빠진 것은 시각자료 결함보다 큰 공백이라 먼저 적는다.
-    gaps.extend(f"시장 생성: {warning}" for warning in scope_warnings)
-    gaps.extend(f"시각자료: {warning}" for warning in visual_result.get("warnings", []))
+    gaps.extend({"market": "both", "message": f"시장 생성: {warning}"} for warning in scope_warnings)
+    gaps.extend({"market": "both", "category": "market_data", "message": f"시각자료: {warning}"} for warning in visual_result.get("warnings", []))
     for snapshot in visual_result.get("visualSnapshots", []):
-        gaps.extend(f"시각자료 {snapshot.get('id', '')}: {warning}" for warning in snapshot.get("warnings", []))
+        snapshot_market = str(snapshot.get("market") or "both").lower()
+        gaps.extend({"market": snapshot_market, "category": "market_data", "message": f"시각자료 {snapshot.get('id', '')}: {warning}"} for warning in snapshot.get("warnings", []))
         if (snapshot.get("coverage") or {}).get("status") == "partial":
-            gaps.append(f"시각자료 {snapshot.get('id', '')}: 일부 종목만 수집됐습니다.")
+            gaps.append({"market": snapshot_market, "category": "market_data", "message": f"시각자료 {snapshot.get('id', '')}: 일부 종목만 수집됐습니다."})
         if snapshot.get("freshness") in {"stale", "unavailable"}:
-            gaps.append(
-                f"시각자료 {snapshot.get('id', '')}: {snapshot.get('freshness')} "
-                f"(session {snapshot.get('marketSessionDate', '')}, asOf {snapshot.get('asOf', '')})"
-            )
+            gaps.append({
+                "market": snapshot_market,
+                "category": "market_data",
+                "message": (
+                    f"시각자료 {snapshot.get('id', '')}: {snapshot.get('freshness')} "
+                    f"(session {snapshot.get('marketSessionDate', '')}, asOf {snapshot.get('asOf', '')})"
+                ),
+            })
     data_gaps = data_gaps_from_messages(gaps, artifact_type="briefing", artifact_id=date)
     generations = [results[scope]["generation"] for scope in requested_scopes]
     generation = {
@@ -695,6 +734,7 @@ def build_briefing(
     raw_sections = {
         key: {field: value for field, value in result.items() if field in {
             "markdown", "sessionMode", "marketSessionDate", "sources", "generation", "status",
+            "generationEvidence", "claimLedger",
         }}
         for key, result in results.items()
     }
@@ -752,6 +792,20 @@ def build_briefing(
                 if results[scope].get("concentrationControl")
             },
         },
+        "generationEvidence": {
+            "version": 1,
+            "byMarket": {
+                scope: deepcopy(results[scope].get("generationEvidence") or {})
+                for scope in requested_scopes
+            },
+        },
+        "claimLedger": {
+            "version": 1,
+            "byMarket": {
+                scope: deepcopy(results[scope].get("claimLedger") or {})
+                for scope in requested_scopes
+            },
+        },
         "visualRecommendations": visual_result.get("visualRecommendations", []),
         "visualSnapshots": visual_result.get("visualSnapshots", []),
         "checkpoints": checkpoints,
@@ -769,7 +823,9 @@ def build_briefing(
         },
     }
     try:
-        briefing = apply_quality_loop("briefing", briefing, mode=quality_mode, preflight=quality_preflight)
+        postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
+        briefing = apply_quality_loop("briefing", briefing, mode=quality_mode, preflight=postflight)
+        briefing.setdefault("qualityGeneration", {})["generationPreflight"] = quality_preflight
     except Exception:
         briefing["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}
 

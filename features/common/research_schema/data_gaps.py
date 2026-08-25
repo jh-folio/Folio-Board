@@ -33,6 +33,7 @@ def normalize_data_gap(
     category: str = "evidence",
     severity: str = "medium",
     source_section: str = "",
+    market: str = "",
 ) -> dict:
     src = item if isinstance(item, dict) else {"message": item}
     artifact_type = normalize_artifact_type(src.get("artifactType") or src.get("artifact_type") or artifact_type)
@@ -42,7 +43,10 @@ def normalize_data_gap(
     severity = normalize_data_gap_severity(src.get("severity") or severity)
     suggested = _clean(src.get("suggestedAction") or src.get("suggested_action") or _SUGGESTED_ACTIONS.get(category, _SUGGESTED_ACTIONS["evidence"]))
     source_section = _clean(src.get("sourceSection") or src.get("source_section") or source_section, 120)
-    gid = str(src.get("id") or "").strip() or _stable_id(artifact_type, artifact_id, category, message)
+    market = str(src.get("market") or market or "").strip().lower()
+    if market not in {"", "us", "kr", "jp", "europe", "both", "all", "multi"}:
+        market = ""
+    gid = str(src.get("id") or "").strip() or _stable_id(artifact_type, artifact_id, category, market, message)
     return {
         "id": gid,
         "artifactType": artifact_type,
@@ -52,6 +56,7 @@ def normalize_data_gap(
         "severity": severity,
         "suggestedAction": suggested,
         "sourceSection": source_section,
+        "market": market,
     }
 
 
@@ -63,6 +68,7 @@ def data_gaps_from_messages(
     category: str = "evidence",
     severity: str = "medium",
     source_section: str = "",
+    market: str = "",
     limit: int = 12,
 ) -> list[dict]:
     rows: list[dict] = []
@@ -76,6 +82,7 @@ def data_gaps_from_messages(
             category=category,
             severity=severity,
             source_section=source_section,
+            market=market,
         )
         if not gap["message"] or gap["message"].lower() in seen:
             continue
@@ -84,6 +91,15 @@ def data_gaps_from_messages(
         if len(rows) >= limit:
             break
     return rows
+
+
+def data_gap_applies_to(item: dict, market: str) -> bool:
+    """Whether a structured gap belongs in a single-market projection."""
+    if not isinstance(item, dict):
+        return True
+    item_market = str(item.get("market") or "").strip().lower()
+    target = str(market or "").strip().lower()
+    return not item_market or item_market in {target, "both", "all", "multi"}
 
 
 def data_gap_rows(value) -> list[dict]:

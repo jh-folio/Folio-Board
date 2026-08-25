@@ -314,13 +314,104 @@
     return slots;
   }
 
+  /** 방향은 색상, 등락 크기는 휘도가 말한다.
+   *
+   *  타일의 3분의 2는 라벨을 받지 못해 색이 정보를 다 져야 한다. 예전 5단은
+   *  보합 회색과 소폭 상승 초록의 휘도비가 1.06:1이라 사실상 같은 밝기였고,
+   *  흰 글자 대비가 #168a56 4.37:1 · #b65b67 4.49:1로 WCAG AA(4.5:1)에 못 미쳤다.
+   *  지금 단계는 전부 5.26:1 이상이고 이웃 단계끼리 1.23:1 이상 벌어진다.
+   *
+   *  적록색약에서 같은 크기의 상승·하락은 여전히 구분되지 않는다(1.13:1).
+   *  빨강/초록을 쓰는 한 색으로는 못 고치며, 방향은 라벨의 부호와 hover가 받는다.
+   */
+  // 회색은 **표시상 0.00%이거나 등락을 모르는 칸**만이다. 예전에는 |등락| < 0.5%를
+  // 통째로 회색으로 칠했는데, 그러면 전체 타일의 26%가 회색이 되고 그중 실제로
+  // 0.00%인 것은 US 129개 중 1개뿐이었다 — 움직인 종목이 안 움직인 것처럼 보인다.
+  const HEATMAP_FLAT_EPSILON = 0.005;
+  const HEATMAP_BANDS = [
+    { max: -3, color: "#6d1823" },
+    { max: -1.5, color: "#882e3a" },
+    { max: -0.5, color: "#904852" },
+    { max: -HEATMAP_FLAT_EPSILON, color: "#875960" },
+    { max: HEATMAP_FLAT_EPSILON, color: "#676c78" },
+    { max: 0.5, color: "#486d5f" },
+    { max: 1.5, color: "#326853" },
+    { max: 3, color: "#195840" },
+  ];
+  const HEATMAP_TOP_BAND = "#05412a";
+
   function heatmapColor(change) {
     const value = finite(change) || 0;
-    if (value >= 2) return "#168a56";
-    if (value > 0) return "#34785f";
-    if (value <= -2) return "#a92d42";
-    if (value < 0) return "#b65b67";
-    return "#667085";
+    for (const band of HEATMAP_BANDS) {
+      // 음수 쪽은 경계값을 아래 단계에 넣는다(-3%는 `-3% 이하`다).
+      if (band.max < 0 ? value <= band.max : value < band.max) return band.color;
+    }
+    return HEATMAP_TOP_BAND;
+  }
+
+  // KR 유니버스는 GICS 영문 섹터를 한글로 옮겨 저장한다
+  // (kospi200_universe.py::GICS_SECTOR_KO). 지도에서만 영문으로 되돌린다 —
+  // 저장된 시각자료는 불변이라 여기서 고쳐야 이미 만들어진 브리핑도 함께 영문이 된다.
+  // **되돌리기만 하고 다시 분류하지 않는다.** KRX식 그룹(IT·Heavy Industries·
+  // Constructions·Energy & Chemicals·Steels & Materials)은 GICS와 체계가 달라,
+  // 묶으면 종목이 엉뚱한 섹터로 간다(석유화학은 Energy와 Materials로 갈린다).
+  const HEATMAP_GROUP_EN = {
+    "정보기술": "Information Technology",
+    "금융": "Financials",
+    "헬스케어": "Health Care",
+    "경기소비재": "Consumer Discretionary",
+    "커뮤니케이션서비스": "Communication Services",
+    "산업재": "Industrials",
+    "필수소비재": "Consumer Staples",
+    "소재": "Materials",
+    "에너지": "Energy",
+    "유틸리티": "Utilities",
+    "부동산": "Real Estate",
+    "건설": "Constructions",
+    "중공업": "Heavy Industries",
+    "에너지화학": "Energy & Chemicals",
+    "철강소재": "Steels & Materials",
+  };
+
+  function heatmapGroupName(value) {
+    const name = String(value || "Other").trim() || "Other";
+    return HEATMAP_GROUP_EN[name] || name;
+  }
+
+  // 법인격 꼬리와 거래소 접미사는 타일에서 자리만 차지한다.
+  const HEATMAP_LEGAL_SUFFIX = /(,?\s+(Inc|Incorporated|Corporation|Corp|Company|Co|Ltd|Limited|PLC|N\.V|NV|S\.A|SA|AG|SE|Holdings?|Group)\.?)+$/i;
+  const HEATMAP_EXCHANGE_SUFFIX = /\.(L|AS|PA|DE|MI|MC|SW|BR|HE|ST|CO|OL|VI|LS|IR|T|KS|KQ)$/;
+
+  // 라틴 문자로 적힌 이름인가. 일본 행의 `label`은 현지 표기(`トヨタ自動車`)이고
+  // `englishName`에 영문이 들어 있다. 유럽·한국은 반대로 `label`이 이미 짧은 영문
+  // 표시명이라(`ASML Holding`) 그쪽을 먼저 본다 — `englishName`은 법인 전체 이름이다.
+  const LATIN_NAME = /^[ -~À-ɏ‐-’\s]+$/;
+
+  function shortCompanyName(value) {
+    return String(value || "")
+      .replace(HEATMAP_LEGAL_SUFFIX, "")
+      // `Mitsui & Co., Ltd.`에서 법인격을 떼면 `Mitsui &`가 남는다. 접속 기호로
+      // 끝나는 이름은 잘린 것처럼 읽히므로 함께 정리한다.
+      .replace(/[\s,]*[&＆]\s*$/, "")
+      .replace(/[\s,]+$/, "")
+      .trim();
+  }
+
+  /** 타일에 쓸 종목 이름.
+   *
+   *  숫자 코드(`005930`·`8306.T`)와 거래소 지역 코드(`MUV2.DE`·`ALV.DE`)는 사람이
+   *  읽는 손잡이가 아니다. 접미사 없는 미국식 티커(`NVDA`)만 그 자체로 읽힌다.
+   *  한국 6자리는 예전부터 회사명으로 바꿔 왔는데 일본·유럽은 코드가 그대로
+   *  나오고 있었다 — 저장된 행에 읽을 수 있는 이름이 전부 들어 있는데도.
+   *
+   *  전체 이름은 hover가 계속 들고 있다.
+   */
+  function heatmapTickerLabel(row) {
+    const ticker = String(row.ticker || "");
+    if (ticker && !/^\d/.test(ticker) && !HEATMAP_EXCHANGE_SUFFIX.test(ticker)) return ticker;
+    const label = String(row.label || "");
+    const preferred = label && LATIN_NAME.test(label) ? label : (row.englishName || label || ticker);
+    return shortCompanyName(preferred) || ticker.replace(HEATMAP_EXCHANGE_SUFFIX, "") || "—";
   }
 
   function abbreviateHeatmapLabel(label) {
@@ -364,17 +455,25 @@
     return Math.max(520, Math.round(measured));
   }
 
-  function heatmapNodes(inputRows, compact = false) {
+  /** 히트맵 계층을 만든다.
+   *
+   *  `options.flat`이면 산업 층을 접고 섹터 바로 아래에 종목을 붙인다. 뿌리
+   *  화면이 그것을 쓴다 — 산업 127개가 각각 머리띠와 여백을 가져가면서 종목이
+   *  쓸 자리를 먹는데, 정작 그 머리띠는 실측에서 13%(127개 중 16개)만 읽혔다.
+   *  섹터를 누르면 계층이 있는 쪽으로 바꿔 그 안에서 산업을 다시 연다.
+   */
+  function heatmapNodes(inputRows, options) {
+    const flat = Boolean(options && options.flat);
     const rows = (inputRows || []).filter((row) => {
       const value = finite(row.marketCap ?? row.weight);
       return value !== null && value > 0;
     });
-    const result = { ids: [], labels: [], parents: [], values: [], colors: [], text: [], customdata: [], textsizes: [] };
-    const sectors = [...new Set(rows.map((row) => row.sector || "Other"))];
+    const result = { ids: [], labels: [], parents: [], values: [], colors: [], customdata: [], changes: [] };
+    const capOf = (row) => finite(row.marketCap ?? row.weight) || 0;
     const weightedChange = (items) => {
       const usable = items.filter((row) => finite(row.changePct) !== null);
-      const total = usable.reduce((sum, row) => sum + finite(row.marketCap ?? row.weight), 0);
-      return total ? usable.reduce((sum, row) => sum + finite(row.changePct) * finite(row.marketCap ?? row.weight), 0) / total : 0;
+      const total = usable.reduce((sum, row) => sum + capOf(row), 0);
+      return total ? usable.reduce((sum, row) => sum + finite(row.changePct) * capOf(row), 0) / total : 0;
     };
     const normalizedGroupName = (value) => String(value || "Other").trim() || "Other";
     const shouldSkipIndustryLayer = (sector, industry) => {
@@ -382,33 +481,35 @@
       const industryName = normalizedGroupName(industry).toLowerCase();
       return !industryName || industryName === "other" || industryName === sectorName;
     };
-    const addTicker = (row, parentId) => {
-      // KR tiles use 6-digit codes as the ticker; show the company name instead
-      // (a code like "005930" is not recognizable, unlike a US ticker like AAPL).
-      const isKrCode = /^\d{6}$/.test(String(row.ticker || ""));
-      const display = isKrCode && row.label ? String(row.label) : String(row.ticker || row.label || "—");
-      result.ids.push(`ticker:${row.ticker}`);
-      result.labels.push(display);
+    const addGroup = (groupId, rawName, parentId, items) => {
+      const change = weightedChange(items);
+      const name = heatmapGroupName(rawName);
+      result.ids.push(groupId);
+      result.labels.push(abbreviateHeatmapLabel(name));
       result.parents.push(parentId);
-      result.values.push(finite(row.marketCap ?? row.weight));
-      result.colors.push(heatmapColor(row.changePct));
-      const ticker = escapeHtml(display);
-      const change = finite(row.changePct) === null ? "—" : `${finite(row.changePct) >= 0 ? "+" : ""}${finite(row.changePct).toFixed(2)}%`;
-      result.text.push(`<b>${ticker}</b><br><b>${change}</b>`);
-      result.customdata.push([row.label || row.ticker, row.changePct, row.close, row.asOf]);
+      result.values.push(items.reduce((sum, row) => sum + capOf(row), 0));
+      result.colors.push(heatmapColor(change));
+      result.customdata.push([name, change, null, ""]);
+      result.changes.push(change);
     };
+    const addTicker = (row, parentId) => {
+      result.ids.push(`ticker:${row.ticker}`);
+      result.labels.push(heatmapTickerLabel(row));
+      result.parents.push(parentId);
+      result.values.push(capOf(row));
+      result.colors.push(heatmapColor(row.changePct));
+      result.customdata.push([row.label || row.ticker, row.changePct, row.close, row.asOf]);
+      result.changes.push(finite(row.changePct));
+    };
+    const sectors = [...new Set(rows.map((row) => row.sector || "Other"))];
     for (const sector of sectors) {
       const sectorRows = rows.filter((row) => (row.sector || "Other") === sector);
       const sectorId = `sector:${sector}`;
-      const sectorValue = sectorRows.reduce((sum, row) => sum + finite(row.marketCap ?? row.weight), 0);
-      result.ids.push(sectorId);
-      const sectorLabel = abbreviateHeatmapLabel(sector);
-      result.labels.push(sectorLabel);
-      result.parents.push("");
-      result.values.push(sectorValue);
-      result.colors.push(heatmapColor(weightedChange(sectorRows)));
-      result.text.push(`<b>${escapeHtml(sectorLabel)}</b>`);
-      result.customdata.push([sector, weightedChange(sectorRows), null, ""]);
+      addGroup(sectorId, sector, "", sectorRows);
+      if (flat) {
+        for (const row of sectorRows) addTicker(row, sectorId);
+        continue;
+      }
       const industries = [...new Set(sectorRows.map((row) => row.industry || "Other"))];
       for (const industry of industries) {
         const industryRows = sectorRows.filter((row) => (row.industry || "Other") === industry);
@@ -417,45 +518,13 @@
           continue;
         }
         const industryId = `industry:${sector}:${industry}`;
-        const industryValue = industryRows.reduce((sum, row) => sum + finite(row.marketCap ?? row.weight), 0);
-        result.ids.push(industryId);
-        const industryLabel = abbreviateHeatmapLabel(industry);
-        result.labels.push(industryLabel);
-        result.parents.push(sectorId);
-        result.values.push(industryValue);
-        result.colors.push(heatmapColor(weightedChange(industryRows)));
-        result.text.push(`<b>${escapeHtml(industryLabel)}</b>`);
-        result.customdata.push([industry, weightedChange(industryRows), null, ""]);
+        addGroup(industryId, industry, sectorId, industryRows);
         for (const row of industryRows) addTicker(row, industryId);
       }
     }
-    result.textsizes = heatmapTextSizes(result.ids, result.values, compact);
-    // Apply the per-tile size via inline <span> markup. Plotly 2.35.2's treemap
-    // fails to lay out (blank tiles) when textfont.size is passed as an array, so
-    // we embed the finviz-style variable size into the text itself instead.
-    result.text = result.text.map((txt, index) => {
-      const size = result.textsizes[index];
-      const id = result.ids[index];
-      // #1: tiles whose label would be too small to read just stay blank — cleaner map.
-      const minimumSize = id.startsWith("ticker:") ? HEATMAP_MIN_TICKER_LABEL_PX : HEATMAP_MIN_GROUP_LABEL_PX;
-      if (size < minimumSize) return "";
-      if (id.startsWith("ticker:")) {
-        // #2: render ticker and change on two lines at different sizes so they never
-        // overlap on large tiles (a single oversized span made the lines collide).
-        const ticker = escapeHtml(result.labels[index] || "—");
-        const pct = result.customdata[index] ? finite(result.customdata[index][1]) : null;
-        const change = pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
-        const changeSize = Math.max(8, Math.round(size * 0.6));
-        const changeLine = change ? `<br><span style="font-size:${changeSize}px">${escapeHtml(change)}</span>` : "";
-        return `<span style="font-size:${size}px"><b>${ticker}</b></span>${changeLine}`;
-      }
-      return `<span style="font-size:${size}px">${txt}</span>`;
-    });
     return result;
   }
 
-  const HEATMAP_MIN_TICKER_LABEL_PX = 9;
-  const HEATMAP_MIN_GROUP_LABEL_PX = 6;
   // 좁은 화면에서는 종목까지 한 번에 그리지 않는다. 375px 휴대폰에서 재보면
   // 253x620 안에 타일 637개가 들어가고 그중 587개(92%)가 라벨을 담을 수 없는
   // 크기다. 색만 남고 무엇을 보는지 알 수 없어 지도가 되지 않는다.
@@ -466,54 +535,235 @@
     return width !== null && width > 0 && width < HEATMAP_COMPACT_MAX_WIDTH;
   }
 
-  // finviz-style sizing: a tile's font scales with the square root of its area
-  // (market cap) so large caps render a big, readable ticker while small caps
-  // still surface a small ticker instead of being hidden.
-  function heatmapTextSizes(ids, values, compact = false) {
-    const leafMax = Math.max(1, ...ids.map((id, index) => (id.startsWith("ticker:") ? finite(values[index]) || 0 : 0)));
-    const sectorMax = Math.max(1, ...ids.map((id, index) => (id.startsWith("sector:") ? finite(values[index]) || 0 : 0)));
-    return ids.map((id, index) => {
-      const value = Math.max(0, finite(values[index]) || 0);
-      if (id.startsWith("ticker:")) return Math.round(7 + 21 * Math.sqrt(value / leafMax));
-      // 섹터는 평소 7~8px이다. 종목 위에 얹히는 이름표라 작아도 됐지만, 좁은
-      // 화면에서는 섹터가 처음 보이는 층이라 그 크기로는 읽히지 않는다.
-      if (id.startsWith("sector:")) {
-        return compact
-          ? Math.round(12 + 8 * Math.sqrt(value / sectorMax))
-          : Math.round(7 + 1 * Math.sqrt(value / sectorMax));
+  const HEATMAP_FONT_FAMILY = 'Inter, "IBM Plex Sans", SUIT, sans-serif';
+  // 트레이스 기본 글꼴. Plotly는 줄 간격(dy)을 span 크기가 아니라 **이 값**의 약
+  // 1.3배로 잡는다. 줄바꿈이 들어가는지 계산할 때 그 사실을 반영해야 하고,
+  // 겹침 없이 쓸 수 있는 최대 크기도 여기서 나온다 — 이름+등락률 두 줄의 상한은
+  // 11px에서 16px, 12px에서 18px, **13px에서 20px**이다. 상한을 올리려면 이 값을
+  // 올려야 하지만 두 줄 라벨의 세로 비용도 같이 오른다(14.3px → 16.9px).
+  const HEATMAP_BASE_FONT_PX = 13;
+  const HEATMAP_LINE_STEP_PX = HEATMAP_BASE_FONT_PX * 1.3;
+  const HEATMAP_MAX_LABEL_PX = 20;
+  // 하한 아래는 비운다. 지금 방식에서는 정해진 크기가 곧 그려지는 크기라
+  // (Plotly가 줄이지 않는다) 이 값이 곧 화면에 나오는 가장 작은 글자다.
+  const HEATMAP_MIN_LABEL_PX = 6;
+  const HEATMAP_LABEL_PAD_PX = 3;
+  // 칸 크기에 글자 크기가 따라붙는 정도. 완전 비례가 아니라 면적의 제곱근에
+  // 완만하게 따라간다(면적을 그대로 쓰면 큰 칸만 남고 작은 칸은 전부 하한이 된다).
+  const HEATMAP_SIZE_PER_ROOT_AREA = 0.105;
+
+  /** 이 칸이 쓸 수 있는 최대 글자 크기.
+   *
+   *  크기를 "들어가기만 하면 최대"로 두면 **글자 길이가 크기를 정한다** — 작은
+   *  칸이라도 티커가 짧으면(`MU`) 큰 칸과 같은 크기를 받아 칸에 비해 글자가 크다.
+   *  대략적인 눈금: 250×160 → 20px(상한), 130×110 → 18px, 80×70 → 13px,
+   *  60×45 → 11px, 35×28 → 9px, 25×20 → 8px, 15×12 → 7px, 10×8 → 6px(하한).
+   */
+  function heatmapSizeCeiling(width, height) {
+    const area = Math.max(0, width) * Math.max(0, height);
+    if (!area) return HEATMAP_MIN_LABEL_PX;
+    const scaled = HEATMAP_MIN_LABEL_PX + HEATMAP_SIZE_PER_ROOT_AREA * Math.sqrt(area);
+    return Math.max(HEATMAP_MIN_LABEL_PX, Math.min(HEATMAP_MAX_LABEL_PX, Math.round(scaled)));
+  }
+  // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
+  const HEATMAP_MAX_LABEL_LINES = 2;
+  // 글자가 baseline 위아래로 차지하는 몫. 실측으로 렌더된 줄 상자가 글꼴 크기의
+  // 약 1.2배였다(30px → 36px, 19px → 23px).
+  const HEATMAP_ASCENT_RATIO = 0.95;
+  const HEATMAP_DESCENT_RATIO = 0.25;
+
+  /** 위아래 두 줄이 겹치지 않는가.
+   *
+   *  Plotly는 줄 간격을 `dy="1.3em"`로 주는데 그 `em`은 span 크기가 아니라
+   *  **`<text>`의 기본 글꼴**(HEATMAP_BASE_FONT_PX) 기준이다. 간격이 14.3px로
+   *  고정이라 첫 줄을 30px로 키우면 아랫줄이 그 위로 올라온다 — 실측에서 큰 타일의
+   *  종목명과 등락률이 36px 높이만큼 통째로 겹쳤다. 그래서 줄이 둘 이상이면
+   *  **간격이 허락하는 크기까지만** 키운다.
+   */
+  const linesClear = (upper, lower) =>
+    upper * HEATMAP_DESCENT_RATIO + lower * HEATMAP_ASCENT_RATIO <= HEATMAP_LINE_STEP_PX;
+
+  /** 어절 경계로만 줄을 나눈다. 한 줄도 폭을 넘으면 실패로 돌려준다. */
+  function wrapLabelLines(text, size, width, measure) {
+    const words = String(text).split(/\s+/).filter(Boolean);
+    const lines = [];
+    let current = "";
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (!current || measure(candidate, size, true) <= width) current = candidate;
+      else {
+        lines.push(current);
+        current = word;
       }
-      return 6;
+    }
+    if (current) lines.push(current);
+    if (!lines.length || lines.length > HEATMAP_MAX_LABEL_LINES) return null;
+    return lines.every((line) => measure(line, size, true) <= width) ? lines : null;
+  }
+
+  /** 이 타일에 실제로 들어가는 라벨을 만든다. 안 들어가면 빈 문자열이다.
+   *
+   *  예전에는 시가총액 비율만 보고 크기를 정했다(7 + 21·√(cap/max)). 타일 픽셀을
+   *  모르니 넘치는 라벨이 생기고, 그러면 Plotly가 통째로 축소해 1~5px 얼룩으로
+   *  남았다 — 실측 US 데스크톱에서 그려진 라벨 424개 중 276개가 6px 미만이었다.
+   *  "너무 작으면 비운다"는 규칙이 있었지만 명목 크기로만 걸러 소용이 없었다.
+   *
+   *  이름+등락 → 어절 줄바꿈+등락 → 이름만 순으로 물러난다. 어절 단위로 **잘라
+   *  내지는** 않는다: 한 어절로 줄이면 KR에서 `Samsung…`이 12개사를, JP에서
+   *  `Mitsubishi…`가 7개사를 가리켜 다른 회사 이름을 말하게 된다.
+   */
+  function heatmapLabelMarkup(label, change, box, measure) {
+    const text = String(label || "").trim();
+    if (!text) return "";
+    const width = (finite(box && box.width) || 0) - HEATMAP_LABEL_PAD_PX * 2;
+    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_PAD_PX;
+    if (width <= 0 || height <= 0) return "";
+    const ceiling = Math.min(
+      finite(box && box.maxSize) ?? HEATMAP_MAX_LABEL_PX,
+      heatmapSizeCeiling(width, height),
+    );
+    const tail = String(change || "");
+    for (const withTail of [true, false]) {
+      if (withTail && !tail) continue;
+      const suffix = withTail ? tail : "";
+      for (let size = ceiling; size >= HEATMAP_MIN_LABEL_PX; size -= 1) {
+        const tailSize = Math.max(8, Math.round(size * 0.62));
+        if (suffix && measure(suffix, tailSize, false) > width) continue;
+        const lines = wrapLabelLines(text, size, width, measure);
+        if (!lines) continue;
+        // 줄이 둘 이상이면 고정 간격 안에 들어와야 한다. 안 그러면 겹친다.
+        if (lines.length > 1 && !linesClear(size, size)) continue;
+        if (suffix && !linesClear(size, tailSize)) continue;
+        const needed = size * (HEATMAP_ASCENT_RATIO + HEATMAP_DESCENT_RATIO)
+          + (lines.length - 1 + (suffix ? 1 : 0)) * HEATMAP_LINE_STEP_PX;
+        if (needed > height) continue;
+        const body = lines.map(escapeHtml).join("<br>");
+        const tailLine = suffix ? `<br><span style="font-size:${tailSize}px">${escapeHtml(suffix)}</span>` : "";
+        return `<span style="font-size:${size}px"><b>${body}</b></span>${tailLine}`;
+      }
+    }
+    return "";
+  }
+
+  let labelMeasureContext = null;
+  function measureLabelWidth(text, size, bold) {
+    if (labelMeasureContext === null) {
+      const canvas = root.document?.createElement?.("canvas");
+      labelMeasureContext = (canvas && canvas.getContext?.("2d")) || false;
+    }
+    if (!labelMeasureContext) return String(text).length * size * 0.62;
+    labelMeasureContext.font = `${bold ? 700 : 400} ${size}px ${HEATMAP_FONT_FAMILY}`;
+    return labelMeasureContext.measureText(String(text)).width;
+  }
+
+  const heatmapChangeText = (value) => {
+    const change = finite(value);
+    return change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
+  };
+
+  /** 지금 그려진 타일의 픽셀 상자. 이 층에서 그려지지 않은 타일은 빠진다. */
+  function heatmapTileBoxes(stage) {
+    const boxes = new Map();
+    stage.querySelectorAll?.("g.slice").forEach((slice) => {
+      const path = slice.querySelector("path.surface");
+      if (!path) return;
+      const box = path.getBBox();
+      if (box.width * box.height <= 0.5) return;
+      const bound = slice.__data__;
+      const nodeId = bound && bound.data ? bound.data.id : null;
+      if (nodeId) boxes.set(nodeId, box);
+    });
+    return boxes;
+  }
+
+  /** Plotly가 칸에 맞추려고 줄여 버린 라벨과 그 배율. */
+  function heatmapShrunkLabels(stage) {
+    const shrunk = new Map();
+    stage.querySelectorAll?.("g.slice").forEach((slice) => {
+      const node = slice.querySelector("text.slicetext");
+      if (!node || !(node.textContent || "").trim()) return;
+      const match = /scale\(([-\d.]+)/.exec(node.getAttribute("transform") || "");
+      const scale = match ? parseFloat(match[1]) : 1;
+      if (!(scale < 0.985)) return;
+      const bound = slice.__data__;
+      if (bound && bound.data) shrunk.set(bound.data.id, scale);
+    });
+    return shrunk;
+  }
+
+  function heatmapTextForBoxes(stage, nodes, budget) {
+    // 자식이 함께 그려지는 부모는 사각형 전체가 아니라 위쪽 머리띠(marker.pad.t)에만
+    // 이름이 들어간다. 전체 사각형으로 재면 606x427에 맞춰 놓고 실제로는 606x28에
+    // 그려져 다시 축소된다.
+    const pad = stage._fullData?.[0]?.marker?.pad || { t: 28, l: 7, r: 7, b: 7 };
+    const boxes = heatmapTileBoxes(stage);
+    const parentsWithChildren = new Set();
+    nodes.parents.forEach((parent, index) => {
+      if (parent && boxes.has(nodes.ids[index])) parentsWithChildren.add(parent);
+    });
+    return nodes.ids.map((nodeId, index) => {
+      const box = boxes.get(nodeId);
+      if (!box) return "";
+      const room = budget.get(nodeId) || 1;
+      const label = nodes.labels[index];
+      if (parentsWithChildren.has(nodeId)) {
+        return heatmapLabelMarkup(label, "", {
+          width: (box.width - pad.l - pad.r) * room,
+          height: Math.min(pad.t, box.height),
+          maxSize: pad.t - 10,
+        }, measureLabelWidth);
+      }
+      return heatmapLabelMarkup(label, heatmapChangeText(nodes.changes[index]), {
+        width: box.width * room,
+        height: box.height,
+      }, measureLabelWidth);
     });
   }
 
-  /** 지금 보고 있는 층의 형제들 기준으로 글자 크기를 다시 매긴다.
+  /** 라벨을 실측해 얹고, 그래도 Plotly가 줄인 만큼 폭 예산을 깎아 다시 맞춘다.
    *
-   *  원래 크기는 전체 지도 기준으로 한 번만 계산된다. 전체에서 산업·종목은 작게
-   *  그려지는 게 맞지만, 좁은 화면에서 섹터에 들어가면 그 산업들이 화면을 가득
-   *  채우는데도 6px 이름표를 그대로 들고 온다. 층이 바뀌면 기준도 바뀌어야 한다.
+   *  캔버스 글자폭 추정은 SVG 실제 렌더와 조금 어긋난다. 축소 배율이 곧 얼마나
+   *  넘쳤는지이므로 그만큼 예산을 줄여 다시 고르면 몇 번 만에 수렴한다. 끝내
+   *  안 맞는 타일은 라벨을 포기한다 — 줄여서 얹지 않는다.
    */
-  function compactLevelText(nodes, levelId) {
-    const children = nodes.ids
-      .map((id, index) => index)
-      .filter((index) => nodes.parents[index] === String(levelId || ""));
-    const maxValue = Math.max(1, ...children.map((index) => finite(nodes.values[index]) || 0));
-    const text = nodes.text.slice();
-    for (const index of children) {
-      const value = Math.max(0, finite(nodes.values[index]) || 0);
-      const size = Math.round(12 + 10 * Math.sqrt(value / maxValue));
-      const id = nodes.ids[index];
-      if (id.startsWith("ticker:")) {
-        const ticker = escapeHtml(nodes.labels[index] || "—");
-        const pct = nodes.customdata[index] ? finite(nodes.customdata[index][1]) : null;
-        const change = pct === null ? "" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
-        const changeSize = Math.max(9, Math.round(size * 0.6));
-        const changeLine = change ? `<br><span style="font-size:${changeSize}px">${escapeHtml(change)}</span>` : "";
-        text[index] = `<span style="font-size:${size}px"><b>${ticker}</b></span>${changeLine}`;
-      } else {
-        text[index] = `<span style="font-size:${size}px">${escapeHtml(nodes.labels[index] || "")}</span>`;
-      }
+  /** Plotly 내부 레이아웃이 지금 컨테이너 폭을 따라잡을 때까지 기다린다.
+   *
+   *  responsive 리사이즈는 비동기다. 폭이 막 바뀐 직후에는 clientWidth가 820인데
+   *  `_fullLayout.width`는 아직 380이고, 실측으로 약 60ms 뒤에 맞춰진다. 그 사이에
+   *  타일을 재면 옛 크기 기준으로 라벨이 정해진다. 그렇게 작아진 라벨은 축소가
+   *  걸리지 않아 아래 수렴 루프도 눈치채지 못한다 — 창을 넓혔는데 지도가 오히려
+   *  비어 보였다(실측 820px에서 라벨 167개가 78개로).
+   */
+  async function heatmapAwaitSize(stage) {
+    try {
+      root.Plotly.Plots?.resize?.(stage);
+    } catch (_) {}
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const width = finite(stage.clientWidth) || 0;
+      const drawn = finite(stage._fullLayout?.width) || 0;
+      if (width && Math.abs(drawn - width) <= 1) return;
+      await new Promise((resolve) => setTimeout(resolve, 32));
     }
-    return text;
+  }
+
+  async function heatmapApplyLabels(stage, nodes) {
+    const budget = new Map();
+    let text = [];
+    for (let pass = 0; pass < 4; pass += 1) {
+      await heatmapAwaitSize(stage);
+      text = heatmapTextForBoxes(stage, nodes, budget);
+      await root.Plotly.restyle(stage, { text: [text] });
+      // 탭이 뒤에 있으면 requestAnimationFrame이 오지 않는다. 타이머로 기다린다.
+      await new Promise((resolve) => setTimeout(resolve, 16));
+      const shrunk = heatmapShrunkLabels(stage);
+      if (!shrunk.size) return;
+      shrunk.forEach((scale, nodeId) => budget.set(nodeId, (budget.get(nodeId) || 1) * Math.max(0.2, scale)));
+    }
+    const leftover = heatmapShrunkLabels(stage);
+    if (!leftover.size) return;
+    await root.Plotly.restyle(stage, {
+      text: [nodes.ids.map((nodeId, index) => (leftover.has(nodeId) ? "" : text[index]))],
+    });
   }
 
   function createRequestGate() {
@@ -1040,140 +1290,151 @@
   }
 
   function renderHeatmap(snapshot, title, comparison) {
-    // 구성 종목 유무만 먼저 본다. 노드는 폭을 잴 수 있는 렌더 시점에 만든다.
-    if (!heatmapNodes(snapshot.rows || []).ids.length) {
+    const rows = snapshot.rows || [];
+    // 뿌리 화면은 산업 층을 접은 쪽, 들어간 뒤에는 계층이 있는 쪽을 쓴다.
+    const flatNodes = heatmapNodes(rows, { flat: true });
+    if (!flatNodes.ids.length) {
       return unavailableCard(snapshot, title, "저장된 히트맵 구성 종목이 없습니다.");
     }
     if (!root.Plotly?.newPlot) return unavailableCard(snapshot, title, "히트맵 라이브러리를 불러오지 못했습니다.");
+    const groupedNodes = heatmapNodes(rows);
     const { id, card, stage } = cardShell(snapshot, title, "heatmap");
     stage.classList.add("briefing-heatmap-stage");
-    const fontFamily = 'Inter, "IBM Plex Sans", SUIT, sans-serif';
-    const plot = () => {
-      if (stage.dataset.rendered === "true") return Promise.resolve();
-      stage.dataset.rendered = "true";
-      // 폭은 그릴 때 재야 한다. 카드가 화면에 들어올 때까지 렌더를 미루므로
-      // 만들 때의 폭은 아직 0이다.
+    const nav = document.createElement("nav");
+    nav.className = "briefing-heatmap-path";
+    nav.setAttribute("aria-label", "히트맵 위치");
+    stage.insertAdjacentElement("beforebegin", nav);
+
+    let level = "";
+    let drawing = null;
+
+    /** 이 층에서 무엇을 몇 겹까지 그릴지.
+     *
+     *  뿌리는 섹터→종목이다. 섹터에 들어가면 그 안에서 산업이 열리고(넓은 화면은
+     *  종목까지 한 겹 더), 산업에 들어가면 그 산업의 종목만 남는다. 누를 때마다
+     *  더 자세해지는 방향이라 되돌아오는 길은 위 경로 버튼이 맡는다.
+     */
+    const viewFor = (levelId) => {
       const compact = heatmapCompact(stage);
-      const nodes = heatmapNodes(snapshot.rows || [], compact);
-      card.dataset.heatmapCompact = compact ? "true" : "false";
-      compactNodes = compact ? nodes : null;
-      if (compact) buildHeatmapPath(card, stage, nodes);
-      return Promise.resolve(root.Plotly.newPlot(stage, [{
-        type: "treemap",
-        ids: nodes.ids,
-        labels: nodes.labels,
-        parents: nodes.parents,
-        values: nodes.values,
-        branchvalues: "total",
-        text: nodes.text,
-        texttemplate: "%{text}",
-        customdata: nodes.customdata,
-        marker: { colors: nodes.colors, line: { color: "#ffffff", width: 0.45 } },
-        // Scalar base size widens the inter-line gap (dy is ~1.3em of this base) so the
-        // span-enlarged ticker line never overlaps the change line. Per-tile sizing is
-        // still driven by the inline <span> markup in nodes.text. (An array textfont.size
-        // breaks treemap layout in Plotly 2.35.2, but a scalar is safe.)
-        textfont: { family: fontFamily, color: "#ffffff", size: 14 },
-        textposition: "middle center",
-        hovertemplate: "%{customdata[0]}<br>등락 %{customdata[1]:+.2f}%<br>종가 %{customdata[2]:,.2f}<br>%{customdata[3]}<extra></extra>",
-        tiling: { packing: "squarify", pad: 0 },
-        // 좁은 화면에서는 Plotly pathbar를 끈다. 18px짜리 띠에 글자도 비어 있어
-        // 나갈 방법이 보이지 않았다. 대신 우리 경로 버튼을 stage 위에 둔다.
-        pathbar: { visible: !compact, thickness: 12, textfont: { color: chartTheme().text, size: 8 } },
-        // 좁을 때는 한 층씩 본다. 253x620에서 재보면 깊이를 열수록 읽을 수 있는
-        // 타일이 줄어든다 — 전체 637개 중 ~50개, 산업까지 137개 중 24개,
-        // 섹터만 12개 중 12개. 들어가는 일은 아래 handler가 한다.
-        maxdepth: compact ? 1 : -1,
-        sort: true,
-      }], {
+      if (!levelId) return { nodes: flatNodes, maxdepth: compact ? 1 : -1 };
+      if (levelId.startsWith("sector:")) return { nodes: groupedNodes, maxdepth: compact ? 2 : 3 };
+      return { nodes: groupedNodes, maxdepth: 2 };
+    };
+
+    const traceFor = (nodes, view) => ({
+      type: "treemap",
+      ids: nodes.ids,
+      labels: nodes.labels,
+      parents: nodes.parents,
+      values: nodes.values,
+      branchvalues: "total",
+      // 라벨은 그린 뒤 실측해서 얹는다. 처음에는 비워 두고 크기를 잰다.
+      text: nodes.ids.map(() => ""),
+      texttemplate: "%{text}",
+      // 빈 문자열을 넣어도 Plotly는 기본 라벨(`labels`)로 되돌린다. 비운 칸이
+      // 실제로 비어 있으려면 이 fallback을 꺼야 한다.
+      textinfo: "none",
+      customdata: nodes.customdata,
+      marker: { colors: nodes.colors, line: { color: "#ffffff", width: 0.45 } },
+      textfont: { family: HEATMAP_FONT_FAMILY, color: "#ffffff", size: HEATMAP_BASE_FONT_PX },
+      textposition: "middle center",
+      hovertemplate: "%{customdata[0]}<br>등락 %{customdata[1]:+.2f}%<br>종가 %{customdata[2]:,.2f}<br>%{customdata[3]}<extra></extra>",
+      tiling: { packing: "squarify", pad: 0 },
+      // Plotly pathbar는 글자도 비어 있는 얇은 띠라 나갈 방법이 보이지 않는다.
+      // 좁은 화면에서 쓰던 우리 경로 버튼을 넓은 화면에서도 그대로 쓴다.
+      pathbar: { visible: false },
+      level: viewFor(level).nodes === nodes ? level : "",
+      maxdepth: view.maxdepth,
+      sort: true,
+    });
+
+    const draw = () => {
+      const view = viewFor(level);
+      const nodes = view.nodes;
+      stage.dataset.rendered = "true";
+      card.dataset.heatmapCompact = heatmapCompact(stage) ? "true" : "false";
+      drawing = Promise.resolve(root.Plotly.react(stage, [traceFor(nodes, view)], {
         height: heatmapLayoutHeight(stage),
         margin: { l: 0, r: 0, t: 0, b: 0 },
         paper_bgcolor: "rgba(0,0,0,0)",
-        font: { family: fontFamily, color: chartTheme().text, size: 14 },
-        hoverlabel: { font: { family: fontFamily, size: 14 } },
-      }, { responsive: true, displayModeBar: false, scrollZoom: false })).then((result) => {
-        if (compact) bindCompactDrill();
-        return result;
-      });
+        font: { family: HEATMAP_FONT_FAMILY, color: chartTheme().text, size: 14 },
+        hoverlabel: { font: { family: HEATMAP_FONT_FAMILY, size: 14 } },
+      }, { responsive: true, displayModeBar: false, scrollZoom: false }))
+        .then(() => heatmapApplyLabels(stage, nodes))
+        .then(() => {
+          renderPath();
+          bindDrill();
+        });
+      return drawing;
     };
+
+    const plot = () => (stage.dataset.rendered === "true" ? drawing || Promise.resolve() : draw());
+
+    function goToLevel(nodeId) {
+      level = String(nodeId || "");
+      draw();
+    }
+
+    /** 어디까지 들어왔고 어떻게 나가는지. */
+    function renderPath() {
+      const labelOf = (nodeId) => {
+        const index = groupedNodes.ids.indexOf(nodeId);
+        return index >= 0 ? groupedNodes.labels[index] : "";
+      };
+      const parentOf = (nodeId) => {
+        const index = groupedNodes.ids.indexOf(nodeId);
+        return index >= 0 ? groupedNodes.parents[index] : "";
+      };
+      const chain = [];
+      let cursor = level;
+      while (cursor) {
+        chain.unshift(cursor);
+        cursor = parentOf(cursor);
+      }
+      const steps = [{ id: "", label: "전체" }, ...chain.map((nodeId) => ({ id: nodeId, label: labelOf(nodeId) }))];
+      nav.innerHTML = "";
+      steps.forEach((step, index) => {
+        const last = index === steps.length - 1;
+        if (index > 0) {
+          const separator = document.createElement("span");
+          separator.className = "briefing-heatmap-path-sep";
+          separator.setAttribute("aria-hidden", "true");
+          separator.textContent = "›";
+          nav.appendChild(separator);
+        }
+        if (last) {
+          const here = document.createElement("span");
+          here.className = "briefing-heatmap-path-here";
+          here.setAttribute("aria-current", "true");
+          here.textContent = step.label;
+          nav.appendChild(here);
+          return;
+        }
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn--text";
+        button.textContent = step.label;
+        button.addEventListener("click", () => goToLevel(step.id));
+        nav.appendChild(button);
+      });
+      if (steps.length === 1) {
+        const hint = document.createElement("span");
+        hint.className = "briefing-heatmap-hint";
+        hint.textContent = "칸을 누르면 그 안을 봅니다.";
+        nav.appendChild(hint);
+      }
+    }
+
     // `maxdepth`를 걸면 하위가 렌더되지 않아 Plotly의 기본 드릴다운이 걸릴 대상을
     // 못 찾는다(섹터를 눌러도 아무 일이 없었다). 우리가 직접 `level`을 옮긴다.
-    // 뿌리에서는 한 층(섹터)만, 들어간 뒤에는 그 노드와 자식 한 층을 그린다.
-    let heatmapPath = null;
-    let compactNodes = null;
-
-    function goToLevel(id) {
-      const update = { level: [id], maxdepth: [id ? 2 : 1] };
-      if (compactNodes) update.text = [compactLevelText(compactNodes, id)];
-      root.Plotly.restyle(stage, update);
-      heatmapPath?.render(id);
-    }
-
-    /** 어디까지 들어왔고 어떻게 나가는지. Plotly pathbar를 대신한다. */
-    function buildHeatmapPath(cardEl, stageEl, nodes) {
-      const nav = cardEl.querySelector(".briefing-heatmap-path") || document.createElement("nav");
-      nav.className = "briefing-heatmap-path";
-      nav.setAttribute("aria-label", "히트맵 위치");
-      if (!nav.isConnected) stageEl.insertAdjacentElement("beforebegin", nav);
-      const labelOf = (id) => {
-        const index = nodes.ids.indexOf(id);
-        return index >= 0 ? nodes.labels[index] : "";
-      };
-      const parentOf = (id) => {
-        const index = nodes.ids.indexOf(id);
-        return index >= 0 ? nodes.parents[index] : "";
-      };
-      heatmapPath = {
-        render(levelId) {
-          const chain = [];
-          let cursor = String(levelId || "");
-          while (cursor) {
-            chain.unshift(cursor);
-            cursor = parentOf(cursor);
-          }
-          const steps = [{ id: "", label: "전체" }, ...chain.map((id) => ({ id, label: labelOf(id) }))];
-          nav.innerHTML = "";
-          steps.forEach((step, index) => {
-            const last = index === steps.length - 1;
-            if (index > 0) {
-              const sep = document.createElement("span");
-              sep.className = "briefing-heatmap-path-sep";
-              sep.setAttribute("aria-hidden", "true");
-              sep.textContent = "›";
-              nav.appendChild(sep);
-            }
-            if (last) {
-              const here = document.createElement("span");
-              here.className = "briefing-heatmap-path-here";
-              here.setAttribute("aria-current", "true");
-              here.textContent = step.label;
-              nav.appendChild(here);
-              return;
-            }
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "btn btn--text";
-            button.textContent = step.label;
-            button.addEventListener("click", () => goToLevel(step.id));
-            nav.appendChild(button);
-          });
-          const hint = document.createElement("span");
-          hint.className = "briefing-heatmap-hint";
-          hint.textContent = steps.length > 2 ? "" : "칸을 누르면 그 안을 봅니다.";
-          if (hint.textContent) nav.appendChild(hint);
-        },
-      };
-      heatmapPath.render("");
-    }
-
-    function bindCompactDrill() {
+    function bindDrill() {
       if (stage.dataset.drillBound === "true" || typeof stage.on !== "function") return;
       stage.dataset.drillBound = "true";
       stage.on("plotly_treemapclick", (event) => {
-        const id = String(event?.points?.[0]?.id || "");
+        const nodeId = String(event?.points?.[0]?.id || "");
         // 종목이 마지막 층이다. 더 들어갈 곳이 없다.
-        if (id.startsWith("ticker:")) return false;
-        goToLevel(id);
+        if (!nodeId || nodeId.startsWith("ticker:")) return false;
+        goToLevel(nodeId);
         return false;
       });
     }
@@ -1184,13 +1445,7 @@
       if (stage.dataset.rendered !== "true") return;
       const next = heatmapCompact(stage) ? "true" : "false";
       if (next === card.dataset.heatmapCompact) return;
-      root.Plotly?.purge?.(stage);
-      stage.dataset.rendered = "";
-      stage.dataset.drillBound = "";
-      card.querySelector(".briefing-heatmap-path")?.remove();
-      heatmapPath = null;
-      compactNodes = null;
-      plot();
+      draw();
     };
     root.addEventListener?.("resize", syncDepth);
     chartRecords.set(id, {
@@ -1479,7 +1734,9 @@
     preferredIndexTicker,
     buildSectionSlots,
     heatmapNodes,
-    compactLevelText,
+    heatmapLabelMarkup,
+    heatmapTickerLabel,
+    heatmapGroupName,
     abbreviateHeatmapLabel,
     heatmapLayoutHeight,
     createRequestGate,

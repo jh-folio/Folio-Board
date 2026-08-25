@@ -421,6 +421,8 @@ def normalize_briefing_contract(report):
     out.setdefault("visualSnapshots", [])
     out.setdefault("issueCoverage", [])
     out.setdefault("concentrationControl", {"version": 1, "mode": "off", "byMarket": {}})
+    out.setdefault("generationEvidence", {"version": 1, "byMarket": {}})
+    out.setdefault("claimLedger", {"version": 1, "byMarket": {}})
     return out
 
 
@@ -694,6 +696,11 @@ def briefing_scope_view(report, market_scope=None):
         scoped = out
     view = deepcopy(out)
     view["marketScope"] = scope
+    from features.common.research_schema.data_gaps import data_gap_applies_to
+    view["dataGaps"] = [
+        deepcopy(item) for item in (out.get("dataGaps") or [])
+        if data_gap_applies_to(item, scope)
+    ]
     metadata = briefing_market_metadata(out, scope, scoped)
     if metadata.get("kind") == "weekly":
         # 주간 본문은 세션 제목 정규화를 태우지 않는다. 그 정규화는 H1을
@@ -702,6 +709,8 @@ def briefing_scope_view(report, market_scope=None):
         view["markdown"] = scoped.get("markdown", view.get("markdown", ""))
         view["sources"] = scoped.get("sources", view.get("sources", []))
         view["generation"] = scoped.get("generation", view.get("generation", {}))
+        view["generationEvidence"] = scoped.get("generationEvidence", view.get("generationEvidence", {}))
+        view["claimLedger"] = scoped.get("claimLedger", view.get("claimLedger", {}))
         view.update({key: metadata[key] for key in (
             "kind", "weekStart", "weekEnd", "previewStart", "previewEnd",
             "sessionDate", "publicationDate", "title", "summary", "tags",
@@ -717,6 +726,8 @@ def briefing_scope_view(report, market_scope=None):
     view["marketWindows"] = effective_market_windows
     view["sources"] = scoped.get("sources", view.get("sources", []))
     view["generation"] = scoped.get("generation", view.get("generation", {}))
+    view["generationEvidence"] = scoped.get("generationEvidence", view.get("generationEvidence", {}))
+    view["claimLedger"] = scoped.get("claimLedger", view.get("claimLedger", {}))
     view.update({key: metadata[key] for key in (
         "kind", "sessionDate", "sessionMode", "publicationDate", "title", "summary", "tags",
     )})

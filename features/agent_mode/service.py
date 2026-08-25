@@ -19,7 +19,7 @@ from features.common.market_data.snapshot import fetch_market_snapshot
 from features.common.market_data.providers import fetch_korea_market_data
 from features.common.market_data.tape import build_market_tape
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
-from features.common.research_schema.data_gaps import data_gaps_from_messages
+from features.common.research_schema.data_gaps import data_gap_applies_to, data_gaps_from_messages
 from features.common.research_schema.evidence import evidence_items_from_list
 from features.common.research_schema.source_ledger import source_ledger_from_items
 from features.common.company_lookup import infer_requested_company
@@ -34,6 +34,8 @@ from features.daily_briefing.limits import (
     source_ref_limit,
 )
 from features.daily_briefing.source_window import scope_session_documents
+from features.daily_briefing.source_integrity import reconcile_source_ledger, source_manifest_prompt
+from features.daily_briefing.claim_integrity import enforce_claim_integrity
 from features.daily_briefing.weekly_visuals import collect_weekly_visuals
 from features.daily_briefing.weekly import (
     calendar_preview,
@@ -199,6 +201,10 @@ def _single_market_briefing(briefing, scope):
     scoped["issueCoverage"] = [
         deepcopy(item) for item in (briefing.get("issueCoverage") or [])
         if str(item.get("market") or "").lower() in {scope, "both", ""}
+    ]
+    scoped["dataGaps"] = [
+        deepcopy(item) for item in (briefing.get("dataGaps") or [])
+        if data_gap_applies_to(item, scope)
     ]
     stats = deepcopy(scoped.get("stats") or {})
     stats["marketScope"] = scope
@@ -369,6 +375,8 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             target_groups,
             market_scope=target,
             kind=kind,
+            report_date=date,
+            reports_dir=BRIEFINGS_DIR,
             # Agent pack preparation normally runs while bridge._RUN_SEMAPHORE is held.
             agent_serialize=False,
         )
@@ -502,6 +510,8 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     sources = prioritized_source_refs(
         scoped_docs, market_windows, limit=ref_limit, issue_coverage=issue_coverage_raw, market_scope=market_scope,
     ) or briefing_sources_from_headlines(_briefing_headlines(groups), limit=ref_limit)
+    sources = source_refs(sources, limit=ref_limit)
+    context = "\n\n".join([context, source_manifest_prompt(sources)])
     session_counts = session_doc_counts(scoped_docs, market_windows)
     draft = {
         "date": date,
@@ -529,7 +539,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         "prompt": read_briefing_prompt(requested_markets, kind),
         "promptPath": briefing_prompt_path_label(requested_markets, kind),
         "headlines": _briefing_headlines(groups),
-        "sources": source_refs(sources, limit=ref_limit),
+        "sources": sources,
         "marketSnapshot": market_snapshot,
         "koreaMarketData": korea_market_data,
         "marketWindows": market_windows,
@@ -615,6 +625,11 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 for target, control in concentration_by_market.items()
                 if control.get("mode") == "active"
             },
+            leader_section_modes={
+                target: "qualified_zero_to_two"
+                for target, control in concentration_by_market.items()
+                if control.get("mode") == "active"
+            },
         ),
         write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json")},
         save_target=str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json"),
@@ -674,13 +689,20 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
                 "leading_company_visual_alignment_failed"
             )
     draft = replace_leading_company_visuals(draft, aligned_visuals)
-    sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=ref_limit)
+    candidate_sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=ref_limit)
+    markdown, sources, generation_evidence, claim_ledger = reconcile_source_ledger(
+        str(markdown or "").strip(), candidate_sources, limit=ref_limit,
+    )
     # 저장된 pack의 시장 목록이 권위다(아래 requested_scopes와 같은 규칙).
     generation_scopes = list(
         normalize_market_selection(draft.get("generationMarkets") or market_scope)
     )
+    resolved_sources_by_market = {}
     if len(generation_scopes) <= 1:
-        markdown = append_briefing_sources(str(markdown or "").strip(), sources, limit=ref_limit, kind=kind)
+        markdown, claim_ledger = enforce_claim_integrity(markdown, sources, claim_ledger)
+        markdown = append_briefing_sources(markdown, sources, limit=ref_limit, kind=kind)
+        if generation_scopes:
+            resolved_sources_by_market[generation_scopes[0]] = sources
     else:
         # 다시장 합본에는 여기서 붙이지 않는다 — 합본에 목록이 하나라도 있으면
         # has_sources가 참이 되어 시장별 본문이 참고자료를 영영 못 받고, 분리가
@@ -714,12 +736,24 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
         # 구분하지 않으므로 떼어내고, 일간은 그 시장의 선별 목록(sourcesByMarket)을
         # 붙인다(규칙 생성과 같은 계약). 주간은 본문에 목록을 두지 않는다(§10).
         scoped_sources = (pack.get("internal") or {}).get("sourcesByMarket") or {}
+        global_external = [row for row in sources if row.get("external")]
         parts = []
         for scope_key, section in market_markdowns.items():
             scoped_markdown = strip_markdown_sources_section(str(section.get("markdown") or ""))
-            if kind != "weekly" and scope_key in scoped_sources:
+            scoped_markdown, market_sources, market_evidence, market_claims = reconcile_source_ledger(
+                scoped_markdown,
+                [*(scoped_sources.get(scope_key) or []), *global_external],
+                limit=ref_limit,
+            )
+            resolved_sources_by_market[scope_key] = market_sources
+            generation_evidence.setdefault("byMarket", {})[scope_key] = market_evidence
+            scoped_markdown, market_claims = enforce_claim_integrity(
+                scoped_markdown, market_sources, market_claims,
+            )
+            claim_ledger.setdefault("byMarket", {})[scope_key] = market_claims
+            if kind != "weekly":
                 scoped_markdown = append_briefing_sources(
-                    scoped_markdown, scoped_sources.get(scope_key) or sources, limit=ref_limit, kind=kind,
+                    scoped_markdown, market_sources, limit=ref_limit, kind=kind,
                 )
             parts.append(scoped_markdown)
         markdown = "\n\n".join(part for part in parts if part).strip()
@@ -747,25 +781,30 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     # 하나만 섹션이 없을 때 그 사실이 어디에도 남지 않는다.
     for scope in checkpoint_scopes:
         if not scope_checkpoints[scope]:
-            gaps.append(f"{MARKET_LABELS.get(scope, scope)}: 체크포인트 섹션을 찾지 못했습니다.")
+            gaps.append({"market": scope, "category": "checkpoint", "message": f"{MARKET_LABELS.get(scope, scope)}: 체크포인트 섹션을 찾지 못했습니다."})
     if not checkpoints:
-        gaps.append("브리핑에서 구조화 가능한 체크포인트 섹션을 찾지 못했습니다.")
+        gaps.append({"market": "both", "category": "checkpoint", "message": "브리핑에서 구조화 가능한 체크포인트 섹션을 찾지 못했습니다."})
     if not draft.get("stats", {}).get("documents"):
-        gaps.append("브리핑 입력 뉴스 자료가 없습니다.")
+        gaps.append({"market": "both", "message": "브리핑 입력 뉴스 자료가 없습니다."})
     if not (draft.get("marketSnapshot") or {}).get("ok"):
-        gaps.append("미국/글로벌 시장 스냅샷을 불러오지 못했습니다.")
+        gaps.append({"market": "both", "category": "market_data", "message": "미국/글로벌 시장 스냅샷을 불러오지 못했습니다."})
     if not (draft.get("koreaMarketData") or {}).get("ok"):
-        gaps.append("한국장 시장 수치를 불러오지 못했습니다.")
-    gaps.extend(f"시각자료: {warning}" for warning in draft.get("visualWarnings", []))
+        gaps.append({"market": "kr", "category": "market_data", "message": "한국장 시장 수치를 불러오지 못했습니다."})
+    gaps.extend({"market": "both", "category": "market_data", "message": f"시각자료: {warning}"} for warning in draft.get("visualWarnings", []))
     for snapshot in draft.get("visualSnapshots", []):
-        gaps.extend(f"시각자료 {snapshot.get('id', '')}: {warning}" for warning in snapshot.get("warnings", []))
+        snapshot_market = str(snapshot.get("market") or "both").lower()
+        gaps.extend({"market": snapshot_market, "category": "market_data", "message": f"시각자료 {snapshot.get('id', '')}: {warning}"} for warning in snapshot.get("warnings", []))
         if (snapshot.get("coverage") or {}).get("status") == "partial":
-            gaps.append(f"시각자료 {snapshot.get('id', '')}: 일부 종목만 수집됐습니다.")
+            gaps.append({"market": snapshot_market, "category": "market_data", "message": f"시각자료 {snapshot.get('id', '')}: 일부 종목만 수집됐습니다."})
         if snapshot.get("freshness") in {"stale", "unavailable"}:
-            gaps.append(
-                f"시각자료 {snapshot.get('id', '')}: {snapshot.get('freshness')} "
-                f"(session {snapshot.get('marketSessionDate', '')}, asOf {snapshot.get('asOf', '')})"
-            )
+            gaps.append({
+                "market": snapshot_market,
+                "category": "market_data",
+                "message": (
+                    f"시각자료 {snapshot.get('id', '')}: {snapshot.get('freshness')} "
+                    f"(session {snapshot.get('marketSessionDate', '')}, asOf {snapshot.get('asOf', '')})"
+                ),
+            })
     sections = enrich_briefing_sections(
         split_market_markdown(markdown, market_scope),
         report_date=date,
@@ -784,27 +823,41 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     )
     # 시장별 참고자료를 그 시장 섹션에 붙인다. `briefing_scope_view`가 섹션의 것을
     # 먼저 읽으므로, 없으면 합본 목록으로 떨어져 네 시장이 같은 자료를 싣게 된다.
-    sources_by_market = (pack.get("internal") or {}).get("sourcesByMarket") or {}
+    sources_by_market = resolved_sources_by_market or (pack.get("internal") or {}).get("sourcesByMarket") or {}
     for scope_key, rows in sources_by_market.items():
         if rows and isinstance(sections.get(scope_key), dict):
             sections[scope_key]["sources"] = rows
+    for scope_key, section in sections.items():
+        if not isinstance(section, dict):
+            continue
+        section["generationEvidence"] = deepcopy(
+            (generation_evidence.get("byMarket") or {}).get(scope_key) or generation_evidence
+        )
+        section["claimLedger"] = deepcopy(
+            (claim_ledger.get("byMarket") or {}).get(scope_key) or claim_ledger
+        )
     briefing = {
         **draft,
         "markdown": markdown,
         "briefings": sections,
         "sources": sources,
         "generation": generation,
+        "generationEvidence": generation_evidence,
+        "claimLedger": claim_ledger,
         "checkpoints": checkpoints,
         "dataGaps": data_gaps_from_messages(gaps, artifact_type="briefing", artifact_id=date),
         "marketTape": pack.get("marketTape") or {},
     }
     try:
+        generation_preflight = (pack.get("internal") or {}).get("qualityPreflight")
+        postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
         briefing = apply_quality_loop(
             "briefing",
             briefing,
             mode=(pack.get("internal") or {}).get("qualityMode", "diagnose_only"),
-            preflight=(pack.get("internal") or {}).get("qualityPreflight"),
+            preflight=postflight,
         )
+        briefing.setdefault("qualityGeneration", {})["generationPreflight"] = generation_preflight
     except Exception:
         briefing["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}
     # 주간은 내러티브에 적재하지 않는다(§builder와 같은 규칙). 같은 이슈를 일간이 이미

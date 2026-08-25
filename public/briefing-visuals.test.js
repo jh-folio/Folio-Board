@@ -21,7 +21,9 @@ const {
   signedPercent,
   preferredIndexTicker,
   heatmapNodes,
-  compactLevelText,
+  heatmapLabelMarkup,
+  heatmapTickerLabel,
+  heatmapGroupName,
   abbreviateHeatmapLabel,
   heatmapLayoutHeight,
   createRequestGate,
@@ -158,10 +160,11 @@ test("heatmapNodes groups stocks by sector and industry using market cap", () =>
   assert.deepEqual(nodes.ids.slice(0, 3), ["sector:Technology", "industry:Technology:Semiconductors", "ticker:NVDA"]);
   assert.equal(nodes.values[nodes.ids.indexOf("ticker:NVDA")], 100);
   assert.equal(nodes.parents[nodes.ids.indexOf("ticker:NVDA")], "industry:Technology:Semiconductors");
-  // text embeds the per-tile font size via inline span markup (Plotly array textfont breaks treemap layout);
-  // ticker and change are separate spans/lines so they don't overlap on large tiles.
-  const nvdaText = nodes.text[nodes.ids.indexOf("ticker:NVDA")];
-  assert.match(nvdaText, /^<span style="font-size:\d+px"><b>NVDA<\/b><\/span><br><span style="font-size:\d+px">\+2\.00%<\/span>$/);
+  // 라벨 글자는 여기서 정하지 않는다. 그린 뒤 타일을 재서 얹으므로 노드는
+  // 이름과 등락률만 들고 있다.
+  assert.equal(nodes.labels[nodes.ids.indexOf("ticker:NVDA")], "NVDA");
+  assert.equal(nodes.changes[nodes.ids.indexOf("ticker:NVDA")], 2);
+  assert.equal(nodes.text, undefined);
 });
 
 test("heatmapNodes skips duplicate industry layer when sector and industry are identical", () => {
@@ -173,43 +176,6 @@ test("heatmapNodes skips duplicate industry layer when sector and industry are i
   assert.ok(!nodes.ids.some((id) => id.startsWith("industry:전기전자:전기전자")));
   assert.equal(nodes.parents[nodes.ids.indexOf("ticker:005930")], "sector:전기전자");
   assert.equal(nodes.parents[nodes.ids.indexOf("ticker:000660")], "sector:전기전자");
-});
-
-test("heatmap hides labels that would render below the minimum readable size", () => {
-  // one dominant cap + many tiny caps: the tiny tiles fall under the px threshold → blank text
-  const rows = [{ ticker: "MEGA", sector: "Technology", industry: "Semiconductors", marketCap: 100000, changePct: 1 }];
-  for (let i = 0; i < 30; i += 1) rows.push({ ticker: `T${i}`, sector: "Technology", industry: "Software", marketCap: 1, changePct: -1 });
-  const nodes = heatmapNodes(rows);
-  const tinyText = nodes.text[nodes.ids.indexOf("ticker:T0")];
-  assert.equal(tinyText, "");
-  assert.notEqual(nodes.text[nodes.ids.indexOf("ticker:MEGA")], "");
-});
-
-test("heatmap font scales ticker size by box area so big caps read larger", () => {
-  const nodes = heatmapNodes([
-    { ticker: "BIG", sector: "Technology", industry: "Semiconductors", marketCap: 400, changePct: 1 },
-    { ticker: "SMALL", sector: "Technology", industry: "Software", marketCap: 4, changePct: -1 },
-  ]);
-  const big = nodes.textsizes[nodes.ids.indexOf("ticker:BIG")];
-  const small = nodes.textsizes[nodes.ids.indexOf("ticker:SMALL")];
-  // largest cap gets the biggest font; the small cap still gets a visible, smaller font
-  assert.ok(big > small, `expected ${big} > ${small}`);
-  assert.ok(small >= 7 && small < big);
-  assert.equal(nodes.textsizes.length, nodes.ids.length);
-});
-
-test("heatmap group labels stay compact so stock tiles stay visually dominant", () => {
-  const nodes = heatmapNodes([
-    { ticker: "MEGA", sector: "Technology", industry: "Semiconductors", marketCap: 1000, changePct: 1 },
-  ]);
-  const sectorSize = nodes.textsizes[nodes.ids.indexOf("sector:Technology")];
-  const industrySize = nodes.textsizes[nodes.ids.indexOf("industry:Technology:Semiconductors")];
-  const tickerSize = nodes.textsizes[nodes.ids.indexOf("ticker:MEGA")];
-
-  assert.ok(sectorSize <= 8, `sector label should be compact, got ${sectorSize}`);
-  assert.ok(industrySize <= 6, `industry label should be compact, got ${industrySize}`);
-  assert.match(nodes.text[nodes.ids.indexOf("industry:Technology:Semiconductors")], /font-size:6px/);
-  assert.ok(tickerSize > sectorSize, `ticker ${tickerSize} should dominate sector ${sectorSize}`);
 });
 
 test("heatmap displays the representative ticker for collapsed share-class rows", () => {
@@ -227,7 +193,6 @@ test("heatmap displays the representative ticker for collapsed share-class rows"
   const tickerIndex = nodes.ids.indexOf("ticker:GOOGL");
 
   assert.equal(nodes.labels[tickerIndex], "GOOGL");
-  assert.match(nodes.text[tickerIndex], /GOOGL/);
 });
 
 test("price values omit currency for indices and use compact symbols for stocks", () => {
@@ -382,14 +347,6 @@ test("indexSeries rebases valid closes to 100 while retaining actual values", ()
   ]);
 });
 
-test("heatmapColor uses explicit signed buckets", () => {
-  assert.equal(heatmapColor(3), "#168a56");
-  assert.equal(heatmapColor(0.2), "#34785f");
-  assert.equal(heatmapColor(0), "#667085");
-  assert.equal(heatmapColor(-0.2), "#b65b67");
-  assert.equal(heatmapColor(-3), "#a92d42");
-});
-
 test("inline visuals are inserted immediately after their section heading", () => {
   let call = null;
   const heading = { insertAdjacentElement: (position, element) => { call = { position, element }; } };
@@ -432,50 +389,163 @@ test("snapshot selection cancels a pending current request", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 층에 들어가면 글자 크기도 그 층 기준이어야 한다.
-// 전체 지도 기준으로 한 번만 계산하면 섹터에 들어간 산업들이 화면을 가득
-// 채우는데도 6px 이름표를 그대로 들고 온다(모바일에서 읽을 수 없었다).
+// 라벨은 그린 뒤 타일을 재서 정한다.
+// 예전에는 시가총액 비율(7 + 21·√(cap/max))로만 크기를 정해 타일 픽셀을 몰랐다.
+// 넘치는 라벨은 Plotly가 통째로 축소해 1~5px 얼룩으로 남았고, 실측 US 데스크톱
+// 에서 그려진 라벨 424개 중 276개가 6px 미만이었다.
+// 아래 측정 함수는 결정적인 stub이다(어느 글꼴이 깔려 있든 같은 답이 나온다).
 // ---------------------------------------------------------------------------
-test("drilling into a sector re-sizes its industries for the visible layer", () => {
-  const nodes = heatmapNodes([
-    { ticker: "NVDA", sector: "Tech", industry: "Semis", marketCap: 3000, changePct: 2.5 },
-    { ticker: "MU", sector: "Tech", industry: "Semis", marketCap: 300, changePct: 0.5 },
-    { ticker: "MSFT", sector: "Tech", industry: "Software", marketCap: 2500, changePct: 1.0 },
-    { ticker: "JPM", sector: "Fin", industry: "Banks", marketCap: 700, changePct: -0.4 },
-  ], true);
-  const sectorId = nodes.ids.find((id) => id === "sector:Tech");
-  const text = compactLevelText(nodes, sectorId);
-  for (const [index, id] of nodes.ids.entries()) {
-    if (nodes.parents[index] !== sectorId) continue;
-    const match = String(text[index]).match(/font-size:(\d+)px/);
-    assert.ok(match, `${id} 라벨에 크기가 없다`);
-    assert.ok(Number(match[1]) >= 12, `${id} 라벨이 ${match[1]}px — 층 기준으로 커져야 한다`);
+const measureStub = (text, size) => String(text).length * size * 0.6;
+const labelSize = (markup) => Number(String(markup).match(/font-size:(\d+)px/)[1]);
+const lineSizes = (markup) => [...String(markup).matchAll(/font-size:(\d+)px/g)].map((m) => Number(m[1]));
+
+// Plotly의 줄 간격은 span 크기가 아니라 트레이스 기본 글꼴(13px) 기준 `dy="1.3em"`으로
+// 고정이다. 줄이 둘 이상이면 그 16.9px 안에 들어와야 겹치지 않는다.
+const LINE_STEP = 13 * 1.3;
+const assertNoOverlap = (markup) => {
+  const sizes = lineSizes(markup);
+  const lines = String(markup).split(/<br>/).length;
+  const perLine = lines > 1 && sizes.length === 1 ? [sizes[0], sizes[0]] : sizes;
+  for (let i = 0; i < perLine.length - 1; i += 1) {
+    const needed = perLine[i] * 0.25 + perLine[i + 1] * 0.95;
+    assert.ok(needed <= LINE_STEP + 0.01, `${perLine[i]}px 위에 ${perLine[i + 1]}px가 겹친다`);
+  }
+};
+
+test("라벨은 타일에 들어갈 때만 그려지고, 크기는 실제 상자에서 나온다", () => {
+  const roomy = heatmapLabelMarkup("NVDA", "+2.00%", { width: 200, height: 120 }, measureStub);
+  assert.match(roomy, /NVDA/);
+  assert.match(roomy, /\+2\.00%/);
+  assert.ok(labelSize(roomy) >= 14, `넓은 타일인데 ${labelSize(roomy)}px`);
+
+  const tight = heatmapLabelMarkup("NVDA", "+2.00%", { width: 60, height: 30 }, measureStub);
+  assert.ok(labelSize(tight) < labelSize(roomy), "작은 타일이 더 작은 글자를 받아야 한다");
+});
+
+test("여러 줄 라벨은 고정 줄 간격 안에 들어와 겹치지 않는다", () => {
+  // 큰 타일에서 종목명 30px + 등락률 19px이 14.3px 간격에 얹혀 통째로 겹쳤다(실측).
+  assertNoOverlap(heatmapLabelMarkup("NVDA", "+2.00%", { width: 400, height: 300 }, measureStub));
+  assertNoOverlap(heatmapLabelMarkup("NVDA", "+2.00%", { width: 200, height: 120 }, measureStub));
+  assertNoOverlap(heatmapLabelMarkup("Mitsubishi UFJ Financial", "+1.00%", { width: 90, height: 100 }, measureStub));
+  // 아무리 넓어도 간격이 허락하는 크기를 넘지 않는다.
+  const huge = heatmapLabelMarkup("NVDA", "+2.00%", { width: 800, height: 800 }, measureStub);
+  assert.ok(labelSize(huge) <= 20, `${labelSize(huge)}px는 아랫줄을 덮는다`);
+});
+
+test("글자 크기는 칸 크기를 따라간다 — 짧은 티커라고 작은 칸에서 커지지 않는다", () => {
+  // 크기를 "들어가기만 하면 최대"로 두면 글자 길이가 크기를 정한다. 작은 칸이라도
+  // 티커가 짧으면(MU) 큰 칸과 같은 크기를 받아 칸에 비해 글자가 컸다.
+  const sizeAt = (w, h) => labelSize(heatmapLabelMarkup("MU", "+1.00%", { width: w, height: h }, measureStub));
+  const big = sizeAt(250, 160);
+  const mid = sizeAt(90, 70);
+  const small = sizeAt(40, 30);
+  assert.ok(big > mid && mid > small, `${big} > ${mid} > ${small}이어야 한다`);
+  // 완전 비례는 아니다. 면적이 33배인데 글자는 3배를 넘지 않는다.
+  assert.ok(big < small * 3, `${big}px는 ${small}px에 비해 과하게 크다`);
+  // 상한과 하한은 지킨다.
+  assert.ok(sizeAt(2000, 2000) <= 20, "겹침 상한을 넘지 않는다");
+  for (const [w, h] of [[250, 160], [90, 70], [40, 30], [30, 22]]) {
+    assert.ok(sizeAt(w, h) >= 6, `${w}x${h}에서 하한 미만`);
   }
 });
 
-test("ticker tiles keep their change line after the level resize", () => {
-  const nodes = heatmapNodes([
-    { ticker: "NVDA", sector: "Tech", industry: "Semis", marketCap: 3000, changePct: 2.93 },
-    { ticker: "MU", sector: "Tech", industry: "Semis", marketCap: 300, changePct: -1.2 },
-  ], true);
-  const industryId = nodes.ids.find((id) => id.startsWith("industry:"));
-  const text = compactLevelText(nodes, industryId);
-  const nvda = nodes.ids.indexOf("ticker:NVDA");
-  assert.match(String(text[nvda]), /NVDA/);
-  assert.match(String(text[nvda]), /\+2\.93%/);
+test("이름이 길면 어절 단위로 줄을 나눈다", () => {
+  // 실측: 이 줄바꿈 하나가 JP에서 라벨 20개, KR에서 12개를 살린다.
+  const markup = heatmapLabelMarkup("Mitsubishi UFJ Financial", "+1.00%", { width: 90, height: 100 }, measureStub);
+  assert.match(markup, /Mitsubishi UFJ<br>Financial/);
+  assert.ok(labelSize(markup) >= 9);
 });
 
-test("the root level resize keeps every sector label readable", () => {
-  const nodes = heatmapNodes([
-    { ticker: "A", sector: "Big", industry: "X", marketCap: 5000, changePct: 1 },
-    { ticker: "B", sector: "Small", industry: "Y", marketCap: 50, changePct: -1 },
-  ], true);
-  const text = compactLevelText(nodes, "");
-  for (const [index, id] of nodes.ids.entries()) {
-    if (nodes.parents[index] !== "") continue;
-    const match = String(text[index]).match(/font-size:(\d+)px/);
-    assert.ok(Number(match[1]) >= 12, `${id}가 ${match[1]}px`);
+test("자리가 모자라면 등락률 줄을 먼저 버린다", () => {
+  const markup = heatmapLabelMarkup("NVDA", "+2.00%", { width: 60, height: 20 }, measureStub);
+  assert.match(markup, /NVDA/);
+  assert.doesNotMatch(markup, /%/, "이름을 살리려면 등락률이 먼저 빠져야 한다");
+});
+
+test("들어가지 않는 라벨은 잘라내지 않고 비운다", () => {
+  // 어절 단위로 잘라내면 KR `Samsung…`이 12개사를, JP `Mitsubishi…`가 7개사를
+  // 가리킨다. 다른 회사 이름을 말하느니 색만 남기고 hover에 맡긴다.
+  assert.equal(heatmapLabelMarkup("NVDA", "+2.00%", { width: 20, height: 20 }, measureStub), "");
+  assert.equal(heatmapLabelMarkup("Samsung Electronics", "-1.00%", { width: 24, height: 24 }, measureStub), "");
+});
+
+test("종목 이름은 읽히는 쪽을 쓰고 거래소·법인격 꼬리를 뗀다", () => {
+  // 숫자로 시작하는 코드는 그 자체로 읽히지 않는다. 한국 6자리는 예전부터
+  // 회사명을 썼는데 일본은 `8306.T`가 그대로 나오고 있었다.
+  assert.equal(heatmapTickerLabel({
+    ticker: "8306.T",
+    label: "三菱UFJフィナンシャル・グループ",
+    englishName: "Mitsubishi UFJ Financial Group, Inc.",
+  }), "Mitsubishi UFJ Financial");
+  assert.equal(heatmapTickerLabel({ ticker: "005930", label: "Samsung Electronics" }), "Samsung Electronics");
+  // 거래소 지역 코드는 손잡이가 아니다. MUV2가 뮌헨재보험이라고 읽히지 않는다.
+  assert.equal(heatmapTickerLabel({ ticker: "ASML.AS", label: "ASML Holding" }), "ASML");
+  assert.equal(heatmapTickerLabel({ ticker: "MUV2.DE", label: "Munich Re" }), "Munich Re");
+  // 접미사 없는 미국식 티커는 그 자체로 읽힌다.
+  assert.equal(heatmapTickerLabel({ ticker: "NVDA", label: "Nvidia" }), "NVDA");
+  // 법인격을 떼면 접속 기호가 남는다. 잘린 이름처럼 보이면 안 된다.
+  assert.equal(heatmapTickerLabel({ ticker: "8031.T", label: "三井物産", englishName: "Mitsui & Co., Ltd." }), "Mitsui");
+  // 라틴 표기 label이 있으면 법인 전체 이름보다 그쪽이 짧고 읽기 좋다.
+  assert.equal(heatmapTickerLabel({
+    ticker: "MC.PA",
+    label: "LVMH",
+    englishName: "LVMH Moët Hennessy - Louis Vuitton, Société Européenne",
+  }), "LVMH");
+});
+
+test("KR 섹터는 영문으로 되돌리되 다시 분류하지 않는다", () => {
+  // kospi200_universe.py가 GICS 영문을 한글로 옮겨 저장한다. 저장된 시각자료는
+  // 불변이라 표시 시점에 되돌려야 과거 브리핑도 함께 영문이 된다.
+  assert.equal(heatmapGroupName("경기소비재"), "Consumer Discretionary");
+  assert.equal(heatmapGroupName("금융"), "Financials");
+  // KRX식 그룹은 GICS와 체계가 달라 묶지 않는다(석유화학은 Energy와 Materials로 갈린다).
+  assert.equal(heatmapGroupName("IT"), "IT");
+  assert.equal(heatmapGroupName("Heavy Industries"), "Heavy Industries");
+  assert.equal(heatmapGroupName("Technology"), "Technology");
+});
+
+test("뿌리 화면은 산업 층을 접어 종목에 자리를 준다", () => {
+  // 산업 127개가 각각 머리띠와 여백을 가져가는데 실측에서 13%만 읽혔다.
+  const rows = [
+    { ticker: "NVDA", sector: "Technology", industry: "Semiconductors", marketCap: 100, changePct: 2 },
+    { ticker: "MSFT", sector: "Technology", industry: "Software", marketCap: 90, changePct: -1 },
+  ];
+  const flat = heatmapNodes(rows, { flat: true });
+  assert.ok(!flat.ids.some((id) => id.startsWith("industry:")), "뿌리에는 산업 층이 없다");
+  assert.equal(flat.parents[flat.ids.indexOf("ticker:NVDA")], "sector:Technology");
+  // 들어갔을 때 쓸 계층은 그대로 만들어진다.
+  assert.ok(heatmapNodes(rows).ids.some((id) => id.startsWith("industry:")));
+});
+
+test("heatmapColor는 방향을 색상으로, 등락 크기를 휘도로 말한다", () => {
+  // 흰 글자 대비가 전 구간 5.26:1 이상이다. 예전 #168a56은 4.37:1로 AA 미달이었다.
+  assert.equal(heatmapColor(-3), "#6d1823");
+  assert.equal(heatmapColor(-2), "#882e3a");
+  assert.equal(heatmapColor(-1), "#904852");
+  assert.equal(heatmapColor(-0.3), "#875960");
+  assert.equal(heatmapColor(0), "#676c78");
+  assert.equal(heatmapColor(0.3), "#486d5f");
+  assert.equal(heatmapColor(1), "#326853");
+  assert.equal(heatmapColor(2), "#195840");
+  assert.equal(heatmapColor(3), "#05412a");
+  // 경계는 대칭이다.
+  assert.equal(heatmapColor(-0.5), "#904852");
+  assert.notEqual(heatmapColor(0.4), heatmapColor(0.6));
+});
+
+test("회색은 표시상 0.00%인 칸만이다", () => {
+  // |등락| < 0.5%를 통째로 회색으로 칠하던 시절 전체 타일의 26%가 회색이었고,
+  // 그중 실제로 0.00%인 것은 US 129개 중 1개뿐이었다 — 움직인 종목이 안 움직인
+  // 것처럼 보인다.
+  const flat = heatmapColor(0);
+  assert.equal(heatmapColor(0.004), flat, "0.00%로 찍히는 값은 회색이다");
+  assert.equal(heatmapColor(null), flat, "등락을 모르면 회색이다");
+  for (const value of [0.01, 0.05, 0.32, 0.49]) {
+    assert.notEqual(heatmapColor(value), flat, `+${value}%가 회색이면 안 된다`);
+    assert.notEqual(heatmapColor(-value), flat, `-${value}%가 회색이면 안 된다`);
   }
+  // 옅은 단계도 방향이 갈린다.
+  assert.notEqual(heatmapColor(0.3), heatmapColor(-0.3));
 });
 
 test("네 시장 모두 섹션 슬롯을 얻는다", () => {
