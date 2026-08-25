@@ -37,6 +37,12 @@ ROOT = Path(__file__).resolve().parents[4]
 RSS_INBOX_DIR = research_inbox_dir() / "rss"
 RSS_ARCHIVE_MODULE = "features.common.research_library.rss.rss_archive"
 
+# 수집 서브프로세스 상한. 300초는 정상 실행도 못 끝낸다 — 실측으로 10일치 공백을
+# 메우는 실행이 8~10분 걸렸고, 매시 자동 수집이 전부 300초에서 잘려 **한 건도 쓰지
+# 못한 채** `done`으로 기록됐다(2026-08-14~24, 열흘). 잘린 실행은 파일을 남기지 않아
+# 다음 실행이 같은 backlog를 다시 시도하므로 스스로 회복되지 않는다.
+RSS_COLLECT_TIMEOUT_SECONDS = max(300, int(os.environ.get("RSS_COLLECT_TIMEOUT_SECONDS", "1800")))
+
 RSS_DATETIME_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
@@ -801,6 +807,7 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
     output = []
     before = len(list(RSS_INBOX_DIR.glob("*.md")))
     collector_created = None
+    collection_error = ""
     if progress:
         progress(f"RSS 수집 준비 중입니다. 기존 RSS 파일 {before}개", progress=5)
     if run_collection:
@@ -816,7 +823,7 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
             proc = subprocess.run(
                 command,
                 cwd=str(ROOT), text=True, encoding="utf-8", errors="replace",
-                capture_output=True, timeout=300,
+                capture_output=True, timeout=RSS_COLLECT_TIMEOUT_SECONDS,
                 creationflags=_cf,
             )
             if proc.stdout.strip():
@@ -824,8 +831,17 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
                 collector_created = _collection_created_count(proc.stdout)
             if proc.stderr.strip():
                 output.append(proc.stderr.strip())
-        except Exception:
-            output.append("RSS collection failed.")
+        except subprocess.TimeoutExpired:
+            collection_error = "timeout"
+            output.append(
+                f"RSS collection timed out after {RSS_COLLECT_TIMEOUT_SECONDS}s. "
+                "RSS_COLLECT_TIMEOUT_SECONDS로 상한을 늘릴 수 있습니다."
+            )
+        except Exception as exc:
+            # 이유를 버리면 왜 안 되는지 알 길이 없다. 예외 종류는 코드 식별자라
+            # 사용자 자료가 아니다 — 원문 메시지는 담지 않는다.
+            collection_error = type(exc).__name__
+            output.append(f"RSS collection failed ({collection_error}).")
     after = len(list(RSS_INBOX_DIR.glob("*.md")))
     added = collector_created if collector_created is not None else max(after - before, 0)
     output.append(f"RSS collection finished. Added {added}, total {after}.")
@@ -868,6 +884,7 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
         pass
     return {
         "output": "\n".join(output),
+        "collection": {"ok": not collection_error, "error": collection_error},
         "added": added,
         "total": after,
         "cache": cache,

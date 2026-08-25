@@ -320,6 +320,7 @@ class SharedJobStore:
             "attemptedEngine",
             "finalEngine",
             "fallbackReason",
+            "failureDetail",
             "proposalId",
         }
         with self.lock:

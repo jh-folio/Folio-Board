@@ -131,6 +131,8 @@ def compatibility_job(job: SharedJob, live_detail: TerminalLiveDetail | None = N
         "attemptedEngine": job.attemptedEngine.value if job.attemptedEngine is not None else None,
         "finalEngine": job.finalEngine.value if job.finalEngine is not None else None,
         "fallbackReason": job.fallbackReason.value if job.fallbackReason is not None else None,
+        # 실패 이유를 코드로만 노출한다. 없으면 키를 만들지 않는다.
+        **({"failureDetail": job.failureDetail} if getattr(job, "failureDetail", None) else {}),
     }
 
 

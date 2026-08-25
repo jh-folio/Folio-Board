@@ -642,7 +642,11 @@ def _read_index_from_store():
     # Try SQLite first; fall back to legacy JSON during first migration run
     if RESEARCH_DB_PATH.exists():
         docs = load_documents_from_db(RESEARCH_DB_PATH)
-        if docs and any(d.get("content") for d in docs[:10]):
+        # 판정 기준은 "문서가 있는가"다. 예전에는 `content`가 채워졌는지를 봤는데, 그
+        # 컬럼은 나중에 ALTER로 추가돼 기존 행이 전부 비었고 증분 재사용이 그 상태를
+        # 계속 물려줬다 — 조건이 늘 거짓이라 매번 build_index() 전체 실행(5.6초)으로
+        # 떨어졌다. DB 읽기는 0.6초다. 본문은 chunks에 있고 요약은 summary가 갖는다.
+        if docs:
             status = read_json(DATA_DIR / "index.json", {})
             return {
                 "generatedAt": status.get("generatedAt", ""),

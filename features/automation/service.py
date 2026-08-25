@@ -547,6 +547,10 @@ def run_automation_once(kind: str, schedule: dict | None = None) -> dict:
             return {"ok": False, "error": f"Unsupported automation: {kind}"}
         status = "done"
         job_id = ""
+        if kind == "rss" and isinstance(result, dict) and result.get("collection", {}).get("ok") is False:
+            # 수집이 실패했는데 done으로 적으면 자동 수집이 도는 줄 알고 며칠을 보낸다 —
+            # 실제로 매시 실행이 300초에서 잘리는 동안 실행 기록은 열흘 내내 done이었다.
+            status = "failed"
         if kind == "briefing" and isinstance(result, dict) and result.get("generationMode") == "llm_cli":
             # submit_agent_task는 job을 전용 스레드로 띄우고 바로 돌아온다. 이 시점은
             # 완료가 아니라 제출이다 — done으로 적으면 job이 실패해도 그날 '성공'이

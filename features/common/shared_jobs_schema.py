@@ -272,6 +272,8 @@ class SharedJob(StrictModel):
     attemptedEngine: Engine | None
     finalEngine: Engine | None
     fallbackReason: FallbackReason | None
+    # 실패 원인을 코드로만 남기는 진단 필드. 본문·프롬프트 조각은 담지 않는다.
+    failureDetail: Annotated[str, Field(max_length=200)] | None = None
     operationId: str | None
     artifactRefs: list[ArtifactRef]
     commitIntent: CommitIntent | None
