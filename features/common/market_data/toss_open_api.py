@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 """Toss Securities Open API market-data client.
 
 Official docs: https://developers.tossinvest.com/docs
@@ -163,6 +165,11 @@ def fetch_toss_market_calendar(
 
 
 def fetch_toss_prices(symbols: list[str], *, transport: Transport | None = None) -> list[dict]:
+    # 테스트에서는 실제 API를 부르지 않는다(market_universe의 yfinance 가드와 같은
+    # 계약). transport를 주입한 호출은 테스트가 의도적으로 응답을 제어하는 것이므로
+    # 허용한다.
+    if transport is None and os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("market_data_network_disabled_in_tests")
     normalized = [toss_symbol_for(symbol) for symbol in symbols]
     normalized = [symbol for symbol in dict.fromkeys(normalized) if symbol]
     if not normalized:

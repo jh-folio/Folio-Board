@@ -61,7 +61,12 @@ class JobJsonProducers:
         reports = {
             scope: decorate_candidate(
                 "briefing",
-                {**request.reports[scope], "date": request.date, "marketScope": scope, "kind": request.kind},
+                # 세션일을 발행일로 덮어쓰지 않는다(§job_briefing_producer와 같은 계약).
+                # 여기서 덮어쓰면 change event의 artifactId가 발행일로 파생돼, 새벽
+                # 실행의 08-27 세션이 08-28 이벤트로 등록된다.
+                {**request.reports[scope],
+                 "date": str(request.reports[scope].get("date") or request.date),
+                 "marketScope": scope, "kind": request.kind},
                 data_dir=self.data_root,
                 generation_provenance=True,
             )

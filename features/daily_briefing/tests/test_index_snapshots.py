@@ -41,6 +41,11 @@ def _collect(scope: str, *, failing: tuple[str, ...] = ()) -> dict:
         price_history_fetcher=_fetcher(failing=failing),
         # 회사 차트는 이 작업 범위 밖이고, 비워 두면 종목 조회 네트워크 호출도 없다.
         leader_subjects={},
+        # 히트맵도 반드시 스텁한다. 기본 fetcher를 타면 실제 yfinance를 부르고 그
+        # 결과를 **실제 last-good 캐시에 저장**한다 — 이 테스트가 2026-07-31 스냅샷을
+        # 캐시에 심어, provider가 지연된 날 브리핑 두 건이 한 달 전 히트맵을 실었다.
+        # fetcher 가드가 이제 네트워크를 막지만, 스텁이 의도를 문서화한다.
+        heatmap_fetchers={key: (lambda _d: {}) for key in ("us", "kr", "europe", "jp")},
     )
     return next(row for row in result["visualSnapshots"] if row["type"] == "price_series")
 

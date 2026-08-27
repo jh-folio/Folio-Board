@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import gzip
 import json
 from pathlib import Path
@@ -252,6 +253,8 @@ def _close_pairs(frame, ticker: str, target: str) -> list[tuple[str, float]]:
 
 
 def fetch_bulk_daily_prices(tickers: list[str], date: str) -> dict[str, dict]:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("market_data_network_disabled_in_tests")
     import yfinance as yf
 
     target = str(date)[:10]
@@ -638,6 +641,13 @@ def fetch_bulk_daily_prices_by_symbol(symbols: list[str], date: str) -> dict[str
     which would turn ``SAP.DE`` into ``SAP-DE`` and ``7203.T`` into ``7203-T``.
     Overseas symbols carry their exchange in that suffix, so they go as-is.
     """
+    # 테스트에서는 네트워크를 부르지 않는다. `test_index_snapshots.py`가 heatmap
+    # fetcher를 스텁하지 않은 채 collect_briefing_visuals를 불러 실제 yfinance를
+    # 때리고, 그 결과(요청일 2026-07-31)를 **실제 last-good 캐시에 저장**했다 —
+    # 그날 밤 provider 지연으로 fallback한 브리핑 두 건이 한 달 전 히트맵을 실었다
+    # (2026-08-28 실측). 여기서 막으면 어떤 테스트도 캐시를 오염시킬 수 없다.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("market_data_network_disabled_in_tests")
     import yfinance as yf
 
     target = str(date)[:10]
