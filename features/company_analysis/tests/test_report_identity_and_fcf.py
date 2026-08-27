@@ -205,7 +205,7 @@ def test_a_draft_missing_sections_is_rewritten_once(monkeypatch):
     seen: list[str] = []
 
     def llm(*_args, **kwargs):
-        seen.append(str(kwargs.get("web_facts") or ""))
+        seen.append(str(kwargs.get("context") or ""))
         broken = len(seen) == 1
         return ({"markdown": _draft(drop=("어떻게 접근할까",)) if broken else _draft(),
                  "usedDocs": [], "webSearch": False}, "ok")
@@ -255,7 +255,7 @@ def test_web_lookup_feeds_the_ledger_and_the_context():
     seen: list[str] = []
 
     def llm(*_args, **kwargs):
-        seen.append(str(kwargs.get("web_facts") or ""))
+        seen.append(str(kwargs.get("context") or ""))
         return ({"markdown": _draft(), "usedDocs": [], "webSearch": True}, "ok")
 
     runtime = {

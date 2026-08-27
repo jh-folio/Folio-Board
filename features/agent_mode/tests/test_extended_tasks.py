@@ -112,13 +112,17 @@ def test_company_analysis_agent_pack_preserves_analysis_style():
         "rankedFiling": {"ok": False, "paragraphs": []},
         "marketFinancialData": {},
     }
+    # 자료 수집과 컨텍스트 조립은 이제 `generation_context`가 소유한다. API 경로와 CLI
+    # 경로가 같은 조립기를 쓰므로 이음매도 거기다.
+    from features.company_analysis import generation_context as gen_ctx
+
     with (
-        patch.object(service, "load_index", return_value=[]),
-        patch.object(service, "search_documents", return_value=[]),
-        patch.object(service, "infer_requested_company", return_value=materials["company"]),
-        patch.object(service, "build_company_analysis_materials", return_value=materials),
-        patch.object(service, "build_company_analysis_charts", return_value={"available": False, "charts": []}),
-        patch.object(service, "company_analysis_sources", return_value=[]),
+        patch.object(gen_ctx, "load_index", return_value=[]),
+        patch.object(gen_ctx, "search_documents", return_value=[]),
+        patch.object(gen_ctx, "infer_requested_company", return_value=materials["company"]),
+        patch.object(gen_ctx, "build_company_analysis_materials", return_value=materials),
+        patch.object(gen_ctx, "build_company_analysis_charts", return_value={"available": False, "charts": []}),
+        patch.object(gen_ctx, "company_analysis_sources", return_value=[]),
         patch.object(service.A, "write_pack", side_effect=lambda pack: Path("agent-pack.json")),
     ):
         pack, path = service.prepare_company_analysis_pack("NVDA", analysis_style="advanced")

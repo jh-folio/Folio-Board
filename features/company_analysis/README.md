@@ -22,6 +22,46 @@
 - 웹 검색 보완 ON/OFF
 - 자동 preflight, evidence coverage, 품질 평가 결과 저장
 
+## 생성 경로 — 0.5.6
+
+기업분석에는 생성 경로가 둘이다.
+
+```text
+API   app.py → analyze_company()
+CLI   app.py → submit_agent_task() → agent_mode/service.py::prepare_company_analysis_pack()
+```
+
+**조립기와 후처리기는 하나씩이다.** 두 경로가 각자 조립하던 시절 실제로 갈렸다:
+
+- 산출물 계약(분량·근거 인용·서술 요구·웹 조회·검증)이 API 경로에만 붙어, CLI로 만든
+  보고서에는 `contractValidation`이 아예 없었다. 사용자는 CLI를 쓰고 있었다.
+- 자료 검색도 갈렸다. API는 회사를 해석하고 그 표기들로 검색해 합치는데
+  (`search_company_documents`) CLI는 사용자가 친 문자열 하나로 찾았다 — 실측 **NVDA 문서
+  겹침 8/30**, CLI 상위 3건에 엔비디아 기사가 하나도 없었다(세레브라스·SanDisk·CoreWeave).
+- 팩의 `requiredSections`가 손으로 적은 6개라 경쟁우위·성장 전망·어떻게 접근할까가
+  빠져도 아무도 몰랐다.
+
+| 무엇 | 어디 |
+|---|---|
+| 자료 수집·컨텍스트 조립 | `generation_context.py::build_generation_inputs()` |
+| 보고서 뼈대 | `generation_context.py::draft_artifact()` |
+| 계약 검증·점수 상한 | `finalize.py::finalize_report()` |
+| CLI 초안 재시도 | `agent_mode/bridge.py::run_agent_task` (브리핑과 같은 자리) |
+
+**새 계약은 조립기에 붙인다.** 경로별로 붙이면 다시 갈린다.
+
+주의:
+- **데이터 갭은 설정이 아니라 실제로 웹 검색이 돌았는지로 정한다.** 조립기가 설정으로
+  미리 굳히면 CLI 모드·LLM 실패·자료 없음처럼 검색이 한 번도 돌지 않은 경로에서도
+  "시도함"으로 남는다. 조립기는 조회 발동 판단용 `dataGaps`만 갖고, 최종 갭은 생성 뒤에
+  호출자가 정한다.
+- **CLI 재시도는 실패로 끝내지 않는다.** 브리핑은 계약 위반이면 잡을 실패시키지만
+  기업분석은 섹션 하나가 빠져도 나머지가 쓸모 있고, 계약 결함으로 남으면 점수 상한이
+  그것을 말한다.
+- `engine_calls`는 브리지를 **호출 시점에** import한다. 최상단에서 가져오면
+  `generation_context → engine_calls → bridge → agent_mode.service → generation_context`
+  순환이 생긴다.
+
 ## 산출물 계약 — 0.5.6
 
 프롬프트로 부탁한 것과 산출물이 지킨 것은 다르다. 지금까지 기업분석은 계약을

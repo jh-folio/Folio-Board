@@ -13,6 +13,10 @@ from features.agent_mode import schema
 from features.agent_mode import service as agent_service
 from features.agent_mode import job_runtime
 from features.agent_mode.briefing_contract import briefing_contract_violations
+from features.company_analysis.report_contract import (
+    missing_sections as company_missing_sections,
+    render_section_retry as company_section_retry,
+)
 from features.common.jobs import cancel_job, get_job, submit_job
 from features.common.shared_jobs_schema import TaskType
 from features.llm_settings.client import load_dotenv
@@ -712,6 +716,23 @@ def run_agent_task(
                         "Agent CLI 브리핑이 출력 계약을 충족하지 못했습니다: "
                         + "; ".join(violations)
                     )
+            elif task_type == "company_analysis" and output_format == "markdown":
+                # 초안이 고정 9섹션을 어기면 **쓰기만** 한 번 더 시킨다. 브리핑이 이미
+                # 같은 자리에서 같은 일을 한다 — 앞의 자료 수집·웹 조회는 재사용된다.
+                # 브리핑과 달리 **실패로 끝내지 않는다.** 기업분석은 섹션 하나가 빠져도
+                # 나머지가 쓸모 있고, 계약 결함으로 남으면 점수 상한이 그것을 말한다.
+                missing = company_missing_sections(output)
+                if missing:
+                    progress("CLI 기업분석 구조를 보완해 다시 작성하고 있습니다.", 60, adapter=selected["id"])
+                    retry = _invoke_agent_cli(
+                        selected,
+                        agent_prompt + "\n\n" + company_section_retry(missing),
+                        timeout,
+                        job_id,
+                    )
+                    # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
+                    if len(company_missing_sections(retry)) < len(missing):
+                        output = retry
         except Exception:
             schema.update_pack_status(pack_path, status="failed", result={"error": "agent_task_failed"})
             raise

@@ -127,7 +127,16 @@ from features.company_analysis.service import (
     save_analysis_report,
 )
 from features.company_analysis.data_gap_resolver import resolve_company_analysis_gaps
-from features.company_analysis.style import analysis_prompt_path, normalize_analysis_style
+from features.company_analysis.finalize import finalize_report as finalize_company_report
+from features.company_analysis.generation_context import (
+    build_generation_inputs,
+    draft_artifact as company_draft_artifact,
+)
+from features.company_analysis.style import (
+    REQUIRED_SECTION_HEADINGS as COMPANY_REQUIRED_SECTIONS,
+    analysis_prompt_path,
+    normalize_analysis_style,
+)
 from features.topic_report.data_fetcher import fetch_topic_market_data
 from features.topic_report.evaluation import evaluate_report
 from features.topic_report.evidence import build_evidence_pack, evidence_pack_summary
@@ -930,70 +939,28 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
 
 
 def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", web_search=False, analysis_style="beginner", owner_job_id: str | None = None) -> tuple[dict, Path]:
+    """CLI용 컨텍스트 팩. 자료 수집과 계약 블록은 **API 경로와 같은 조립기**가 만든다.
+
+    예전에는 이 함수가 자료 수집과 컨텍스트 조립을 따로 했고, 그래서 두 경로가 갈렸다 —
+    산출물 계약이 API 경로에만 붙었고, 자료 검색도 CLI만 사용자가 친 문자열 하나로
+    찾아 실측 NVDA 문서 겹침이 8/30이었다(CLI 상위 3건에 엔비디아 기사 0건).
+    """
     analysis_style = normalize_analysis_style(analysis_style)
-    index = load_index()
-    docs = search_documents(index, query=query, company=query, limit=30)
-    company = infer_requested_company(query, docs)
-    materials = build_company_analysis_materials(query, docs, company)
-    selected = materials.get("selectedDocs", [])
-    quality_preflight = preflight_from_context("company_analysis", {}, {
-        "sourceCount": len(selected) or len(docs),
-        "documentCount": len(docs),
-        "analysisInputs": {
-            "secFactsOk": bool(materials.get("secFacts", {}).get("ok")),
-            "rankedFilingOk": bool(materials.get("rankedFiling", {}).get("ok")),
-        },
-    })
-    context = materials["context"]
-    context = "\n\n".join([context, render_quality_target_context(
-        "company_analysis",
-        preflight=quality_preflight,
-        context={"extraRoutes": [
-            f"현재 로컬 filings/reports/articles/rss 개수: {materials.get('counts', {})}",
-            f"로컬 IR/실적발표 감지 수: {materials.get('localIrEarningsCount', 0)}",
-            "공식 숫자가 없으면 dataGap으로 남기고, 웹 검색 사용 시 공식 IR·SEC·DART를 우선한다.",
-        ]},
-    )])
-    context = "\n\n".join([context, build_preflight_evidence_context(
-        "company_analysis",
-        preflight=quality_preflight,
-        artifact={
-            "sources": selected,
-            "analysisInputs": {
-                "secFactsOk": bool((materials.get("secFacts") or {}).get("ok")),
-                "rankedFilingOk": bool((materials.get("rankedFiling") or {}).get("ok")),
-            },
-            "dataGaps": [],
-        },
-    )])
-    hint_block = render_prompt_hints(quality_preflight)
-    if hint_block:
-        context = "\n\n".join([context, hint_block])
-    if web_search:
-        context = "\n\n".join([context, company_external_search_context(materials)])
-    charts = build_company_analysis_charts(materials)
-    data_gaps = resolve_company_analysis_gaps(materials, web_search_allowed=bool(web_search))
+    inputs = build_generation_inputs(
+        query, analysis_style=analysis_style, web_search=bool(web_search),
+    )
     prompt = read_company_analysis_prompt(analysis_style)
     draft = {
-        "saved": False,
+        **company_draft_artifact(inputs, query, analysis_style=analysis_style),
         "generatedAt": now_iso(),
-        "query": query,
-        "company": materials.get("company") or company,
-        "documentCount": len(docs),
-        "headline": f"{(materials.get('company') or company).get('name', query)} 기업 분석",
-        "analysisStyle": analysis_style,
-        "dataGaps": data_gaps,
-        "resolutionAttempts": data_gaps.get("gaps", []),
+        "headline": f"{(inputs.materials.get('company') or inputs.company).get('name', query)} 기업 분석",
         "prompt": prompt,
         "promptPath": str(analysis_prompt_path(analysis_style)),
-        "sources": company_analysis_sources(materials, selected[:14]),
-        "analysisCharts": charts,
-        "analysisInputs": {
-            "secFactsOk": bool(materials.get("secFacts", {}).get("ok")),
-            "rankedFilingOk": bool(materials.get("rankedFiling", {}).get("ok")),
-            "rankedParagraphs": len(materials.get("rankedFiling", {}).get("paragraphs", [])),
-        },
     }
+    context = inputs.context
+    data_gaps = inputs.dataGaps
+    quality_preflight = inputs.preflight
+
     pack = A.build_pack(
         task_type="company_analysis",
         artifact_type="company_analysis",
@@ -1001,7 +968,13 @@ def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", w
         title=draft["headline"],
         prompt=prompt,
         context=context,
-        output_contract={"format": "markdown", "analysisStyle": analysis_style, "requiredSections": ["핵심 판단", "기업 개요와 돈 버는 방식", "실적과 재무 품질", "밸류에이션", "리스크와 반증조건", "자료 한계와 참고자료"]},
+        # 계약이 요구하는 아홉 개 전부다. 손으로 여섯 개만 적어 두면 나머지 셋은
+        # 빠져도 아무도 모른다(실측: 경쟁우위·성장 전망·어떻게 접근할까가 빠져 있었다).
+        output_contract={
+            "format": "markdown",
+            "analysisStyle": analysis_style,
+            "requiredSections": list(COMPANY_REQUIRED_SECTIONS),
+        },
         write_back_contract={"method": "write_markdown", "target": "data/company-analysis/{stable-id}.json"},
         save_target=str(ANALYSIS_REPORTS_DIR),
         metadata={"analysisStyle": analysis_style},
@@ -1026,6 +999,11 @@ def write_company_analysis_from_markdown(pack: dict, markdown: str, *, persist: 
         )
     except Exception:
         report["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}
+    # 계약 검증과 점수 상한은 **API 경로와 같은 것**을 쓴다. 한쪽에만 붙이면 다른 쪽에서
+    # 조용히 빠진다 — 실제로 CLI 보고서에는 `contractValidation`이 아예 없었다.
+    report = finalize_company_report(
+        report, quote_sources=(report.get("webLookup") or {}).get("speakerSources") or [],
+    )
     return save_analysis_report(report) if persist else report
 
 

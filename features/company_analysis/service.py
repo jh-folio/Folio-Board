@@ -772,8 +772,14 @@ def _context_search_instruction(company: dict) -> str:
 def generate_llm_company_analysis(
     query, docs, web_search_override=None, llm_override=None, materials=None,
     quality_preflight=None, analysis_style="beginner", *, depth_policy=None, source_ledger=None,
-    web_facts="",
+    context=None,
 ):
+    """`context`가 주어지면 그것을 그대로 쓴다.
+
+    조립기는 `generation_context.py` 하나이며 API 경로와 CLI 경로가 함께 쓴다. 여기서
+    다시 조립하면 두 경로가 또 갈린다 — 실제로 그렇게 갈려서, 계약을 한쪽에만 붙인 채로
+    보고서가 나갔다. `context=None`은 이 함수를 직접 부르는 옛 호출자를 위한 길이다.
+    """
     cfg = selected_llm_config()
     llm_on = use_llm_analysis() if llm_override is None else bool(llm_override)
     if not llm_on:
@@ -787,48 +793,52 @@ def generate_llm_company_analysis(
         return None, "no_documents"
     if materials is None:
         materials = build_company_analysis_materials(query, docs)
-    context = materials["context"]
     used_docs = materials["selectedDocs"]
-    target_block = render_quality_target_context(
-        "company_analysis",
-        preflight=quality_preflight,
-        context={"extraRoutes": [
-            f"현재 로컬 filings/reports/articles/rss 개수: {materials.get('counts', {})}",
-            f"로컬 IR/실적발표 감지 수: {materials.get('localIrEarningsCount', 0)}",
-            "공식 숫자가 없으면 웹 검색보다 먼저 dataGap으로 남기고, 웹 검색 사용 시 공식 IR·SEC·DART를 우선한다.",
-        ]},
-    )
-    context = "\n\n".join([context, target_block])
-    context = "\n\n".join([
-        context,
-        build_preflight_evidence_context(
+    prepared = context is not None
+    context = context if prepared else materials["context"]
+    # 준비된 컨텍스트를 받았으면 다시 조립하지 않는다. 두 경로가 각자 조립하면
+    # 계약이 한쪽에만 붙는다(실측: CLI 보고서에 계약이 하나도 적용되지 않았다).
+    if not prepared:
+        target_block = render_quality_target_context(
             "company_analysis",
             preflight=quality_preflight,
-            artifact={
-                "sources": used_docs,
-                "analysisInputs": {
-                    "secFactsOk": bool((materials.get("secFacts") or {}).get("ok")),
-                    "rankedFilingOk": bool((materials.get("rankedFiling") or {}).get("ok")),
+            context={"extraRoutes": [
+                f"현재 로컬 filings/reports/articles/rss 개수: {materials.get('counts', {})}",
+                f"로컬 IR/실적발표 감지 수: {materials.get('localIrEarningsCount', 0)}",
+                "공식 숫자가 없으면 웹 검색보다 먼저 dataGap으로 남기고, 웹 검색 사용 시 공식 IR·SEC·DART를 우선한다.",
+            ]},
+        )
+        context = "\n\n".join([context, target_block])
+        context = "\n\n".join([
+            context,
+            build_preflight_evidence_context(
+                "company_analysis",
+                preflight=quality_preflight,
+                artifact={
+                    "sources": used_docs,
+                    "analysisInputs": {
+                        "secFactsOk": bool((materials.get("secFacts") or {}).get("ok")),
+                        "rankedFilingOk": bool((materials.get("rankedFiling") or {}).get("ok")),
+                    },
+                    "dataGaps": [],
                 },
-                "dataGaps": [],
-            },
-        ),
-    ])
-    hint_block = render_prompt_hints(quality_preflight)
-    if hint_block:
-        context = "\n\n".join([context, hint_block])
-    # 분량과 근거 인용은 프롬프트가 아니라 **이 요청의 숫자와 목록**으로 준다.
-    # 원칙은 안 움직이고 숫자로 된 과제만 움직인다(딥 리서치에서 세 번 확인).
-    for block in (
-        render_length_contract(depth_policy or {}),
-        render_quality_requirements(),
-        render_source_contract(source_ledger),
-        web_facts,
-    ):
-        if block:
-            context = "\n\n".join([context, block])
+            ),
+        ])
+        hint_block = render_prompt_hints(quality_preflight)
+        if hint_block:
+            context = "\n\n".join([context, hint_block])
+        # 분량과 근거 인용은 프롬프트가 아니라 **이 요청의 숫자와 목록**으로 준다.
+        # 원칙은 안 움직이고 숫자로 된 과제만 움직인다(딥 리서치에서 세 번 확인).
+        for block in (
+            render_length_contract(depth_policy or {}),
+            render_quality_requirements(),
+            render_source_contract(source_ledger),
+        ):
+            if block:
+                context = "\n\n".join([context, block])
     web_search = use_web_search_for_analysis() if web_search_override is None else bool(web_search_override)
-    if web_search:
+    # 준비된 컨텍스트에는 조립기가 이미 붙였다. 여기서 또 붙이면 같은 블록이 두 번 간다.
+    if web_search and not prepared:
         context = "\n\n".join([context, company_external_search_context(materials)])
     web_status = "web_search" if web_search else "local_only"
     try:

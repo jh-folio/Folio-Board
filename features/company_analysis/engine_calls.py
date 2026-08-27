@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from features.agent_mode import bridge as agent_bridge
 from features.llm_settings.client import request_llm_text, selected_llm_config, use_llm_analysis
 
 LookupCall = Callable[[str, str], str]
@@ -35,6 +34,9 @@ def configured_lookup_call(*, adapter: str = "", job_id: str = "") -> LookupCall
                 timeout_seconds=max(60, int(os.environ.get("COMPANY_LOOKUP_API_TIMEOUT_SECONDS", "240"))),
             )
             return str(text or "")
+        # 모듈 최상단에서 가져오면 순환이 생긴다(조립기를 두 경로가 공유하기 때문).
+        from features.agent_mode import bridge as agent_bridge
+
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
