@@ -24,6 +24,9 @@ METRIC_CANDIDATES = {
     "Total Assets": ["Assets"],
     "Total Liabilities": ["Liabilities"],
     "Long-Term Debt": ["LongTermDebtAndFinanceLeaseObligations", "LongTermDebt"],
+    # 장기부채만 보면 유동성 차입이 많은 회사의 부채가 통째로 사라진다. 순부채는
+    # 장기+단기-현금이다.
+    "Short-Term Debt": ["ShortTermBorrowings", "LongTermDebtCurrent", "DebtCurrent", "OtherShortTermBorrowings"],
     "Current Assets": ["AssetsCurrent"],
     "Current Liabilities": ["LiabilitiesCurrent"],
     "Inventory": ["InventoryNet"],
@@ -64,6 +67,7 @@ IFRS_METRIC_CANDIDATES = {
     "Total Assets": ["Assets"],
     "Total Liabilities": ["Liabilities"],
     "Long-Term Debt": ["NoncurrentPortionOfNoncurrentBorrowings", "Borrowings"],
+    "Short-Term Debt": ["CurrentPortionOfNoncurrentBorrowings", "ShorttermBorrowings"],
     "Current Assets": ["CurrentAssets"],
     "Current Liabilities": ["CurrentLiabilities"],
     "Inventory": ["Inventories"],

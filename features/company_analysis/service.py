@@ -19,6 +19,7 @@ from features.company_analysis.filing_items import select_analysis_items, select
 from features.company_analysis.depth_policy import render_length_contract
 from features.company_analysis.report_contract import render_quality_requirements, render_source_contract
 from features.company_analysis.valuation import build_valuation_scenarios
+from features.company_analysis.dcf import build_dcf
 from features.company_analysis.style import analysis_prompt_path, read_analysis_prompt
 from features.company_analysis.report_rules import (
     _fcf_series,
@@ -1355,15 +1356,20 @@ def build_company_analysis_charts(materials):
                 "netMargin": net_margin,
             })
 
-    fcf = _latest_metric_value(sec_summary, market, "Free Cash Flow")
-    cash = financial_engine.latest_value(sec_summary, "Cash & Equivalents") or 0.0
-    debt = financial_engine.latest_value(sec_summary, "Long-Term Debt") or 0.0
     shares = market.get("sharesOutstanding") if market.get("ok") else None
     if shares is None:
         shares = financial_engine.latest_value(sec_summary, "Shares Diluted")
     price = market.get("price") if market.get("ok") else None
     near_growth = financial_engine.growth_rate(_fcf_series(sec_summary, market))
-    scenarios = financial_engine.dcf_scenarios(fcf or 0.0, debt - cash, shares or 0.0, near_growth)
+    # **DCF도 한 곳에서 계산한다.** 차트·본문 컨텍스트·규칙 보고서가 이 객체를 읽는다.
+    dcf_model = build_dcf(
+        sec_summary,
+        price=price,
+        shares=shares,
+        market_cap=market.get("marketCap") if market.get("ok") else None,
+        beta=market.get("beta") if market.get("ok") else None,
+        currency=price_currency,
+    )
     scenario_rows = [
         {
             "name": item.get("name"),
@@ -1372,17 +1378,26 @@ def build_company_analysis_charts(materials):
             "discount": _finite_number(item.get("discount")),
             "terminal": _finite_number(item.get("terminal")),
         }
-        for item in scenarios
+        for item in (dcf_model.get("scenarios") or [])
         if item.get("ok") and _finite_number(item.get("perShare")) is not None
     ]
     if scenario_rows:
+        implied = (dcf_model.get("impliedGrowth") or {}).get("growth")
         charts.append({
             "id": "dcf",
             "title": "DCF 시나리오",
-            "subtitle": "보수·기본·낙관 가정별 주당 내재가치",
+            "subtitle": (
+                f"초기 FCF 성장률 가정별 주당 내재가치 "
+                f"(할인율 {dcf_model['discountRate']['rate'] * 100:.1f}%, "
+                f"{len(dcf_model['fadePath'])}년 감쇠, 터미널 비중 "
+                f"{(dcf_model.get('terminalShare') or 0) * 100:.0f}%)"
+            ),
             "kind": "dcf",
             "scenarios": scenario_rows,
             "currentPrice": _finite_number(price),
+            # 현재가를 정당화하는 성장률. 차트가 판정하지 않고 이 값을 함께 보여준다.
+            "impliedGrowth": _finite_number(implied),
+            "terminalShare": _finite_number(dcf_model.get("terminalShare")),
             # 내재가치/주는 현재가와 나란히 읽히므로 주가 통화를 쓴다.
             "currency": price_currency,
         })
@@ -1429,6 +1444,7 @@ def build_company_analysis_charts(materials):
         # 본문 컨텍스트가 이 객체를 그대로 읽는다. 차트와 본문이 같은 숫자를 말하려면
         # 계산이 한 번만 일어나야 한다.
         "valuation": valuation,
+        "dcf": dcf_model,
         "company": {"name": company.get("name", ""), "ticker": company.get("ticker", "")},
         "source": "SEC companyfacts + yfinance market data",
         # 차트 숫자는 전부 외부 provider에서 온다. 하나라도 NaN이면 보고서 저장이

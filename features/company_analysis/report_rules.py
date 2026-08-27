@@ -8,6 +8,7 @@ from pathlib import Path
 
 from features.common.workspace import data_dir
 from features.company_analysis import financial_engine
+from features.company_analysis.dcf import PROJECTION_YEARS, build_dcf, dcf_value
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
 
 try:
@@ -231,7 +232,7 @@ def _market_cache_dir() -> Path:
 
 
 # 캐시에 담는 항목이 늘면 올린다. 옛 파일은 신선해도 다시 받는다.
-MARKET_CACHE_SHAPE = 2
+MARKET_CACHE_SHAPE = 3  # 3: beta 추가(할인율 회사별 계산). 올리지 않으면 옛 캐시가 TTL까지 내려온다.
 
 
 def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
@@ -344,6 +345,9 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
             "enterpriseValue": pick("enterprise_value", "enterpriseValue"),
             "sharesOutstanding": pick("shares", "sharesOutstanding", "impliedSharesOutstanding"),
             "ebitda": pick("ebitda", "trailingEbitda"),
+            # 할인율을 회사별로 만들려면 베타가 필요하다. 없으면 DCF가 고정
+            # 할인율로 내려가고 그 사실을 보고서가 밝힌다.
+            "beta": pick("beta"),
             "currency": info.get("currency") or "USD",
             # 회사 공식 도메인. 웹 검색 허용 목록이 이 회사 사이트만 열어 두는 데 쓴다.
             "website": info.get("website") or "",
@@ -676,8 +680,11 @@ def _growth_rate(values: list[float], fallback: float = 0.04) -> float:
     return financial_engine.growth_rate(values, fallback)
 
 
-def _dcf_value(base_fcf: float, net_debt: float, shares: float, near_growth: float, discount_rate: float, terminal_growth: float, years: int = 5) -> dict:
-    return financial_engine.dcf_value(base_fcf, net_debt, shares, near_growth, discount_rate, terminal_growth, years)
+def _dcf_value(base_fcf: float, net_debt: float, shares: float, near_growth: float, discount_rate: float, terminal_growth: float, years: int | None = None) -> dict:
+    """민감도 표도 시나리오 표와 **같은 모델**을 쓴다. 예전에는 여기만 5년 평탄
+    모델이라 같은 할인율에서 두 표가 다른 값을 말했다."""
+    return dcf_value(base_fcf, net_debt, shares, near_growth, discount_rate, terminal_growth,
+                     years if years is not None else PROJECTION_YEARS)
 
 
 def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict | None = None) -> str:
@@ -718,12 +725,22 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
     fcf_yield = _ratio(fcf, market_cap)
     fcf_margin = _ratio(fcf, revenue)
 
-    fcf_values = _fcf_series(sec_summary, market)
-    near_growth = _growth_rate(fcf_values)
-    discount_rate = 0.09
-    terminal_growth = 0.025
-    dcf = _dcf_value(fcf or 0.0, net_debt, shares or 0.0, near_growth, discount_rate, terminal_growth)
-    scenarios = financial_engine.dcf_scenarios(fcf or 0.0, net_debt, shares or 0.0, near_growth)
+    # **규칙 보고서도 같은 DCF를 쓴다.** 여기서 따로 계산하면 규칙 보고서와 LLM
+    # 보고서가 같은 회사에 다른 내재가치를 말한다 — PER 시나리오에서 이미 겪었다.
+    dcf_model = build_dcf(
+        sec_summary,
+        price=price,
+        shares=shares,
+        market_cap=market_cap,
+        beta=market.get("beta") if market.get("ok") else None,
+        currency=currency,
+    )
+    near_growth = dcf_model.get("growth", {}).get("rate", 0.04)
+    discount_rate = dcf_model.get("discountRate", {}).get("rate", 0.09)
+    terminal_growth = dcf_model.get("terminalGrowth", 0.025)
+    scenarios = dcf_model.get("scenarios") or []
+    dcf = next((row for row in scenarios if row.get("name") == "기준"), {"ok": False})
+    base_fcf = (dcf_model.get("baseFcf") or {}).get("value")
 
     # 주가는 상장 통화, 재무는 신고 통화다. ASML은 나스닥 ADR이 달러인데 재무는
     # 유로라, 두 통화가 다르면 시가총액/매출 같은 배수는 서로 다른 단위를 나눈
@@ -745,10 +762,16 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
 
     lines = ["### Valuation Metrics", "", *table, ""]
     if dcf.get("ok"):
+        basis = (dcf_model.get("growth") or {}).get("basis", "")
+        basis_label = {"revenue_cagr": "매출 CAGR", "fcf_cagr": "FCF CAGR"}.get(basis, "기본값")
         lines += [
             "### DCF 기반 내재가치",
             "",
-            "| 시나리오 | FCF 성장률 | 할인율 | 영구성장률 | 자기자본가치 | 내재가치/주 | 현재가 대비 |",
+            f"초기 성장률은 {basis_label}에서 왔고, {len(dcf_model.get('fadePath') or [])}년에 걸쳐 "
+            f"영구성장률 {_pct(terminal_growth)}까지 감쇠시켰습니다. 시나리오는 성장률만 흔들고 "
+            "할인율·영구성장률은 아래 민감도 표가 맡습니다.",
+            "",
+            "| 시나리오 | 초기 성장률 | 할인율 | 영구성장률 | 자기자본가치 | 내재가치/주 | 현재가 대비 |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for scenario in scenarios:
@@ -760,30 +783,55 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
                 )
             else:
                 lines.append(f"| {scenario['name']} | {_pct(scenario['growth'])} | {_pct(scenario['discount'])} | {_pct(scenario['terminal'])} | 계산 불가 | 계산 불가 | 계산 불가 |")
+        base = dcf_model.get("baseFcf") or {}
+        discount = dcf_model.get("discountRate") or {}
+        deviation = base.get("deviationFromRecent")
         lines += [
             "",
             "| 항목 | 값 |",
             "| --- | ---: |",
-            f"| 기준 FCF | {_money(fcf, currency)} |",
+            f"| 기준 FCF (정상화) | {_money(base_fcf, currency)} |",
+            f"| 최근 연도 실제 FCF | {_money(base.get('recent'), currency)}"
+            + (f" ({_pct(deviation)} 차이)" if deviation is not None else "")
+            + " |",
+            f"| 할인율 | {_pct(discount_rate)}"
+            + (f" (WACC, 조정베타 {discount.get('adjustedBeta')})" if discount.get("method") == "wacc"
+               else " (회사별 계산 실패로 고정값)")
+            + " |",
+            f"| 순부채 | {_money(net_debt, currency)} |",
             f"| 순부채 차감 후 자기자본가치 | {_money(dcf['equityValue'], currency)} |",
             f"| DCF 내재가치/주 | {_money(dcf['perShare'], currency)} |",
+        ]
+        # **터미널 비중을 숨기지 않는다.** 가치의 절반 이상이 예측 기간 이후 가정에서
+        # 오는데 그 사실이 없으면 독자는 정밀한 현금흐름 모델을 봤다고 생각한다.
+        share = dcf.get("terminalShare")
+        if share is not None:
+            lines.append(f"| 터미널 비중 | {_pct(share)} (예측 기간 이후 가정에서 오는 가치) |")
+        implied = dcf_model.get("impliedGrowth") or {}
+        if implied.get("status") == "solved":
+            lines.append(f"| 역산 성장률 | {_pct(implied['growth'])} (현재가를 정당화하는 초기 FCF 성장률) |")
+        lines += [
             "",
             "| 민감도: 내재가치/주 | 영구성장 2.0% | 영구성장 2.5% | 영구성장 3.0% |",
             "| --- | ---: | ---: | ---: |",
         ]
-        for dr in [0.085, 0.09, 0.095]:
+        # 시나리오는 사업 가정(성장률)만 흔들고, 평가 가정(할인율·영구성장)은 이 표가 맡는다.
+        for dr in [discount_rate - 0.01, discount_rate, discount_rate + 0.01]:
             cells = []
             for tg in [0.02, 0.025, 0.03]:
-                case = _dcf_value(fcf or 0.0, net_debt, shares or 0.0, near_growth, dr, tg)
+                case = _dcf_value(base_fcf or 0.0, net_debt, shares or 0.0, near_growth, dr, tg)
                 cells.append(_money(case.get("perShare") if case.get("ok") else None))
             lines.append(f"| 할인율 {_pct(dr)} | {cells[0]} | {cells[1]} | {cells[2]} |")
         lines += [
             "",
-            "DCF는 최근 연간 FCF를 기준으로 한 단순 예비 모델입니다. 유지/성장 CapEx, 운전자본 정상화, 경기 사이클, 세율, WACC는 별도 검증이 필요합니다.",
+            "DCF는 예비 모델입니다. 기준 FCF는 FCF 마진 중앙값으로 정상화했고 성장률은 "
+            "예측 기간에 걸쳐 영구성장률까지 감쇠시켰습니다. 무위험수익률과 위험프리미엄은 "
+            "가정이며, 유지/성장 CapEx 구분, 운전자본 정상화, 경기 사이클은 별도 검증이 필요합니다. "
+            "**내재가치와 현재가의 차이를 고평가·저평가로 단정하지 마세요** — 위 가정이 바뀌면 결과도 바뀝니다.",
         ]
     else:
         missing = []
-        if not fcf or fcf <= 0:
+        if not base_fcf or base_fcf <= 0:
             missing.append("양의 기준 FCF")
         if not shares:
             missing.append("희석주식수")

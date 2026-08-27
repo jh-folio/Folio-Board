@@ -54,6 +54,7 @@ from features.company_analysis.service import (
 from features.company_analysis.style import normalize_analysis_style
 from features.company_analysis.valuation import render_valuation_contract
 from features.company_analysis.buyback import build_buyback_quality, render_buyback_quality
+from features.company_analysis.dcf import render_dcf_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +202,9 @@ def build_generation_inputs(
         # 본문이 밸류에이션을 다시 계산하지 않게 값을 통째로 준다. 각자 계산하던
         # 시절 한 보고서에 시나리오가 두 벌 있었다.
         render_valuation_contract(valuation),
+        # DCF도 차트와 같은 객체다. 본문이 따로 계산하면 한 보고서가 두 내재가치를
+        # 말한다 — PER 시나리오에서 이미 겪었다.
+        render_dcf_context((charts or {}).get("dcf") or {}),
         # 매입 금액만 주면 본문도 금액만 쓴다. 주식 수가 줄었는지가 함께 있어야
         # 주주환원인지 희석 상쇄인지 판단할 수 있다.
         render_buyback_quality(buyback),

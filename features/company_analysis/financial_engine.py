@@ -148,37 +148,6 @@ def growth_rate(values: list[float], fallback: float = 0.04) -> float:
     return max(-0.03, min(0.10, cagr))
 
 
-def dcf_value(base_fcf: float, net_debt: float, shares: float, near_growth: float, discount_rate: float, terminal_growth: float, years: int = 5) -> dict:
-    if base_fcf <= 0 or shares <= 0 or discount_rate <= terminal_growth:
-        return {"ok": False}
-    projected = []
-    pv_fcf = 0.0
-    for year in range(1, years + 1):
-        fcf = base_fcf * ((1 + near_growth) ** year)
-        pv = fcf / ((1 + discount_rate) ** year)
-        projected.append({"year": year, "fcf": fcf, "pv": pv})
-        pv_fcf += pv
-    terminal_fcf = projected[-1]["fcf"] * (1 + terminal_growth)
-    terminal_value = terminal_fcf / (discount_rate - terminal_growth)
-    pv_terminal = terminal_value / ((1 + discount_rate) ** years)
-    enterprise_value = pv_fcf + pv_terminal
-    equity_value = enterprise_value - net_debt
-    return {
-        "ok": True,
-        "pvFcf": pv_fcf,
-        "terminalValue": terminal_value,
-        "pvTerminal": pv_terminal,
-        "enterpriseValue": enterprise_value,
-        "equityValue": equity_value,
-        "perShare": equity_value / shares,
-    }
-
-
-def dcf_scenarios(base_fcf: float, net_debt: float, shares: float, base_growth: float) -> list[dict]:
-    scenarios = [
-        {"name": "보수", "growth": max(-0.02, base_growth - 0.03), "discount": 0.10, "terminal": 0.015},
-        {"name": "기준", "growth": base_growth, "discount": 0.09, "terminal": 0.025},
-        {"name": "낙관", "growth": min(0.12, base_growth + 0.03), "discount": 0.08, "terminal": 0.03},
-    ]
-    return [{**s, **dcf_value(base_fcf, net_debt, shares, s["growth"], s["discount"], s["terminal"])} for s in scenarios]
-
+# DCF는 `features/company_analysis/dcf.py`가 소유한다. 여기 있던 5년 평탄 모델은
+# 모든 회사에 사실상 같은 답을 줬다(실측 5개사가 전부 "현재가의 37~62%"). 되살리지
+# 않는다 — 두 벌이 있으면 어느 표가 어느 모델에서 왔는지 알 수 없게 된다.

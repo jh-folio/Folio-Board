@@ -16,6 +16,8 @@ type AnalysisChart = {
   scenarios?: Array<Record<string, unknown>>;
   series?: Record<string, number[]>;
   currentPrice?: number;
+  impliedGrowth?: number;
+  terminalShare?: number;
   currency?: string;
   [key: string]: unknown;
 };
@@ -647,6 +649,15 @@ function ChartCard({ chart }: { chart: AnalysisChart }) {
         )}
       </div>
       {banded && series.length > 0 ? <PeriodPanel chart={banded.chart} series={series} index={index} /> : null}
+      {/* 역산 성장률이 이 차트의 핵심 숫자다. 내재가치와 현재가의 차이를 보여 주기만
+          하면 독자는 그것을 고평가·저평가 판정으로 읽는다 — DCF는 가정 위에 섰고,
+          "현재가가 정당화되려면 얼마여야 하는가"가 그 가정을 되돌려 보여 준다. */}
+      {kind === "dcf" && typeof chart.impliedGrowth === "number" ? (
+        <p className="analysis-chart-note">
+          현재가가 정당화되려면 초기 성장률이 <strong>{(chart.impliedGrowth * 100).toFixed(1)}%</strong>여야
+          합니다. 내재가치와 현재가의 차이는 고평가·저평가 판정이 아니라 가정의 결과입니다.
+        </p>
+      ) : null}
     </article>
   );
 }

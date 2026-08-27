@@ -13431,6 +13431,14 @@ function Da({ chart: e }) {
 				chart: o.chart,
 				series: s,
 				index: _
+			}) : null,
+			r === "dcf" && typeof e.impliedGrowth == "number" ? /* @__PURE__ */ (0, K.jsxs)("p", {
+				className: "analysis-chart-note",
+				children: [
+					"현재가가 정당화되려면 초기 성장률이 ",
+					/* @__PURE__ */ (0, K.jsxs)("strong", { children: [(e.impliedGrowth * 100).toFixed(1), "%"] }),
+					"여야 합니다. 내재가치와 현재가의 차이는 고평가·저평가 판정이 아니라 가정의 결과입니다."
+				]
 			}) : null
 		]
 	});
