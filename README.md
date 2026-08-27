@@ -122,6 +122,14 @@ Track companies, sectors, and themes in a local Watchlist, then inspect the rela
 
 Cards and detail views show the next earnings date with a countdown. When the date is a third-party estimate rather than something the company announced, it says so — check the company's own IR notice in that case.
 
+### Portfolio
+
+Enter your holdings and see their value in a single currency, along with the weight across markets, sectors, and currencies. The screen has three tabs: holdings, presets, and backtest.
+
+Presets hold target weights. You can turn today's weights into a preset, then see how far each holding has drifted from the target and what you would need to buy or sell to close the gap. The backtest tab runs a preset over past prices against a benchmark, and can place several presets side by side. Backtests are for research: they have limits around taxes, fees, slippage, and dividends, and a result is kept only when you press save.
+
+Holdings you enter stay in your local workspace.
+
 ### Briefing
 
 Create and read daily market briefings for the US, Korea, Europe, and Japan. Pick one market or several; each becomes its own report, and you can regenerate, export, or delete one without touching the others. Briefings use news/RSS-style inputs and stored market snapshots where available. If AI is configured, Folio OS can use it for richer writing; otherwise the briefing is written with built-in rules.

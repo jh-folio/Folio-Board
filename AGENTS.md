@@ -222,6 +222,7 @@ features/company_analysis/financial_quality_prompt.md
 | 시장 내러티브 메모리 / Regime 추적 v2 | `market_memory` | 중기 내러티브 상태·taxonomy·momentum/confidence·thesis 연결 | source-grounded |
 | 워치리스트 | `watchlist_notes` | 워치리스트·상세(기업 정보/네이티브 차트/실적/수집 뉴스) | — |
 | Native Investment Notes | `investment_notes` | Obsidian 없이 운용되는 Folio 로컬 투자 노트와 `native_note_index` | hypothesis 입력 |
+| 자동화 | `automation` | RSS 수집·시장 메모리 갱신·브리핑 예약 스케줄러와 실행 기록(`data/automation-settings.json`, `data/automation-runs.json`). 서버가 켜져 있을 때만 돈다 | — |
 | LLM/설정/웹검색 | `llm_settings` | API Key·웹검색 보완 | — |
 | Notion 내보내기 | `notion_export` | 보고서 → Notion DB | — |
 | Obsidian 연동 | `obsidian` | 보고서/내러티브 → Vault, 사용자 노트 회수, thesis/memo/review 템플릿·검사 | hypothesis 입력 |
