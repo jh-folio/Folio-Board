@@ -7,7 +7,7 @@
 This document is the source, access, and redistribution decision record for the
 0.5 Europe/Japan expansion. It is a feasibility contract, not an implementation
 claim. A provider is not supported until its adapter and fixtures pass the gates
-in `roadmap/release/0.5_PLAN.md`.
+in `plan/release/0.5_PLAN.md`.
 
 ## Status vocabulary
 

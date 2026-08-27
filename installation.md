@@ -218,7 +218,7 @@ Do not delete these unless you intentionally want to remove local data:
 
 These three data folders live inside the app folder by default. **Settings > “자료 위치”** (data location) shows the current location and size, opens the folder, and can move it to your Documents folder so future updates carry it automatically.
 
-Development-only folders such as `web/`, `docs/`, and `roadmap/` are needed for source development, but are not required in a normal user runtime package if the built frontend under `public/` is current. Source/developer archives can still include them.
+Development-only folders such as `web/`, `docs/`, and `plan/` are needed for source development, but are not required in a normal user runtime package if the built frontend under `public/` is current. Source/developer archives can still include them.
 
 Maintainers can create a clean user package from reviewed tracked inputs with:
 

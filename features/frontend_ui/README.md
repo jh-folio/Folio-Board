@@ -18,7 +18,7 @@
 
 ## React SPA 전환 방향
 
-`web/` React/TypeScript SPA가 routing, navigation, Agent Home, Deep Research, Dashboard, Report Reader, Notes, Settings를 소유한다. `public/app.js`는 더 이상 화면 상태나 view 전환을 관리하지 않고, 검증된 Markdown/visual/source 렌더러를 React에 제공하는 bridge-only 역할만 맡는다. React 전환 자체는 [REACT_SPA_REWRITE_PLAN.md](../../roadmap/completed/REACT_SPA_REWRITE_PLAN.md)에 완료 이력으로 남긴다.
+`web/` React/TypeScript SPA가 routing, navigation, Agent Home, Deep Research, Dashboard, Report Reader, Notes, Settings를 소유한다. `public/app.js`는 더 이상 화면 상태나 view 전환을 관리하지 않고, 검증된 Markdown/visual/source 렌더러를 React에 제공하는 bridge-only 역할만 맡는다. React 전환 자체는 로컬 계획문서 `REACT_SPA_REWRITE_PLAN.md`에 완료 이력으로 남긴다.
 
 `#/office`는 0.3.0의 기본 Home인 Pixel Office다. read-only `/api/pixel-office` 요약을 7개 의미 있는 오브젝트로 표시하고, 기존 `/api/jobs`의 redacted 프론트 모델을 이용해 Agent 활동·완료·실패 상태를 갱신한다. 데스크톱에서는 lazy-loaded PixiJS 게임 장면+React semantic hotspot+overlay 상세 패널을 사용하고, 980px 이하에서는 Agent 미니 장면+상태 카드+하단 시트를 사용한다. Agent는 authored waypoint 경로로 대응 가구까지 실제 이동하며 발 위치로 Y-depth를 정렬한다. 상세 dialog는 Escape, focus trap, 원래 오브젝트 focus 복귀를 지원한다. 캐릭터 preset은 프로젝트 원본 `Classic Analyst`와 `Economics Student` 두 개만 노출하며, 사용자 이름과 움직임 줄이기 설정을 함께 저장한다.
 

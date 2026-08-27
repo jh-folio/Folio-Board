@@ -3,8 +3,8 @@
 대시보드(Step 8)와 품질 평가(Step 7)가 **보고서 markdown을 파싱하지 않고** 읽을 수 있도록,
 Folio OS 산출물의 핵심 구조를 최소 스키마로 통일한다.
 
-설계 원문: [roadmap/completed/folio_os_roadmap_post_v1.md](../../../roadmap/completed/folio_os_roadmap_post_v1.md) §6
-구현 추적: [roadmap/completed/IMPLEMENTATION_PLAN_POSTV1.md](../../../roadmap/completed/IMPLEMENTATION_PLAN_POSTV1.md)
+설계 원문: 로컬 계획문서 `folio_os_roadmap_post_v1.md` §6 (저장소에 포함하지 않는다)
+구현 추적: 로컬 계획문서 `IMPLEMENTATION_PLAN_POSTV1.md`
 
 ## 담당 범위
 

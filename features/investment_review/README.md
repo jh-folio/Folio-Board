@@ -4,8 +4,8 @@
 
 > 최근 시장 변화가 내 투자 논리를 강화했나 약화했나? 이번 주 무엇을 확인해야 하나?
 
-설계: [roadmap/completed/folio_os_roadmap_post_v1.md](../../roadmap/completed/folio_os_roadmap_post_v1.md) §8 ·
-추적: [roadmap/completed/IMPLEMENTATION_PLAN_POSTV1.md](../../roadmap/completed/IMPLEMENTATION_PLAN_POSTV1.md)
+설계: 로컬 계획문서 `folio_os_roadmap_post_v1.md` §8 ·
+추적: 로컬 계획문서 `IMPLEMENTATION_PLAN_POSTV1.md`
 
 ## 계층
 

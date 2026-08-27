@@ -32,7 +32,7 @@ Use local planning documents for detailed execution planning, investigation note
 
 Default local locations:
 
-- `roadmap/` for private product or execution plans. This folder is ignored and must not be included in public releases.
+- `plan/` for private product or execution plans. This folder is ignored and must not be included in public releases.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` only for public-safe design and implementation plans that are useful to retain in source history.
 
 When a local plan corresponds to a GitHub Issue, include the issue number or URL near the top of the plan. When an issue refers to a private local plan, include only the local relative path and a public-safe summary.

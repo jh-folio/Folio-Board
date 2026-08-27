@@ -169,7 +169,7 @@ hypothesis metadata일 뿐 자동 리밸런싱·매수/매도/보유 권고가 �
 
 한 가지는 인식이 아니라 우리 코드 문제였다는 것을 남겨 둔다. 한국 증권사 화면은 미국 종목도 한글 이름으로 보여주고 티커 칸이 없는 경우가 많은데, `normalize_draft()`가 티커 모양 문자열만 받아 **이름만 읽힌 행을 전부 `unresolved`로 버렸다**. 모델은 제대로 읽었는데 우리가 버린 것이다 — `알파벳`→GOOGL, `브로드컴`→AVGO, `히타치`→6501.T 모두 `company_resolution`이 confident로 답한다. 다시 만들 때 여기부터 붙인다.
 
-**남은 코드는 죽은 코드가 아니다.** `import_image.py`(임시 파일 수명·`validate_image` 가드·`import_preview` 정규화), `agent_import.py`(CLI 추출), `vision_import.py`(API 추출), `import_schema.py`(초안 정규화)는 0.5.X가 그대로 쓴다. 지우기 전에 `roadmap/release/0.5_PLAN.md`를 본다.
+**남은 코드는 죽은 코드가 아니다.** `import_image.py`(임시 파일 수명·`validate_image` 가드·`import_preview` 정규화), `agent_import.py`(CLI 추출), `vision_import.py`(API 추출), `import_schema.py`(초안 정규화)는 0.5.X가 그대로 쓴다. 지우기 전에 `plan/release/0.5_PLAN.md`를 본다.
 
 ## 다시 만들 때 — Agent 도크로 통일 (0.5.X)
 

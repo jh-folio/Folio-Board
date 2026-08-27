@@ -7,7 +7,7 @@ Use this checklist before changing the repository visibility to Public.
 - [ ] `.env` is not present.
 - [ ] `data/` is not present.
 - [ ] `research-inbox/` is not present.
-- [ ] `roadmap/` is not present.
+- [ ] `plan/` is not present.
 - [ ] `README.dev.md` is not present.
 - [ ] `.agents/`, `.claude/`, and `.superpowers/` are not present.
 - [ ] local launcher variants such as `start-lan.ps1` and `start-lan.cmd` are not present.

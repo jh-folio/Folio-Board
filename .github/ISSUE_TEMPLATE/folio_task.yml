@@ -31,8 +31,8 @@ body:
     id: local_plan
     attributes:
       label: Local plan
-      description: Optional public-safe relative path to a local/private plan, such as roadmap/example.md.
-      placeholder: "roadmap/..."
+      description: Optional public-safe relative path to a local/private plan, such as plan/example.md.
+      placeholder: "plan/..."
     validations:
       required: false
   - type: textarea

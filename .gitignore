@@ -4,7 +4,7 @@ web/playwright-report/
 dist/
 .env
 README.dev.md
-roadmap/
+plan/
 research-inbox/
 start-lan.ps1
 start-lan.cmd

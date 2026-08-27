@@ -4,7 +4,7 @@
 >
 > 이 문서는 Folio OS를 맡는 AI/LLM 에이전트가 **가장 먼저, 끝까지** 읽어야 하는 최상위 작업 지침이다.
 > 사용자용 설명은 [README.md](README.md), 기능별 세부 규칙은 `features/*/README.md`를 본다.
-> `roadmap/`은 개인 개발용 로컬 계획 폴더이며 공개 저장소와 릴리즈 패키지에는 포함하지 않는다. 사용자가 로컬 roadmap 문서를 제공한 경우에만 참고한다.
+> `plan/`은 개인 개발용 로컬 계획 폴더이며 공개 저장소와 릴리즈 패키지에는 포함하지 않는다. 계획과 진행 상황의 단일 입구는 `plan/STATUS.md`이며, 사용자가 로컬 계획 폴더를 제공한 경우에만 참고한다.
 >
 > **동기화 지침**: `AGENTS.md`와 `CLAUDE.md`는 항상 동일한 본문을 유지한다. 한 파일을 수정하면 반드시 다른 파일도 같은 내용으로 업데이트한다.
 >
@@ -257,10 +257,10 @@ features/company_analysis/financial_quality_prompt.md
 
 | 작업 | 계획 위치 | 범위 |
 |---|---|---|
-| 0.1 공개 릴리즈 | 로컬 `roadmap/` 문서가 있을 때만 참고 | Home/Agent, Briefing, RSS, Market Memory v3, Company Analysis v2, Agent-assisted Investment Notes v2, Settings/Automation 간소화, release QA |
-| 0.3.0 공개 릴리즈 | 로컬 `roadmap/` 문서가 있을 때만 참고 | Light/Dark/System, Dashboard/Watchlist 공개, 공개 화면 WCAG 2.2 AA, responsive/release QA |
-| 후속 제품 로드맵 | 로컬 `roadmap/` 문서가 있을 때만 참고 | 고급 portfolio/note workflow 재평가, installer/tray polish |
-| AI Agent Mode hardening | 로컬 `roadmap/` 문서가 있을 때만 참고 | CLI/API bridge preflight, Direct Bridge 안정화, proposal writeback, job lifecycle, restart recovery, context/log retention |
+| 0.1 공개 릴리즈 | 로컬 `plan/` 문서가 있을 때만 참고 | Home/Agent, Briefing, RSS, Market Memory v3, Company Analysis v2, Agent-assisted Investment Notes v2, Settings/Automation 간소화, release QA |
+| 0.3.0 공개 릴리즈 | 로컬 `plan/` 문서가 있을 때만 참고 | Light/Dark/System, Dashboard/Watchlist 공개, 공개 화면 WCAG 2.2 AA, responsive/release QA |
+| 후속 제품 로드맵 | 로컬 `plan/` 문서가 있을 때만 참고 | 고급 portfolio/note workflow 재평가, installer/tray polish |
+| AI Agent Mode hardening | 로컬 `plan/` 문서가 있을 때만 참고 | CLI/API bridge preflight, Direct Bridge 안정화, proposal writeback, job lifecycle, restart recovery, context/log retention |
 
 > 개선안 01~04(Personal Overlay / Thesis Tracker / Regime 추적 v2 / Topic Report v2)와 post-v1 Step 6~11은 구현되어 위 표로 승격되었다.
 
@@ -561,7 +561,7 @@ features/company_analysis/financial_quality_prompt.md
 - 초기 공개 릴리즈에 실려 온 `.portfolio-donut-grid` 등 CSS 46개는 D1 프리미티브 이전 디자인(테두리 카드)이라 되살리지 않는다.
 - **스크린샷 가져오기는 0.5.0 화면에 없다.** 시간 대비 인식이 만족스럽지 않았고 첫 설정에 한 번 쓰는 도구였다(2026-08-07 사용자 결정). 버튼·다이얼로그·`/import-image/*` route를 걷어냈고 보유 종목은 직접 입력한다.
 - 다시 만들 때는 **Agent 도크 하나로 통일한다** — 사용자가 도크에 사진을 붙이고 포지션 입력을 요청할 때만 인식한다. 도크가 설정의 CLI/API 모드를 따르므로 엔진 선택을 따로 두지 않고, 로컬 Tesseract는 도크에 자리가 없어 함께 사라진다. **막힌 지점**: 도크 API 모드는 지금 이미지를 못 읽는다(`chat.py::_run_with_images`가 CLI 전용). 리뷰 표는 없애지 못한다 — 저장 전 확인이 안전 계약이라, 읽은 행을 Portfolio 편집표에 얹고 기존 저장 버튼이 커밋하게 한다. 기존 proposal 배관은 markdown 보고서 전용이라 쓸 수 없다.
-- `features/portfolio/import_image.py`·`agent_import.py`·`vision_import.py`·`import_schema.py`는 호출자가 없어도 **죽은 코드가 아니라 0.5.X용으로 남긴 것이다.** 지우기 전에 `roadmap/release/0.5_PLAN.md`를 본다.
+- `features/portfolio/import_image.py`·`agent_import.py`·`vision_import.py`·`import_schema.py`는 호출자가 없어도 **죽은 코드가 아니라 0.5.X용으로 남긴 것이다.** 지우기 전에 `plan/release/0.5_PLAN.md`를 본다.
 
 ### Obsidian 내보내기
 
@@ -817,8 +817,9 @@ Invoke-RestMethod -Uri "http://localhost:8787/api/rss/items?offset=0&limit=20"
 - 문서 수정 시 AGENTS/CLAUDE는 AI 작업자 관점, README/README.ko는 일반 사용자 관점으로 유지한다. README.dev는 예전 상세 사용자/개발 문서 백업이며 일반 0.2 릴리즈 패키지에는 포함하지 않는다.
 - README는 프로젝트를 처음 사용하는 사람이 읽는 문서다. 0.2에서 실제로 보이는 기능의 목적, 화면에서 하는 일, 필요한 입력 자료, 저장 위치, 주의점을 쉬운 말로 설명한다. 내부 구현 추적, Step 번호 중심 설명, 후속 아이디어, 숨김/비활성 기능을 현재 기능처럼 서술하지 않는다.
 - README는 기본적으로 화면 탭 단위로 정리한다. 여러 탭에서 함께 쓰는 자료·품질·연동 기능은 `features/common/` 또는 명확한 통합 폴더(예: `features/obsidian/`)의 상위 README에서 관리하고, 하위 README를 불필요하게 늘리지 않는다.
-- `roadmap/`은 개인 개발용 로컬 계획 폴더이며 GitHub/source archive/릴리즈 패키지에는 포함하지 않는다. 새 대형 작업은 `master`에서 독립 브랜치를 따고, 사용자가 로컬 roadmap 문서를 유지하는 경우에만 그 문서에 제품 순서와 진행 상태를 반영한다.
-- 앞으로 계획 관리는 GitHub Issues와 로컬 계획문서를 함께 사용한다. 공개적으로 추적할 작업은 GitHub Issue를 기준으로 삼고, 세부 실행 메모·개인 맥락·agent handoff는 `roadmap/` 또는 공개-safe한 `docs/superpowers/` 계획문서에 둔다. 자세한 규칙은 `docs/PLANNING_WORKFLOW.md`를 따른다.
+- `plan/`은 개인 개발용 로컬 계획 폴더이며 GitHub/source archive/릴리즈 패키지에는 포함하지 않는다. 새 대형 작업은 `master`에서 독립 브랜치를 따고, 사용자가 로컬 계획 폴더를 유지하는 경우에만 그 문서에 제품 순서와 진행 상태를 반영한다.
+- 앞으로 계획 관리는 GitHub Issues와 로컬 계획문서를 함께 사용한다. 공개적으로 추적할 작업은 GitHub Issue를 기준으로 삼고, 세부 실행 메모·개인 맥락·agent handoff는 `plan/` 또는 공개-safe한 `docs/superpowers/` 계획문서에 둔다. 자세한 규칙은 `docs/PLANNING_WORKFLOW.md`를 따른다.
+- **계획은 `plan/STATUS.md` 하나를 거친다.** 그 문서가 현재 릴리즈 상태·진행 중인 작업·모든 계획 문서를 링크하는 단일 입구다. 새 계획을 만들면 거기에 등록하고, 주제 단위 계획에는 **대상 릴리즈를 반드시 적는다** — 비워 두면 기록하는 쪽이 릴리즈 번호를 추측하고, 실제로 그렇게 승인된 적 없는 `(0.5.5)`·`(0.5.6)` 라벨이 문서에 남은 적이 있다.
 - 브랜치를 `master`에 머지하기 전에, 변경을 작성한 세션이 아니라 **새 컨텍스트에서 diff를 리뷰한다**(서브에이전트 리뷰 또는 `/code-review`). 작성자 세션은 자기 가정을 그대로 물려받아 같은 오류를 놓친다. 리뷰어에게는 변경 의도와 관련 기능 README를 함께 주고, 특히 §5 아키텍처 원칙(2계층 분리, 3계층 데이터 위계, 확증편향 방지, enum 검증, 자기참조 금지) 위반 여부를 확인한다.
 
 ---

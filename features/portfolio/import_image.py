@@ -6,7 +6,7 @@
 정규화를 그대로 쓴다. 0.5.X가 정리할 것은 `local` 모드와 `local_ocr.py`다: 도크는
 설정에 따라 CLI 아니면 API로 동작하므로 Tesseract가 설 자리가 없다.
 
-지우기 전에 `roadmap/release/0.5_PLAN.md`의 해당 절을 먼저 본다.
+지우기 전에 `plan/release/0.5_PLAN.md`의 해당 절을 먼저 본다.
 """
 from __future__ import annotations
 
