@@ -36,6 +36,7 @@ from features.daily_briefing.limits import (
 from features.daily_briefing.source_window import scope_session_documents
 from features.daily_briefing.source_integrity import reconcile_source_ledger, source_manifest_prompt
 from features.daily_briefing.claim_integrity import enforce_claim_integrity
+from features.daily_briefing.style_check import briefing_style_check
 from features.daily_briefing.weekly_visuals import collect_weekly_visuals
 from features.daily_briefing.weekly import (
     calendar_preview,
@@ -153,7 +154,7 @@ from features.topic_report.templates import compose_prompt
 from features.topic_report.topic_config import get_topic_config
 from features.topic_report.planner import apply_deep_research_plan, build_topic_plan
 from features.topic_report.service import save_topic_report
-from features.llm_settings.client import bok_api_key, fred_api_key
+from features.llm_settings.client import bok_api_key, fred_api_key, use_web_search_for_briefing
 from features.common.canonical_identity import split_briefing_id
 from features.personal_overlay import schema as overlay_schema
 from features.personal_overlay.service import (
@@ -474,6 +475,10 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             preview = calendar_preview(MARKET_MEMORY_DB_PATH, target, week)
             blocks.append(f"### {MARKET_TAGS[target]}\n\n{render_calendar_preview(preview, week)}")
         calendar_block = "\n\n".join(blocks)
+    # 결측(None)은 설정을 따른다 — API 경로(generate_llm_briefing)와 같은 규칙이다.
+    # 한쪽만 `is True`로 접으면 화면이 값을 안 보낼 때 CLI만 꺼진다(기업분석 실측).
+    web_search = use_web_search_for_briefing() if web_search is None else bool(web_search)
+    web_lookup_sink: dict = {}
     context, used_docs = build_llm_context(
         date,
         source_date,
@@ -492,6 +497,8 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         kind=kind,
         weekly_window=week.to_dict() if week is not None else None,
         calendar_block=calendar_block,
+        web_search=web_search,
+        web_lookup_sink=web_lookup_sink,
         # shadow는 관측 전용이다(README 계약) — 프롬프트 권위 주입은 active만.
         concentration_context="\n\n".join(
             render_concentration_context(control)
@@ -525,6 +532,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     draft = {
         "date": date,
         "generatedAt": generated_at,
+        # 웹 보완 요약(시장별). write_briefing_from_markdown이 {**draft, ...}로 저장하므로
+        # 여기 실으면 저장 JSON까지 간다 — API 경로의 llm_result["webLookup"]과 같은 계약.
+        "webLookup": web_lookup_sink,
         "title": (
             f"Weekly Market Briefing — {week.label}" if week is not None
             else f"Daily Market Briefing — {date.replace('-', '.')}"
@@ -721,6 +731,7 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     generation = A.agent_generation(
         len(sources),
         message="LLM CLI 브리핑 생성 완료: Agent CLI / context pack 기반",
+        model=str(pack.get("executedAdapter") or ""),
     )
     # 시장별 markdown에서 그 시장 라벨로 따로 뽑는다(§builder와 같은 규칙). 예전의
     # 일반 라벨 목록("내일 확인할 체크포인트" 등)은 네 시장 프롬프트 어디에도 없어
@@ -908,6 +919,12 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
             legacy = read_json(BRIEFINGS_DIR / briefing_file_name(date), None)
             existing = briefing_scope_view(legacy, scope) if isinstance(legacy, dict) else None
         scoped_briefing = merge_briefing_report(scoped_briefing, existing, scope)
+        # 이 시장 본문의 문체 실측(§builder와 같은 계약). 검사만 하고 되돌리지 않는다 —
+        # 예약 발행물이 문체 때문에 막히면 안 된다.
+        scoped_briefing["styleCheck"] = briefing_style_check(
+            str((market_markdowns.get(scope) or {}).get("markdown") or scoped_briefing.get("markdown") or "")
+        )
+        scoped_briefing["webLookup"] = deepcopy((draft.get("webLookup") or {}).get(scope) or {})
         if persist:
             write_json(save_path, scoped_briefing)
         try:
@@ -1663,6 +1680,9 @@ def prepare_pack(task_type: str, **kwargs) -> tuple[dict, Path]:
             markets=kwargs.get("markets"),
             # 브리핑 종류. 없으면 일간이라 기존 호출부가 그대로 동작한다.
             kind=kwargs.get("kind", DEFAULT_BRIEFING_KIND),
+            # 결측(None)은 pack 빌더가 설정으로 푼다. 여기서 bool로 접으면 값을 안 준
+            # 호출자(자동화 스케줄러)에게 웹 보완이 조용히 꺼진다(기업분석에서 실측).
+            web_search=kwargs.get("web_search"),
             owner_job_id=owner_job_id,
         )
     if task_type == "company_analysis":

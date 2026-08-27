@@ -254,12 +254,15 @@ def update_pack_status(path: str | Path, *, status: str, result: dict | None = N
     return scrubbed
 
 
-def agent_generation(source_count: int = 0, *, status: str = "ok_agent_authored", message: str = "") -> dict:
+def agent_generation(source_count: int = 0, *, status: str = "ok_agent_authored", message: str = "", model: str = "") -> dict:
+    """`model`에 실제 어댑터 id를 넣는다. 비워 두면 예전 자리표가 남는데, 그 자리표는
+    품질 편차를 귀속할 수 없게 만든다 — 실측으로 유보 밀도가 0.2~0.5와 2.7~4.0으로
+    갈리는 브리핑들이 전부 `current-agent-session`이라 원인 변수를 확인할 수 없었다."""
     return {
         "mode": "agent",
         "status": status,
         "provider": "external_agent",
-        "model": "current-agent-session",
+        "model": str(model or "").strip() or "current-agent-session",
         "message": message or "AI 에이전트가 Folio OS context pack을 읽고 생성했습니다.",
         "sourceCount": int(source_count or 0),
     }

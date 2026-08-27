@@ -629,6 +629,9 @@ def api_create_briefing(body: dict | None = Body(default=None)):
                 "markets": markets,
                 "briefing_type": body.get("briefingType", "default"),
                 "kind": briefing_kind,
+                # 규칙 경로의 web_search_override와 **같은 값**이 도착해야 한다(§6 규칙 14).
+                # `is True`로 접지 않는다 — None은 pack 빌더가 설정으로 푼다.
+                "web_search": bool_override(body.get("webSearch")),
             }, adapter=body.get("agentAdapter", ""))
             for date, markets in date_groups
         ]

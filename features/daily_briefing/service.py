@@ -35,6 +35,7 @@ from features.daily_briefing.schema import (
     visual_sidecar_file_name,
     visual_sidecar_gzip_file_name,
 )
+from features.daily_briefing.web_lookup import web_supplement as briefing_web_supplement
 from features.daily_briefing.limits import (
     WEEKLY,
     is_weekly,
@@ -742,6 +743,27 @@ def _weekly_context_header(
     ]
 
 
+def _web_supplement_block(market_scope, date, market_snapshot, korea_market_data, *, web_search, lookup, sink):
+    """시장별 웹 보완 블록. 실패는 빈 블록으로 끝난다 — 조회가 브리핑을 죽이지 않는다."""
+    blocks = []
+    for scope in normalize_market_selection(market_scope):
+        try:
+            block, summary = briefing_web_supplement(
+                scope, date,
+                market_snapshot=market_snapshot,
+                korea_market_data=korea_market_data if scope == "kr" else None,
+                web_search=bool(web_search),
+                lookup=lookup,
+            )
+        except Exception:  # noqa: BLE001
+            block, summary = "", {"ok": False, "reason": "supplement_failed"}
+        if isinstance(sink, dict):
+            sink[scope] = summary
+        if block:
+            blocks.append(block)
+    return "\n\n".join(blocks)
+
+
 def build_llm_context(
     date,
     source_date,
@@ -761,6 +783,9 @@ def build_llm_context(
     weekly_window=None,
     calendar_block="",
     concentration_context="",
+    web_search=False,
+    web_lookup_call=None,
+    web_lookup_sink=None,
 ):
     market_windows = market_windows or briefing_market_windows(date)
     market_scope = normalize_market_scope(market_scope)
@@ -977,6 +1002,13 @@ def build_llm_context(
             snapshot_to_markdown(market_snapshot or {"ok": False, "error": "snapshot not available"}),
             snapshot_staleness_note(market_snapshot, market_windows),
             "",
+            # 웹 보완(찾기 전용). 두 생성 경로가 이 조립기를 공유하므로 여기 한 곳에만
+            # 있으면 CLI에서만 조용히 빠지는 일이 없다(§6 규칙 14 — 값으로 확인).
+            _web_supplement_block(
+                market_scope, date, market_snapshot, korea_market_data,
+                web_search=web_search, lookup=web_lookup_call, sink=web_lookup_sink,
+            ),
+            "",
             "## 한국장 시장 수치",
             korea_market_data_to_markdown(korea_market_data),
             "",
@@ -1172,6 +1204,8 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
     prompt = read_briefing_prompt(market_scope, kind)
     if not prompt:
         return None, "missing_prompt"
+    web_search = use_web_search_for_briefing() if web_search_override is None else bool(web_search_override)
+    web_lookup_sink: dict = {}
     context, used_docs = build_llm_context(
         date,
         source_date,
@@ -1191,6 +1225,8 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
         weekly_window=weekly_window,
         calendar_block=calendar_block,
         concentration_context=concentration_context,
+        web_search=web_search,
+        web_lookup_sink=web_lookup_sink,
     )
     target_block = render_quality_target_context(
         "briefing",
@@ -1218,7 +1254,6 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
         context = "\n\n".join([context, hint_block])
     candidate_sources = source_refs(used_docs, limit=source_ref_limit(kind))
     context = "\n\n".join([context, source_manifest_prompt(candidate_sources)])
-    web_search = use_web_search_for_briefing() if web_search_override is None else bool(web_search_override)
     web_status = "web_search" if web_search else "local_only"
     try:
         max_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000")))
@@ -1255,6 +1290,9 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
             "claimLedger": claim_ledger,
             "responseId": response_id,
             "webSearch": web_search,
+            # 시장별 웹 보완 요약. 저장 JSON까지 가야 "웹이 실제로 기여했나"를 나중에
+            # 확인할 수 있다 — 배선이 죽어 있던 것을 저장물이 말해 준 전례가 있다.
+            "webLookup": web_lookup_sink,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=max_tokens),
         }, f"ok_{web_status}"
     except Exception:

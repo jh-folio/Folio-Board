@@ -25,6 +25,7 @@ from features.daily_briefing.limits import (
     source_ref_limit,
 )
 from features.daily_briefing.claim_integrity import enforce_claim_integrity
+from features.daily_briefing.style_check import briefing_style_check
 from features.daily_briefing.source_window import scope_session_documents
 from features.daily_briefing.weekly import (
     build_weekly_rules_markdown,
@@ -805,6 +806,16 @@ def build_briefing(
                 scope: deepcopy(results[scope].get("claimLedger") or {})
                 for scope in requested_scopes
             },
+        },
+        # 시장별 웹 보완 요약과 문체 실측. generationEvidence와 같은 byMarket 계약이며
+        # _single_market_briefing의 scope_view 복사를 그대로 타고 저장 파일까지 간다.
+        "webLookup": {
+            scope: deepcopy((results[scope].get("webLookup") or {}).get(scope) or {})
+            for scope in requested_scopes
+        },
+        "styleCheck": {
+            scope: deepcopy(results[scope].get("styleCheck") or {})
+            for scope in requested_scopes
         },
         "visualRecommendations": visual_result.get("visualRecommendations", []),
         "visualSnapshots": visual_result.get("visualSnapshots", []),

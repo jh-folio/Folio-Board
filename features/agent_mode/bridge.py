@@ -698,6 +698,10 @@ def run_agent_task(
         pack, pack_path = agent_service.prepare_pack(task_type, **prepare_params)
         progress("Agent CLI를 실행하고 있습니다.", 25, contextPackPath=str(pack_path), adapter=selected["id"])
         agent_prompt = _agent_prompt(pack_path, pack)
+        # 실제로 실행한 어댑터를 pack에 남긴다. 저장물의 generation.model이 자리표
+        # (`current-agent-session`)뿐이면 나중에 품질 편차를 어느 엔진 탓인지 귀속할
+        # 수 없다(브리핑 유보 밀도 이분포에서 실측).
+        pack["executedAdapter"] = selected["id"]
         timeout = max(30, int(os.environ.get("AGENT_CLI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
         try:
             # **본문 생성에는 어댑터 웹 도구를 켜지 않는다(`web_search=` 없음).** 누락이

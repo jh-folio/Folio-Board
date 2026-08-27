@@ -666,3 +666,27 @@ POST /api/briefings/{date}/export-notion
 
 `GET /api/briefings/{date}/visuals/current`는 저장된 종목 universe를 최신 무료 일봉으로 조회한 임시 응답을 반환합니다. 저장 보고서와 sidecar에는 쓰지 않으며, yfinance가 설치되지 않았거나 조회에 실패하면 `unavailable`과 warning을 반환합니다.
 
+
+## 웹 보완 (web_lookup.py)
+
+§6 규칙 9("웹 검색은 부족한 지수/가격 반응/공식 자료를 보완하는 용도")의 실행 통로다.
+예전에는 API 경로의 provider 웹 도구뿐이라 실제 사용 경로(CLI)에 통로가 없었다 —
+실측으로 최근 저장 브리핑 14건 전부 웹 기여 0건이었다.
+
+- **찾기 전용 패스**다. 쓰기 과제에 검색을 얹는 방식은 실측 4회 모두 실패했다.
+- 발동 조건은 **무엇이 비었는가**: 미국장 프록시(SPY/QQQ) 결측·정체, 한국장
+  KOSPI/KOSDAQ/환율 결측, 일본·유럽은 지수 수치 피드가 없어 구조적 공백.
+  공백이 없으면 호출도 없다.
+- 블록은 두 경로가 공유하는 `build_llm_context` 안에 있고, 요약은 저장 JSON의
+  `webLookup`(시장별)에 남는다. 조회 실패는 브리핑을 죽이지 않는다.
+- 결측 `webSearch` 파라미터는 두 경로 모두 설정(`use_web_search_for_briefing`)으로
+  푼다. `is True`로 접지 않는다.
+- 출처는 웹 검색 허용 목록 안에서만. 목록을 못 읽으면 조회하지 않는다.
+
+## 문체 실측 (style_check.py)
+
+저장 브리핑 16건 중 8건이 유보 밀도·쏠림 위반이었다(최다 표현은 딥 리서치와 같은
+`수 있다`). 검사 결과를 `styleCheck`(시장별)로 저장만 하고 **산출물을 되돌리지
+않는다** — 예약 발행물이 문체 때문에 막히면 안 된다. 밀도가 0.2~0.5와 2.7~4.0으로
+갈리는 이분포의 원인(어댑터)을 귀속하기 위해 Agent 생성의 `generation.model`에 실행
+어댑터 id를 기록한다(`pack["executedAdapter"]`).
