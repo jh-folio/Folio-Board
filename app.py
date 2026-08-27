@@ -148,7 +148,7 @@ from features.market_memory.regime_v2 import (
     refresh_regime_state,
     upsert_regime_thesis_link,
 )
-from features.llm_settings.client import bool_override, default_generation_mode, selected_llm_config
+from features.llm_settings.client import bool_override, default_generation_mode, selected_llm_config, use_web_search_for_analysis
 from features.daily_briefing.service import (
     NEWS_INBOX_PREFIXES,
     append_briefing_sources,
@@ -783,16 +783,22 @@ def api_analyze(request: Request):
     generation_mode = request_generation_mode(None)
     query = qs.get("q", [""])[0]
     analysis_style = normalize_analysis_style(qs.get("analysisStyle", qs.get("analysis_style", ["beginner"]))[0])
+    # **두 경로가 웹 검색을 같은 방법으로 정한다.** 예전에는 CLI만 `is True`로 접어서
+    # 파라미터가 없으면(화면은 보내지 않는다) 하드 오프였고, 바로 아래 API 경로는
+    # 같은 `None`을 설정값으로 풀어 켜졌다 — 같은 요청이 경로에 따라 정반대가 된다.
+    # 실측으로 로컬 문서 0건인 회사의 CLI 보고서에 `webLookup`이 없고 `sourceLedger`가
+    # 0건이었다. 자료 공백을 메우는 유일한 경로가 그 설치에서 죽어 있었다(§6 규칙 14).
+    web_search = bool_override(qs.get("webSearch", [None])[0])
     if generation_mode == "llm_cli":
         return submit_agent_task("company_analysis", {
             "query": query,
             "quality_mode": quality_mode,
             "analysis_style": analysis_style,
-            "web_search": bool_override(qs.get("webSearch", [None])[0]) is True,
+            "web_search": use_web_search_for_analysis() if web_search is None else web_search,
         }, adapter=qs.get("agentAdapter", [""])[0])
     report = analyze_company(
         query,
-        web_search_override=bool_override(qs.get("webSearch", [None])[0]),
+        web_search_override=web_search,
         llm_override=llm_override_for_mode(generation_mode),
         analysis_style=analysis_style,
     )
