@@ -140,6 +140,14 @@ def validate_company_report(
     if scenario_body and not any(word in scenario_body for word in _CONDITION_WORDS):
         defects.append(defect("depth", "scenario_not_conditional", 35, section=_SCENARIO_SECTION))
 
+    # 내부 용어 노출 — 상태 관리에 쓰는 말이 독자에게 가면 안 된다.
+    leaked = sorted({term for term in INTERNAL_TERMS if term in visible})
+    if leaked:
+        defects.append(defect(
+            "style", "internal_term_leak", 35,
+            section=next((h for h in by_heading if any(t in by_heading[h] for t in leaked)), ""),
+        ))
+
     # 문체 — 재는 것은 둘뿐이다.
     hedges = hedge_stats(text)
     if hedges["per1000"] > HEDGE_DENSITY_LIMIT:
@@ -171,6 +179,15 @@ _SCOPE_MARKERS = ("분석 범위", "질문 정의", "포함 범위", "제외 범
 # 모델은 시킨 대로 쓰고도 벌을 받는다(실제로 `밑돌면`으로 쓸 뻔했다).
 _CONDITION_WORDS = ("넘으면", "아래로", "위로", "이상", "이하", "돌파", "하회", "상회", "되면", "라면", "초과", "미만")
 _SCENARIO_SECTION = "성장 전망과 체크포인트"
+# 내부 상태 관리에 쓰는 말. 최종 본문은 독자의 말로 쓴다.
+# `evidence`·`thesis`는 한국어 문장 안에서도 그대로 쓰이므로 함께 잡는다.
+INTERNAL_TERMS = (
+    "data gap", "data_gap", "dataGap",
+    "resolved", "partial", "unresolved",
+    "comparable_context", "official_financials",
+    "Business implication", "Valuation implication",
+    "thesis", "Thesis", "trigger", "Trigger",
+)
 
 
 def render_quality_requirements() -> str:
@@ -186,6 +203,10 @@ def render_quality_requirements() -> str:
         "   $10B를 넘으면\"처럼 관측 가능한 값과 방향을 함께 적습니다.",
         "3. **섹션은 자기 몫만** — 다른 섹션이 맡은 이야기를 여기서 다시 전개하지 마세요.",
         "   필요하면 결론 한 줄만 빌려 쓰고 넘어갑니다.",
+        "4. **내부 용어를 본문에 쓰지 마세요.** 아래는 상태 관리용 말이지 독자의 말이 아닙니다:",
+        "   " + ", ".join(f"`{term}`" for term in INTERNAL_TERMS[:10]),
+        "   \"자료 한계\"·\"확인되지 않음\"·\"판단이 바뀌는 조건\"처럼 한국어로 풀어 쓰고,",
+        "   표의 상태 칸도 `partial`이 아니라 \"일부 확인\"처럼 적습니다.",
     ])
 
 
@@ -263,6 +284,7 @@ def apply_report_ceiling(report: dict) -> dict:
 
 __all__ = [
     "HEDGE_EXEMPT_SECTIONS",
+    "INTERNAL_TERMS",
     "MIN_SOURCE_LINKAGE",
     "hedge_stats",
     "hedgiest_section",

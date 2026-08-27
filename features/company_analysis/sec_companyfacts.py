@@ -36,6 +36,10 @@ METRIC_CANDIDATES = {
     "Income Tax": ["IncomeTaxExpenseBenefit"],
     "Interest Expense": ["InterestExpenseNonOperating", "InterestExpense"],
     "Share Repurchases": ["PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity"],
+    # 자사주 매입의 **질**은 금액만으로 보이지 않는다. 주식보상이 매입을 얼마나
+    # 상쇄하는지, 주식 수가 실제로 줄었는지가 함께 있어야 판단이 된다.
+    "Stock-Based Compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
+    "Shares Repurchased": ["TreasuryStockSharesAcquired"],
     "Dividends Paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
 }
 
@@ -66,6 +70,7 @@ IFRS_METRIC_CANDIDATES = {
     "Accounts Receivable": ["TradeAndOtherCurrentReceivables", "CurrentTradeReceivables"],
     "Accounts Payable": ["TradeAndOtherCurrentPayables", "CurrentTradePayables"],
     "Shares Diluted": ["WeightedAverageNumberOfDilutedSharesOutstanding"],
+    "Stock-Based Compensation": ["ShareBasedPayments", "ExpenseFromShareBasedPaymentTransactions"],
     "Depreciation & Amortization": ["DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss"],
     "Pretax Income": ["ProfitLossBeforeTax"],
     "Income Tax": ["IncomeTaxExpenseContinuingOperations"],

@@ -52,6 +52,8 @@ from features.company_analysis.service import (
     company_external_search_context,
 )
 from features.company_analysis.style import normalize_analysis_style
+from features.company_analysis.valuation import render_valuation_contract
+from features.company_analysis.buyback import build_buyback_quality, render_buyback_quality
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +70,7 @@ class GenerationInputs:
     sourceLedger: list
     dataGaps: dict
     webRow: dict = field(default_factory=dict)
+    buyback: dict = field(default_factory=dict)
     contextBlocks: list = field(default_factory=list)
 
     @property
@@ -161,6 +164,13 @@ def build_generation_inputs(
     if web_items:
         source_ledger = [*source_ledger, *web_items]
 
+    valuation = (charts or {}).get("valuation") or {}
+    buyback = build_buyback_quality(
+        materials.get("secFacts") or {},
+        price=valuation.get("currentPrice"),
+        currency=valuation.get("currency") or "USD",
+    )
+
     blocks = [
         # 자료가 하나도 없으면 이 키가 없을 수 있다. 없는 것과 빈 것을 가르지 않는다.
         str(materials.get("context") or ""),
@@ -188,6 +198,12 @@ def build_generation_inputs(
         render_prompt_hints(preflight),
         # 계약은 프롬프트가 아니라 **이 요청의 숫자와 목록**으로 준다.
         render_length_contract(depth_policy),
+        # 본문이 밸류에이션을 다시 계산하지 않게 값을 통째로 준다. 각자 계산하던
+        # 시절 한 보고서에 시나리오가 두 벌 있었다.
+        render_valuation_contract(valuation),
+        # 매입 금액만 주면 본문도 금액만 쓴다. 주식 수가 줄었는지가 함께 있어야
+        # 주주환원인지 희석 상쇄인지 판단할 수 있다.
+        render_buyback_quality(buyback),
         render_quality_requirements(),
         render_source_contract(source_ledger),
         company_external_search_context(materials) if web_search else "",
@@ -204,6 +220,7 @@ def build_generation_inputs(
         sourceLedger=source_ledger,
         dataGaps=early_gaps,
         webRow=web_row,
+        buyback=buyback,
         contextBlocks=[block for block in blocks if block],
     )
 
@@ -226,6 +243,8 @@ def draft_artifact(inputs: GenerationInputs, query: str, *, analysis_style: str,
         "depthPolicy": inputs.depthPolicy,
         "sourceLedger": inputs.sourceLedger,
         "webLookup": inputs.webSummary,
+        # 본문이 이 값을 썼는지 나중에 대조할 수 있어야 한다.
+        "buybackQuality": inputs.buyback,
     }
 
 

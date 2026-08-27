@@ -372,3 +372,31 @@ DCF 차트는 통화가 `USD`로 하드코딩돼 있었습니다.
 확정되면 `/api/analyze`에 입력 원문이 아니라 **확정된 티커**를 보낸다. "마이크론"을 그대로 넘기면 서버가 다시 추측해 화면에서 고른 것과 달라질 수 있다.
 
 **왜 필요했나.** 예전에는 해석에 실패해도 입력 문자열이 그대로 티커가 되어 분석이 진행됐다. 사용자는 빈 보고서를 받고 나서야 잘못 읽혔다는 걸 알 수 있었다.
+
+## 밸류에이션 (valuation.py)
+
+시나리오의 **단일 출처**다. 본문과 차트가 각자 계산하던 시절 한 보고서에 밸류에이션이
+두 벌 있었다(실측 HWM 2026-08-27: 본문 EPS 5.54×30/45/60 vs 차트 EPS 4.081×54/73/94).
+
+- `build_valuation_scenarios()` — forward EPS ↔ **forward PER**로 기준을 맞춘다. trailing
+  PER을 forward EPS에 곱하면 기본 시나리오가 정의상 `현재가×(1+성장률)`이라 어떤
+  회사든 상승으로 나오는 항등식이 된다.
+- `render_valuation_contract()` — 컨텍스트에 표를 통째로 싣고 재계산을 금지한다.
+- 차트(`service.py::build_company_analysis_charts`)와 컨텍스트(`generation_context.py`)가
+  **같은 객체**를 읽는다. `analysisCharts.valuation`에 저장된다.
+- **배수는 가정이다.** 비교 기업·과거 밴드 자료가 없으므로 현재 배수 대비 비율로만 두고
+  `multipleBasis`가 그 사실을 밝힌다. 근거 있는 배수는 새 데이터소스가 필요하며
+  `plan/COMPANY_ANALYSIS_QUALITY_TRANSFER_PLAN.md` §8.2에 미뤄 뒀다.
+
+## 자사주 매입의 질 (buyback.py)
+
+금액만 있으면 매입은 언제나 주주환원으로 읽힌다. **주식 수가 줄지 않는 매입은 환원이
+아니라 희석 상쇄다.**
+
+- `build_buyback_quality()` — 매입액, 주식보상 상쇄 비율, 희석주식수 전년 대비,
+  매입 수익률, (공시될 때만) 평균 매입가. `buybackQuality`로 저장된다.
+- SEC companyfacts만 쓴다(`ShareBasedCompensation`, `TreasuryStockSharesAcquired`를
+  0.5.4에 등재). 새 데이터소스가 필요 없다.
+- `TreasuryStockSharesAcquired`는 등재하지 않는 회사가 많아(실측 HWM 없음) 평균 매입가는
+  있을 때만 낸다. 없으면 없다고 적는다.
+- **판정하지 않는다.** 비율을 보여줄 뿐 좋다·나쁘다는 본문이 쓴다(§5 원칙 4).

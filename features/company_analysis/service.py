@@ -18,6 +18,7 @@ from features.company_analysis.dart_client import build_dart_summary
 from features.company_analysis.filing_items import select_analysis_items, select_filing_keyword_excerpts
 from features.company_analysis.depth_policy import render_length_contract
 from features.company_analysis.report_contract import render_quality_requirements, render_source_contract
+from features.company_analysis.valuation import build_valuation_scenarios
 from features.company_analysis.style import analysis_prompt_path, read_analysis_prompt
 from features.company_analysis.report_rules import (
     _fcf_series,
@@ -561,6 +562,12 @@ def build_supporting_doc_context(docs, company=None, query="", max_reports=4, ma
     return "\n".join(lines), selected
 
 
+def _clean_classification(value: str | None) -> str:
+    """분류 문자열 정리. SEC SIC 서술은 연속 공백을 그대로 갖고 온다."""
+    text = " ".join(str(value or "").split())
+    return "" if text.lower() in {"unclassified", "n/a", "none"} else text
+
+
 def build_company_analysis_materials(query, docs, company=None):
     company = company or {}
     scored_docs = [company_analysis_doc_score(d, company, query) for d in docs]
@@ -582,8 +589,6 @@ def build_company_analysis_materials(query, docs, company=None):
         else ranked_quarterly_report_paragraphs(company, SEC_CACHE_DIR, max_paragraphs=8)
     )
     sic_description = (ranked_filing.get("metadata", {}) or {}).get("sicDescription", "")
-    if sic_description and (not company.get("sector") or company.get("sector") == "Unclassified"):
-        company = {**company, "sector": sic_description}
     filing_context = local_filing_context
     filing_used = local_filing_used
     if ranked_filing.get("ok"):
@@ -666,11 +671,20 @@ def build_company_analysis_materials(query, docs, company=None):
     ]
     # 웹 검색 허용 목록과 산업 맥락 질의가 회사 도메인·업종을 필요로 한다.
     market_meta = market_financial_data if isinstance(market_financial_data, dict) else {}
+    # **섹터와 산업은 같은 체계에서 나와야 한다.** SEC의 SIC 서술을 섹터에 먼저 넣던
+    # 시절 한 보고서가 `sector: Rolling Drawing & Extruding of  Nonferrous Metals`(SIC
+    # 원문, 공백 둘)와 `industry: Aerospace & Defense`(yfinance GICS)를 나란히 실었다.
+    # 독자에게는 두 분류가 서로를 부정하는 것처럼 보인다. SIC는 둘 다 없을 때의
+    # 마지막 보루로만 쓴다.
     company = {
         **company,
         "website": company.get("website") or market_meta.get("website") or "",
-        "sector": company.get("sector") or market_meta.get("sector") or "",
-        "industry": company.get("industry") or market_meta.get("industry") or "",
+        "sector": _clean_classification(
+            company.get("sector") or market_meta.get("sector") or sic_description
+        ),
+        "industry": _clean_classification(
+            company.get("industry") or market_meta.get("industry") or ""
+        ),
     }
     return {
         "company": company,
@@ -1376,30 +1390,22 @@ def build_company_analysis_charts(materials):
     # PER scenario price chart
     trailing_eps = financial_engine.latest_value(sec_summary, "EPS Diluted") or \
                    financial_engine.latest_value(sec_summary, "EPS Basic")
-    if trailing_eps and price and trailing_eps > 0:
-        current_pe = _finite_number(price / trailing_eps)
-        forward_eps = _finite_number(trailing_eps * (1 + (near_growth or 0.05)))
-        if current_pe and forward_eps:
-            per_bear = _finite_number(current_pe * 0.75)
-            per_base = current_pe
-            per_bull = _finite_number(current_pe * 1.30)
-            per_scenarios = [
-                {"label": "나쁜 경우", "price": _finite_number(forward_eps * per_bear), "per": per_bear, "eps": forward_eps},
-                {"label": "기본",     "price": _finite_number(forward_eps * per_base), "per": per_base, "eps": forward_eps},
-                {"label": "좋은 경우","price": _finite_number(forward_eps * per_bull), "per": per_bull, "eps": forward_eps},
-            ]
-            valid_per_scenarios = [s for s in per_scenarios if s["price"] is not None]
-            if valid_per_scenarios:
-                charts.append({
-                    "id": "scenario_price",
-                    "title": "PER 시나리오 적정가",
-                    "subtitle": f"Forward EPS 추정 × PER 범위 (현재 PER ×0.75 / ×1.0 / ×1.30)",
-                    "kind": "scenario_price",
-                    "scenarios": valid_per_scenarios,
-                    "currentPrice": _finite_number(price),
-                    "forwardEps": forward_eps,
-                    "currency": price_currency,
-                })
+    # **본문과 차트가 같은 객체를 읽는다.** 각자 계산하던 시절 한 보고서에 밸류에이션이
+    # 두 벌 있었다(본문 EPS 5.54×30/45/60 vs 차트 EPS 4.081×54/73/94).
+    valuation = build_valuation_scenarios(
+        trailing_eps=trailing_eps, price=price, growth=near_growth, currency=price_currency,
+    )
+    if valuation.get("scenarios"):
+        charts.append({
+            "id": "scenario_price",
+            "title": "PER 시나리오 적정가",
+            "subtitle": "Forward EPS × 현재 배수 대비 ×0.7 / ×1.0 / ×1.3 (배수는 가정)",
+            "kind": "scenario_price",
+            "scenarios": valuation["scenarios"],
+            "currentPrice": valuation["currentPrice"],
+            "forwardEps": valuation["eps"]["value"],
+            "currency": price_currency,
+        })
 
     # Price return vs benchmark chart
     yf_ticker = market.get("ticker") if market.get("ok") else (
@@ -1420,6 +1426,9 @@ def build_company_analysis_charts(materials):
 
     return {
         "available": bool(charts),
+        # 본문 컨텍스트가 이 객체를 그대로 읽는다. 차트와 본문이 같은 숫자를 말하려면
+        # 계산이 한 번만 일어나야 한다.
+        "valuation": valuation,
         "company": {"name": company.get("name", ""), "ticker": company.get("ticker", "")},
         "source": "SEC companyfacts + yfinance market data",
         # 차트 숫자는 전부 외부 provider에서 온다. 하나라도 NaN이면 보고서 저장이
