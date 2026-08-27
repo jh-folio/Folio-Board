@@ -700,6 +700,12 @@ def run_agent_task(
         agent_prompt = _agent_prompt(pack_path, pack)
         timeout = max(30, int(os.environ.get("AGENT_CLI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
         try:
+            # **본문 생성에는 어댑터 웹 도구를 켜지 않는다(`web_search=` 없음).** 누락이
+            # 아니라 실측으로 도달한 설계다 — 쓰기 과제에 "필요하면 검색도 하라"를 얹는
+            # 방식은 딥 리서치에서 네 번 모두 실패했다(새 URL 0~1건). 모델은 팩에 근거가
+            # 있으면 충분하다고 판단한다. 웹은 별도 **찾기 과제**로 분리해야 작동하며,
+            # 그 자리에서 `run_agent_prompt(..., web_search=True)`로 켠다
+            # (`company_analysis/engine_calls.py`, `topic_report/web_lookup.py`).
             output = _invoke_agent_cli(selected, agent_prompt, timeout, job_id)
             output_format = (pack.get("outputContract") or {}).get("format", "markdown")
             if task_type == "briefing" and output_format == "markdown":
