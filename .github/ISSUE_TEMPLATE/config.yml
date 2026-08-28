@@ -1,5 +1,1 @@
 blank_issues_enabled: true
-contact_links:
-  - name: Planning workflow
-    url: https://github.com/jh-folio/FolioOS/blob/master/docs/PLANNING_WORKFLOW.md
-    about: How Folio OS uses GitHub Issues and local planning documents.

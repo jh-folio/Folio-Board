@@ -76,11 +76,10 @@ These do not block the tag, but leaving them undone is how a repository rots.
       blocked by one of our own reproducibility gates, or superseded. The gates that
       block them are the pinned action SHAs in `tests/test_todo15_ci_workflow_contract.py`,
       the `--exclude-newer` lock cutoff, and the `public/react` bundle drift check —
-      none of which Dependabot can satisfy on its own. Record the reasoning in an issue
-      rather than re-deriving it every release.
+      none of which Dependabot can satisfy on its own. Record any changed reasoning in
+      this checklist or the relevant local release plan rather than re-deriving it.
 - [ ] Merge the PRs that are genuinely green. Close the ones that can never be, with the
       reason, so the queue reflects reality.
-- [ ] Update the issues this release closed or changed. A feature that shipped, was cut,
-      or was put on hold should say so on its issue; the next reader should not have to
-      read the diff to find out.
+- [ ] Update `plan/STATUS.md` and the relevant local plan for work that shipped, was cut,
+      or was put on hold. The next session should not have to read the diff to find out.
 - [ ] Confirm Dependabot alerts, secret scanning, and push protection are still enabled.

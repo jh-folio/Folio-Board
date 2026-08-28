@@ -1,6 +1,5 @@
 # Local Plan Template
 
-GitHub Issue:
 Status:
 Target release:
 Owner:
