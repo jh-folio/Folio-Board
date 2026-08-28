@@ -2,8 +2,11 @@
 
 GitHub Issue:
 Status:
+Target release:
 Owner:
 Branch:
+
+Register this plan in `plan/STATUS.md` when it is created. Update this header and the STATUS row together whenever the state or target release changes.
 
 ## Goal
 
