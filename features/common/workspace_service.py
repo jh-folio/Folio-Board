@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from features.common import workspace
@@ -53,12 +54,20 @@ def _is_sqlite_sidecar(path: Path) -> bool:
 
 
 def _checkpoint_sqlite(root: Path) -> list[str]:
-    """Fold each database's WAL into its main file so the copy is self-contained.
+    """WAL을 본체 파일로 접어 넣어 복사본이 그 자체로 완결되게 한다.
 
-    체크포인트에 실패해도 옮기기를 막지 않는다 — 다른 프로세스가 쓰고 있으면 WAL이
-    남지만, 목적지에서 처음 열 때 SQLite가 알아서 복구한다. 실패한 파일만 돌려준다.
+    **`PRAGMA wal_checkpoint`는 실패해도 예외를 던지지 않는다.** 접지 못하면
+    `(busy, log, checkpointed)`의 `busy=1`로 *돌려줄* 뿐이다. 그 행을 읽지 않으면
+    "성공"으로 보이고, 곁다리는 복사에서 빠지므로 아직 WAL에만 있던 커밋이 통째로
+    사라진다(실측: 리더가 스냅샷을 쥔 상태에서 `(1, 6, 2)`를 받고, 복사본을 열면
+    `no such table`). 서버가 살아 있는 채로 설정 화면에서 누르는 것이 정상 사용법이라
+    busy는 예외가 아니라 기본값이다.
+
+    그래서 몇 번 물러나며 다시 시도하고, 끝내 접지 못한 DB는 이름을 돌려준다.
+    호출부가 그것을 보고 옮기기를 **중단한다** — 반쪽 DB를 성공이라고 말하지 않는다.
     """
     import sqlite3
+    import time
 
     failed: list[str] = []
     for name in WORKSPACE_DIR_NAMES:
@@ -66,15 +75,44 @@ def _checkpoint_sqlite(root: Path) -> list[str]:
         if not directory.is_dir():
             continue
         for db in directory.rglob("*.sqlite3"):
+            busy = True
             try:
                 conn = sqlite3.connect(str(db), timeout=10)
                 try:
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    for attempt in range(5):
+                        row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                        busy = bool(row[0]) if row else False
+                        if not busy:
+                            break
+                        time.sleep(0.2 * (attempt + 1))
                 finally:
                     conn.close()
-            except Exception:  # noqa: BLE001 - 체크포인트 실패가 옮기기를 막지 않는다
+            except Exception:  # noqa: BLE001 - 못 연 DB도 접지 못한 것으로 센다
+                busy = True
+            if busy:
                 failed.append(db.name)
     return failed
+
+
+def _clear_destination_sidecars(target: Path) -> None:
+    """복사한 본체 옆에 남아 있던 **목적지의** 곁다리를 지운다.
+
+    `copytree`는 목적지에서 아무것도 지우지 않고, 곁다리는 원본 목록에서 빠져 있으므로
+    예전 크래시가 남긴 `-wal`이 그대로 살아남는다. 그러면 SQLite가 다음 시작에 그것을
+    **새로 복사한 본체 위에 재생해** 옛 자료로 되돌린다 — `integrity_check`도 `_verify`도
+    통과하므로, 사용자가 "새 위치를 확인"하는 화면이 옛 자료다.
+    """
+    for name in WORKSPACE_DIR_NAMES:
+        directory = target / name
+        if not directory.is_dir():
+            continue
+        for db in directory.rglob("*.sqlite3"):
+            for suffix in SQLITE_SIDECAR_SUFFIXES:
+                sidecar = db.with_name(db.name + suffix)
+                try:
+                    sidecar.unlink()
+                except OSError:
+                    continue
 
 
 def _usage(root: Path) -> tuple[int, int]:
@@ -160,10 +198,28 @@ def _write_marker(target: Path) -> None:
 
 
 def _clear_marker() -> None:
-    try:
-        marker_path().unlink()
-    except OSError:
-        pass
+    """표지를 지운다. 실패는 삼키지 않는다.
+
+    쓰기는 `write_bytes_atomic`이 `PermissionError`를 여섯 번 물러나며 재시도하는데
+    삭제만 첫 거절에 포기하면, 백신이 잠깐 잡은 것만으로 표지가 살아남는다. 그러면
+    "앱 폴더로 되돌렸습니다"라고 말해 놓고 재시작 뒤에도 문서 폴더를 쓰게 되고,
+    화면 안내대로 원본을 지운 사용자는 **살아 있는 워크스페이스를 지운다**.
+    """
+    path = marker_path()
+    for attempt in range(6):
+        try:
+            path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            time.sleep(0.01 * (2**attempt))
+        except OSError as exc:
+            raise WorkspaceMoveError(f"이전 위치 표지를 지우지 못했습니다: {exc}") from exc
+    raise WorkspaceMoveError(
+        "이전 위치 표지(workspace.json)를 지우지 못했습니다. 다른 프로그램이 잡고 있을 수 "
+        "있습니다. 잠시 뒤 다시 시도하거나 파일을 직접 지운 뒤 재시작하세요."
+    )
 
 
 def _verify(source: Path, target: Path) -> list[str]:
@@ -227,8 +283,9 @@ def move_workspace(destination: str, *, merge: bool = False) -> dict:
     existing, _ = _usage(target)
     if existing and not merge:
         raise WorkspaceMoveError(
-            f"그 위치에 이미 자료 {existing}개가 있습니다. 합치면 그쪽에만 있던 파일은 "
-            "그대로 남습니다."
+            f"그 위치에 이미 자료 {existing}개가 있습니다. 합치면 **이름이 같은 파일은 "
+            "지금 자료로 덮어씁니다**(되돌릴 수 없습니다). 그쪽에만 있던 파일은 그대로 "
+            "남습니다."
         )
 
     files, total = _usage(source)
@@ -239,34 +296,67 @@ def move_workspace(destination: str, *, merge: bool = False) -> dict:
             f"공간이 부족합니다. {_human(total)}가 필요한데 {_human(free)}가 남아 있습니다."
         )
 
-    # 복사 전에 WAL을 본체로 접어 넣는다. 그래야 목적지 DB가 그 자체로 완결된다.
-    checkpoint_failed = _checkpoint_sqlite(source)
+    # 복사가 시작되기 **전에** 자료를 쓰는 작업을 쉬게 한다. 예전에는 검증까지 끝난 뒤에
+    # 표시해서, 매시 수집이 복사 도중에 끼어들면 (a) 그 파일들이 원본에만 남고 — 화면은
+    # 곧 원본을 지우라고 안내한다 — (b) `_verify`가 복사 뒤 늘어난 원본과 대조해 900MB를
+    # 옮기고도 "원본과 다릅니다"로 중단됐다.
+    workspace.mark_moved_pending_restart()
+    try:
+        # 복사 전에 WAL을 본체로 접어 넣는다. 그래야 목적지 DB가 그 자체로 완결된다.
+        checkpoint_failed = _checkpoint_sqlite(source)
+        if checkpoint_failed:
+            # 접지 못한 WAL을 두고 본체만 복사하면 그 안의 커밋이 통째로 사라진다.
+            # 성공이라고 말하고 원본을 지우게 하느니 여기서 멈춘다.
+            raise WorkspaceMoveError(
+                "데이터베이스를 정리하지 못해 옮기기를 중단했습니다. 다른 작업이 자료를 쓰고 "
+                "있을 수 있습니다. 서버를 재시작한 뒤 바로 다시 시도하면 대부분 해결됩니다. "
+                f"({', '.join(checkpoint_failed)})"
+            )
 
-    target.mkdir(parents=True, exist_ok=True)
-    copied = []
-    ignore = shutil.ignore_patterns(*(f"*{suffix}" for suffix in SQLITE_SIDECAR_SUFFIXES))
-    for name in WORKSPACE_DIR_NAMES:
-        origin = source / name
-        if not origin.is_dir():
-            continue
-        shutil.copytree(origin, target / name, dirs_exist_ok=True, ignore=ignore)
-        copied.append(name)
+        target.mkdir(parents=True, exist_ok=True)
+        copied = []
+        ignore = shutil.ignore_patterns(*(f"*{suffix}" for suffix in SQLITE_SIDECAR_SUFFIXES))
+        for name in WORKSPACE_DIR_NAMES:
+            origin = source / name
+            if not origin.is_dir():
+                continue
+            try:
+                shutil.copytree(origin, target / name, dirs_exist_ok=True, ignore=ignore)
+            except OSError as exc:
+                # `shutil.Error`는 `OSError`라서 그대로 두면 라우터가 잡지 못하고 500이 된다.
+                # 사용자가 알아야 할 것은 셋이다: 원본은 그대로다, 목적지에 반쪽이 남았다,
+                # 다시 시도하려면 그것을 지워야 한다.
+                raise WorkspaceMoveError(
+                    f"복사 도중 실패했습니다: {exc}. 원본({source})은 그대로 있습니다. "
+                    f"목적지({target})에 복사하다 만 파일이 남아 있으니 지운 뒤 다시 시도하세요."
+                ) from exc
+            copied.append(name)
 
-    problems = _verify(source, target)
-    if problems:
-        raise WorkspaceMoveError(
-            "복사한 자료가 원본과 다릅니다. 원본은 그대로 있으니 다시 시도해 주세요. "
-            f"({len(problems)}개 이상: {', '.join(problems[:3])})"
-        )
+        # 목적지에 남아 있던 남의 곁다리를 치운다. 두면 다음 시작에 그것이 새 본체 위로
+        # 재생되어 옛 자료로 되돌아간다.
+        _clear_destination_sidecars(target)
 
-    if destination == "app":
-        _clear_marker()
-    else:
-        _write_marker(target)
+        problems = _verify(source, target)
+        if problems:
+            raise WorkspaceMoveError(
+                "복사한 자료가 원본과 다릅니다. 원본은 그대로 있으니 다시 시도해 주세요. "
+                f"({len(problems)}개 이상: {', '.join(problems[:3])})"
+            )
+
+        if destination == "app":
+            _clear_marker()
+        else:
+            _write_marker(target)
+    except Exception:
+        # 표지를 쓰지 못했으니 워크스페이스는 하나 그대로다. 계속 쉬게 둘 이유가 없다.
+        workspace.clear_moved_pending_restart()
+        raise
+
     reset_cache()
     # 표지를 쓴 순간부터 이 프로세스는 두 워크스페이스를 동시에 본다 — 모듈 상수는 옛
     # 폴더, 새로 판정하는 경로와 수집 서브프로세스는 새 폴더다. 재시작 전까지 자료를
     # 쓰는 작업(수집·정리)을 쉬게 해서 새 자료가 두 폴더로 갈리지 않게 한다.
+    # (`reset_cache()`가 플래그를 지우므로 그 뒤에 다시 표시한다.)
     workspace.mark_moved_pending_restart()
 
     return {

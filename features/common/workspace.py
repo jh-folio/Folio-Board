@@ -82,7 +82,9 @@ def _marker_target() -> Path | None:
     """표지가 가리키는 폴더. 없거나 못 읽거나 사라졌으면 None."""
     try:
         raw = marker_path().read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # 인코딩 오류도 여기서 끝낸다. 이 함수는 import 시점에 불리므로 예외가 새면
+        # 앱이 아예 켜지지 않는다 — 표지 하나 깨졌다고 그러면 안 된다.
         return None
     try:
         target = str(json.loads(raw).get("workspace") or "").strip()
@@ -96,12 +98,40 @@ def _marker_target() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-def _has_content(directory: Path) -> bool:
-    """빈 폴더 껍데기와 실제로 쓰던 워크스페이스를 가른다.
+# 사용자가 손대야만 생기는 것들. 서버가 스스로 만드는 파일은 넣지 않는다.
+# `features/onboarding/service.py`가 첫 실행 판정에 쓰는 목록과 같은 뜻이며, 그쪽이
+# 이 모듈을 import하므로 정의는 여기(의존성 없는 쪽)에 둔다.
+USER_DATA_FILES = ("portfolio.json", "watchlist.json", "market-scope.json", "obsidian-settings.json")
+USER_DATA_DIRS = ("briefings", "company-analysis", "topic-reports", "notes", "agent-threads", "investment-notes")
+USER_INBOX_DIRS = ("rss", "articles", "reports", "filings", "links", "market-data")
 
-    배포 zip은 `data/`와 그 하위를 **빈 폴더로** 만들어 둔다. 그래서 폴더 존재만
-    보면 새로 푼 설치도 "쓰던 워크스페이스"로 오인한다.
+
+def _has_any(directory: Path) -> bool:
+    try:
+        return any(directory.iterdir())
+    except OSError:
+        return False
+
+
+def has_user_data(root: Path) -> bool:
+    """이 폴더에서 사용자가 무언가를 한 적이 있는가.
+
+    **파일이 하나라도 있는가로 물으면 안 된다.** 서버는 처음 켜질 때 스스로
+    `index.json`과 빈 DB와 설정 기본값을 만든다(실측 5개). 그것을 "쓰던
+    워크스페이스"로 세면, 옮긴 사용자가 새 버전을 한 번 잘못 켠 순간 앱 폴더가
+    영구히 고정되고 문서 폴더 규칙은 다시는 실행되지 않는다.
     """
+    data = root / "data"
+    if any((data / name).is_file() for name in USER_DATA_FILES):
+        return True
+    if any(_has_any(data / name) for name in USER_DATA_DIRS):
+        return True
+    inbox = root / "research-inbox"
+    return any(_has_any(inbox / name) for name in USER_INBOX_DIRS)
+
+
+def _has_files(directory: Path) -> bool:
+    """폴더에 파일이 하나라도 있는가. 사용자 자료 판정이 아니라 껍데기 판별용이다."""
     try:
         return any(item.is_file() for item in directory.rglob("*"))
     except OSError:
@@ -118,6 +148,10 @@ def workspace_root() -> Path:
     요구하므로(설정 화면이 안내한다) 실행 중 값이 바뀔 일은 없다.
     """
     configured = str(os.environ.get("FOLIO_HOME", "") or "").strip()
+    # cmd.exe의 `set VAR="값"`은 따옴표까지 값에 담는다. 따옴표는 NTFS 이름에 못 쓰는
+    # 문자라 그대로 두면 모든 쓰기가 OS 층에서 실패하고, 화면은 "환경변수가 잡고 있음"만
+    # 말해 원인을 짚어주지 못한다.
+    configured = configured.strip('"').strip("'").strip()
     if configured:
         return Path(configured).expanduser()
 
@@ -125,12 +159,17 @@ def workspace_root() -> Path:
     if marked is not None:
         return marked
 
-    if _has_content(APP_ROOT / "data"):
+    if has_user_data(APP_ROOT):
         return APP_ROOT
 
     documents = documents_workspace()
-    if _has_content(documents / "data"):
+    if has_user_data(documents):
         return documents
+
+    # 사용자 자료가 어디에도 없다. 서버가 만든 파일이라도 있는 쪽을 이어 쓴다 —
+    # 갓 푼 설치와 "쓰다가 자료를 다 지운 설치"를 가르는 마지막 단서다.
+    if _has_files(APP_ROOT / "data"):
+        return APP_ROOT
 
     return APP_ROOT
 
@@ -153,6 +192,16 @@ def mark_moved_pending_restart() -> None:
 
 def moved_pending_restart() -> bool:
     return _MOVED_PENDING_RESTART
+
+
+def clear_moved_pending_restart() -> None:
+    """옮기기가 표지를 쓰기 전에 실패했을 때만 부른다.
+
+    복사 동안에도 수집을 쉬게 하려고 미리 표시하는데, 실패하면 워크스페이스는 하나
+    그대로이므로 계속 쉬게 둘 이유가 없다.
+    """
+    global _MOVED_PENDING_RESTART
+    _MOVED_PENDING_RESTART = False
 
 
 def reset_cache() -> None:
@@ -182,5 +231,14 @@ def config_dir() -> Path:
 
 
 def is_outside_app_folder() -> bool:
-    """자료가 앱 폴더 밖에 있는가. 업데이트 안내가 갈리는 기준이다."""
-    return workspace_root().resolve() != APP_ROOT.resolve()
+    """자료가 앱 폴더 **밖**에 있는가. 업데이트 안내가 갈리는 기준이다.
+
+    부등호로 물으면 앱 폴더 **안**의 하위 폴더도 "밖"이 된다. 그러면 버전 폴더 안에
+    자료를 둔 사용자에게 "새 버전을 받아도 그대로 이어집니다"라고 말하게 되는데,
+    다음 zip은 그 폴더째로 두고 간다 — 이 모듈이 막으려던 바로 그 결과다.
+    """
+    try:
+        workspace_root().resolve().relative_to(APP_ROOT.resolve())
+        return False
+    except (ValueError, OSError):
+        return True

@@ -255,3 +255,110 @@ def test_the_size_estimate_counts_the_wal_it_will_fold_in(moved):
     _, total = service._usage(moved)
     assert total > wal
     conn.close()
+
+
+class TestMoveDoesNotLoseData:
+    """옮기기가 "성공"이라고 말했는데 자료가 사라진 세 경로의 회귀 테스트."""
+
+    def test_unfoldable_wal_aborts_instead_of_copying_a_half_database(self, moved, monkeypatch):
+        """`PRAGMA wal_checkpoint`는 접지 못해도 예외를 던지지 않고 busy를 돌려준다.
+
+        그 행을 읽지 않고 곁다리를 복사에서 빼면 아직 WAL에만 있던 커밋이 통째로
+        사라진다. 실측으로 리더가 스냅샷을 쥔 상태에서 `(1, 6, 2)`를 받았고 복사본을
+        열면 `no such table`이었다. 성공이라고 말하고 원본을 지우게 하느니 멈춘다.
+        """
+        monkeypatch.setattr(service, "_checkpoint_sqlite", lambda root: ["research-index.sqlite3"])
+
+        with pytest.raises(service.WorkspaceMoveError) as excinfo:
+            service.move_workspace("documents")
+
+        assert "research-index.sqlite3" in str(excinfo.value)
+        assert workspace.moved_pending_restart() is False, "표지를 못 썼으면 수집을 다시 재운 채 두지 않는다"
+        assert not workspace.marker_path().exists()
+
+    def test_a_stale_sidecar_at_the_destination_is_removed(self, moved, tmp_path):
+        """목적지에 남은 남의 `-wal`은 새로 복사한 본체 위로 재생되어 옛 자료를 되살린다."""
+        target = tmp_path / "home" / "Documents" / "FolioOS"
+        (target / "data").mkdir(parents=True)
+        import sqlite3
+
+        old_db = target / "data" / "research-index.sqlite3"
+        conn = sqlite3.connect(str(old_db))
+        conn.execute("CREATE TABLE t(x)")
+        conn.execute("INSERT INTO t VALUES('옛 자료')")
+        conn.commit()
+        conn.close()
+        stale = target / "data" / "research-index.sqlite3-wal"
+        stale.write_text("옛 WAL", encoding="utf-8")
+
+        new_db = moved / "data" / "research-index.sqlite3"
+        conn = sqlite3.connect(str(new_db))
+        conn.execute("CREATE TABLE t(x)")
+        conn.execute("INSERT INTO t VALUES('새 자료')")
+        conn.commit()
+        conn.close()
+
+        service.move_workspace("documents", merge=True)
+
+        assert not stale.exists(), "곁다리를 두면 다음 시작에 옛 자료로 되돌아간다"
+        conn = sqlite3.connect(str(old_db))
+        assert conn.execute("SELECT x FROM t").fetchone()[0] == "새 자료"
+        conn.close()
+
+    def test_a_failed_copy_reports_where_the_original_and_the_debris_are(self, moved, monkeypatch):
+        """`shutil.Error`는 `OSError`라서 그대로 두면 라우터가 못 잡고 500이 된다."""
+        def explode(*args, **kwargs):
+            raise OSError("디스크가 가득 찼습니다")
+
+        monkeypatch.setattr(service.shutil, "copytree", explode)
+
+        with pytest.raises(service.WorkspaceMoveError) as excinfo:
+            service.move_workspace("documents")
+
+        message = str(excinfo.value)
+        assert "원본" in message and "그대로" in message
+        assert workspace.moved_pending_restart() is False
+
+    def test_collection_pauses_before_the_copy_starts_not_after(self, moved, monkeypatch):
+        """복사 도중 수집이 끼어들면 그 파일은 원본에만 남는데, 화면은 원본을 지우라고 안내한다."""
+        seen: list[bool] = []
+        original = service.shutil.copytree
+
+        def spy(*args, **kwargs):
+            seen.append(workspace.moved_pending_restart())
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(service.shutil, "copytree", spy)
+        service.move_workspace("documents")
+
+        assert seen and all(seen), "복사가 시작될 때 이미 쉬고 있어야 한다"
+
+    def test_the_merge_warning_names_the_destructive_half(self, moved, tmp_path):
+        """`copytree`는 같은 이름 파일을 덮어쓴다. 경고문이 그 사실을 먼저 말해야 한다."""
+        target = tmp_path / "home" / "Documents" / "FolioOS" / "data"
+        target.mkdir(parents=True)
+        (target / "portfolio.json").write_text('{"holdings": ["기존"]}', encoding="utf-8")
+
+        with pytest.raises(service.WorkspaceMoveError) as excinfo:
+            service.move_workspace("documents")
+
+        assert "덮어씁니다" in str(excinfo.value)
+
+    def test_a_marker_that_cannot_be_deleted_fails_loudly(self, moved, monkeypatch, tmp_path):
+        """삭제 실패를 삼키면 "앱 폴더로 되돌렸습니다"라고 말해 놓고 문서 폴더를 계속 쓴다."""
+        documents = tmp_path / "home" / "Documents" / "FolioOS"
+        for name in workspace.WORKSPACE_DIR_NAMES:
+            (documents / name).mkdir(parents=True)
+        (documents / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+        workspace.marker_path().write_text(json.dumps({"workspace": str(documents)}), encoding="utf-8")
+        workspace.reset_cache()
+
+        def refuse(self):
+            raise PermissionError("다른 프로그램이 사용 중입니다")
+
+        monkeypatch.setattr(service.Path, "unlink", refuse)
+
+        with pytest.raises(service.WorkspaceMoveError) as excinfo:
+            service.move_workspace("app", merge=True)
+
+        assert "workspace.json" in str(excinfo.value)

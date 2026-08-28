@@ -98,3 +98,68 @@ def test_unknown_directory_names_are_rejected(app):
         assert workspace.workspace_dir(name).name == name
     with pytest.raises(ValueError):
         workspace.workspace_dir("secrets")
+
+
+class TestResolutionDoesNotStrandTheUser:
+    """판정이 틀리면 사용자는 자료가 사라진 것으로 본다. 그 경로들의 회귀 테스트."""
+
+    def test_server_bootstrap_files_do_not_pin_the_app_folder(self, tmp_path, monkeypatch):
+        """서버는 처음 켤 때 스스로 파일을 만든다(실측 5개). 그것을 "쓰던 워크스페이스"로
+        세면, 옮긴 사용자가 새 버전을 한 번 잘못 켠 순간 앱 폴더가 영구히 고정되고
+        문서 폴더 규칙은 다시는 실행되지 않는다.
+        """
+        app = tmp_path / "FolioOS-v0.5.5"
+        (app / "data").mkdir(parents=True)
+        for name in ("index.json", "market-memory.sqlite3", "research-index.sqlite3"):
+            (app / "data" / name).write_text("", encoding="utf-8")
+
+        documents = tmp_path / "home" / "Documents"
+        moved = documents / "FolioOS"
+        (moved / "data" / "briefings").mkdir(parents=True)
+        (moved / "data" / "briefings" / "2026-08-28.us.json").write_text("{}", encoding="utf-8")
+
+        monkeypatch.setattr(workspace, "APP_ROOT", app)
+        monkeypatch.setattr(workspace, "documents_root", lambda: documents)
+        monkeypatch.delenv("FOLIO_HOME", raising=False)
+        workspace.reset_cache()
+
+        assert workspace.workspace_root() == moved
+
+    def test_a_marker_saved_in_another_encoding_does_not_stop_the_app(self, tmp_path, monkeypatch):
+        """`UnicodeDecodeError`는 `OSError`가 아니다. import 시점에 새면 앱이 안 켜진다."""
+        app = tmp_path / "app"
+        (app / "data").mkdir(parents=True)
+        (app / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+        (app / "workspace.json").write_bytes("﻿{}".encode("utf-16"))
+
+        monkeypatch.setattr(workspace, "APP_ROOT", app)
+        monkeypatch.delenv("FOLIO_HOME", raising=False)
+        workspace.reset_cache()
+
+        assert workspace.workspace_root() == app
+
+    def test_a_workspace_inside_the_app_folder_is_not_reported_as_outside(self, tmp_path, monkeypatch):
+        """부등호로 물으면 앱 폴더 **안**의 하위 폴더도 "밖"이 되어, 다음 zip이 두고 갈
+        자료를 두고 "새 버전을 받아도 그대로 이어집니다"라고 말하게 된다.
+        """
+        app = tmp_path / "FolioOS-v0.5.5"
+        nested = app / "workspace"
+        (nested / "data").mkdir(parents=True)
+        monkeypatch.setattr(workspace, "APP_ROOT", app)
+        monkeypatch.setenv("FOLIO_HOME", str(nested))
+        workspace.reset_cache()
+
+        assert workspace.workspace_root() == nested
+        assert workspace.is_outside_app_folder() is False
+
+    def test_quotes_around_folio_home_are_stripped(self, tmp_path, monkeypatch):
+        """cmd.exe의 `set VAR="값"`은 따옴표까지 값에 담는다. NTFS 이름에 못 쓰는 문자라
+        그대로 두면 모든 쓰기가 OS 층에서 실패하고 화면은 원인을 짚어주지 못한다.
+        """
+        target = tmp_path / "Folio Data"
+        target.mkdir()
+        monkeypatch.setattr(workspace, "APP_ROOT", tmp_path / "app")
+        monkeypatch.setenv("FOLIO_HOME", f'"{target}"')
+        workspace.reset_cache()
+
+        assert workspace.workspace_root() == target
