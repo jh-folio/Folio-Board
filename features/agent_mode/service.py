@@ -71,6 +71,7 @@ from features.daily_briefing.selection import (
 )
 from features.daily_briefing.issue_selection import (
     build_issue_coverage,
+    doc_ref as issue_doc_ref,
     documents_for_scope,
     public_issue_coverage,
     session_modes_from_windows,
@@ -305,7 +306,7 @@ def _write_pack(pack: dict, owner_job_id: str | None) -> Path:
     return A.write_pack(pack, owner_job_id=owner_job_id)
 
 
-def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality_mode="diagnose_only", market_scope="both", briefing_type="default", markets=None, kind=DEFAULT_BRIEFING_KIND, owner_job_id: str | None = None) -> tuple[dict, Path]:
+def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality_mode="diagnose_only", market_scope="both", briefing_type="default", markets=None, kind=DEFAULT_BRIEFING_KIND, web_search=None, owner_job_id: str | None = None) -> tuple[dict, Path]:
     generated_at = now_iso()
     date = date or kst_date()
     kind = normalize_briefing_kind(kind)
@@ -579,6 +580,11 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 "impactTags": d.get("impactTags", []),
                 "sectors": d.get("sectors", []),
                 "docCount": len(d.get("docs", [])),
+                # 규칙 생성(`builder.py`)과 같은 계약이다. 이게 없으면 그 동인이
+                # 무슨 내용이었는지 되짚을 방법이 없고, 변화의 의미 비교가
+                # 대조할 재료를 못 받아 이슈 목록만 판정하게 된다 — 이슈는 매일
+                # 통째로 갈리는 집합이라 판정이 언제나 "새 정보"로 나온다.
+                "topDocs": [issue_doc_ref(doc) for doc in (d.get("docs") or [])[:3]],
             }
             for d in market_drivers
         ],
@@ -650,8 +656,12 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 if control.get("mode") == "active"
             },
         ),
-        write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json")},
-        save_target=str(BRIEFINGS_DIR / f"{date}{'.weekly' if week is not None else ''}.json"),
+        # 실제 저장 경로는 여기서 정하지 않는다 — 시장별 **세션 키**가 파일명을 정하고
+        # (`write_briefing_from_markdown`/`job_briefing_producer`), 그 키는 쓰기 시점의
+        # 보고서 `date`다. 예전에는 이 라벨이 발행일 합본 경로를 박아 둬서, 이 문자열을
+        # 계약으로 읽은 작성자가 발행일 키 저장 경로를 만들었다. 라벨은 템플릿으로만 남긴다.
+        write_back_contract={"method": "write_markdown", "target": str(BRIEFINGS_DIR / f"{{sessionDate}}.{{market}}{'.weekly' if week is not None else ''}.json")},
+        save_target=str(BRIEFINGS_DIR / f"{{sessionDate}}.{{market}}{'.weekly' if week is not None else ''}.json"),
         draft_artifact=draft,
         sources=sources,
         market_tape=market_tape,
