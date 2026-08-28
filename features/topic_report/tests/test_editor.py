@@ -218,3 +218,25 @@ def test_the_summary_records_whether_hedges_actually_fell():
     result = E.edit_report(hedged, run_call=_call(hedged))
     assert result["status"] == "applied"
     assert result["hedgeBefore"] > 0 and result["hedgeAfter"] == result["hedgeBefore"]
+
+
+def test_a_fabricated_number_hiding_inside_a_longer_one_is_caught():
+    """부분 문자열로 물으면 더 긴 숫자 안에 우연히 든 숫자가 전부 통과한다.
+
+    실측으로 초안에 `31,458.42`가 있으면 지어낸 `8.4%`가 위반으로 잡히지 않았다.
+    12,000자 보고서에서는 짧은 수치 대부분이 그렇게 통과하고, 편집본은 그대로
+    Canonical 본문이 된다 — 이 모듈은 그 금지를 코드가 집행한다고 말한다.
+    """
+    from features.topic_report.editor import new_numbers
+
+    original = "## 결론\n\n지수는 31,458.42로 마감했고 정책금리는 4.25%다.\n"
+    edited = original.rstrip() + " 실업률은 8.4%다.\n"
+    assert new_numbers(original, edited) == ["8.4"]
+
+
+def test_formatting_variants_are_still_allowed():
+    """표기 변형까지 위반으로 잡으면 정당한 편집이 막힌다."""
+    from features.topic_report.editor import new_numbers
+
+    assert new_numbers("금리는 7.0%다.", "금리는 7%다.") == []
+    assert new_numbers("지수는 31,458.42다.", "지수는 31458.42다.") == []

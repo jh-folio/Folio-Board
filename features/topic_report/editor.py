@@ -81,17 +81,37 @@ def _normalized(text: str) -> str:
     return (text or "").replace(",", "")
 
 
+def _numeric_value(number: str) -> float | None:
+    try:
+        return float(number)
+    except (TypeError, ValueError):
+        return None
+
+
 def new_numbers(original: str, edited: str) -> list[str]:
     """편집본에만 있는 수치. 초안 어디에도 없는 숫자는 지어낸 것이다.
 
-    표기 변형(7.0% → 7%, 2021-12 → 2021)까지 위반으로 잡으면 정당한 편집이 막히므로,
-    초안 본문 안에서 문자열로 찾을 수 있으면 통과시킨다.
+    **부분 문자열로 찾으면 안 된다.** 예전에는 초안 전체를 한 문자열로 두고
+    `number in haystack`으로 물었는데, 그러면 더 긴 숫자 안에 우연히 들어 있는 숫자가
+    전부 통과한다 — 실측으로 초안에 `31,458.42`가 있으면 지어낸 `8.4%`가 위반으로 잡히지
+    않았다(`8.4` ⊂ `31458.42`). 12,000자 보고서에서는 짧은 수치 대부분이 그렇게 통과하고,
+    편집본은 그대로 Canonical 본문이 된다. 이 모듈의 docstring은 그 금지를 프롬프트가
+    아니라 **코드가 집행한다**고 말한다.
+
+    표기 변형(7.0% → 7%)까지 위반으로 잡으면 정당한 편집이 막히므로, 문자열이 다르면
+    수치로 한 번 더 견준다.
     """
-    haystack = _normalized(visible_markdown(original))
+    original_numbers = set(_numbers(visible_markdown(original)))
+    original_values = {value for value in (_numeric_value(row) for row in original_numbers) if value is not None}
     seen = set()
     out: list[str] = []
     for number in _numbers(visible_markdown(edited)):
-        if number in seen or number in haystack:
+        if number in seen:
+            continue
+        if number in original_numbers:
+            continue
+        value = _numeric_value(number)
+        if value is not None and value in original_values:
             continue
         seen.add(number)
         out.append(number)

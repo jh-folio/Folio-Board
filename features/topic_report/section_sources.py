@@ -15,9 +15,15 @@ _TAG = re.compile(
 )
 # 근거 ID만으로 이뤄진 대괄호 묶음. 일반 대괄호(각주, 강조)를 삼키지 않도록
 # 항목 전부가 알려진 접두사를 가질 때만 인용으로 본다.
-_INLINE_CITATION = re.compile(
-    r"\[((?:(?:ev|market|macro)_[A-Za-z0-9_.\-]+)(?:\s*,\s*(?:ev|market|macro)_[A-Za-z0-9_.\-]+)*)\]"
-)
+#
+# **접두사 목록은 한 곳에서 나온다.** `web`이 빠져 있던 시절, 같은 릴리즈가 만든
+# `web_NNN`을 `render_lookup`이 대괄호 형식으로 가르치는데 이 정규식만 그것을 몰랐다.
+# 항목 **전부**가 맞아야 하므로 `[ev_003, web_001]` 한 묶음이 통째로 버려졌다 —
+# 같이 있던 `ev_003`까지 잃고, 그 섹션은 근거 없음(`unlinked_section`)이 되며
+# `webSearchAudit.citedSourceIds`는 실제로 인용한 보고서를 0건으로 보고했다.
+SOURCE_ID_PREFIXES = ("ev", "market", "macro", "web")
+_PREFIX_GROUP = "(?:" + "|".join(SOURCE_ID_PREFIXES) + r")_[A-Za-z0-9_.\-]+"
+_INLINE_CITATION = re.compile(r"\[(" + _PREFIX_GROUP + r"(?:\s*,\s*" + _PREFIX_GROUP + r")*)\]")
 _SOURCE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,79}$")
 
 

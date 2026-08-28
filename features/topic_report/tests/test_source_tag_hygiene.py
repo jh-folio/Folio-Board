@@ -60,3 +60,29 @@ def test_repair_does_not_leave_a_second_tag():
     assert len(_TAG.findall(patched)) == 1
     assert "ev_002" in patched
     assert "새 본문" in patched
+
+
+def test_inline_citations_keep_every_id_including_web():
+    """항목 전부가 맞아야 하는 정규식이라 `web` 하나가 묶음을 통째로 버렸다.
+
+    같은 릴리즈가 `web_NNN`을 만들고 `render_lookup`이 대괄호 형식을 가르치는데
+    이 패턴만 그것을 몰랐다 — `[ev_003, web_001]`이 통째로 사라져 `ev_003`까지 잃고,
+    그 섹션은 근거 없음이 되며 `citedSourceIds`는 0건으로 보고됐다.
+    """
+    from features.topic_report.section_sources import parse_section_source_ids
+
+    body = "## Executive Summary\n\n금리는 올랐다 [ev_003, web_001].\n"
+    usage, _unknown = parse_section_source_ids(body)
+    ids = usage.get("Executive Summary") or []
+    assert "ev_003" in ids and "web_001" in ids, ids
+
+    usage, _unknown = parse_section_source_ids("## Executive Summary\n\n올랐다 [web_002].\n")
+    assert usage.get("Executive Summary") == ["web_002"]
+
+
+def test_repair_strips_alias_tags_so_a_section_never_carries_two():
+    """파서가 받아들이는 별칭을 strip이 모르면 새 태그와 함께 둘이 남는다."""
+    from features.topic_report.section_repair import _SOURCE_TAG
+
+    for name in ("folio-source-ids", "folio-sources", "source-ids", "sources"):
+        assert _SOURCE_TAG.sub("", f"본문 <!-- {name}: ev_015 -->").strip() == "본문", name

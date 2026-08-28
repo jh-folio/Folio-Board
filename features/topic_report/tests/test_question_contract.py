@@ -208,3 +208,27 @@ def test_interrogative_tails_are_not_the_only_keyword():
     keywords = question_keywords("기대 심리 중심의 해석이 틀릴 수 있는 반대 근거는 무엇인가?")
     assert "무엇인" not in keywords
     assert "근거" in keywords and "해석" in keywords
+
+
+def test_a_term_that_merely_contains_digits_does_not_erase_the_content_words():
+    """`10년물`·`P500` 같은 용어가 걸리면 내용어를 전부 버리고 그 한 토큰만 요구했다.
+
+    "미국 10년물 금리…" 질문은 본문이 "10년 만기 국채 금리"라고 제대로 답해도 미답으로
+    잡혀 `question_unanswered`(심각도 70)가 붙고 품질이 69점으로 눌렸다.
+    """
+    from features.topic_report.report_contract import question_keywords, unanswered_questions
+
+    question = "미국 10년물 금리 상승이 한국 증시에 미치는 영향은 무엇인가?"
+    assert len(question_keywords(question)) > 1
+    body = "미국 10년 만기 국채 금리가 오르면 한국 증시의 밸류에이션이 눌린다."
+    assert unanswered_questions(body, [question]) == []
+
+
+def test_a_year_in_the_question_is_still_required_in_the_body():
+    """연도가 든 질문은 그 연도가 답의 대상이다. 일반어가 겹친다고 답한 것이 아니다."""
+    from features.topic_report.report_contract import question_keywords, unanswered_questions
+
+    question = "2021~2022년 인플레이션 국면에서 무엇이 확인되는가?"
+    assert question_keywords(question) == ["2021", "2022년"]
+    body = "인플레이션과 정책 대응을 다룬다."
+    assert unanswered_questions(body, [question]) == [question]

@@ -63,6 +63,8 @@ _QUESTION_STOPWORDS = frozenset({
 })
 _QUESTION_TOKEN = re.compile(r"[A-Za-z가-힣0-9]{2,}")
 _PARTICLES = "이가은는을를와과에의로서도만"
+# 연도만 고른다. `10년물`·`P500` 같은 용어는 숫자를 품었을 뿐 답의 대상이 아니다.
+_YEAR_TOKEN = re.compile(r"^(?:19|20)\d{2}년?$")
 
 
 def question_keywords(question: str, limit: int = 8) -> list[str]:
@@ -77,12 +79,18 @@ def question_keywords(question: str, limit: int = 8) -> list[str]:
         if len(token) < 2 or token.lower() in _QUESTION_STOPWORDS or token in tokens:
             continue
         tokens.append(token)
-    numeric = [token for token in tokens if any(ch.isdigit() for ch in token) and len(token) >= 4]
-    if numeric:
+    years = [token for token in tokens if _YEAR_TOKEN.match(token)]
+    if years:
         # 연도가 든 질문은 그 연도가 답의 대상이다. 다른 낱말이 겹친다고 답한 것이 아니다 —
         # 실측으로 "2021~2022년 인플레이션 국면" 질문이 본문에 2021도 2022도 없이
         # 인플레이션·정책 같은 일반어만으로 통과했다.
-        return numeric[:limit]
+        #
+        # **연도만 골라낸다.** 예전에는 "숫자가 든 4자 이상 토큰"으로 물어서 `10년물`,
+        # `P500`, `5y5y` 같은 용어가 걸렸고, 그러면 내용어를 전부 버린 채 그 한 토큰의
+        # 문자열 일치만 요구했다 — "미국 10년물 금리…" 질문은 본문이 "10년 만기 국채
+        # 금리"라고 제대로 답해도 미답으로 잡혀 `question_unanswered`(심각도 70)가
+        # 붙고 품질이 69점으로 눌렸다.
+        return years[:limit]
     # 두 글자를 버리지 않는다. 한국어 내용어는 대부분 두 글자라(물가·금리·환율·경로)
     # 세 글자 하한을 두면 동사 활용형과 의문사만 남아 답한 질문을 못 답했다고 잡는다.
     return tokens[:limit]
