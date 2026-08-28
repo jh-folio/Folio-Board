@@ -11,6 +11,64 @@ def _unit_map(basis: dict | None) -> dict[str, dict]:
     return {str(row.get("id")): row for row in (basis or {}).get("changeUnits") or [] if isinstance(row, dict) and row.get("id")}
 
 
+def _numeric(value, field: str | None):
+    if field:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(field)
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+def _change_magnitude(row: dict, before: dict | None) -> float:
+    """변화의 크기. 선언된 `magnitude`는 그 단위의 비중이지 움직인 양이 아니다.
+
+    둘을 같은 값으로 쓰던 시절 이슈 단위 상수 0.35와 종가 차이가 매일 그대로
+    materiality가 되어, 어떤 브리핑도 `no_material_change`가 될 수 없었다
+    (실측 61건 중 0건). 이제 측정법(`delta`)을 선언한 단위는 직전 값과의 차이로
+    재고, 집합이 매번 새로 뽑히는 단위(`churning`)의 등장·퇴장은 0으로 둔다.
+    """
+    declared = float(row.get("magnitude") or 0.0)
+    if before is None:
+        # 매번 새로 뽑히는 집합에서 "어제 목록에 없었다"는 변화의 근거가 아니다.
+        return 0.0 if row.get("continuity") == "churning" else declared
+    spec = row.get("delta")
+    if not isinstance(spec, dict):
+        return declared
+    current = _numeric(row.get("currentValue"), spec.get("field"))
+    previous = _numeric(before.get("currentValue"), spec.get("field"))
+    if current is None or previous is None:
+        return declared
+    raw = abs(current - previous)
+    if spec.get("relative"):
+        if not previous:
+            return declared
+        raw /= abs(previous)
+    raw = max(0.0, raw - float(spec.get("deadband") or 0.0))
+    scale = float(spec.get("scale") or 0) or 1.0
+    # 소수점을 자른다. deadband에 딱 걸친 값이 부동소수점 잔여(7e-16)로 0을 넘으면
+    # "움직인 단위"로 세어져 건수 가산이 붙는다 — 안 움직인 하루에 크기가 생긴다.
+    return round(max(0.0, min(1.0, raw / scale)), 4)
+
+
+def _materiality(changed: list[dict]) -> float:
+    """가장 크게 움직인 단위 + 실제로 움직인 단위 수의 작은 가산.
+
+    가산은 움직인 단위만 센다. 전부 세던 시절 브리핑은 지표 12개가 종가 차이만으로
+    늘 changed였고 가산이 상한 0.25에 매일 고정돼, 이슈 상수와 합쳐 0.60 바닥이 생겼다.
+    """
+    magnitudes = [float(row.get("magnitude") or 0) for row in changed]
+    moved = [value for value in magnitudes if value > 0]
+    if not moved:
+        return 0.0
+    return min(1.0, max(moved) + min(0.12, len(moved) * 0.03))
+
+
 def _changed(current: dict, previous: dict | None) -> list[dict]:
     current_units = _unit_map(current)
     previous_units = _unit_map(previous)
@@ -18,12 +76,12 @@ def _changed(current: dict, previous: dict | None) -> list[dict]:
     for uid, row in current_units.items():
         before = previous_units.get(uid)
         if before is None:
-            rows.append({"id": uid, "kind": row.get("kind"), "subject": row.get("subject"), "change": "added", "previousValue": None, "currentValue": row.get("currentValue"), "horizon": row.get("horizon"), "magnitude": row.get("magnitude"), "contextDocs": row.get("contextDocs") or [], "previousContextDocs": []})
+            rows.append({"id": uid, "kind": row.get("kind"), "subject": row.get("subject"), "change": "added", "previousValue": None, "currentValue": row.get("currentValue"), "horizon": row.get("horizon"), "magnitude": _change_magnitude(row, None), "continuity": row.get("continuity") or "stable", "contextDocs": row.get("contextDocs") or [], "previousContextDocs": []})
         elif content_hash(before.get("currentValue")) != content_hash(row.get("currentValue")):
-            rows.append({"id": uid, "kind": row.get("kind"), "subject": row.get("subject"), "change": "changed", "previousValue": before.get("currentValue"), "currentValue": row.get("currentValue"), "horizon": row.get("horizon"), "magnitude": row.get("magnitude"), "contextDocs": row.get("contextDocs") or [], "previousContextDocs": before.get("contextDocs") or []})
+            rows.append({"id": uid, "kind": row.get("kind"), "subject": row.get("subject"), "change": "changed", "previousValue": before.get("currentValue"), "currentValue": row.get("currentValue"), "horizon": row.get("horizon"), "magnitude": _change_magnitude(row, before), "continuity": row.get("continuity") or "stable", "contextDocs": row.get("contextDocs") or [], "previousContextDocs": before.get("contextDocs") or []})
     for uid, row in previous_units.items():
         if uid not in current_units:
-            rows.append({"id": uid, "kind": row.get("kind"), "subject": row.get("subject"), "change": "removed", "previousValue": row.get("currentValue"), "currentValue": None, "horizon": row.get("horizon"), "magnitude": row.get("magnitude"), "contextDocs": [], "previousContextDocs": row.get("contextDocs") or []})
+            rows.append({"id": uid, "kind": row.get("kind"), "subject": row.get("subject"), "change": "removed", "previousValue": row.get("currentValue"), "currentValue": None, "horizon": row.get("horizon"), "magnitude": _change_magnitude(row, None), "continuity": row.get("continuity") or "stable", "contextDocs": [], "previousContextDocs": row.get("contextDocs") or []})
     return rows[:24]
 
 
@@ -74,19 +132,21 @@ def compare_basis(current: dict, previous: dict | None, *, current_ref: dict, ba
         changed = []
     else:
         changed = _changed(current, previous)
-        magnitudes = [float(row.get("magnitude") or 0) for row in changed]
-        materiality = min(1.0, (max(magnitudes) if magnitudes else 0.0) + min(0.25, len(changed) * 0.04))
+        materiality = _materiality(changed)
         has_conflict = bool(current.get("counterSignals")) and reliability >= 0.55 and bool(changed)
         major_gate = materiality >= 0.7 and (tier1 >= 1 or len(tier2_groups) >= 2)
         if has_conflict and materiality >= 0.45:
             status = "conflicting_uncertain"
         elif major_gate:
             status = "major_change"
-        elif changed and (materiality >= 0.3 or reliability >= 0.55):
+        elif materiality >= 0.3:
+            # 근거 등급만으로 승격하지 않는다. 브리핑은 발행처가 수십 곳이라
+            # reliability가 언제나 0.85였고, 그 대안 조건이 "단위 하나라도
+            # 바뀌면 신호"라는 두 번째 바닥이었다.
             status = "developing_signal"
         else:
             status = "no_material_change"
-    materiality = 0.0 if not changed else min(1.0, max(float(row.get("magnitude") or 0) for row in changed) + min(0.25, len(changed) * 0.04))
+    materiality = _materiality(changed)
     horizons = {"shortTerm": [], "mediumTerm": [], "longTerm": []}
     keys = {"short_term": "shortTerm", "medium_term": "mediumTerm", "long_term": "longTerm"}
     for row in changed:

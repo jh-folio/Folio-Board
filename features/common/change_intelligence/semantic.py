@@ -44,11 +44,21 @@ SEMANTIC_PROMPT = (
 )
 
 
+def _has_both_sides(row: dict) -> bool:
+    """직전과 현재 대표 기사가 모두 있어야 내용을 대조할 수 있다.
+
+    한쪽만 있는 단위(그날 새로 뽑힌 이슈)를 보내면 모델은 비교할 것이 없으므로
+    당연히 `new_information`을 답하고, 그 verdict가 승격 게이트를 통과시킨다.
+    실측 8/25 KR 브리핑은 판정 6건이 전부 그런 `added` 이슈였다. 대조가 불가능한
+    것을 "새 정보"로 세면 의미 비교 층이 강등 장치가 아니라 승격 장치가 된다.
+    """
+    return bool(row.get("contextDocs")) and bool(row.get("previousContextDocs"))
+
+
 def semantic_eligible_items(summary: dict) -> list[dict]:
     return [
         row for row in (summary or {}).get("changedItems") or []
-        if isinstance(row, dict) and row.get("kind") in SEMANTIC_KINDS
-        and (row.get("contextDocs") or row.get("previousContextDocs"))
+        if isinstance(row, dict) and row.get("kind") in SEMANTIC_KINDS and _has_both_sides(row)
     ]
 
 
@@ -160,10 +170,16 @@ def evaluate_semantic_changes(summary: dict, *, llm_call=None) -> dict:
     return {"status": "evaluated", "verdicts": verdicts, "provider": provider, "model": model}
 
 
+# 내용 확인 없이 major를 유지시키는 문턱. 지표 눈금상 1.0은 그 자산에서 드문 하루라
+# 뜻이 분명하고, 0.9는 거기에 거의 닿은 값이다. 예전 0.7은 지수 2.6%·유가 5% 이동이면
+# 걸려서 "내용 확인 없는 major를 막는다"는 이 층의 목적을 자주 우회했다.
+METRIC_ALONE_MAJOR_MAGNITUDE = 0.9
+
+
 def _metric_alone_is_major(summary: dict) -> bool:
     """지표 급변은 의미 분류 대상이 아니므로 지표만으로 넘은 major는 유지한다."""
     return any(
-        row.get("kind") == "market_metric" and float(row.get("magnitude") or 0) >= 0.7
+        row.get("kind") == "market_metric" and float(row.get("magnitude") or 0) >= METRIC_ALONE_MAJOR_MAGNITUDE
         for row in summary.get("changedItems") or []
     )
 
@@ -180,7 +196,7 @@ def apply_semantic_verdicts(summary: dict, evaluation: dict) -> dict:
             row["semanticVerdict"] = verdict["verdict"]
             row["semanticNote"] = verdict["note"]
             row["semanticCitedTitles"] = verdict["citedTitles"]
-        elif row.get("kind") in SEMANTIC_KINDS and (row.get("contextDocs") or row.get("previousContextDocs")):
+        elif row.get("kind") in SEMANTIC_KINDS and _has_both_sides(row):
             row["semanticVerdict"] = "not_evaluated"
     result["changedItems"] = items
     result["semanticEvaluation"] = {
@@ -213,8 +229,11 @@ def apply_semantic_verdicts(summary: dict, evaluation: dict) -> dict:
     elif status == "major_change" and not _metric_alone_is_major(result):
         # 내용 미평가 상태로는 major를 확정하지 않는다. 지어내는 것보다 한계 명시가 낫다.
         result["status"] = "developing_signal"
-        uncertainties = list(result.get("uncertainties") or [])
-        if "semantic_not_evaluated" not in uncertainties:
-            uncertainties.append("semantic_not_evaluated")
-        result["uncertainties"] = uncertainties
+        # 대조할 단위가 없어 판정을 건너뛴 것(`no_eligible_items`)은 실패가 아니다.
+        # 그때까지 "판정하지 못했다"로 적으면 화면이 엔진을 의심하게 된다.
+        if (evaluation or {}).get("status") != "no_eligible_items":
+            uncertainties = list(result.get("uncertainties") or [])
+            if "semantic_not_evaluated" not in uncertainties:
+                uncertainties.append("semantic_not_evaluated")
+            result["uncertainties"] = uncertainties
     return result

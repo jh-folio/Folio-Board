@@ -33,10 +33,18 @@ def _llm(verdict, note="확인된 변화", cited=None):
     return call
 
 
-def test_only_driver_and_issue_units_with_context_are_eligible():
+def test_only_driver_and_issue_units_with_both_sides_are_eligible():
+    """대조할 직전 제목이 없는 단위는 보내지 않는다.
+
+    한쪽만 보내면 모델은 비교할 것이 없어 언제나 `new_information`을 답하고, 그
+    verdict가 승격 게이트를 통과시킨다 — 매일 새로 뽑히는 이슈 목록이 그런 단위다.
+    """
     summary = _summary(items=[
-        {"id": "m", "kind": "market_metric", "subject": "^GSPC", "change": "changed"},
-        {"id": "d", "kind": "market_driver", "subject": "금리", "change": "changed", "contextDocs": ["t"]},
+        {"id": "m", "kind": "market_metric", "subject": "^GSPC", "change": "changed",
+         "contextDocs": ["t"], "previousContextDocs": ["p"]},
+        {"id": "d", "kind": "market_driver", "subject": "금리", "change": "changed",
+         "contextDocs": ["t"], "previousContextDocs": ["p"]},
+        {"id": "added", "kind": "issue_coverage", "subject": "오늘 새 이슈", "change": "added", "contextDocs": ["t"]},
         {"id": "bare", "kind": "market_driver", "subject": "옛 형식", "change": "changed"},
     ])
     assert [row["id"] for row in semantic_eligible_items(summary)] == ["d"]
@@ -124,7 +132,7 @@ def test_the_summary_records_why_it_could_not_judge():
         "status": "developing_signal",
         "generatedAt": "2026-08-21T09:00:00+09:00",
         "changedItems": [
-            {"id": "u1", "kind": "market_driver", "contextDocs": ["제목"]},
+            {"id": "u1", "kind": "market_driver", "contextDocs": ["제목"], "previousContextDocs": ["직전 제목"]},
         ],
     }
 
@@ -140,8 +148,8 @@ def test_the_summary_records_why_it_could_not_judge():
     assert failed["semanticEvaluation"]["reason"] == "llm_failed"
 
 
-def test_items_without_titles_are_never_marked_unjudged():
-    """대표 기사 제목이 없는 단위에는 아무 표시도 남기지 않는다.
+def test_items_that_cannot_be_compared_are_never_marked_unjudged():
+    """대조할 수 없는 단위에는 아무 표시도 남기지 않는다.
 
     서버가 판정하지 않을 단위다. 표시가 남으면 화면이 그것을 "다음 생성에서 판정할
     기록"으로 세는데, 그 약속은 영원히 지켜지지 않는다.
@@ -153,11 +161,13 @@ def test_items_without_titles_are_never_marked_unjudged():
             "status": "developing_signal",
             "changedItems": [
                 {"id": "u1", "kind": "market_driver"},
-                {"id": "u2", "kind": "market_driver", "contextDocs": ["제목"]},
+                {"id": "u2", "kind": "issue_coverage", "change": "added", "contextDocs": ["오늘 제목"]},
+                {"id": "u3", "kind": "market_driver", "contextDocs": ["제목"], "previousContextDocs": ["직전 제목"]},
             ],
         },
         {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"},
     )
 
     assert "semanticVerdict" not in result["changedItems"][0]
-    assert result["changedItems"][1]["semanticVerdict"] == "not_evaluated"
+    assert "semanticVerdict" not in result["changedItems"][1]
+    assert result["changedItems"][2]["semanticVerdict"] == "not_evaluated"

@@ -3,6 +3,31 @@ from __future__ import annotations
 from features.common.change_intelligence.basis import content_hash, normalize_basis, stable_id
 from features.common.research_schema.data_gaps import data_gap_rows
 
+# `topicKey`는 주제의 정체성이 아니라 종류인 값이 섞여 있다. custom 딥 리서치는
+# 질문이 무엇이든 전부 `custom`이라, 이것을 계보로 쓰면 아무 관계 없는 질문끼리
+# 기준선-비교 대상이 된다(실측 21건이 한 계보에 묶여 18건이 conflicting_uncertain).
+GENERIC_TOPIC_KEYS = {"custom", "preset", "topic", "general", "default", "none"}
+
+
+def _topic_lineage(report: dict) -> str:
+    """같은 질문의 재실행만 이어 붙인다. 정체성을 못 찾으면 보고서 자신이 계보다.
+
+    계보가 자기 자신이면 비교 대상이 없어 `baseline_created`가 되는데, 서로 다른
+    질문을 비교해 만든 가짜 변화보다 "비교 기준 없음"이 정직하다.
+    """
+    plan = report.get("topicPlan") or {}
+    for value in (
+        report.get("researchLineageId"),
+        plan.get("researchLineageId") if isinstance(plan, dict) else None,
+        report.get("topicKey"),
+        report.get("topicLabel"),
+        plan.get("topicLabel") if isinstance(plan, dict) else None,
+    ):
+        text = str(value or "").strip()
+        if text and text.lower() not in GENERIC_TOPIC_KEYS:
+            return text
+    return str(report.get("id") or "")
+
 
 def build_topic_basis(report: dict) -> dict:
     report = report or {}
@@ -41,7 +66,7 @@ def build_topic_basis(report: dict) -> dict:
     for item in evidence:
         if isinstance(item, dict) and str(item.get("role") or item.get("evidenceRole") or "").lower() in {"challenging", "counter", "contradiction"}:
             counter.append(item.get("title") or item.get("summary") or item.get("id"))
-    lineage = report.get("researchLineageId") or (report.get("topicPlan") or {}).get("researchLineageId") or report.get("topicKey") or report.get("id")
+    lineage = _topic_lineage(report)
     return normalize_basis({
         "artifactKind": "topic_report", "artifactId": report.get("id"), "lineageId": lineage,
         "scope": {"reportType": report.get("reportType")}, "asOf": report.get("generatedAt"),

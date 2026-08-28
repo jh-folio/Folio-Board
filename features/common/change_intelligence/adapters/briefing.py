@@ -6,6 +6,39 @@ from features.common.markets import PRODUCT_MARKETS
 from features.common.research_schema.data_gaps import data_gap_rows
 
 
+# 자산마다 평범한 하루의 크기가 다르므로 같은 %를 같은 변화로 재면 변동성 자산이
+# 매일 상단을 차지한다(예전 눈금은 2.25% 이동이면 곧 major라 유가·VIX가 수시로 넘었다).
+# 눈금은 자산군별로 둔다 — 종목마다 정밀하게 맞추려면 표본이 필요한데 저장된 브리핑
+# 23건(2026-06~08)뿐이라 그 표에 맞추면 표본의 잔떨림까지 배운다. 대신 그 실측으로
+# 검증한다: 각 지표의 일간 |등락률| **중앙값이 deadband 안에 들어와** 평범한 하루가
+# 0이 되는지 본다(SPY 0.72%·^VIX 2.54%·CL=F 2.47%·^TNX 0.54%·BTC 0.78% 모두 통과).
+# (deadband, scale) — deadband 이하는 0, deadband+scale에서 1.0.
+_METRIC_DELTA_CLASSES = {
+    "index": (0.005, 0.030),      # 주가지수·광의 ETF: 2% 이동 = 0.50
+    "credit": (0.003, 0.015),     # 채권·신용 ETF
+    "rate": (0.010, 0.050),       # 금리(수준값이라 %가 작다)
+    "fx": (0.003, 0.012),
+    "commodity": (0.015, 0.050),
+    "volatility": (0.050, 0.200),  # VIX는 두 자릿수 % 이동이 평범하다
+    "crypto": (0.020, 0.060),
+}
+_METRIC_CLASS_BY_ID = {
+    "SPY": "index", "QQQ": "index", "IWM": "index", "RSP": "index",
+    "KOSPI": "index", "KOSDAQ": "index", "KOSPI200": "index",
+    "TLT": "credit", "HYG": "credit", "LQD": "credit",
+    "^TNX": "rate", "DX-Y.NYB": "fx", "USDKRW": "fx",
+    "CL=F": "commodity", "GC=F": "commodity",
+    "^VIX": "volatility", "BTC-USD": "crypto",
+}
+
+
+def _metric_delta_spec(metric_id: str) -> dict:
+    """모르는 지표는 주가지수 눈금을 쓴다. 눈금을 모른다고 변화를 크게 잡으면
+    지표가 하나 늘 때마다 피드가 시끄러워진다."""
+    deadband, scale = _METRIC_DELTA_CLASSES[_METRIC_CLASS_BY_ID.get(str(metric_id), "index")]
+    return {"relative": True, "scale": scale, "deadband": deadband}
+
+
 def _briefing_kind(report: dict) -> str:
     """`daily` 또는 `weekly`. 저장된 옛 보고서에는 이 값이 없고 그때는 일간이다."""
     value = str((report or {}).get("kind") or "").strip().lower()
@@ -91,6 +124,9 @@ def build_briefing_basis(report: dict, *, generation_docs: list[dict] | None = N
             "id": stable_id("driver", report.get("marketScope"), subject), "kind": "market_driver",
             "subject": subject, "currentValue": {"rank": rank, "share": share, "docCount": int(driver.get("docCount") or 0)},
             "direction": "active", "magnitude": share or 0.2,
+            # 동인 이름은 고정 어휘라 정체성이 날마다 이어진다. 변화의 크기는
+            # 그날의 비중이 아니라 직전 대비 비중 이동이다(0.5 이동 = 1.0).
+            "delta": {"field": "share", "scale": 0.5},
             "horizon": "short_term", "sourceRefIds": _own_ref_ids(top_docs, ref_ids[:12]),
             # 의미 비교(전/후 내용 대조)의 입력. 제목만 담고 본문은 담지 않는다.
             "contextDocs": [str(row.get("title") or "") for row in top_docs if row.get("title")],
@@ -103,6 +139,11 @@ def build_briefing_basis(report: dict, *, generation_docs: list[dict] | None = N
                 "kind": "issue_coverage", "subject": issue.get("title") or issue.get("issueId"),
                 "currentValue": {"market": issue.get("market"), "impact": issue.get("marketImpactStatus")},
                 "direction": "observed", "magnitude": 0.35, "horizon": "short_term",
+                # `issueId`는 그 클러스터의 문서 집합 해시라 기사 한 건만 달라져도
+                # 값이 바뀐다. 즉 이슈 목록은 매일 통째로 새로 뽑히는 집합이고,
+                # 그 등장·퇴장은 변화의 크기가 아니다. 내용이 달라졌는지는
+                # 의미 비교(semantic.py)가 대표 기사 제목으로 판정한다.
+                "continuity": "churning",
                 "sourceRefIds": _own_ref_ids(issue_docs, ref_ids[:8]),
                 "contextDocs": [str(row.get("title") or "") for row in issue_docs if row.get("title")],
             })
@@ -116,7 +157,12 @@ def build_briefing_basis(report: dict, *, generation_docs: list[dict] | None = N
         if metric_id and value is not None:
             units.append({
                 "id": stable_id("tape", metric_id), "kind": "market_metric", "subject": metric_id,
-                "currentValue": value, "direction": "observed", "magnitude": min(1.0, abs(float(item.get("changePct") or 0)) / 5),
+                # 종가는 매일 다르므로 값이 달라진 사실 자체는 변화가 아니다.
+                # 크기는 전적으로 직전 값과의 차이가 정한다(`delta`). 지표가 목록에
+                # 처음 등장하거나 사라지는 것은 provider 사정이지 시장의 변화가
+                # 아니므로, 비교할 직전 값이 없을 때 쓰는 이 기본값은 0이다.
+                "currentValue": value, "direction": "observed", "magnitude": 0.0,
+                "delta": _metric_delta_spec(metric_id),
                 "horizon": "short_term", "sourceRefIds": ref_ids[:4],
             })
     counter = [gap.get("message") or gap.get("title") for gap in data_gap_rows(report.get("dataGaps"))]

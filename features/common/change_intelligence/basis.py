@@ -10,6 +10,9 @@ from typing import Any
 ARTIFACT_KINDS = {"briefing", "company_analysis", "topic_report", "market_memory"}
 BASIS_STATUSES = {"ready", "partial", "insufficient"}
 HORIZONS = {"short_term", "medium_term", "long_term"}
+# 단위의 정체성이 산출물 사이에 이어지는가. `churning`은 매 생성마다 집합이 다시
+# 뽑히는 단위(그날 고른 이슈)라 "어제 목록에 없었다"가 변화의 근거가 되지 않는다.
+CONTINUITY_MODES = {"stable", "churning"}
 
 
 def clean(value: Any, limit: int = 300) -> str:
@@ -59,6 +62,33 @@ def normalize_source_ref(value: dict, index: int) -> dict:
     }
 
 
+def normalize_delta_spec(value: Any) -> dict | None:
+    """변화량 측정법 선언. 없으면 comparator가 선언된 magnitude를 그대로 쓴다.
+
+    선언된 `magnitude`는 "이 단위가 그날 얼마나 큰가"(동인 비중, 이슈 상수)이지
+    "직전 대비 얼마나 움직였나"가 아니다. 둘을 같은 값으로 쓰면 매일 같은 크기로
+    존재하기만 해도 변화 크기가 그만큼 잡힌다.
+    """
+    if not isinstance(value, dict):
+        return None
+    try:
+        scale = float(value.get("scale") or 0)
+    except (TypeError, ValueError):
+        return None
+    if scale <= 0:
+        return None
+    try:
+        deadband = max(0.0, float(value.get("deadband") or 0))
+    except (TypeError, ValueError):
+        deadband = 0.0
+    return {
+        "field": clean(value.get("field"), 60) or None,
+        "relative": bool(value.get("relative")),
+        "scale": scale,
+        "deadband": deadband,
+    }
+
+
 def normalize_change_unit(value: dict, index: int) -> dict:
     row = value or {}
     subject = clean(row.get("subject") or row.get("label") or row.get("title"), 220)
@@ -72,6 +102,9 @@ def normalize_change_unit(value: dict, index: int) -> dict:
     except (TypeError, ValueError):
         magnitude = None
     refs = row.get("sourceRefIds") or row.get("source_ref_ids") or []
+    continuity = clean(row.get("continuity") or "stable", 20).lower()
+    if continuity not in CONTINUITY_MODES:
+        continuity = "stable"
     return {
         "id": clean(row.get("id"), 100) or stable_id("unit", kind, subject, index),
         "kind": kind,
@@ -80,6 +113,8 @@ def normalize_change_unit(value: dict, index: int) -> dict:
         "currentValue": row.get("currentValue"),
         "direction": clean(row.get("direction") or "changed", 40),
         "magnitude": magnitude,
+        "continuity": continuity,
+        "delta": normalize_delta_spec(row.get("delta")),
         "horizon": horizon,
         "sourceRefIds": [clean(ref, 100) for ref in refs if clean(ref, 100)][:12],
         # 의미 비교·변화 상세용 대표 자료 제목. currentValue 밖에 두는 이유:
