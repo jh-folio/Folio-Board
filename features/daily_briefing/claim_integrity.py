@@ -13,9 +13,25 @@ import re
 from copy import deepcopy
 
 
+# 문장 끝에 남은 어미를 **전부** 삼킨다.
+#
+# 예전 어미 목록은 해라체(`했다|했으며|했고`)만 알았는데 브리핑은 합니다체로 쓰인다.
+# 그러면 어미가 매치 밖에 남아 치환문 뒤에 원래 어미가 그대로 붙었다 — 실측으로
+# `…이동했습니다.` → `…근거는 부족하다습니다.`, `…유입되었다.` → `…부족하다되었다.`,
+# `…몰렸다.` → `…부족하다다.`가 독자에게 그대로 나갔다. 기본 모드가 `active`라
+# Canonical 본문·리더·Obsidian/Notion 내보내기 모두 그 문장을 실었다.
+_TAIL = r"(?P<tail>[^\n.!?]{0,24})"
+
 _CAPITAL_FLOW_PATTERNS = (
-    re.compile(r"(?P<origin>[^\n.!?]{1,45}?)에서\s*(?:빠져나오거나\s*)?이탈한\s*자금이\s*(?P<target>[^\n.!?]{1,45}?)(?:로|으로)\s*(?:이동|유입|몰렸)(?:했(?:다|으며|고)?|한\s*것으로\s*(?:해석됐|보였)다)?", re.I),
-    re.compile(r"(?P<target>[^\n.!?]{1,45}?)(?:은|는)\s*(?:이탈한\s*)?자금의\s*(?:대체\s*)?목적지", re.I),
+    re.compile(
+        r"(?P<origin>[^\n.!?]{1,45}?)에서\s*(?:빠져나오거나\s*)?이탈한\s*자금이\s*"
+        r"(?P<target>[^\n.!?]{1,45}?)(?:로|으로)\s*(?:이동|유입|유출입|몰렸|옮겨갔|이전)" + _TAIL,
+        re.I,
+    ),
+    re.compile(
+        r"(?P<target>[^\n.!?]{1,45}?)(?:은|는)\s*(?:이탈한\s*)?자금의\s*(?:대체\s*)?목적지" + _TAIL,
+        re.I,
+    ),
 )
 _SECTOR_BREADTH_PATTERNS = (
     re.compile(r"반도체\s*소부장(?:\s*전반)?(?:의|이|은|도)?\s*(?:동반\s*)?강세", re.I),
@@ -62,12 +78,40 @@ def _direct_support(sources, claim_type: str) -> tuple[bool, list[str]]:
     return bool(supporting), supporting
 
 
+def _is_polite(tail: str) -> bool:
+    """원문이 합니다체인가. 치환문도 같은 문체로 끝나야 한 문서 안에서 문체가 섞이지 않는다."""
+    return "니다" in str(tail or "")
+
+
+def _topic_particle(word: str) -> str:
+    """받침 유무로 `은`/`는`을 고른다.
+
+    하드코딩한 `은`은 모음으로 끝나는 명사에서 틀린다 — 실측 `반도체은`.
+    """
+    text = str(word or "").strip()
+    if not text:
+        return "은"
+    last = text[-1]
+    if "가" <= last <= "힣":
+        return "은" if (ord(last) - 0xAC00) % 28 else "는"
+    # 숫자·라틴 문자로 끝나면 받침을 판정할 수 없다. 틀리는 쪽보다 무난한 쪽을 쓴다.
+    return "은"
+
+
 def _downgrade_flow(match: re.Match) -> str:
-    target = re.sub(r"\s+", " ", str(match.groupdict().get("target") or "해당 자산")).strip()
-    if "origin" in match.groupdict() and match.groupdict().get("origin"):
+    groups = match.groupdict()
+    target = re.sub(r"\s+", " ", str(groups.get("target") or "해당 자산")).strip()
+    polite = _is_polite(groups.get("tail"))
+    if groups.get("origin"):
         origin = re.sub(r"\s+", " ", str(match.group("origin"))).strip()
-        return f"{origin}의 약세와 {target}의 상대 강세가 동시에 나타났지만 동일 자금의 직접 이동으로 단정할 근거는 부족하다"
-    return f"{target}은 상대 강세가 나타난 후보"
+        ending = "부족합니다" if polite else "부족하다"
+        return (
+            f"{origin}의 약세와 {target}의 상대 강세가 동시에 나타났지만 "
+            f"동일 자금의 직접 이동으로 단정할 근거는 {ending}"
+        )
+    particle = _topic_particle(target)
+    ending = "후보입니다" if polite else "후보다"
+    return f"{target}{particle} 상대 강세가 나타난 {ending}"
 
 
 def _downgrade_breadth(match: re.Match) -> str:

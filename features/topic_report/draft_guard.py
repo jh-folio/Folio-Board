@@ -69,18 +69,37 @@ def retry_directive(problems: list[str], *, min_chars: int, sections: list[str])
     return "\n".join(lines)
 
 
+# 사유는 무게가 다르다. 이 둘은 `validate_deep_report`에서 **차단**이라 잡을 죽이고,
+# `draft_stub`은 `below_recommended_length` 결함으로 남아 보고서는 저장된다.
+BLOCKING_DRAFT_PROBLEMS = frozenset({"draft_empty", "draft_sections_missing"})
+
+
+def _rank(markdown: str, *, min_chars: int) -> tuple[int, int, int]:
+    """작을수록 나은 초안. (차단 사유 수, 전체 사유 수, 짧을수록 큰 값)."""
+    problems = draft_problems(markdown, min_chars=min_chars)
+    blocking = sum(1 for row in problems if row in BLOCKING_DRAFT_PROBLEMS)
+    return blocking, len(problems), -visible_character_count(markdown)
+
+
 def better_draft(first: str, second: str, *, min_chars: int) -> tuple[str, str]:
-    """두 초안 중 쓸 것을 고른다. 돌려주는 두 번째 값은 선택 사유다."""
-    first_problems = draft_problems(first, min_chars=min_chars)
-    second_problems = draft_problems(second, min_chars=min_chars)
-    if len(second_problems) < len(first_problems):
-        return second, "retry_better"
-    if len(second_problems) > len(first_problems):
-        return first, "retry_worse"
-    # 사유 수가 같으면 더 채운 쪽. 재시도가 같은 결함을 안고 더 짧으면 얻은 것이 없다.
-    if visible_character_count(second) > visible_character_count(first):
+    """두 초안 중 쓸 것을 고른다. 돌려주는 두 번째 값은 선택 사유다.
+
+    **사유 개수만 세면 안 된다.** `draft_problems`는 평평한 목록이라
+    `["draft_stub"]`(비차단)과 `["draft_sections_missing"]`(차단)이 길이 1로 같고,
+    그러면 글자 수 비교로 넘어가 길지만 구조가 깨진 재시도가 항상 이긴다. 그 초안은
+    곧 `deep_initial_candidate_invalid`로 잡을 죽여서, 웹 조회·축 브리프·논지·초안
+    두 번을 다 쓰고 **아무것도 남기지 못한다** — 짧아도 유효한 첫 초안은 저장됐을
+    것이다. 이 모듈이 막으려던 실패를 이 함수가 만들고 있었다.
+    """
+    first_rank = _rank(first, min_chars=min_chars)
+    second_rank = _rank(second, min_chars=min_chars)
+    if second_rank < first_rank:
+        if second_rank[:2] < first_rank[:2]:
+            return second, "retry_better"
         return second, "retry_longer"
+    if second_rank[:2] > first_rank[:2]:
+        return first, "retry_worse"
     return first, "retry_no_gain"
 
 
-__all__ = ["MIN_DRAFT_RATIO", "better_draft", "draft_problems", "retry_directive"]
+__all__ = ["BLOCKING_DRAFT_PROBLEMS", "MIN_DRAFT_RATIO", "better_draft", "draft_problems", "retry_directive"]

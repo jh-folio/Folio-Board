@@ -86,3 +86,44 @@ def test_the_directive_names_the_missing_sections_without_showing_the_bad_draft(
 def test_the_directive_only_says_what_went_wrong():
     note = G.retry_directive(["draft_stub"], min_chars=12_000, sections=["A"])
     assert "고정 섹션이 빠졌습니다" not in note
+
+
+def test_a_longer_but_structurally_invalid_retry_never_wins():
+    """`draft_problems`는 평평한 목록이라 차단 사유와 비차단 사유가 길이 1로 같다.
+
+    개수만 세면 글자 수 비교로 넘어가고, 길지만 고정 섹션이 깨진 재시도가 항상
+    이긴다. 그 초안은 곧 `deep_initial_candidate_invalid`로 잡을 죽여서 웹 조회·축
+    브리프·논지·초안 두 번을 다 쓰고 아무것도 남기지 못한다.
+    """
+    from features.topic_report.draft_guard import better_draft, draft_problems
+    from features.topic_report.report_contract import REPORT_HEAD_SECTIONS, REPORT_TAIL_SECTIONS
+
+    valid_short = "\n\n".join(
+        f"## {name}\n\n본문입니다." for name in [*REPORT_HEAD_SECTIONS, "분석 축", *REPORT_TAIL_SECTIONS]
+    )
+    broken_long = "\n\n".join(
+        f"## {name}\n\n" + ("길게 쓴 본문입니다. " * 200)
+        for name in [*REPORT_HEAD_SECTIONS, "분석 축", *REPORT_TAIL_SECTIONS[:-1], "Sources and Data Notes"]
+    )
+
+    assert "draft_stub" in draft_problems(valid_short, min_chars=12000)
+    assert "draft_sections_missing" not in draft_problems(valid_short, min_chars=12000)
+    assert "draft_sections_missing" in draft_problems(broken_long, min_chars=12000)
+
+    chosen, reason = better_draft(valid_short, broken_long, min_chars=12000)
+    assert chosen == valid_short, "구조가 깨진 초안은 아무리 길어도 이기지 못한다"
+    assert reason == "retry_worse"
+
+
+def test_a_longer_retry_with_the_same_problems_still_wins():
+    """차단 사유가 같을 때는 예전처럼 더 채운 쪽을 쓴다."""
+    from features.topic_report.draft_guard import better_draft
+    from features.topic_report.report_contract import REPORT_HEAD_SECTIONS, REPORT_TAIL_SECTIONS
+
+    names = [*REPORT_HEAD_SECTIONS, "분석 축", *REPORT_TAIL_SECTIONS]
+    short = "\n\n".join(f"## {name}\n\n짧은 본문." for name in names)
+    longer = "\n\n".join(f"## {name}\n\n" + ("더 채운 본문입니다. " * 60) for name in names)
+
+    chosen, reason = better_draft(short, longer, min_chars=12000)
+    assert chosen == longer
+    assert reason == "retry_longer"
