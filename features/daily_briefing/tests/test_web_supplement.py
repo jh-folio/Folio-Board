@@ -161,3 +161,33 @@ class TestStyleCheck:
     def test_clean_text_passes_and_empty_text_reports_nothing(self):
         assert briefing_style_check("## 시장 흐름\n지수가 1.2% 올랐다.")["violations"] == []
         assert briefing_style_check("") == {}
+
+
+class TestScopeNameDoesNotExpandTheMarketList:
+    """범위 이름으로 시장을 다시 풀면 임의 조합이 네 시장으로 퍼진다(§10)."""
+
+    def test_a_two_market_selection_only_supplements_those_two(self, monkeypatch):
+        from features.daily_briefing import service as svc
+
+        seen: list[str] = []
+
+        def spy(scope, date, **kwargs):
+            seen.append(scope)
+            return "", {"ok": True}
+
+        monkeypatch.setattr(svc, "briefing_web_supplement", spy)
+        svc._web_supplement_block(
+            "multi", "2026-08-28", {}, None,
+            web_search=True, lookup=None, sink={}, markets=["kr", "jp"],
+        )
+        assert seen == ["kr", "jp"], seen
+
+    def test_without_a_list_it_still_falls_back_to_the_scope_name(self, monkeypatch):
+        from features.daily_briefing import service as svc
+
+        seen: list[str] = []
+        monkeypatch.setattr(svc, "briefing_web_supplement", lambda scope, date, **kw: (seen.append(scope), ("", {}))[1])
+        svc._web_supplement_block(
+            "both", "2026-08-28", {}, None, web_search=True, lookup=None, sink={},
+        )
+        assert seen == ["us", "kr"], seen

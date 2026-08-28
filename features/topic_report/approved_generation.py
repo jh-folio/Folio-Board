@@ -143,8 +143,15 @@ def build_approved_report(
     web_lookups: list[dict] = []
     if approved.deepResearch and source_scope is not None and not command.preview.zeroEvidence.required:
         subquestions = list(approved.topicPlan.deepResearch.subQuestions)
+        # 이 콜러블은 `lookup_axis()`가 쓴다 — 웹에서 찾아오는 것이 그 패스의 일이므로
+        # 검색을 명시로 켠다. 설정에 맡기면 API 분기가 조용히 꺼진 채로 "찾아오라"는
+        # 지시만 받아 지어낸 URL을 원장에 등재한다.
         axis_call = configured_axis_call(
-            approved, requested_mode=command.requestedMode, adapter=command.adapter, job_id=job_id
+            approved,
+            requested_mode=command.requestedMode,
+            adapter=command.adapter,
+            job_id=job_id,
+            web_search=True,
         )
         for axis in approved.topicPlan.analysisAxes:
             if len(web_lookups) >= MAX_LOOKUPS:
@@ -302,6 +309,11 @@ def build_approved_report(
         problems = draft_problems(output.markdown, min_chars=depth_policy["recommendedMinChars"])
         draft_guard_note = {"problems": problems, "retried": False, "outcome": ""}
         if problems:
+            # `_generate`는 `fallback_reason`을 `nonlocal`로 쓴다. 재시도가 실패하면 그
+            # 값이 "engine_failed"로 덮이는데, 이 분기는 **첫 초안이 이미 성공했을 때만**
+            # 돈다 — 그러면 실제로는 LLM이 만든 보고서에 엔진 실패가 기록되고 Work Log가
+            # 실패한 실행으로 보여준다. 재시도 결과를 버릴 때는 이유도 되돌린다.
+            reason_before_retry = fallback_reason
             retry = _generate(retry_directive(
                 problems,
                 min_chars=int(depth_policy["recommendedMinChars"]),
@@ -315,8 +327,12 @@ def build_approved_report(
                 draft_guard_note["outcome"] = reason
                 if chosen == retry.markdown:
                     output = retry
+                else:
+                    # 첫 초안을 쓰기로 했으면 그 실행의 이유를 그대로 둔다.
+                    fallback_reason = reason_before_retry
             else:
                 draft_guard_note["outcome"] = "retry_unavailable"
+                fallback_reason = reason_before_retry
     markdown = output.markdown if output is not None else build_rule_report(
         topic,
         market_data,

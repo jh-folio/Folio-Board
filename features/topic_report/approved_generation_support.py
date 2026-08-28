@@ -255,8 +255,24 @@ def configured_editor_call(approved: ApprovedRequest, *, requested_mode: str, ad
     return invoke
 
 
-def configured_axis_call(approved: ApprovedRequest, *, requested_mode: str, adapter: str, job_id: str) -> AxisCall:
-    """축별 분석 호출. 보고서 본문 생성과 같은 엔진을 쓰되 팩 없이 프롬프트만 보낸다."""
+def configured_axis_call(
+    approved: ApprovedRequest,
+    *,
+    requested_mode: str,
+    adapter: str,
+    job_id: str,
+    web_search: bool | None = None,
+) -> AxisCall:
+    """축별 분석 호출. 보고서 본문 생성과 같은 엔진을 쓰되 팩 없이 프롬프트만 보낸다.
+
+    **웹 검색 여부는 두 분기에 같은 값이 도착해야 한다.** 예전에는 API 분기만
+    `web_search=False`로 박혀 있고 CLI 분기는 설정을 읽었다. 같은 호출자가 이 콜러블을
+    `lookup_axis()`에도 넘기는데 — 그 패스의 일이 바로 웹에서 찾아오는 것이다 — API 키
+    설치에서는 "웹에서 사실을 찾아 출처 URL을 붙이라"는 지시를 검색 도구 없이 받았다.
+    모델은 기억으로 답하고 `_rows`는 `http`로 시작하면 받으므로, 지어낸 URL이 `web_001`로
+    원장에 등재된다(§6 규칙 14 — 확인은 구조가 아니라 값으로 한다).
+    """
+    resolved_web_search = use_web_search_for_analysis() if web_search is None else bool(web_search)
 
     def invoke(prompt: str, context: str) -> str:
         if os.environ.get("PYTEST_CURRENT_TEST"):
@@ -269,7 +285,7 @@ def configured_axis_call(approved: ApprovedRequest, *, requested_mode: str, adap
                 config,
                 prompt,
                 context,
-                web_search=False,
+                web_search=resolved_web_search,
                 max_output_tokens=2_500,
                 json_mode=True,
                 timeout_seconds=max(60, int(os.environ.get("TOPIC_AXIS_API_TIMEOUT_SECONDS", "240"))),
@@ -280,7 +296,7 @@ def configured_axis_call(approved: ApprovedRequest, *, requested_mode: str, adap
             adapter=adapter,
             job_id=job_id,
             timeout=max(60, int(os.environ.get("TOPIC_AXIS_CLI_TIMEOUT_SECONDS", "600"))),
-            web_search=use_web_search_for_analysis(),
+            web_search=resolved_web_search,
         )
         return str(result.get("output") or "")
 

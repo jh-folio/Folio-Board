@@ -362,6 +362,17 @@ def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT, kind=DEFA
 
 
 def source_refs(docs, limit=SOURCE_REF_LIMIT):
+    """참고자료 후보. **상한은 중복을 걷어낸 뒤에 건다.**
+
+    예전에는 원본 URL로 한 번 걸러 상한까지 채운 다음 `attach_source_ids`가 정규화 URL로
+    다시 걸렀다. 뒤엣것이 더 거친 기준이라(호스트 대소문자·끝 슬래시·fragment) 앞에서
+    살아남아 예산을 쓴 문서가 뒤에서 죽고, 그만큼 목록이 상한보다 짧아졌다 — 실측으로
+    문서 3건에 상한 2를 주면 1건만 남고 세 번째 문서는 후보에 오르지도 못했다.
+    이 목록은 독자용 참고자료이자 모델에게 보여주는 후보 카탈로그라, 여기서 조용히
+    빠진 문서를 모델이 `usedSourceIds`에 적으면 `manifest_source_outside_whitelist`가 되어
+    보고서 전체가 후보 전량 fallback으로 떨어지고 선언된 claim이 버려진다.
+    `SOURCE_REF_LIMIT == CONTEXT_DOC_LIMIT` 계약도 그만큼 깎였다.
+    """
     rows = []
     seen = set()
     for d in docs:
@@ -370,8 +381,8 @@ def source_refs(docs, limit=SOURCE_REF_LIMIT):
             continue
         seen.add(key)
         rows.append(d)
-        if len(rows) >= limit:
-            break
+    # 정규화 기준 중복 제거와 상한은 `attach_source_ids`가 함께 한다. 여기서 미리 자르지
+    # 않으므로 뒤에서 죽은 자리는 다음 문서가 채운다.
     return attach_source_ids(rows, limit=limit)
 
 
@@ -743,10 +754,17 @@ def _weekly_context_header(
     ]
 
 
-def _web_supplement_block(market_scope, date, market_snapshot, korea_market_data, *, web_search, lookup, sink):
-    """시장별 웹 보완 블록. 실패는 빈 블록으로 끝난다 — 조회가 브리핑을 죽이지 않는다."""
+def _web_supplement_block(market_scope, date, market_snapshot, korea_market_data, *, web_search, lookup, sink, markets=None):
+    """시장별 웹 보완 블록. 실패는 빈 블록으로 끝난다 — 조회가 브리핑을 죽이지 않는다.
+
+    **시장은 범위 이름이 아니라 목록으로 받는다.** 이름으로 다시 풀면 임의 조합이
+    `multi`가 되고 `multi`는 네 시장 전부로 퍼진다 — 한국+일본 예약이 미국·유럽 조회를
+    돌리고 STOXX/DAX 표를 그 시장 절이 없는 보고서 컨텍스트에 넣는다(§10 "예약이 고른
+    시장만 만든다"). 호출부 둘 다 권위 있는 목록을 이미 들고 있다.
+    """
+    targets = [str(row) for row in (markets or []) if row] or list(normalize_market_selection(market_scope))
     blocks = []
-    for scope in normalize_market_selection(market_scope):
+    for scope in targets:
         try:
             block, summary = briefing_web_supplement(
                 scope, date,
@@ -786,6 +804,7 @@ def build_llm_context(
     web_search=False,
     web_lookup_call=None,
     web_lookup_sink=None,
+    markets=None,
 ):
     market_windows = market_windows or briefing_market_windows(date)
     market_scope = normalize_market_scope(market_scope)
@@ -1007,6 +1026,7 @@ def build_llm_context(
             _web_supplement_block(
                 market_scope, date, market_snapshot, korea_market_data,
                 web_search=web_search, lookup=web_lookup_call, sink=web_lookup_sink,
+                markets=markets,
             ),
             "",
             "## 한국장 시장 수치",
@@ -1193,7 +1213,7 @@ def build_llm_context(
     return "\n".join(lines), selected_for_refs
 
 
-def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block="", concentration_context=""):
+def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block="", concentration_context="", markets=None):
     cfg = selected_llm_config()
     kind = normalize_briefing_kind(kind)
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
@@ -1223,6 +1243,7 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
         session_modes=session_modes,
         kind=kind,
         weekly_window=weekly_window,
+        markets=markets,
         calendar_block=calendar_block,
         concentration_context=concentration_context,
         web_search=web_search,

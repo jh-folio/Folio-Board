@@ -500,6 +500,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         calendar_block=calendar_block,
         web_search=web_search,
         web_lookup_sink=web_lookup_sink,
+        # 범위 이름이 아니라 이 목록이 권위다. 이름으로 다시 풀면 한국+일본이 `multi`가
+        # 되고 네 시장 전부로 퍼진다(§10 "예약이 고른 시장만 만든다").
+        markets=requested_markets,
         # shadow는 관측 전용이다(README 계약) — 프롬프트 권위 주입은 active만.
         concentration_context="\n\n".join(
             render_concentration_context(control)
@@ -1120,6 +1123,11 @@ def prepare_topic_report_pack(
         user_context,
         date,
         data_gaps=evidence_pack["dataGaps"] if evidence_pack else None,
+        # 계획을 넘겨야 컨텍스트가 그것을 실을 수 있다. 빠뜨리면 `_build_llm_context`에서
+        # 계획에 걸린 블록이 통째로 사라진다 — 사용자 원문 질문, 하위 질문 목록,
+        # `[본문 섹션]` 제목 계약 셋 다. 승인 경로는 넘기고 있어서 같은 요청이 경로에
+        # 따라 다른 보고서를 냈다(§6 규칙 14 — 값이 도착하는지로 확인한다).
+        topic_plan=topic_plan or None,
     )
     context = "\n\n".join([context, render_quality_target_context(
         "topic_report",

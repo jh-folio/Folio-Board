@@ -321,6 +321,10 @@ def _scope_result(
             weekly_window=window.to_dict() if window is not None else None,
             calendar_block=calendar_block,
             concentration_context=concentration_context,
+            # 이 경로는 시장 하나씩 만든다. 범위 이름으로 다시 풀게 두면 그 한 시장이
+            # 네 시장으로 퍼져, 고르지도 않은 시장의 웹 조회를 돌리고 그 표를 컨텍스트에
+            # 넣는다(§10 "예약이 고른 시장만 만든다").
+            markets=[scope],
         )
         if llm_status not in {"disabled", "missing_prompt"} and not llm_status.startswith("missing_"):
             record_call(concentration_control, "generation")
@@ -425,6 +429,13 @@ def _scope_result(
         "concentrationControl": concentration_control,
         "generationEvidence": generation_evidence,
         "claimLedger": claim_ledger,
+        # 웹 보완 요약과 문체 실측도 여기서 실어야 저장 JSON까지 간다. 예전에는
+        # `build_briefing`이 `results[scope].get("webLookup")`을 읽는데 이 dict에 그 키가
+        # 없어서 규칙/API 경로의 저장물은 언제나 빈 값이었고, `briefing_style_check`는
+        # import만 되고 한 번도 불리지 않았다 — 두 필드는 "배선이 죽었는지"를 저장물로
+        # 알아보려고 만든 것인데 그 탐지기가 한쪽 경로에서 꺼져 있었다(§6 규칙 14).
+        "webLookup": deepcopy(((llm_result or {}).get("webLookup") or {}).get(scope) or {}),
+        "styleCheck": briefing_style_check(markdown),
     }
 
 
@@ -809,8 +820,11 @@ def build_briefing(
         },
         # 시장별 웹 보완 요약과 문체 실측. generationEvidence와 같은 byMarket 계약이며
         # _single_market_briefing의 scope_view 복사를 그대로 타고 저장 파일까지 간다.
+        # `_scope_result`가 이미 그 시장 것만 담아 주므로 여기서 다시 시장으로 들어가지
+        # 않는다 — 그 이중 `.get(scope)`는 Agent 경로(전체 sink를 들고 있다)에서 베껴 온
+        # 모양이라 이쪽에서는 언제나 빈 값이 됐다.
         "webLookup": {
-            scope: deepcopy((results[scope].get("webLookup") or {}).get(scope) or {})
+            scope: deepcopy(results[scope].get("webLookup") or {})
             for scope in requested_scopes
         },
         "styleCheck": {
