@@ -257,3 +257,58 @@ def test_the_requirements_block_says_where_to_write_each_thing():
     assert "핵심 판단" in text and "다루지 않는 것" in text
     assert "45%를 하회하면" in text  # 조건을 예시로 보여준다
     assert "자기 몫만" in text  # 섹션 간 중복 방지
+
+
+class TestUltrareviewFindings:
+    """클라우드 리뷰가 잡은 세 건의 회귀 테스트."""
+
+    def test_the_web_lookup_prompt_shows_valid_json(self):
+        """PROMPT는 f-string도 아니고 `.format()`도 거치지 않는다.
+
+        이중 중괄호는 그대로 모델에게 가서, "JSON 객체 하나만 출력하라"는 지시 바로
+        아래에 유효하지 않은 JSON이 예시로 놓인다. 모델이 그 모양을 흉내 내면
+        `_extract`의 fallback도 못 살려 `{}`가 되고 웹 조회 기여가 통째로 사라진다.
+        """
+        import json
+
+        from features.company_analysis.web_lookup import PROMPT
+
+        json.loads(PROMPT.strip().splitlines()[-1])
+
+    def test_every_cli_writer_stamps_the_executed_adapter(self):
+        """`bridge`는 모든 task type에 `executedAdapter`를 찍고 `agent_generation`은
+        `model=`을 받는데, 브리핑 writer만 그것을 넘기고 있었다. 나머지는
+        `generation.model`이 자리표로 남아 어댑터별 품질 편차를 귀속할 수 없다.
+        """
+        import ast
+        from pathlib import Path
+
+        source = Path("features/agent_mode/service.py").read_text(encoding="utf-8")
+        calls = [
+            node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "agent_generation"
+        ]
+        assert calls, "agent_generation 호출을 찾지 못했다"
+        missing = [c.lineno for c in calls if not any(kw.arg == "model" for kw in c.keywords)]
+        assert missing == [], f"model= 을 넘기지 않는 writer: {missing}"
+
+    def test_net_debt_includes_short_term_borrowings(self):
+        """`순부채` 행·민감도 표가 장기부채만 보고, 같은 섹션의 시나리오 표는
+        단기차입을 포함한 값을 읽어 한 보고서가 두 레버리지를 말했다.
+        """
+        from pathlib import Path
+
+        from features.company_analysis.dcf import net_debt_from
+
+        summary = {"rows": [
+            {"metric": "Long-Term Debt", "annual": [{"val": 4_000_000_000, "end": "2025-12-31"}]},
+            {"metric": "Short-Term Debt", "annual": [{"val": 2_500_000_000, "end": "2025-12-31"}]},
+            {"metric": "Cash & Equivalents", "annual": [{"val": 600_000_000, "end": "2025-12-31"}]},
+        ]}
+        assert net_debt_from(summary)["netDebt"] == 5_900_000_000.0
+
+        source = Path("features/company_analysis/report_rules.py").read_text(encoding="utf-8")
+        assert "net_debt_from(sec_summary)" in source, "규칙 보고서가 단일 출처를 읽어야 한다"
+        assert "장기부채 {_money(debt, currency)} - 현금" not in source

@@ -66,7 +66,7 @@ _PROMPT = """당신은 조사원이다. 아래 주제에 대해 **웹에서 사�
 - 찾지 못하면 빈 배열을 돌려준다. 지어내지 마라.
 
 JSON 객체 하나만 출력하라:
-{{"facts": [{{"statement": "사실 한 문장", "url": "https://…"}}], "quotes": [{{"who": "이름·직책", "when": "시점", "what": "발언 요지", "url": "https://…"}}]}}"""
+{"facts": [{"statement": "사실 한 문장", "url": "https://…"}], "quotes": [{"who": "이름·직책", "when": "시점", "what": "발언 요지", "url": "https://…"}]}"""
 
 
 def _extract(text: str) -> dict:

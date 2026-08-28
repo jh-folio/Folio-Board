@@ -1019,7 +1019,7 @@ def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", w
 def write_company_analysis_from_markdown(pack: dict, markdown: str, *, persist: bool = True) -> dict:
     report = dict(pack.get("draftArtifact") or {})
     report["markdown"] = str(markdown or "").strip()
-    report["generation"] = A.agent_generation(len(report.get("sources") or []))
+    report["generation"] = A.agent_generation(len(report.get("sources") or []), model=str(pack.get("executedAdapter") or ""))
     try:
         report = apply_quality_loop(
             "company_analysis",
@@ -1238,7 +1238,7 @@ def write_topic_report_from_markdown(pack: dict, markdown: str, *, persist: bool
         "marketTape": market_tape,
         "quality": quality,
         "qualityPreflight": internal.get("qualityPreflight"),
-        "generation": A.agent_generation(len(docs)),
+        "generation": A.agent_generation(len(docs), model=str(pack.get("executedAdapter") or "")),
     }
     try:
         report = apply_quality_loop(
@@ -1317,7 +1317,7 @@ def write_personal_overlay_from_json(pack: dict, overlay_payload: dict, *, persi
         for h in hypotheses
     ]
     overlay = overlay_schema.normalize_overlay(overlay_payload, linked_notes=linked_notes, markdown=str(overlay_payload.get("markdown") or ""))
-    overlay["generation"] = A.agent_generation(len(pack.get("sources") or []))
+    overlay["generation"] = A.agent_generation(len(pack.get("sources") or []), model=str(pack.get("executedAdapter") or ""))
     updated = with_overlay(canonical, overlay, status="ok_agent_authored")
     if persist:
         write_json(path, updated)
@@ -1387,7 +1387,7 @@ def prepare_thesis_delta_writeback(pack: dict, delta_payload: dict) -> tuple[str
     if not thesis:
         raise ValueError("Pack does not contain thesis data")
     delta = thesis_delta.normalize_delta(delta_payload, thesis=thesis, evidence=evidence, meta=meta)
-    delta["generation"] = A.agent_generation(len(evidence))
+    delta["generation"] = A.agent_generation(len(evidence), model=str(pack.get("executedAdapter") or ""))
     delta["company"] = thesis.get("company", "")
     return str(thesis.get("ticker") or ""), delta
 
@@ -1445,7 +1445,7 @@ def prepare_market_memory_writeback(pack: dict, payload: dict) -> dict:
             dropped.append(reason or "invalid_entry")
             continue
         entry["sourceKind"] = "agent"
-        entry["generation"] = A.agent_generation(len(entry.get("sources") or []))
+        entry["generation"] = A.agent_generation(len(entry.get("sources") or []), model=str(pack.get("executedAdapter") or ""))
         prepared.append(entry)
     return {
         "ok": True,
@@ -1456,7 +1456,7 @@ def prepare_market_memory_writeback(pack: dict, payload: dict) -> dict:
         "droppedReasons": dropped,
         "entries": prepared,
         "message": f"AI 에이전트 시장 내러티브 {len(prepared)}건을 준비했습니다.",
-        "generation": A.agent_generation(len(used_docs)),
+        "generation": A.agent_generation(len(used_docs), model=str(pack.get("executedAdapter") or "")),
     }
 
 
@@ -1519,7 +1519,7 @@ def prepare_market_state_snapshot_writeback(pack: dict, payload: dict) -> dict:
 def write_market_state_snapshot_from_json(pack: dict, payload: dict) -> dict:
     snapshot_payload = prepare_market_state_snapshot_writeback(pack, payload)
     snapshot = save_market_state_snapshot(MARKET_MEMORY_DB_PATH, snapshot_payload)
-    generation = A.agent_generation(len((pack.get("internal") or {}).get("sourceRefs") or snapshot.get("sourceRefs") or []))
+    generation = A.agent_generation(len((pack.get("internal") or {}).get("sourceRefs") or snapshot.get("sourceRefs") or []), model=str(pack.get("executedAdapter") or ""))
     return {
         "ok": True,
         "status": "ok_agent_authored",
@@ -1588,7 +1588,7 @@ def write_quality_repair_from_markdown(pack: dict, markdown: str, *, persist: bo
         "repairType": "agent",
         "qualityBefore": previous_quality,
         "qualityAfter": artifact["quality"],
-        "generation": A.agent_generation(len(artifact.get("sources") or [])),
+        "generation": A.agent_generation(len(artifact.get("sources") or []), model=str(pack.get("executedAdapter") or "")),
     }
     if not persist:
         return artifact
@@ -1646,7 +1646,7 @@ def write_investment_review_from_markdown(pack: dict, markdown: str, *, persist:
     date = review.get("date") or pack.get("artifactId") or kst_date()
     review["markdown"] = str(markdown or "").strip()
     review["mode"] = "agent"
-    review["generation"] = A.agent_generation(0)
+    review["generation"] = A.agent_generation(0, model=str(pack.get("executedAdapter") or ""))
     if persist:
         from features.common.canonical_report_io import safe_child_path
 

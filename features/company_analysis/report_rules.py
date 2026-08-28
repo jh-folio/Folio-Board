@@ -8,7 +8,7 @@ from pathlib import Path
 
 from features.common.workspace import data_dir
 from features.company_analysis import financial_engine
-from features.company_analysis.dcf import PROJECTION_YEARS, build_dcf, dcf_value
+from features.company_analysis.dcf import PROJECTION_YEARS, build_dcf, dcf_value, net_debt_from
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
 
 try:
@@ -707,7 +707,11 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
     market_cap = market.get("marketCap") if market.get("ok") else None
     if market_cap is None and price is not None and shares is not None:
         market_cap = price * shares
-    net_debt = (debt if debt is not None else 0.0) - cash
+    # **순부채는 한 값이다.** 예전에는 여기서 `장기부채 - 현금`으로 계산해 `순부채` 행과
+    # 민감도 표에 쓰고, 바로 아래 시나리오 표는 `dcf_model`(단기차입 포함)을 읽었다 —
+    # 한 섹션 안에서 세 표가 서로 다른 레버리지를 말했다. 단기차입이 많은 회사에서는
+    # 그 차이가 그대로 주당 가치로 간다. `dcf.net_debt_from()`이 단일 출처다.
+    net_debt = float(net_debt_from(sec_summary).get("netDebt") or 0.0)
     enterprise_value = market.get("enterpriseValue") if market.get("ok") else None
     if enterprise_value is None and market_cap is not None:
         enterprise_value = market_cap + net_debt
@@ -752,7 +756,7 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
         "| --- | ---: | --- |",
         f"| 현재 주가 | {_money(price, market_currency)} | yfinance {market.get('ticker', company.get('ticker', ''))} |",
         f"| 시가총액 | {_money(market_cap, market_currency)} | 주가 × 주식수 또는 yfinance marketCap |",
-        f"| 순부채 | {_money(net_debt, currency)} | 장기부채 {_money(debt, currency)} - 현금 {_money(cash, currency)} |",
+        f"| 순부채 | {_money(net_debt, currency)} | 장기부채 + 단기차입 - 현금 {_money(cash, currency)} |",
         f"| PER | {_multiple(per)} | 주가 / 희석 EPS {_plain_number(eps)} |",
         f"| PSR | {_multiple(psr)} | 시가총액 / 매출 {_money(revenue, currency)} |",
         f"| EV/EBITDA | {_multiple(ev_ebitda)} | 기업가치 / EBITDA {_money(ebitda, currency)} |",

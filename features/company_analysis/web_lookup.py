@@ -53,7 +53,7 @@ PROMPT = """당신은 조사원이다. 아래 회사에 대해 **웹에서 사�
 - 주가 전망이나 투자 의견은 찾지 마라. 사실만 가져온다.
 
 JSON 객체 하나만 출력하라:
-{{"facts": [{{"statement": "사실 한 문장", "url": "https://…"}}], "quotes": [{{"who": "이름·직함", "when": "시점", "what": "발언 요지", "url": "https://…"}}]}}"""
+{"facts": [{"statement": "사실 한 문장", "url": "https://…"}], "quotes": [{"who": "이름·직함", "when": "시점", "what": "발언 요지", "url": "https://…"}]}"""
 
 
 def needs_web_lookup(*, document_count: int, data_gaps=None) -> bool:
