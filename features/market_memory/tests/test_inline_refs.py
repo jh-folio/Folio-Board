@@ -64,3 +64,62 @@ def test_scrubbed_text_never_carries_control_characters():
 def test_decimals_and_percentages_survive():
     text = "미 10년물이 4.627%로 내렸고 WTI는 -9.79%다."
     assert scrub_inline_refs(text, LOOKUP) == text
+
+
+def test_market_interpretation_drops_citations_instead_of_naming_them():
+    """시장 해석은 화면의 큰 본문이라 문장마다 매체명이 붙으면 읽히지 않는다.
+
+    다른 필드는 매체명으로 살리고 이 필드만 지운다. 출처는 그 뷰의 sourceRefs가
+    이미 갖고 있다.
+    """
+    payload = {
+        "marketViews": {
+            "kr": {
+                "marketInterpretation": "유가가 급락했고 (rss:item:13), 증시가 올랐다 (rss:item:76).",
+                "actionSummary": "관망이 낫다 (rss:item:13).",
+                "sourceRefs": ["rss:item:13"],
+            }
+        }
+    }
+    out = scrub_inline_refs(payload, LOOKUP)
+    view = out["marketViews"]["kr"]
+    assert view["marketInterpretation"] == "유가가 급락했고, 증시가 올랐다."
+    assert view["actionSummary"] == "관망이 낫다 (Bloomberg)."
+    assert view["sourceRefs"] == ["rss:item:13"]
+
+
+def test_empty_view_headline_falls_back_to_a_korean_market_label():
+    """헤드라인이 비면 `EUROPE`가 아니라 `유럽`이 나와야 한다.
+
+    나머지가 전부 한국어인 자리에 영문 코드가 앉으면 값이 빠진 티가 아니라
+    고장으로 읽힌다.
+    """
+    from features.market_memory.snapshot import _market_view
+
+    view = _market_view({"marketInterpretation": "정책 불확실성이 가격을 지배한다."}, "europe", {})
+    assert view["headline"] == "유럽"
+
+
+def test_interpretation_audit_counts_a_recital_lead():
+    """계약이 깨졌는지 재서 남긴다. 자르거나 실패시키지는 않는다.
+
+    첫 문장이 지수 등락 나열이면 `leadNumbers`가 그것을 말한다. 실측으로
+    프롬프트에 같은 금지 규칙이 있는 채로 이 문장이 나왔다.
+    """
+    from features.market_memory.snapshot import _market_view
+
+    recital = (
+        "27일 유럽 증시는 전 지역이 하락 마감했고, 파리가 1.6%, 밀라노가 1.17%, "
+        "마드리드가 0.9%, 런던이 0.7% 내렸습니다. 원인은 통화정책이었습니다."
+    )
+    audit = _market_view({"marketInterpretation": recital}, "europe", {})["interpretationAudit"]
+    assert audit["sentences"] == 2
+    assert audit["leadNumbers"] == 5
+
+    clean = "유럽은 이익 개선보다 정책·재정 불확실성이 가격을 지배하는 시장이 됐습니다."
+    assert _market_view({"marketInterpretation": clean}, "europe", {})["interpretationAudit"] == {
+        "chars": len(clean),
+        "sentences": 1,
+        "numbers": 0,
+        "leadNumbers": 0,
+    }

@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import assert_never
 
-from features.common.markets import PRODUCT_MARKETS
+from features.common.markets import MARKET_REGISTRY, PRODUCT_MARKETS, normalize_market_code
 from features.common.utils import now_iso
 from features.common.market_calendar import infer_doc_markets
 from features.market_memory.digest import build_rss_digest
@@ -29,7 +29,7 @@ Synthesize the current medium-term market state from:
 - sourceRefs: allowed source references
 
 Required JSON fields:
-- headline: short Korean title for the current medium-term market state
+- headline: one Korean line, 20-40 characters, stating the judgment for the current medium-term market state
 - oneLineSummary: one clear paragraph explaining the state, including why the judgment follows from the evidence.
 - beginnerSummary: one plain Korean sentence for a beginner investor. Do not list factors; state what the market means for action.
 - marketRegime: compact English or Korean regime key
@@ -41,7 +41,7 @@ Required JSON fields:
 - uncertainties: optional but recommended
 - sourceRefs: source references used, preserving ids from context when possible
 - confidence: 0.0 to 1.0
-- marketViews: optional object with overall, us, kr, europe, jp. Each view may include headline, marketInterpretation, actionSummary, actionGuide, keyDrivers, watchItems, counterEvidence, uncertainties.
+- marketViews: optional object with overall, us, kr, europe, jp. Each view may include headline, marketInterpretation, actionSummary, actionGuide, keyDrivers, watchItems, counterEvidence, uncertainties. marketInterpretation is 3-4 short sentences, about 300 Korean characters and never more than 400.
 
 Rules:
 - Use judgment, but keep it source-grounded.
@@ -53,7 +53,16 @@ Rules:
 - marketViews.overall/us/kr/europe/jp keyDrivers are not labels. Each market view driver must include the same rich fields as top-level keyDrivers: title, summary, directionLabel, marketImpact, nextMemoryCheck, evidenceSummary, whyItMatters, sourceRefs.
 - If a market-specific view has weak evidence, say that in marketInterpretation/counterEvidence instead of filling it with short factor names.
 - Use marketTape and macroSnapshot as structured evidence. They are not conclusions. They help decide whether news flows are confirmed or contradicted by prices and macro data.
-- marketInterpretation and oneLineSummary must start from what happened — the news flow in rssCandidates (events, announcements, policy remarks) — and then bring in prices or macro numbers to confirm or contradict that story. Do not open any view with index levels or a run of percentages; numbers support the interpretation, they do not lead it.
+- Every headline, top-level and per market view, states a judgment about what happened. A classification is not a headline: do not write a noun phrase that files the state into a category ("...위험을 높임", "...가 병존", "...를 요구하는 국면"), and do not end a market view headline with the market's own name ("...하는 유럽") — the screen already says which market it is.
+- A market view headline must compress that same view's marketInterpretation, including whichever cause that body treats as dominant. If the body says two forces drive the market, a headline naming only one is wrong, not shorter.
+- Do not headline a market purely by comparison to another market ("미국보다 부진"). If the cause is external, name the mechanism that transmits it.
+- Write each marketInterpretation as 3-4 sentences totalling about 300 Korean characters, and never more than 400. Counting sentences alone is not the contract: a sentence that chains four clauses with commas is a paragraph. Keep one idea per sentence, roughly 60-80 characters each.
+- Do not enumerate in marketInterpretation. Name at most one or two examples, not every company, official, or index with its own move and reason; keyDrivers already show that list next to this body. Carry a number only when the judgment changes without it.
+- Every sentence in marketInterpretation must carry a claim. Reporting what prices did is confirmation, not interpretation: a sentence whose whole content is that indices closed lower by given amounts tells the reader only what the drivers and charts beside it already show. When a move matters, put it inside the claim it supports and keep it to one number — "정책 불확실성이 이익 개선을 눌렀다" is interpretation, "파리가 1.6%, 밀라노가 1.17% 내렸습니다" is not.
+- The first sentence of marketInterpretation is this market's judgment: what state it is in and why it is in that state. The screen highlights that sentence. Do not spend it on a session recap, an index level, or a run of percentages.
+- Structure the rest as: what cuts against that judgment, and what therefore has to be true for it to hold or break.
+- Do not attach source names or reference ids to individual sentences in marketInterpretation. Per-sentence citations make that body unreadable. Put the references in the view's sourceRefs array; inline ids in this field are stripped, not displayed.
+- Ground marketInterpretation and oneLineSummary in the news flow in rssCandidates (events, announcements, policy remarks). marketTape and macroSnapshot confirm or contradict that story; they are never the story itself, and a recital of them is not a substitute for judgment.
 - marketTape and macroSnapshot are supporting evidence only. If they are unavailable, stale, weak, or hard to match, do not list that as user-facing uncertainties; keep those limitations as internal data diagnostics.
 - Treat existingStates as prior hypotheses to re-check, not as conclusions to preserve.
 - Do not anchor on past Market Memory. If rssCandidates contradict, weaken, or invalidate an existing state, say so and update the current judgment.
@@ -103,6 +112,9 @@ _INLINE_REF_BARE = re.compile(r"\s*" + _REF_ID)
 _REF_ONLY = re.compile(_REF_ID)
 # 본문에 내부 id가 들어가면 안 되는 필드만 훑는다. sourceRefs와 id는 id가 값이다.
 _REF_SAFE_KEYS = {"id", "sourceRefs", "sources", "sourceLookup", "inputWatermarks"}
+# 인용을 매체명으로 살리지 않고 지우는 필드. 화면의 큰 본문이라 문장마다 출처가
+# 붙으면 읽을 수 없다. 출처는 그 뷰의 sourceRefs가 이미 갖고 있다.
+_REF_DROP_KEYS = {"marketInterpretation"}
 
 
 def _resolve_ref_label(source_id: str, lookup: dict[str, dict] | None) -> str:
@@ -120,6 +132,10 @@ def scrub_inline_refs(value, lookup: dict[str, dict] | None = None):
 
     아는 출처면 매체명으로 바꾸고, 모르면 지운다. 사용자에게 `rss:item:13`은
     출처가 아니라 새는 내부 구현이다.
+
+    단 `_REF_DROP_KEYS`의 필드는 아는 id도 지운다. 매체명으로 살려 주면 문장마다
+    `(Bloomberg, 연합뉴스)`가 붙어 화면의 큰 본문이 읽히지 않는다(실측 한 해석에
+    9곳). 그 필드의 출처는 sourceRefs 배열이 이미 갖고 있으므로 잃는 것이 없다.
     """
     if isinstance(value, str):
         def replace_group(match):
@@ -139,7 +155,9 @@ def scrub_inline_refs(value, lookup: dict[str, dict] | None = None):
         return [scrub_inline_refs(item, lookup) for item in value]
     if isinstance(value, dict):
         return {
-            key: item if key in _REF_SAFE_KEYS else scrub_inline_refs(item, lookup)
+            key: item
+            if key in _REF_SAFE_KEYS
+            else scrub_inline_refs(item, None if key in _REF_DROP_KEYS else lookup)
             for key, item in value.items()
         }
     return value
@@ -284,18 +302,54 @@ def _action_guide(value) -> dict:
     }
 
 
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_NUMBER_TOKEN = re.compile(r"\d+(?:[.,]\d+)*\s*%?")
+
+
+def _interpretation_audit(text: str) -> dict:
+    """시장 해석이 계약을 지켰는지 재서 남긴다. 되돌리지는 않는다.
+
+    같은 규칙(`퍼센트 나열로 열지 말 것`)이 프롬프트에 있는 채로 두 번 깨졌다.
+    프롬프트는 부탁이라 지켜졌는지 아무도 모르면 다음 판단이 눈대중이 된다.
+    자르거나 실패시키지 않는 이유는 마지막 문장이 결론이고 재생성이 수십 초짜리
+    CLI 호출이기 때문이다 — 재는 것과 되돌리는 것은 다른 결정이다.
+    """
+    sentences = [part for part in _SENTENCE_SPLIT.split(text) if part.strip()]
+    lead = sentences[0] if sentences else ""
+    return {
+        "chars": len(text),
+        "sentences": len(sentences),
+        "numbers": len(_NUMBER_TOKEN.findall(text)),
+        "leadNumbers": len(_NUMBER_TOKEN.findall(lead)),
+    }
+
+
+def _view_label(key: str) -> str:
+    """헤드라인이 비었을 때 쓰는 마지막 라벨.
+
+    `key.upper()`는 화면에 `EUROPE`를 내보낸다. 나머지 문장이 전부 한국어인
+    자리에 영문 코드가 앉으면 값이 빠진 티가 아니라 고장으로 읽힌다.
+    """
+    if key == "overall":
+        return "종합"
+    code = normalize_market_code(key)
+    definition = MARKET_REGISTRY.get(code) if code in PRODUCT_MARKETS else None
+    return definition.label_ko if definition else key.upper()
+
+
 def _market_view(value, key: str, fallback: dict, lookup: dict[str, dict] | None = None) -> dict | None:
     if not isinstance(value, dict):
         return None
     headline = _text(value.get("headline") or value.get("title"), 160)
     # 시장 해석은 화면 상단의 큰 본문이다. 짧은 라벨과 같은 상한을 두면 모델이
-    # 근거를 덧붙일수록 뒤가 잘린다. 상한은 폭주 방지용으로만 남긴다.
+    # 근거를 덧붙일수록 뒤가 잘린다. 상한은 폭주 방지용으로만 남긴다 — 계약은
+    # 400자이고 이 값은 그 두 배다. 계약을 지킨 본문은 여기에 닿지 않는다.
     interpretation = _body_text(
         value.get("marketInterpretation")
         or value.get("oneLineSummary")
         or value.get("reasonSummary")
         or value.get("summary"),
-        1600,
+        800,
     )
     action_summary = _text(value.get("actionSummary") or value.get("beginnerSummary") or value.get("actionPosture"), 420)
     drivers = [
@@ -315,8 +369,9 @@ def _market_view(value, key: str, fallback: dict, lookup: dict[str, dict] | None
         return None
     return {
         "id": key,
-        "headline": headline or fallback.get("headline") or ("종합" if key == "overall" else key.upper()),
+        "headline": headline or fallback.get("headline") or _view_label(key),
         "marketInterpretation": interpretation or fallback.get("oneLineSummary") or "",
+        "interpretationAudit": _interpretation_audit(interpretation or fallback.get("oneLineSummary") or ""),
         "actionSummary": action_summary or fallback.get("beginnerSummary") or fallback.get("actionPosture") or "",
         "actionGuide": action_guide if any(action_guide.values()) else fallback.get("actionGuide", {}),
         "keyDrivers": _enrich_market_view_drivers(
