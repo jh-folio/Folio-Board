@@ -170,7 +170,7 @@
   color-scheme: light;
   --folio-bg: #f5f6f8;
   --folio-bg-soft: #f9fafb;
-  --folio-surface: #f6f8fb;
+  --folio-surface: #eff2f6;
   /* Stage D2: 컨트롤 fill과 사실상 같은 회색이라 하나로 모은다(참조 26곳 유지). */
   --folio-surface-2: var(--surface-control);
   --folio-surface-clean: #ffffff;
@@ -181,8 +181,8 @@
   --folio-ink: #07111f;
   --folio-ink-soft: #213047;
   --folio-ink-muted: #44505f;
-  /* 12px 보조 텍스트가 흰 카드(5.18:1)와 muted 표면(4.57:1) 모두에서 WCAG AA를 넘도록 유지한다. */
-  --folio-ink-subtle: #636e7c;
+  /* 12px 보조 텍스트가 흰 카드(6.44:1)와 회색 면(#eff2f6, 5.73:1) 모두에서 WCAG AA를 넘도록 유지한다. */
+  --folio-ink-subtle: #556069;
   --folio-ink-inverse: #eef3f9;
   /* Light surfaces need a deeper gold for readable 12px labels (WCAG AA). */
   --folio-gold: #795a1d;
@@ -239,7 +239,7 @@
   --color-info: var(--folio-ink-soft);
   --color-personal: var(--folio-purple);
   --color-thesis: var(--folio-teal);
-  --color-warning-bg: #fff7df;
+  --color-warning-bg: #fdf0c9;
   --color-warning-text: #805300;
   --color-error-bg: #fde8e8;
   --color-error-text: #9f1d1d;
@@ -324,9 +324,9 @@
      page/panel은 이미 같은 역할의 토큰이 있어 잇기만 한다. */
   --surface-page: var(--folio-bg);
   --surface-panel: var(--folio-surface-clean);
-  --surface-group: #f7f8fa;          /* 흰 패널 안의 회색 그룹 면 (테두리 박스 대체) */
-  --surface-control: #eceff2;        /* 버튼·컨트롤 fill — 테두리 버튼을 대체한다 */
-  --surface-control-hover: #e3e7ec;
+  --surface-group: #eff2f6;          /* 흰 패널 안의 회색 그룹 면 (테두리 박스 대체) */
+  --surface-control: #e7ebf1;        /* 버튼·컨트롤 fill — 테두리 버튼을 대체한다 */
+  --surface-control-hover: #dfe4eb;
 
   /* 모서리 4종 — 현재 21종을 여기로 수렴시킨다.
      --radius-pill(999px)이 이미 있으므로 값을 복제하지 않고 r-* 계열 이름만 잇는다. */
@@ -1136,6 +1136,11 @@ body:has(#folioReactRoot .react-shell) main.page {
   display: grid;
   /* 머리말 / 가변 안내 / 본문 / 입력. 본문만 남는 높이를 갖는다. */
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  /* 열을 선언하지 않으면 암시적 열이 auto라 자식의 min-content(실측 401.7px)만큼
+     넓어져 도크(382px)를 넘고, overflow:hidden이 자식의 오른쪽 패딩 18px을 잘라낸다.
+     그러면 도크 안 요소가 오른쪽 외곽에 붙어 보인다. 1fr이 아니라 minmax(0,1fr)이어야
+     min-content가 열을 밀어내지 못한다. */
+  grid-template-columns: minmax(0, 1fr);
   border-left: 1px solid var(--folio-border, #dde2e9);
   background: var(--folio-surface-clean, #ffffff);
   overflow: hidden;
@@ -5121,7 +5126,9 @@ button:disabled {
   position: absolute;
   inset: 0 auto 0 0;
   width: 3px;
-  background: var(--folio-blue);
+  /* 다른 카드 포인트(.briefing-archive-card::before, .report-feed-card::before,
+     .cockpit-change-feed li::before)와 같은 문법이다. 여기만 단색이었다. */
+  background: linear-gradient(180deg, var(--folio-surface-dark), var(--folio-blue));
 }
 
 /* 모양은 .btn--icon 프리미티브가 갖는다 — 여기는 배치만. 항상 보인다(어포던스 계약). */
@@ -11214,7 +11221,6 @@ main.page {
   gap: 16px;
   margin: 0 0 22px;
   padding: 18px;
-  border: 1px solid var(--folio-border);
   border-radius: var(--folio-radius);
   background: var(--folio-surface-clean);
 }
@@ -11290,7 +11296,6 @@ main.page {
   gap: 12px;
   min-height: 180px;
   padding: 20px 22px;
-  border: 1px solid var(--folio-border);
   border-radius: var(--folio-radius);
   background: var(--folio-surface);
 }
@@ -11426,7 +11431,6 @@ main.page {
   gap: 7px;
   min-width: 0;
   padding: 13px 14px;
-  border: 1px solid var(--folio-border);
   border-radius: var(--folio-radius);
   background: var(--folio-surface);
 }
@@ -11686,7 +11690,6 @@ main.page {
 
 .market-state-checks section,
 .market-state-sources {
-  border: 1px solid var(--folio-border);
   border-radius: var(--folio-radius);
   background: var(--folio-surface);
 }
@@ -12368,7 +12371,6 @@ main.page {
 .market-state-gap {
   margin: 0;
   padding: 12px 14px;
-  border: 1px solid var(--folio-border);
   border-radius: var(--folio-radius);
   background: var(--folio-surface-2);
   color: var(--folio-ink-soft);
@@ -12441,7 +12443,6 @@ main.page {
 
 .market-state-next-checks {
   padding: 14px;
-  border: 1px solid var(--folio-border);
   border-radius: var(--folio-radius);
   background: var(--folio-surface);
 }
@@ -15537,6 +15538,7 @@ main.page {
   padding: var(--sp-4);
   box-shadow: none;
 }
+
 .surface--inset {
   background: var(--surface-control);
   border-radius: var(--r-control);
