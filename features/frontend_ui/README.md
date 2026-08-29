@@ -166,7 +166,7 @@ public/react/folio-react.js
 
 - `renderMarkdown()` 변경은 브리핑과 기업분석 모두에 영향을 줍니다.
 - 표 렌더링은 `<div class="table-wrap"><table>...</table></div>` 구조입니다.
-- Plotly 차트는 layout마다 글꼴을 지정하지 않아도 되도록, `Plotly.react`/`newPlot`를 한 번 감싸 `layout.font.family`(`PLOTLY_FONT_FAMILY`, UI 본문 글꼴)를 일괄 주입합니다. 새 차트도 자동 적용되며, 차트 글꼴이 본문과 달라지면 이 래퍼를 먼저 확인합니다.
+- Plotly는 브리핑 트리맵 히트맵(`public/briefing-visuals.js::renderHeatmap`) 한 곳에서만 씁니다. 그 밖의 화면 차트는 Lightweight Charts(대시보드·워치리스트 `MarketChartFigure`, 브리핑 가격 계열) 또는 손으로 그린 SVG(기업분석 `AnalysisCharts`, 워치리스트 분기 지표 `FundamentalsPanel`, 포트폴리오 비교/스파크라인)입니다. 글꼴·색은 각 컴포넌트가 CSS 변수를 `getComputedStyle`로 읽어 옵션에 넣습니다(캔버스는 CSS 변수를 직접 읽지 못합니다).
 - 기업분석 본문 폭은 기본적으로 `markdown-brief`의 제한 폭을 따릅니다.
 
 ## 보고서 가설 검토 표면 (0.2.1)

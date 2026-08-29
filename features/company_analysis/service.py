@@ -20,6 +20,7 @@ from features.company_analysis.depth_policy import render_length_contract
 from features.company_analysis.report_contract import render_quality_requirements, render_source_contract
 from features.company_analysis.valuation import build_valuation_scenarios
 from features.company_analysis.dcf import build_dcf
+from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_prompt_path, read_analysis_prompt
 from features.company_analysis.report_rules import (
     _fcf_series,
@@ -1369,6 +1370,7 @@ def build_company_analysis_charts(materials):
         market_cap=market.get("marketCap") if market.get("ok") else None,
         beta=market.get("beta") if market.get("ok") else None,
         currency=price_currency,
+        risk_free=current_risk_free(price_currency),
     )
     scenario_rows = [
         {

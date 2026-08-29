@@ -71,10 +71,14 @@ _DEFAULT_RISK_FREE = 0.042
 #
 # **이 상수가 DCF에서 가장 큰 지렛대다.** 실측 MSFT 기준 시나리오가 ERP 4%에서 $379,
 # 6%에서 $276으로 **37% 벌어진다.** 그런데 무료로 기계가 읽을 수 있는 ERP 출처가 없어
-# 지금은 더 정확하게 만들 길이 없다 — 그래서 **다음 할 일은 값을 맞히는 것이 아니라
-# 이 범위를 보고서가 보여주는 것**이다(§9.4). 하나의 숫자로 눌러 두면 독자는 그
-# 숫자가 답을 얼마나 지배하는지 알 수 없다.
+# 지금은 더 정확하게 만들 길이 없다 — 그래서 값을 맞히는 대신 **그 범위가 답을 얼마나
+# 지배하는지를 가정 감도표(`assumptionSensitivity`)가 보여준다.** 하나의 숫자로 눌러
+# 두면 독자는 그 숫자가 답을 얼마나 지배하는지 알 수 없다.
 EQUITY_RISK_PREMIUM = 0.05
+# 가정 감도의 탐색 범위. ERP는 "합리적인 사람들이 실제로 쓰는 범위"(4~6%)이고,
+# 무위험은 실측 편향 크기(±0.5%p, 2026-08-27 다섯 통화 −0.05~−0.58%p)를 덮는다.
+ERP_SENSITIVITY_RANGE = (0.04, 0.05, 0.06)
+RISK_FREE_SENSITIVITY_STEP = 0.005
 # 영구성장률은 장기 명목 성장을 넘을 수 없다. 넘으면 회사가 결국 경제보다 커진다.
 TERMINAL_GROWTH_CAP = {"USD": 0.025, "KRW": 0.025, "EUR": 0.020, "JPY": 0.010, "GBP": 0.020}
 _DEFAULT_TERMINAL_CAP = 0.020
@@ -199,11 +203,13 @@ def estimate_discount_rate(
     debt: float | None,
     currency: str = "USD",
     risk_free: float | None = None,
+    equity_risk_premium: float | None = None,
 ) -> dict:
     """회사별 WACC. 입력이 없으면 예전 고정값으로 내려가되 그 사실을 남긴다."""
     unit = (currency or "USD").upper()
     rf = risk_free if risk_free is not None else RISK_FREE_BY_CURRENCY.get(unit, _DEFAULT_RISK_FREE)
     rf_source = "injected" if risk_free is not None else f"assumption_{unit}"
+    erp = equity_risk_premium if equity_risk_premium is not None else EQUITY_RISK_PREMIUM
     cap = _positive(market_cap)
     if beta is None or cap is None:
         return {
@@ -217,7 +223,7 @@ def estimate_discount_rate(
         }
 
     adjusted_beta = BETA_SHRINK * float(beta) + (1 - BETA_SHRINK) * BETA_ANCHOR
-    equity_cost = rf + adjusted_beta * EQUITY_RISK_PREMIUM
+    equity_cost = rf + adjusted_beta * erp
     debt_value = _positive(debt) or 0.0
     total = cap + debt_value
     if debt_value and debt_cost is not None:
@@ -240,7 +246,7 @@ def estimate_discount_rate(
         "equityWeight": round(cap / total, 3),
         "riskFree": rf,
         "riskFreeSource": rf_source,
-        "equityRiskPremium": EQUITY_RISK_PREMIUM,
+        "equityRiskPremium": erp,
         "clamped": abs(bounded - rate) > 1e-9,
     }
 
@@ -359,6 +365,66 @@ def net_debt_from(sec_summary: dict) -> dict:
     }
 
 
+def assumption_sensitivity(
+    *,
+    discount: dict,
+    base_fcf: float,
+    net_debt: float,
+    shares: float,
+    near_growth: float,
+    currency: str,
+    price: float | None,
+    discount_inputs: dict,
+) -> list[dict]:
+    """무위험수익률·ERP가 답을 얼마나 지배하는지의 감도표 (§9.4).
+
+    **두 입력을 더 정확하게 만드는 것보다 그 입력이 답을 얼마나 지배하는지 보이는
+    쪽이 먼저다.** 실측 ERP 4~6%가 MSFT 내재가치를 $276~$379(37%)로 흔드는데 지금까지
+    그 폭이 하나의 숫자에 눌려 보이지 않았다. 역산 성장률도 같은 이유로 밴드로 낸다 —
+    "시장이 가격에 넣은 성장률"이 ERP 가정에 따라 얼마나 다르게 읽히는지가 정보다.
+
+    WACC 경로에서만 의미가 있다(고정 할인율은 두 입력을 읽지 않는다). 시나리오 표
+    (성장률)·민감도 표(할인율·영구성장)와 겹치지 않게 **기준 성장률만 쓴다.**
+    """
+    if discount.get("method") != "wacc":
+        return []
+    rf = float(discount["riskFree"])
+    erp_used = float(discount["equityRiskPremium"])
+    variants = [
+        {"axis": "riskFree", "riskFree": rf - RISK_FREE_SENSITIVITY_STEP, "erp": erp_used},
+        {"axis": "base", "riskFree": rf, "erp": erp_used},
+        {"axis": "riskFree", "riskFree": rf + RISK_FREE_SENSITIVITY_STEP, "erp": erp_used},
+    ] + [
+        {"axis": "erp", "riskFree": rf, "erp": erp}
+        for erp in ERP_SENSITIVITY_RANGE
+        if abs(erp - erp_used) > 1e-9
+    ]
+    rows = []
+    for variant in variants:
+        row_discount = estimate_discount_rate(
+            **discount_inputs, risk_free=variant["riskFree"], equity_risk_premium=variant["erp"],
+        )
+        rate = row_discount["rate"]
+        terminal = terminal_growth_for(currency, rate)
+        value = dcf_value(base_fcf, net_debt, shares, near_growth, rate, terminal)
+        row = {
+            "axis": variant["axis"],
+            "riskFree": round(variant["riskFree"], 4),
+            "equityRiskPremium": round(variant["erp"], 4),
+            "discountRate": rate,
+            # 상·하한에 물린 행을 표시 없이 내면, 모든 행이 같은 값일 때 "가정이
+            # 무관하다"로 읽힌다 — 실제로는 모델이 경계에 눌린 것이다.
+            "clamped": bool(row_discount.get("clamped")),
+            "perShare": round(value["perShare"], 2) if value.get("ok") else None,
+        }
+        if _positive(price):
+            implied = implied_growth(float(price), base_fcf, net_debt, shares, rate, terminal)
+            if implied.get("status") == "solved":
+                row["impliedGrowth"] = implied["growth"]
+        rows.append(row)
+    return rows
+
+
 def build_dcf(
     sec_summary: dict,
     *,
@@ -367,9 +433,23 @@ def build_dcf(
     market_cap: float | None = None,
     beta: float | None = None,
     currency: str = "USD",
-    risk_free: float | None = None,
+    risk_free: float | dict | None = None,
 ) -> dict:
-    """정상화 → 할인율 → 감쇠 → 시나리오 → 역산. 하나라도 빠지면 빈 dict."""
+    """정상화 → 할인율 → 감쇠 → 시나리오 → 역산. 하나라도 빠지면 빈 dict.
+
+    `risk_free`는 소수(0.0466) 또는 `risk_free.current_risk_free()`의 meta dict
+    (`{"rate", "source", "asOf", ...}`)를 받는다. dict로 받으면 출처를 결과의
+    `riskFreeMeta`에 **이 함수가** 싣는다 — 호출부 두 곳이 각자 사후 주입하던 시절,
+    한쪽은 markdown만 반환하는 함수라 그 기록이 어디에도 남지 않았다.
+    """
+    risk_free_meta = risk_free if isinstance(risk_free, dict) else None
+    if risk_free_meta is not None:
+        risk_free = risk_free_meta.get("rate")
+    if risk_free is not None:
+        try:
+            risk_free = float(risk_free)
+        except (TypeError, ValueError):
+            risk_free = None
     base = normalized_base_fcf(sec_summary)
     base_value = _positive(base.get("value"))
     share_count = _positive(shares) or _positive(financial_engine.latest_value(sec_summary, "Shares Diluted"))
@@ -379,15 +459,15 @@ def build_dcf(
     derived = financial_engine.derived_financials(sec_summary)
     debt = net_debt_from(sec_summary)
     cap = _positive(market_cap) or (_positive(price) * share_count if _positive(price) else None)
-    discount = estimate_discount_rate(
-        beta=beta,
-        tax_rate=derived.get("taxRate"),
-        debt_cost=derived.get("debtCost"),
-        market_cap=cap,
-        debt=debt["totalDebt"],
-        currency=currency,
-        risk_free=risk_free,
-    )
+    discount_inputs = {
+        "beta": beta,
+        "tax_rate": derived.get("taxRate"),
+        "debt_cost": derived.get("debtCost"),
+        "market_cap": cap,
+        "debt": debt["totalDebt"],
+        "currency": currency,
+    }
+    discount = estimate_discount_rate(**discount_inputs, risk_free=risk_free)
     rate = discount["rate"]
     terminal = terminal_growth_for(currency, rate)
     growth = growth_driver(sec_summary)
@@ -428,7 +508,19 @@ def build_dcf(
         "terminalHeavy": bool(
             base_case.get("terminalShare") and base_case["terminalShare"] >= TERMINAL_SHARE_WARN
         ),
+        "assumptionSensitivity": assumption_sensitivity(
+            discount=discount,
+            base_fcf=base_value,
+            net_debt=debt["netDebt"],
+            shares=share_count,
+            near_growth=near,
+            currency=currency,
+            price=price,
+            discount_inputs=discount_inputs,
+        ),
     }
+    if risk_free_meta is not None:
+        result["riskFreeMeta"] = dict(risk_free_meta)
     if _positive(price):
         result["price"] = round(float(price), 2)
         result["impliedGrowth"] = implied_growth(
@@ -506,8 +598,60 @@ def render_dcf_context(dcf: dict) -> str:
             f"- 역산 성장률: 탐색 범위(±{abs(implied['bound']) * 100:.0f}%) 밖이라 풀리지 않습니다."
             " 현재가가 이 모델의 가정과 크게 어긋난다는 뜻이며, 그 자체를 본문에 적으세요."
         )
+    sensitivity = dcf.get("assumptionSensitivity") or []
+    if sensitivity:
+        lines += [
+            "",
+            "가정 감도 — 무위험수익률·위험프리미엄은 가정이며, 아래가 그 가정이 답을 움직이는 폭입니다"
+            "(기준 시나리오 성장률 고정):",
+            "",
+            "| 가정 | 할인율 | 내재가치/주 | 역산 성장률 |",
+            "|---|---:|---:|---:|",
+        ]
+        for row in sensitivity:
+            per_share = f"{row['perShare']:,.2f}" if row.get("perShare") is not None else "계산 불가"
+            implied_cell = (
+                f"{row['impliedGrowth'] * 100:.1f}%" if row.get("impliedGrowth") is not None else "—"
+            )
+            lines.append(
+                f"| {assumption_row_label(row)} | {row['discountRate'] * 100:.1f}% | {per_share} | {implied_cell} |"
+            )
+        if sensitivity_band_collapsed(sensitivity):
+            lines.append(
+                "  **모든 행의 할인율이 모델의 상·하한에 물려 같습니다.** 이 표에서 두"
+                " 가정의 영향을 읽을 수 없다는 뜻이지, 가정이 무관하다는 뜻이 아닙니다."
+                " 그 사실을 본문에 적으세요."
+            )
+        else:
+            lines.append(
+                "  내재가치 하나가 아니라 이 **범위**를 본문에 쓰세요. 범위가 현재가를 걸치면"
+                " 그 사실 자체가 결론입니다."
+            )
     lines.append("- 이 표를 다시 계산하지 마세요. 화면의 차트가 같은 값을 씁니다.")
     return "\n".join(lines)
+
+
+def assumption_row_label(row: dict) -> str:
+    """감도 행의 라벨. **axis 어휘는 이 모듈이 소유한다** — 렌더러 두 곳(LLM 컨텍스트·
+    규칙 보고서)이 각자 분기하면 같은 행이 두 이름을 갖고, 새 축이 생기면 catch-all
+    else가 그것을 ERP로 잘못 부른다."""
+    axis = row.get("axis")
+    if axis == "base":
+        return "기준"
+    if axis == "riskFree":
+        return f"무위험 {float(row.get('riskFree') or 0) * 100:.1f}%"
+    if axis == "erp":
+        return f"ERP {float(row.get('equityRiskPremium') or 0) * 100:.1f}%"
+    return str(axis or "?")
+
+
+def sensitivity_band_collapsed(rows: list[dict]) -> bool:
+    """모든 행이 클램프에 물려 같은 할인율이면 이 표는 범위를 말하지 못한다."""
+    if not rows:
+        return False
+    return all(row.get("clamped") for row in rows) and len(
+        {row.get("discountRate") for row in rows}
+    ) == 1
 
 
 _BASE_METHOD_LABELS = {
@@ -522,7 +666,10 @@ _GROWTH_BASIS_LABELS = {
 }
 
 __all__ = [
+    "assumption_row_label",
+    "assumption_sensitivity",
     "build_dcf",
+    "sensitivity_band_collapsed",
     "dcf_value",
     "estimate_discount_rate",
     "fade_path",

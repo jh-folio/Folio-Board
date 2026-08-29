@@ -417,5 +417,22 @@ DCF 차트는 통화가 `USD`로 하드코딩돼 있었습니다.
 - `implied_growth()` — 현재가를 정당화하는 초기 성장률. **이 층의 핵심 숫자다.**
 - 예측 기간 10년, 선형 감쇠, 터미널 비중 공시(`TERMINAL_SHARE_WARN` 70%).
 - 시나리오는 성장률만, 민감도 표가 할인율·영구성장. 둘은 같은 모델을 쓴다.
+- `assumption_sensitivity()` — 무위험수익률(±0.5%p)·ERP(4/5/6%)가 내재가치와 역산
+  성장률을 얼마나 움직이는지의 감도표(`assumptionSensitivity`). **값을 맞히는 것보다
+  그 값이 답을 얼마나 지배하는지 보이는 쪽이 먼저다** — 실측 ERP 4~6%가 MSFT 내재가치를
+  37% 흔든다. WACC 경로에서만 낸다(고정 할인율은 두 입력을 읽지 않는다). 본문 컨텍스트와
+  규칙 보고서 둘 다 이 표를 싣고, 내재가치를 하나의 값이 아니라 범위로 읽으라고 적는다.
 - 무위험수익률·위험프리미엄은 **가정**이다. `risk_free` 인자로 살아 있는 값을 주입할
   수 있지만 이 모듈은 스스로 조회하지 않는다.
+- 조회는 `risk_free.py::current_risk_free()`가 한다 — USD만, 키는
+  `llm_settings.client.fred_api_key()`로 읽어(설정 화면이 `.env`에 쓴 키가 보인다)
+  FRED `DGS10`, 없으면 yfinance `^TNX`. 캐시는 1일 TTL + shape 버전
+  (`data/company-analysis/market-cache/risk-free.json` — **상위 폴더에 두면 보고서
+  목록 glob이 캐시를 보고서 카드로 올린다**), 조회 실패 시 stale 캐시(상한 7일 —
+  무제한이면 낡은 금리가 살아 있는 값처럼 주입된다) → 통화 상수 순 폴백이고, 실패도
+  기록해 1시간 쿨다운을 둔다(오프라인에서 보고서마다 timeout을 되풀이하지 않게).
+  `build_dcf`는 meta dict를 통째로 받아 `riskFreeMeta`(source·asOf·관측일)를 스스로
+  싣는다 — 호출부가 사후 주입하지 않는다. 테스트 가드는 함수 맨 위라 pytest에서는
+  실워크스페이스 캐시조차 읽지 않는다. 비USD는 OECD 월간 계열이 9개월 뒤처져 있어
+  (실측 2025-11) 상수 유지 — 쓰기로 결정하면 관측일을 함께 실어야 한다. 두 생성
+  경로(API·CLI)가 같은 조회를 거친다(`report_rules`·`service`의 `build_dcf` 호출부).

@@ -32,7 +32,7 @@
 - 수익률 기여도, 변동성 기여도, 베타 기여도 분석
 - 누적 성과, Drawdown, Rolling 12M Return, Rolling Volatility, Rolling Beta 시각화
 
-Plotly 차트는 포트폴리오 뷰 또는 하위 탭이 활성화된 뒤 `public/app.js::schedulePortfolioChartResize()`로 다시 치수를 계산한다. 숨겨진 탭에서 먼저 렌더된 차트는 폭을 잘못 잡을 수 있으므로, 새 차트 추가 시 렌더 직후와 탭 전환 후 resize 경로를 유지한다.
+백테스트 스파크라인(`PortfolioBacktest.tsx::Sparkline`)과 프리셋 비교 겹친 시계열(`PresetCompare.tsx::OverlaySeries`)은 Plotly가 아니라 **손으로 그린 SVG**다(폭 640 고정, 반응형·툴팁 없음 — 이 한계와 공통 차트 계층 이전 계획은 `CHART_LAYER_UNIFICATION_PLAN` 문서가 다룬다. 로컬 계획 폴더에만 있다).
 
 ## 화면 구조
 

@@ -8,7 +8,15 @@ from pathlib import Path
 
 from features.common.workspace import data_dir
 from features.company_analysis import financial_engine
-from features.company_analysis.dcf import PROJECTION_YEARS, build_dcf, dcf_value, net_debt_from
+from features.company_analysis.dcf import (
+    PROJECTION_YEARS,
+    assumption_row_label,
+    build_dcf,
+    dcf_value,
+    net_debt_from,
+    sensitivity_band_collapsed,
+)
+from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
 
 try:
@@ -738,6 +746,9 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
         market_cap=market_cap,
         beta=market.get("beta") if market.get("ok") else None,
         currency=currency,
+        # meta dict를 그대로 넘기면 build_dcf가 rate 주입과 riskFreeMeta 기록을
+        # 함께 한다 — 호출부가 각자 사후 주입하면 경로마다 빠뜨린다.
+        risk_free=current_risk_free(currency),
     )
     near_growth = dcf_model.get("growth", {}).get("rate", 0.04)
     discount_rate = dcf_model.get("discountRate", {}).get("rate", 0.09)
@@ -824,8 +835,34 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
             cells = []
             for tg in [0.02, 0.025, 0.03]:
                 case = _dcf_value(base_fcf or 0.0, net_debt, shares or 0.0, near_growth, dr, tg)
-                cells.append(_money(case.get("perShare") if case.get("ok") else None))
+                # 통화를 명시한다 — 기본값 USD로 두면 바로 아래 가정 감도표와 같은
+                # 수치가 다른 통화 기호로 나란히 찍힌다(KRW/EUR 신고 기업).
+                cells.append(_money(case.get("perShare") if case.get("ok") else None, currency))
             lines.append(f"| 할인율 {_pct(dr)} | {cells[0]} | {cells[1]} | {cells[2]} |")
+        # 할인율의 두 입력(무위험·ERP)이 답을 얼마나 지배하는지의 감도. 실측 ERP 4~6%가
+        # 내재가치를 37% 흔드는데 그 폭이 하나의 숫자에 눌려 보이지 않았다(§9.4).
+        assumption_rows = dcf_model.get("assumptionSensitivity") or []
+        if assumption_rows:
+            lines += [
+                "",
+                "| 가정 감도 | 할인율 | 내재가치/주 | 역산 성장률 |",
+                "| --- | ---: | ---: | ---: |",
+            ]
+            for row in assumption_rows:
+                implied_cell = _pct(row.get("impliedGrowth")) if row.get("impliedGrowth") is not None else "—"
+                lines.append(
+                    f"| {assumption_row_label(row)} | {_pct(row.get('discountRate'))} | {_money(row.get('perShare'), currency)} | {implied_cell} |"
+                )
+            if sensitivity_band_collapsed(assumption_rows):
+                lines.append(
+                    "\n모든 행의 할인율이 모델의 상·하한에 물려 같습니다. 이 표에서 두 가정의 "
+                    "영향을 읽을 수 없다는 뜻이지, 가정이 무관하다는 뜻이 아닙니다."
+                )
+            else:
+                lines.append(
+                    "\n무위험수익률과 위험프리미엄은 가정입니다. 내재가치는 하나의 값이 아니라 위 범위로 "
+                    "읽으세요 — 범위가 현재가를 걸치면 그 사실 자체가 판단 재료입니다."
+                )
         lines += [
             "",
             "DCF는 예비 모델입니다. 기준 FCF는 FCF 마진 중앙값으로 정상화했고 성장률은 "
