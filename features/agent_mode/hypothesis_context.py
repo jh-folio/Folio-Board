@@ -25,6 +25,9 @@ _MARKET_STATE_FIELDS = (
 )
 
 
+from features.common.research_schema.tracked_checkpoints import checkpoint_labels
+
+
 def _ticker(value: Any) -> str:
     normalized = str(value or "").strip().upper().replace(".", "-")
     if not _TICKER.fullmatch(normalized):
@@ -112,7 +115,7 @@ def build_hypothesis_review_context(
             "supportingSignals": _strings(thesis.get("supporting_signals")),
             "weakeningSignals": _strings(thesis.get("weakening_signals")),
             "falsificationTriggers": _strings(thesis.get("falsification_triggers")),
-            "nextCheckpoints": _strings(thesis.get("next_checkpoints")),
+            "nextCheckpoints": checkpoint_labels(thesis.get("next_checkpoints"), 500)[:_LIST_LIMIT],
             "keyMetrics": _strings(thesis.get("key_metrics")),
             "reviewCycle": _text(thesis.get("review_cycle"), 40),
             "conviction": _text(thesis.get("conviction"), 40),

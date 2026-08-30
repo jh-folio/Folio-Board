@@ -136,6 +136,9 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
     # 활성/관찰 상태의 추세·근거 카운트는 규칙 기반으로 함께 갱신한다.
     # 화면에서 상태별 수동 갱신 버튼을 없앤 대신 이 경로가 자동으로 처리한다.
     regime_refresh = {"ok": False, "count": 0}
+    # 저장해 둔 "다음 확인"을 새 근거와 대조한다. 규칙 기반이라 LLM 호출이 없고,
+    # 근거 행이 방금 갱신된 뒤라야 대조할 것이 있으므로 추세 갱신 뒤에 돈다.
+    checkpoint_verdicts = {"ok": False, "checkpointCount": 0, "changeCount": 0}
     if refresh_regimes:
         try:
             from features.market_memory.regime_v2 import refresh_all_regimes
@@ -143,6 +146,19 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
             regime_refresh = {"ok": bool(result.get("ok")), "count": int(result.get("count") or 0)}
         except Exception:
             regime_refresh = {"ok": False, "count": 0, "error": "regime_refresh_failed"}
+        try:
+            from features.market_memory.checkpoint_verdicts import run_checkpoint_verdicts
+            verdicts = run_checkpoint_verdicts(MARKET_MEMORY_DB_PATH)
+            checkpoint_verdicts = {
+                "ok": bool(verdicts.get("ok")),
+                "checkpointCount": int(verdicts.get("checkpointCount") or 0),
+                "changeCount": int(verdicts.get("changeCount") or 0),
+            }
+        except Exception:
+            checkpoint_verdicts = {
+                "ok": False, "checkpointCount": 0, "changeCount": 0,
+                "error": "checkpoint_verdicts_failed",
+            }
     return {
         "ok": True,
         "digestCount": len(digest),
@@ -150,4 +166,5 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
         "saved": saved,
         "digest": digest,
         "regimeRefresh": regime_refresh,
+        "checkpointVerdicts": checkpoint_verdicts,
     }

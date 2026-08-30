@@ -50,6 +50,7 @@ def normalize_checkpoint(
     src = item if isinstance(item, dict) else {"checkpoint": item}
     checkpoint = _clean_text(
         src.get("checkpoint")
+        or src.get("item")          # 구조화 체크포인트(tracked_checkpoints)의 본문 키
         or src.get("text")
         or src.get("label")
         or src.get("title")

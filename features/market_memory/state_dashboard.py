@@ -92,7 +92,7 @@ def _checkpoint_text(state: dict) -> str:
         if isinstance(item, str) and item.strip():
             return item.strip()
         if isinstance(item, dict):
-            text = str(item.get("label") or item.get("checkpoint") or item.get("description") or "").strip()
+            text = str(item.get("item") or item.get("label") or item.get("checkpoint") or item.get("description") or "").strip()
             if text:
                 return text
     return ""

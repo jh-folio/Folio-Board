@@ -15,6 +15,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+from features.common.research_schema.tracked_checkpoints import merge_with_templates
 from features.common.taxonomy import canonical_tag
 from features.market_memory.memory import connect, init_db, normalize, parse_json_list
 
@@ -348,7 +349,19 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
     windows = evidence_windows(evidence_rows, as_of=as_of)
     momentum = determine_momentum(evidence_rows, as_of=as_of)
     confidence = confidence_from_evidence(evidence_rows, as_of=as_of)
-    next_checkpoints = regime_checkpoints(state, evidence_rows, momentum)
+    # 구조화 체크포인트는 보존하고 템플릿 문장만 오늘 것으로 갈아끼운다.
+    # 예전에는 목록을 통째로 덮어써서, 이 갱신이 도는 순간(서버 시작·RSS 수집마다)
+    # 판정 pass가 기록한 status가 초기화됐다.
+    next_checkpoints = merge_with_templates(
+        parse_json_list(state.get("next_checkpoints_json")),
+        regime_checkpoints(state, evidence_rows, momentum),
+        scope="narrative",
+        forbidden_keywords=[
+            state.get("state_label"), state.get("state_key"),
+            state.get("story_family"), state.get("story"),
+        ],
+        now=as_of,
+    )
     falsification_triggers = regime_falsification_triggers(state, momentum)
     last_confirmed = next((r["evidenceDate"] for r in evidence_rows if r["role"] == "supporting"), "")
     last_challenged = next((r["evidenceDate"] for r in evidence_rows if r["role"] == "challenging"), "")

@@ -24,6 +24,7 @@ from features.common.research_schema.checkpoints import checkpoints_from_thesis_
 from features.common.research_schema.data_gaps import data_gaps_from_messages
 from features.common.research_schema.evidence import evidence_items_from_list
 from features.common.research_schema.source_ledger import source_ledger_from_items
+from features.common.research_schema.tracked_checkpoints import checkpoint_labels
 from features.common.data_reliability.official_materials import gather_company_material_evidence
 from features.common.data_reliability.source_priority import annotate_source_priority
 from features.common.research_quality.evaluator import evaluate_artifact
@@ -233,7 +234,9 @@ def normalize_delta(raw, *, thesis: dict, evidence: list, meta: dict, fallback_m
     out["counterEvidence"] = [_normalize_evidence_item(x) for x in _as_list(raw.get("counterEvidence"))]
     out["contradictions"] = [str(x).strip() for x in _as_list(raw.get("contradictions")) if str(x).strip()]
     out["uncertainties"] = [str(x).strip() for x in _as_list(raw.get("uncertainties")) if str(x).strip()]
-    out["nextCheckpoints"] = [str(x).strip() for x in _as_list(raw.get("nextCheckpoints")) if str(x).strip()]
+    # thesis의 next_checkpoints에는 구조화 체크포인트(dict)가 섞일 수 있다.
+    # Delta는 사람이 읽는 문장 목록이므로 라벨로 바꾼다.
+    out["nextCheckpoints"] = checkpoint_labels(_as_list(raw.get("nextCheckpoints")), 360)
     markdown = strip_llm_citation_markers(str(raw.get("markdown") or "").strip())
     out["markdown"] = markdown or fallback_markdown
 
@@ -253,7 +256,7 @@ def normalize_delta(raw, *, thesis: dict, evidence: list, meta: dict, fallback_m
     else:
         out["uncertainties"].extend(x for x in meta.get("uncertainties") or [] if x not in out["uncertainties"])
     if not out["nextCheckpoints"]:
-        out["nextCheckpoints"] = list(thesis.get("next_checkpoints") or [])[:5] or [
+        out["nextCheckpoints"] = checkpoint_labels(thesis.get("next_checkpoints"), 360)[:5] or [
             "다음 실적 발표와 가이던스 변화",
             "thesis의 핵심 가정과 직접 충돌하는 공시/뉴스",
         ]
