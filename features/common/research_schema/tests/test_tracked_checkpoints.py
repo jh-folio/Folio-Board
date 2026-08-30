@@ -18,6 +18,7 @@ from features.common.research_schema.tracked_checkpoints import (
     checkpoint_labels,
     merge_checkpoint_lists,
     merge_with_templates,
+    partition_checkpoints,
     normalize_tracked_checkpoint,
     split_checkpoints,
 )
@@ -68,6 +69,34 @@ def test_unknown_status_and_verdict_fall_back_without_dropping():
     )
     assert out["status"] == "open"
     assert out["lastVerdict"] is None
+
+
+def test_untrusted_input_cannot_be_born_confirmed():
+    """생성 경로(LLM·수동 입력)는 status·이력·createdAt을 낼 수 없다 — 서버가 찍는다.
+    받으면 판정 pass가 다시 열 일 없는 '이미 확인됨' 체크포인트가 태어난다(§A.1 결정 1)."""
+    out = normalize_tracked_checkpoint(
+        _cp(
+            status="confirmed",
+            createdAt="2020-01-01T00:00:00+00:00",
+            lastVerdict={"verdict": "confirmed", "at": NOW, "evidence": []},
+            history=[{"at": NOW, "from": "open", "to": "confirmed", "verdict": "confirmed"}],
+        ),
+        now=NOW,
+        trusted=False,
+    )
+    assert out["status"] == "open"
+    assert out["createdAt"] == NOW
+    assert out["lastVerdict"] is None
+    assert out["history"] == []
+
+
+def test_scope_key_separates_identical_wording_across_states():
+    """스코프 정체성이 해시에 없으면 서로 다른 상태의 같은 문구 체크포인트가 같은
+    id를 받아, id로 dedupe하는 소비자가 남의 상태 체크포인트를 지운다."""
+    a = normalize_tracked_checkpoint(_cp(), scope_key="ai_power_bottleneck", now=NOW)
+    b = normalize_tracked_checkpoint(_cp(), scope_key="grid_capex", now=NOW)
+    assert a["id"] != b["id"]
+    assert a["id"] == normalize_tracked_checkpoint(_cp(), scope_key="ai_power_bottleneck", now=NOW)["id"]
 
 
 def test_item_length_and_keyword_rules():
@@ -164,6 +193,38 @@ def test_merge_lists_keeps_open_leftovers_and_prunes_resolved():
     assert len(merged) == MAX_CHECKPOINTS
     assert "아직 열린 항목" in items       # open은 유지
     assert "해소된 항목" not in items      # 해소된 것은 상한 안에서 정리
+
+
+def test_open_leftovers_survive_even_when_new_items_fill_the_cap():
+    """상한은 open을 자르는 칼이 아니다 — LLM이 8개를 새로 내도 해소되지 않은
+    기존 항목이 사라지면 사용자가 기다리던 확인이 소리 없이 증발한다(2026-08-30 리뷰)."""
+    leftovers = [_cp(item=f"열린 기존 {i}", status="open") for i in range(2)]
+    incoming = [_cp(item=f"새 항목 {i}") for i in range(8)]
+    merged = merge_checkpoint_lists(leftovers, incoming, now=NOW)
+    items = [cp["item"] for cp in merged]
+    assert len(merged) == 10                      # 8 상한을 넘더라도
+    assert "열린 기존 0" in items and "열린 기존 1" in items
+
+
+def test_partition_preserves_invalid_dicts_verbatim():
+    """저장된 dict의 재검증 실패는 규칙 쪽 변화다 — 버리면 체크포인트·이력이
+    소리 없이 사라진다. 판정에서만 빼고 원본은 돌려준다."""
+    broken = {"item": "방향 없음", "matchers": {"keywords": ["가이던스"]}}
+    structured, invalid, templates = partition_checkpoints([_cp(), broken, "템플릿"], now=NOW)
+    assert len(structured) == 1
+    assert invalid == [broken]
+    assert templates == ["템플릿"]
+    merged = merge_with_templates([_cp(), broken], ["오늘 템플릿"], now=NOW)
+    assert broken in merged                        # 갱신 병합도 보존한다
+
+
+def test_checkpoint_labels_guards_non_list_values():
+    """thesis 행의 next_checkpoints가 리스트가 아니어도 죽거나 dict 키 목록을
+    체크포인트로 내면 안 된다."""
+    assert checkpoint_labels(None) == []
+    assert checkpoint_labels("문장 하나") == []          # str은 원소 나열이 아니다
+    assert checkpoint_labels(123) == []
+    assert checkpoint_labels(_cp()) == ["전력 설비 기업 실적 가이던스 상향"]  # 단일 dict는 감싼다
 
 
 def test_history_cap_removes_oldest_first():

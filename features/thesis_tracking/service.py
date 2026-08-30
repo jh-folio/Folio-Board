@@ -127,7 +127,13 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
         supporting_signals=M._as_list(data.get("supporting_signals")),
         weakening_signals=M._as_list(data.get("weakening_signals")),
         falsification_triggers=M._as_list(data.get("falsification_triggers")),
-        next_checkpoints=M._as_list(data.get("next_checkpoints")),
+        # dict(구조화 체크포인트)는 이 경로로 오면 안 된다 — `_as_list`가 repr 문자열로
+        # 바꿔 영구 템플릿으로 굳는다. 구조화 생성·갱신은 전용 병합 경로(Stage B)가
+        # 맡고, 저장된 dict는 store.upsert_thesis의 보존 병합이 지킨다.
+        next_checkpoints=M._as_list(
+            [x for x in (data.get("next_checkpoints") or []) if not isinstance(x, dict)]
+            if isinstance(data.get("next_checkpoints"), (list, tuple)) else data.get("next_checkpoints")
+        ),
         key_metrics=M._as_list(data.get("key_metrics")),
         linked_regimes=M._as_list(data.get("linked_regimes")),
         review_cycle=M.normalize_review_cycle(data.get("review_cycle")),

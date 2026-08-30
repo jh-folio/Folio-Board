@@ -19,9 +19,18 @@ thesis `thesis.next_checkpoints_json`). 새 테이블을 만들지 않는다. �
       "lastVerdict": {"verdict": ..., "at": ..., "evidence": [{...}]},
       "history": [{"at", "from", "to", "verdict"}] }
 
-검증 실패 원소는 **버린다**. 규칙 템플릿 문장이 그 자리를 대신하므로 화면이 비지
-않고(0.6 계획 §8.1 결정), 버려진 체크포인트는 판정 대상에서도 빠져 가짜 판정이
-생기지 않는다.
+검증 실패의 처분은 **경로에 따라 다르다** (2026-08-30 리뷰 결정):
+
+- **생성 경로**(LLM 출력·수동 입력)에서 실패한 원소는 버린다 — 규칙 템플릿 문장이
+  그 자리를 대신하므로 화면이 비지 않는다(0.6 계획 §8.1 결정).
+- **저장된 원소**가 재검증에 실패하면 **버리지 않고 그대로 보존하며 판정에서만
+  뺀다.** 저장된 dict는 과거에 검증을 통과한 것이라, 재검증 실패는 원소의 잘못이
+  아니라 규칙 쪽 변화다(예: 상태 라벨 개명으로 keyword가 금지어가 됨). 여기서
+  지우면 체크포인트와 이력이 소리 없이 사라진다 — 화면은 이 원소에 `검증 불가`를
+  표시한다.
+
+생성 경로의 원소는 `status`·`lastVerdict`·`history`·`createdAt`을 **낼 수 없다** —
+서버가 찍는다. LLM에게 맡기면 "이미 확인됨"으로 태어나는 체크포인트가 생긴다.
 """
 from __future__ import annotations
 
@@ -92,17 +101,26 @@ def checkpoint_label(value, limit: int = 240) -> str:
 
 
 def checkpoint_labels(values, limit: int = 240) -> list[str]:
+    # 타입 가드 — thesis 행의 next_checkpoints가 리스트가 아닌 채 저장돼 있어도
+    # (숫자·단일 dict) 라벨 추출이 죽거나 dict의 키 목록을 체크포인트로 내면 안 된다.
+    if isinstance(values, dict):
+        values = [values]
+    if not isinstance(values, (list, tuple)):
+        return []
     out = []
-    for value in values or []:
+    for value in values:
         text = checkpoint_label(value, limit)
         if text:
             out.append(text)
     return out
 
 
-def checkpoint_id(item, tickers, keywords) -> str:
-    """재생성·중복 판별 키. item과 matchers가 같으면 같은 id다."""
+def checkpoint_id(item, tickers, keywords, scope_key: str = "") -> str:
+    """재생성·중복 판별 키. **스코프 정체성(state_key 또는 ticker)이 해시에 든다** —
+    없으면 서로 다른 상태의 같은 문구 체크포인트가 같은 id를 받아, id로 dedupe하는
+    소비자(투자 리뷰 집계·React key)가 남의 상태 체크포인트를 지운다."""
     raw = "|".join([
+        squash(scope_key),
         squash(item),
         ",".join(sorted({str(t).strip().upper() for t in tickers or [] if str(t).strip()})),
         ",".join(sorted({squash(k) for k in keywords or [] if squash(k)})),
@@ -196,16 +214,21 @@ def normalize_tracked_checkpoint(
     raw,
     *,
     scope: str = "narrative",
+    scope_key: str = "",
     now: str = "",
     forbidden_keywords=(),
+    trusted: bool = True,
 ):
-    """구조화 체크포인트를 검증·정규화한다. 실패하면 None(= 그 원소는 버린다).
+    """구조화 체크포인트를 검증·정규화한다. 실패하면 None.
 
     - 모르는 키는 제거한다(스키마 고정).
     - `item`은 120자로 자르고, 비어 있으면 버린다.
     - `direction`은 뜻이 뒤집히는 값이라 기본값을 주지 않는다 — enum을 벗어나면 버린다.
     - 내러티브는 keyword ≥1, thesis는 ticker ≥1 **그리고** keyword ≥1을 요구한다.
       티커만으로는 "그 회사 뉴스가 있다"이지 가설 신호가 아니다.
+    - `trusted=False`(생성 경로 — LLM 출력·수동 입력)면 `status`·`createdAt`·
+      `lastVerdict`·`history`를 **읽지 않는다.** 서버가 찍는 값이라, 받으면
+      "이미 확인됨"으로 태어나는 체크포인트가 생긴다(계획 §A.1 결정 1).
     """
     if not isinstance(raw, dict):
         return None
@@ -227,49 +250,74 @@ def normalize_tracked_checkpoint(
     if scope == "thesis" and not tickers:
         return None
 
-    status = str(raw.get("status") or "").strip().lower()
-    if status not in CHECKPOINT_STATUS_CHOICES:
-        status = CHECKPOINT_STATUS_DEFAULT
-    created_at = _text(raw.get("createdAt") or raw.get("created_at"), 40) or now
+    if trusted:
+        status = str(raw.get("status") or "").strip().lower()
+        if status not in CHECKPOINT_STATUS_CHOICES:
+            status = CHECKPOINT_STATUS_DEFAULT
+        created_at = _text(raw.get("createdAt") or raw.get("created_at"), 40) or now
+        last_verdict = _normalize_last_verdict(raw.get("lastVerdict"))
+        history = _normalize_history(raw.get("history"))
+    else:
+        status, created_at, last_verdict, history = CHECKPOINT_STATUS_DEFAULT, now, None, []
 
     due_by = _text(raw.get("dueBy") or raw.get("due_by"), 10)
     if not _DATE_RE.match(due_by) or due_by <= _date_part(created_at):
         due_by = None
 
     return {
-        "id": checkpoint_id(item, tickers, keywords),
+        "id": checkpoint_id(item, tickers, keywords, scope_key),
         "item": item,
         "direction": direction,
         "matchers": {"tickers": tickers, "keywords": keywords},
         "dueBy": due_by,
         "status": status,
         "createdAt": created_at,
-        "lastVerdict": _normalize_last_verdict(raw.get("lastVerdict")),
-        "history": _normalize_history(raw.get("history")),
+        "lastVerdict": last_verdict,
+        "history": history,
     }
 
 
-def split_checkpoints(values, *, scope: str = "narrative", forbidden_keywords=(), now: str = ""):
-    """저장된 리스트를 (구조화 체크포인트, 템플릿 문장)으로 가른다.
+def partition_checkpoints(
+    values, *, scope: str = "narrative", scope_key: str = "", forbidden_keywords=(), now: str = ""
+):
+    """저장된 리스트를 (구조화, 검증 실패 dict 원본, 템플릿 문장)으로 3분할한다.
 
-    검증에 실패한 dict는 어느 쪽에도 들어가지 않는다(계획 §8.1 — 버리고 템플릿이 대신한다).
+    검증 실패 dict를 **버리지 않고 돌려주는 것**이 핵심이다 — 저장된 원소의 재검증
+    실패는 원소가 아니라 규칙 쪽 변화이고(모듈 docstring), 쓰는 쪽이 이 원본을 그대로
+    보존해야 체크포인트·이력이 소리 없이 사라지지 않는다. 화면은 이 묶음에
+    `검증 불가`를 표시한다.
     """
     structured: list = []
+    invalid: list = []
     templates: list = []
     seen_ids: set = set()
     for value in values or []:
         if is_tracked_checkpoint(value):
             normalized = normalize_tracked_checkpoint(
-                value, scope=scope, now=now, forbidden_keywords=forbidden_keywords
+                value, scope=scope, scope_key=scope_key, now=now, forbidden_keywords=forbidden_keywords
             )
-            if normalized and normalized["id"] not in seen_ids:
+            if normalized is None:
+                invalid.append(value)
+            elif normalized["id"] not in seen_ids:
                 seen_ids.add(normalized["id"])
                 structured.append(normalized)
             continue
         text = _text(value, 500)
         if text:
             templates.append(text)
-    return structured[:MAX_CHECKPOINTS], templates
+    # 상한은 판정 대상 개수의 상한이지 저장 절단이 아니다 — 자르는 일은 쓰기 경로
+    # (merge_checkpoint_lists)만 한다.
+    return structured[:MAX_CHECKPOINTS], invalid, templates
+
+
+def split_checkpoints(values, *, scope: str = "narrative", scope_key: str = "", forbidden_keywords=(), now: str = ""):
+    """(구조화, 템플릿)만 필요한 호출자용. 검증 실패 dict는 결과에 없다 — **이 결과를
+    그대로 저장소에 되쓰면 실패 원소가 삭제되므로**, 저장을 동반하는 경로는
+    `partition_checkpoints`를 쓴다."""
+    structured, _invalid, templates = partition_checkpoints(
+        values, scope=scope, scope_key=scope_key, forbidden_keywords=forbidden_keywords, now=now
+    )
+    return structured, templates
 
 
 def _resolved(checkpoint: dict) -> bool:
@@ -281,20 +329,35 @@ def merge_checkpoint_lists(
     incoming,
     *,
     scope: str = "narrative",
+    scope_key: str = "",
     forbidden_keywords=(),
     now: str = "",
 ) -> list:
     """새 구조화 목록을 기존 목록과 병합한다(생성·교체 경로).
 
+    - **incoming은 신뢰하지 않는다**(`trusted=False`) — LLM·수동 입력이 status·이력을
+      실어 보내도 서버 값으로 태어난다. 승계는 아래의 `prior` 병합만 한다.
     - `id`가 같은 것은 `status`·`history`·`lastVerdict`·`createdAt`을 승계한다.
       판정 결과는 판정 pass만 쓰므로 새 목록이 그것을 되돌리면 안 된다.
-    - 새로 온 것은 추가한다.
-    - 사라진 것 중 `open`은 유지하고, 해소된 것(confirmed/challenged/expired)은
-      상한(8) 안에서 오래된 것부터 정리한다.
+    - 사라진 것 중 `open`은 **무조건 유지한다** — 상한은 open을 자르는 칼이 아니다.
+      해소된 것(confirmed/challenged/expired)만 상한(8) 안에서 오래된 것부터 정리한다.
     """
     now = now or _now_iso()
-    old, _ = split_checkpoints(existing, scope=scope, forbidden_keywords=forbidden_keywords, now=now)
-    new, _ = split_checkpoints(incoming, scope=scope, forbidden_keywords=forbidden_keywords, now=now)
+    old, _ = split_checkpoints(
+        existing, scope=scope, scope_key=scope_key, forbidden_keywords=forbidden_keywords, now=now
+    )
+    new: list = []
+    seen: set = set()
+    for value in incoming or []:
+        normalized = normalize_tracked_checkpoint(
+            value, scope=scope, scope_key=scope_key, now=now,
+            forbidden_keywords=forbidden_keywords, trusted=False,
+        )
+        if normalized and normalized["id"] not in seen:
+            seen.add(normalized["id"])
+            new.append(normalized)
+        if len(new) >= MAX_CHECKPOINTS:
+            break
     by_id = {item["id"]: item for item in old}
 
     merged: list = []
@@ -311,18 +374,17 @@ def merge_checkpoint_lists(
         merged.append(item)
 
     leftovers = list(by_id.values())
-    still_open = [item for item in leftovers if not _resolved(item)]
+    merged.extend(item for item in leftovers if not _resolved(item))  # open은 자르지 않는다
     resolved = sorted(
         (item for item in leftovers if _resolved(item)),
         key=lambda item: str(item.get("createdAt") or ""),
         reverse=True,
     )
-    merged.extend(still_open)
     for item in resolved:
         if len(merged) >= MAX_CHECKPOINTS:
             break
         merged.append(item)
-    return merged[:MAX_CHECKPOINTS]
+    return merged
 
 
 def merge_with_templates(
@@ -330,18 +392,23 @@ def merge_with_templates(
     templates,
     *,
     scope: str = "narrative",
+    scope_key: str = "",
     forbidden_keywords=(),
     now: str = "",
 ) -> list:
-    """규칙 갱신용 병합 — 구조화 원소는 보존하고 템플릿 문장만 오늘 것으로 갈아끼운다.
+    """규칙 갱신용 병합 — 구조화 원소(검증 실패 원본 포함)는 보존하고 템플릿 문장만
+    오늘 것으로 갈아끼운다.
 
     이 함수가 Stage A의 핵심이다. 예전에는 `refresh_regime_state`가 목록을 통째로
     덮어써서, 구조화 체크포인트를 만들어도 다음 갱신(서버 시작·RSS 수집마다 돈다)에
-    status가 초기화됐다.
+    status가 초기화됐다. 검증 실패 dict도 보존한다 — 갱신은 매일 도는 경로라 여기서
+    떨구면 상태 라벨 개명 한 번에 체크포인트와 이력이 통째로 사라진다.
     """
-    structured, _ = split_checkpoints(existing, scope=scope, forbidden_keywords=forbidden_keywords, now=now)
+    structured, invalid, _ = partition_checkpoints(
+        existing, scope=scope, scope_key=scope_key, forbidden_keywords=forbidden_keywords, now=now
+    )
     fresh = [_text(t, 500) for t in templates or []]
-    return structured + [t for t in fresh if t]
+    return structured + invalid + [t for t in fresh if t]
 
 
 def append_history(checkpoint: dict, *, at: str, from_status: str, to_status: str, verdict: str) -> dict:

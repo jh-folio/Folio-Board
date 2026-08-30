@@ -111,14 +111,34 @@ def _now() -> str:
 
 
 def upsert_thesis(conn, thesis: M.Thesis) -> str:
-    """Thesis를 ticker 기준으로 upsert. ticker 반환."""
+    """Thesis를 ticker 기준으로 upsert. ticker 반환.
+
+    `next_checkpoints`는 통째로 덮지 않는다 — 저장돼 있던 **구조화 체크포인트(dict)는
+    보존**하고 들어온 문자열 목록만 갈아끼운다. Thesis 모델은 문자열 리스트라 노트
+    재동기화(`get_thesis_bundle`이 읽을 때마다 돈다)가 덮어쓰면 판정 status·이력이
+    매 조회마다 증발한다 — `refresh_regime_state`에서 고친 것과 같은 결함의 thesis판.
+    """
+    from features.common.research_schema.tracked_checkpoints import merge_with_templates
+
     row = thesis.to_row()
     ticker = row["ticker"]
     if not ticker:
         raise ValueError("thesis.ticker가 비어 있습니다.")
     now = _now()
-    existing = conn.execute("SELECT first_seen FROM thesis WHERE ticker=?", (ticker,)).fetchone()
+    existing = conn.execute(
+        "SELECT first_seen, next_checkpoints_json FROM thesis WHERE ticker=?", (ticker,)
+    ).fetchone()
     first_seen = existing["first_seen"] if existing else now
+    try:
+        stored_checkpoints = json.loads(existing["next_checkpoints_json"]) if existing else []
+    except Exception:
+        stored_checkpoints = []
+    row["next_checkpoints"] = merge_with_templates(
+        stored_checkpoints,
+        [x for x in row.get("next_checkpoints") or [] if isinstance(x, str)],
+        scope="thesis",
+        scope_key=ticker,
+    )
     values = {
         "ticker": ticker,
         "company": row["company"],

@@ -356,6 +356,7 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
         parse_json_list(state.get("next_checkpoints_json")),
         regime_checkpoints(state, evidence_rows, momentum),
         scope="narrative",
+        scope_key=str(state.get("state_key") or state.get("state_id") or ""),
         forbidden_keywords=[
             state.get("state_label"), state.get("state_key"),
             state.get("story_family"), state.get("story"),

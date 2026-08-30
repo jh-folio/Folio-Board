@@ -79,9 +79,11 @@ def test_neutral_role_is_never_counted():
     assert out["verdict"] == "no_signal"
 
 
-def test_only_direction_aligned_role_confirms():
+def test_role_decides_the_verdict_counter_evidence_alone_counts():
+    """role이 판정을 정한다 — 반증 단독이 무시되면(옛 direction 정합 규칙) 반증+지지
+    혼합보다 반증 단독이 약해지는 비대칭이 생긴다(2026-08-30 리뷰)."""
     challenging_only = evaluate_checkpoint(_structured(), [_row(role="challenging")], as_of=AS_OF)
-    assert challenging_only["verdict"] == "no_signal"
+    assert challenging_only["verdict"] == "challenged"
     aligned = evaluate_checkpoint(_structured(), [_row(role="supporting")], as_of=AS_OF)
     assert aligned["verdict"] == "confirmed"
 
@@ -97,6 +99,42 @@ def test_both_directions_hit_prefers_challenged():
     out = evaluate_checkpoint(_structured(), rows, as_of=AS_OF)
     assert out["verdict"] == "challenged"
     assert out["evidence"][0]["role"] == "challenging"
+
+
+def test_refuting_evidence_survives_the_copy_cap():
+    """지지 3건이 더 최신이어도 반증 행이 사본에서 잘리면, challenged 배지 아래
+    확인 기사만 보여 사용자가 판정을 눈으로 검증할 수 없다(2026-08-30 리뷰)."""
+    rows = [
+        _row(memoryId="mem-c", role="challenging", evidenceDate="2026-08-21"),
+        _row(memoryId="mem-s1", role="supporting", evidenceDate="2026-08-27"),
+        _row(memoryId="mem-s2", role="supporting", evidenceDate="2026-08-27"),
+        _row(memoryId="mem-s3", role="supporting", evidenceDate="2026-08-27"),
+    ]
+    out = evaluate_checkpoint(_structured(), rows, as_of=AS_OF)
+    assert out["verdict"] == "challenged"
+    assert out["evidence"][0]["memoryId"] == "mem-c"  # 반증이 먼저 실린다
+
+
+def test_same_day_counter_evidence_can_flip_a_morning_verdict():
+    """오전 판정 뒤 같은 날짜로 들어온 반증이 영구 스킵되면 confirmed가 하루 종일
+    눌러앉는다 — 마지막 verdict '날짜'는 다시 본다(strict `<` skip)."""
+    checkpoint = _structured(
+        status="confirmed",
+        lastVerdict={"verdict": "confirmed", "at": "2026-08-27T01:00:00+00:00", "evidence": []},
+    )
+    afternoon = _row(role="challenging", evidenceDate="2026-08-27")
+    out = evaluate_checkpoint(checkpoint, [afternoon], as_of=AS_OF)
+    assert out["verdict"] == "challenged"
+
+
+def test_first_pass_excludes_evidence_from_the_birth_date():
+    """체크포인트는 대개 그날의 근거에서 태어난다 — 낳아 준 근거로 즉시 확인되는
+    것은 자기확인이다. 첫 판정은 createdAt 날짜를 제외한다."""
+    checkpoint = _structured(createdAt="2026-08-20T09:00:00+00:00")
+    same_day = evaluate_checkpoint(checkpoint, [_row(evidenceDate="2026-08-20")], as_of=AS_OF)
+    assert same_day["verdict"] == "no_signal"
+    next_day = evaluate_checkpoint(checkpoint, [_row(evidenceDate="2026-08-21")], as_of=AS_OF)
+    assert next_day["verdict"] == "confirmed"
 
 
 def test_challenging_direction_checkpoint_reports_challenged():
@@ -257,7 +295,9 @@ def test_verdict_pass_records_change_and_is_idempotent(monkeypatch):
         checkpoint_changes = [c for c in changes if c["field"].startswith("checkpoint:")]
         assert len(checkpoint_changes) == 1
         assert checkpoint_changes[0]["newValue"] == "confirmed"
-        assert checkpoint_changes[0]["evidenceIds"] == ["mem-s"]
+        # momentum/confidence 변경 행은 진짜 evidence_id를 싣는 컬럼이라, memory_id
+        # 사본은 `memory:` 접두로 이름공간을 가른다.
+        assert checkpoint_changes[0]["evidenceIds"] == ["memory:mem-s"]
 
         # 같은 날 두 번 돌아도 안전하다 — 새 근거가 없으므로 이력이 늘지 않는다.
         second = run_checkpoint_verdicts(db_path, as_of=AS_OF)
@@ -281,7 +321,10 @@ def test_template_only_state_produces_no_verdicts(monkeypatch):
         assert not [c for c in R.list_regime_changes(db_path, STATE_ID) if c["field"].startswith("checkpoint:")]
 
 
-def test_invalid_structured_checkpoint_is_dropped_and_templates_remain(monkeypatch):
+def test_invalid_structured_checkpoint_is_preserved_but_not_judged(monkeypatch):
+    """저장된 dict의 재검증 실패는 원소가 아니라 규칙 쪽 변화다(라벨 개명 등).
+    매일 도는 갱신·판정이 그것을 지우면 체크포인트와 이력이 소리 없이 사라진다 —
+    보존하고 판정에서만 뺀다(화면은 `검증 불가` 표시)."""
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         broken = {"item": "방향이 없는 항목", "matchers": {"keywords": ["가이던스"]}}
@@ -289,8 +332,10 @@ def test_invalid_structured_checkpoint_is_dropped_and_templates_remain(monkeypat
         monkeypatch.setattr(R, "_now", lambda: AS_OF)
         R.refresh_regime_state(db_path, STATE_ID, days=90)
 
+        result = run_checkpoint_verdicts(db_path, as_of=AS_OF)
+        assert result["checkpointCount"] == 0                     # 판정 대상 아님
         checkpoints = _stored_checkpoints(db_path)
-        assert not [c for c in checkpoints if isinstance(c, dict)]
+        assert [c for c in checkpoints if isinstance(c, dict)] == [broken]  # 갱신·판정을 거쳐도 보존
         assert [c for c in checkpoints if isinstance(c, str)]     # 화면이 비지 않는다
 
 

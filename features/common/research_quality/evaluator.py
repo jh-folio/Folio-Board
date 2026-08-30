@@ -12,6 +12,7 @@ from features.common.utils import now_iso
 from features.common.research_quality.schema import grade_from_score, level_from_ratio, risk_level, status_from_score
 from features.common.research_quality.source_grounding import evaluate_source_grounding
 from features.common.research_schema.data_gaps import data_gap_rows
+from features.common.research_schema.tracked_checkpoints import checkpoint_labels
 
 _WEIGHTS = {
     "topic_answered": 12,
@@ -72,7 +73,9 @@ def _artifact_markdown(artifact_type: str, artifact: dict) -> str:
             "## 근거",
             str(artifact.get("rationale") or artifact.get("conclusion") or ""),
             "## 다음 체크포인트",
-            "\n".join(f"- {x}" for x in (artifact.get("nextCheckpoints") or [])),
+            # 구조화 체크포인트(dict)가 섞인 목록이다 — 그대로 f-string에 넣으면 dict
+            # repr이 평가용 markdown에 실려 품질 점수가 서식 잡음에 흔들린다.
+            "\n".join(f"- {x}" for x in checkpoint_labels(artifact.get("nextCheckpoints"))),
         ])
     return str((artifact or {}).get("markdown") or "")
 
