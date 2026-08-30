@@ -232,6 +232,37 @@ def llm_story_key(value):
     return token.strip("_")[:80] or "market_narrative"
 
 
+MAX_ENTRY_CHECKPOINTS = 3
+
+
+def llm_checkpoint_inputs(value, limit: int = MAX_ENTRY_CHECKPOINTS) -> list:
+    """LLM 엔트리의 `nextCheckpoints`를 생성 입력 모양으로만 정리한다.
+
+    LLM이 낼 수 있는 키는 `item`·`direction`·`matchers`·`dueBy` 넷뿐이다.
+    `status`·`createdAt`·`lastVerdict`·`history`는 서버가 찍는 값이라 들이지 않는다 —
+    받으면 "이미 확인됨"으로 태어나는 체크포인트가 생긴다(validator의 `trusted=False`가
+    한 번 더 벗긴다).
+
+    값 검증은 하지 않는다 — enum·길이·keyword 규칙은
+    `tracked_checkpoints.normalize_tracked_checkpoint`가 병합 시점에 집행한다.
+    여기서 또 검증하면 같은 규칙이 두 곳에 살게 된다.
+    """
+    out: list = []
+    for raw in value if isinstance(value, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        matchers = raw.get("matchers") if isinstance(raw.get("matchers"), dict) else {}
+        out.append({
+            "item": raw.get("item"),
+            "direction": raw.get("direction"),
+            "matchers": {"tickers": matchers.get("tickers") or [], "keywords": matchers.get("keywords") or []},
+            "dueBy": raw.get("dueBy"),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def normalize_llm_memory_entry(entry, date, used_docs):
     if not isinstance(entry, dict):
         return None, "entry_not_object"
@@ -306,7 +337,50 @@ def normalize_llm_memory_entry(entry, date, used_docs):
         "tags": entry.get("tags", []) if isinstance(entry.get("tags", []), list) else [],
         "sources": selected_sources,
         "dedupeKey": normalize(entry.get("dedupeKey", ""))[:160] or f"llm:{date}:{story}",
+        # 구조화 체크포인트. `upsert_memory`는 이 키를 무시하고, 엔트리가 상태를
+        # 만들거나 갱신할 때 `save_memory_entries`가 그 상태에 병합한다.
+        "nextCheckpoints": llm_checkpoint_inputs(entry.get("nextCheckpoints")),
     }, ""
+
+
+def save_memory_entries(entries, *, db_path=MARKET_MEMORY_DB_PATH) -> dict:
+    """엔트리를 저장하고 구조화 체크포인트를 그 엔트리가 만든 상태에 병합한다.
+
+    **생성 경로가 둘이라 여기 하나로 모은다** — `/api/memory/llm`(API 키)과 Agent CLI
+    writeback이 각자 저장하면 계약이 한쪽에만 붙는다(§6 규칙 14). 어느 경로로 만든
+    내러티브든 체크포인트가 같은 규칙으로 붙어야 한다.
+
+    체크포인트는 **상태의 소유물**이다. 엔트리가 active/watch 상태를 만들거나 갱신할
+    때만 병합하고, 상태로 승격되지 않은 issue 메모의 체크포인트는 버린 개수만 남긴다 —
+    "모든 이슈를 바로 상태로 올리지 않는다"는 기존 보수 원칙이 여기에도 적용된다.
+    """
+    from features.market_memory.checkpoint_verdicts import merge_state_checkpoints
+
+    saved: list = []
+    merged = 0
+    dropped = 0
+    for entry in entries or []:
+        checkpoints = (entry or {}).get("nextCheckpoints") or []
+        result = upsert_memory(db_path, entry)
+        saved.append(result)
+        if not checkpoints:
+            continue
+        state = result.get("state") or {}
+        state_id = str(state.get("id") or "")
+        if not state_id or state.get("status") not in {"active", "watch"}:
+            dropped += len(checkpoints)
+            continue
+        try:
+            outcome = merge_state_checkpoints(db_path, state_id, checkpoints)
+        except Exception:
+            outcome = {}
+        if outcome.get("ok"):
+            merged += int(outcome.get("accepted") or 0)
+            dropped += int(outcome.get("rejected") or 0)
+        else:
+            # 병합 실패가 내러티브 저장을 되돌리지 않는다 — 체크포인트는 부가물이다.
+            dropped += len(checkpoints)
+    return {"saved": saved, "checkpointsMerged": merged, "checkpointsDropped": dropped}
 
 
 def run_llm_market_memory(date=None):
@@ -348,14 +422,16 @@ def run_llm_market_memory(date=None):
             response_id = response_id or repair_id
             payload = extract_json_object(repaired)
         entries = payload.get("entries", []) if isinstance(payload, dict) else []
-        saved = []
+        prepared = []
         dropped = []
         for raw_entry in entries[:3]:
             entry, reason = normalize_llm_memory_entry(raw_entry, date or kst_date(), used_docs)
             if not entry:
                 dropped.append(reason or "invalid_entry")
                 continue
-            saved.append(upsert_memory(MARKET_MEMORY_DB_PATH, entry))
+            prepared.append(entry)
+        stored = save_memory_entries(prepared)
+        saved = stored["saved"]
         if not saved and not entries:
             detail = "LLM이 중기 내러티브로 저장할 만큼 충분한 후보가 없다고 판단했습니다."
         elif not saved:
@@ -377,6 +453,8 @@ def run_llm_market_memory(date=None):
             "rawEntryCount": len(entries),
             "droppedCount": len(dropped),
             "droppedReasons": dropped[:6],
+            "checkpointsMerged": stored["checkpointsMerged"],
+            "checkpointsDropped": stored["checkpointsDropped"],
             "saved": saved,
             "message": detail,
         }

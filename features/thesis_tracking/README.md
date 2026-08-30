@@ -62,6 +62,18 @@ upsert_manual_thesis({"ticker": "NVDA", "core_thesis": "..."})  # UI 직접 입�
 run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/저장
 ```
 
+## 체크포인트 판정 (0.6 Stage A)
+
+`next_checkpoints`에는 문자열(노트에서 읽은 문장)과 구조화 체크포인트(dict)가 함께 삽니다. 스키마는 `features/common/research_schema/tracked_checkpoints.py`가 소유하고 내러티브와 공용입니다(자세한 규칙은 `features/market_memory/README.md`).
+
+- 판정은 `features/thesis_tracking/checkpoint_verdicts.py`가 하며 RSS 수집·시장 메모리 갱신과 같은 자리에서 규칙 기반으로 돕니다. **LLM을 부르지 않습니다.**
+- 근거 풀은 **연구 인덱스 문서**(`search_documents(company=ticker, scope="news")`)이며, 그 회사 태그가 실제로 붙은 문서만 근거입니다. `market_memory` 행을 섞지 않습니다.
+- **구조화 체크포인트를 가진 thesis가 하나도 없으면 인덱스를 열지 않습니다**(`load_index()` 실측 4.7초).
+- 문서 풀에는 supporting/challenging 분류가 없으므로 체크포인트의 `direction`이 판정 방향을 정하고, 근거 사본은 `{docId, date, title}`입니다(`role` 없음). 여기서는 ticker matcher가 hit 판정에 쓰이지 않습니다 — 풀이 이미 그 종목이라 모든 기사가 걸립니다. **keyword가 방향을 담아야 합니다**("가이던스 상향").
+- 판정 이력은 체크포인트 dict의 `history` 배열(상한 20)이며 새 테이블을 만들지 않습니다.
+- 쓰기는 `store.save_thesis_checkpoints`가 `next_checkpoints_json`만 제자리 교체합니다. **`last_reviewed_at`은 바뀌지 않습니다** — 기계 판정은 사용자의 검토가 아닙니다. `upsert_thesis`(노트 동기화)는 문자열 목록만 갈아끼우고 저장된 dict를 보존하므로 판정 status와 이력이 재동기화에 살아남습니다.
+- **판정이 Thesis verdict(6값 enum)를 자동으로 바꾸지 않습니다.** 체크포인트 판정은 "이 확인 항목에 신호가 왔는가"이고, verdict는 명시적 `최신 근거로 검토` action이 소유합니다.
+
 ## Thesis Delta
 
 - evidence 소스: `research-index.sqlite3`의 로컬 뉴스 인덱스(`articles/rss`)를 `hybrid_search()` 경로로 검색하고, Step 9 이후 `company_analysis materials`를 재사용해 SEC companyfacts/DART, SEC 10-K/10-Q 상위 문단, 로컬 filings/reports를 공식자료 evidence로 보강한다.

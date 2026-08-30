@@ -139,6 +139,7 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
     # 저장해 둔 "다음 확인"을 새 근거와 대조한다. 규칙 기반이라 LLM 호출이 없고,
     # 근거 행이 방금 갱신된 뒤라야 대조할 것이 있으므로 추세 갱신 뒤에 돈다.
     checkpoint_verdicts = {"ok": False, "checkpointCount": 0, "changeCount": 0}
+    thesis_verdicts = {"ok": False, "indexLoaded": False, "checkpointCount": 0, "changeCount": 0}
     if refresh_regimes:
         try:
             from features.market_memory.regime_v2 import refresh_all_regimes
@@ -159,6 +160,23 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
                 "ok": False, "checkpointCount": 0, "changeCount": 0,
                 "error": "checkpoint_verdicts_failed",
             }
+        # thesis 체크포인트는 같은 자리에서, 다른 풀(연구 인덱스 문서)로 판정한다.
+        # 대상이 0건이면 인덱스를 열지 않으므로 기본 비용이 없다.
+        try:
+            from features.thesis_tracking.checkpoint_verdicts import run_thesis_checkpoint_verdicts
+            thesis_result = run_thesis_checkpoint_verdicts(MARKET_MEMORY_DB_PATH)
+            thesis_verdicts = {
+                "ok": bool(thesis_result.get("ok")),
+                "indexLoaded": bool(thesis_result.get("indexLoaded")),
+                "checkpointCount": int(thesis_result.get("checkpointCount") or 0),
+                "changeCount": int(thesis_result.get("changeCount") or 0),
+            }
+        except Exception:
+            # 판정 실패가 수집 잡을 죽이지 않는다.
+            thesis_verdicts = {
+                "ok": False, "indexLoaded": False, "checkpointCount": 0, "changeCount": 0,
+                "error": "thesis_checkpoint_verdicts_failed",
+            }
     return {
         "ok": True,
         "digestCount": len(digest),
@@ -167,4 +185,5 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
         "digest": digest,
         "regimeRefresh": regime_refresh,
         "checkpointVerdicts": checkpoint_verdicts,
+        "thesisCheckpointVerdicts": thesis_verdicts,
     }

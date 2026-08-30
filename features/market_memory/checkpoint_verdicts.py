@@ -43,11 +43,16 @@ def _prepared(row: dict) -> dict:
     return row
 
 
-def matches_checkpoint(checkpoint: dict, row: dict) -> bool:
+def matches_checkpoint(checkpoint: dict, row: dict, *, use_tickers: bool = True) -> bool:
     """keyword는 제목+요약+matchedTerms에 공백 제거 부분일치, ticker는 matchedTerms에 있으면 hit.
 
     ticker를 본문에서 찾지 않는 것은 의도다 — 세 글자 티커가 한국어 본문에 우연히
     걸리면 그 회사와 무관한 기사가 확인 신호가 된다.
+
+    `use_tickers=False`는 **풀 자체가 이미 그 회사로 걸러진 경우**(thesis — 종목
+    태그 문서)다. 거기서는 ticker matcher가 모든 행에 걸려 "그 회사 뉴스가 있다"가
+    곧 확인이 된다. 계획 A.2가 "티커 태그 문서 중 **keyword hit**이 전부다"라고
+    적은 이유이고, A.1이 thesis 체크포인트에 keyword를 필수로 건 이유다.
     """
     matchers = checkpoint.get("matchers") or {}
     row = _prepared(row)
@@ -56,6 +61,8 @@ def matches_checkpoint(checkpoint: dict, row: dict) -> bool:
         key = squash(keyword)
         if key and key in haystack:
             return True
+    if not use_tickers:
+        return False
     terms = row["_termKeys"]
     for ticker in matchers.get("tickers") or []:
         key = squash(ticker)
@@ -82,10 +89,16 @@ def _cutoff(checkpoint: dict) -> tuple[str, bool]:
     return str(checkpoint.get("createdAt") or "")[:10], True
 
 
-def evaluate_checkpoint(checkpoint: dict, evidence_rows: list, *, as_of: str = "") -> dict:
+def evaluate_checkpoint(checkpoint: dict, evidence_rows: list, *, as_of: str = "", role_pool: bool = True) -> dict:
     """한 체크포인트를 근거 행들과 대조해 verdict와 근거 사본을 만든다.
 
-    과잉 판정 방지와 판정 규칙:
+    `role_pool=False`는 **role 분류가 없는 풀**(thesis — 연구 인덱스 문서)이다.
+    거기서는 아래 ①②④가 성립하지 않으므로 **direction이 판정 방향을 정한다**
+    (계획 A.2: "티커 태그 문서 중 keyword hit이 전부다"). score 게이트도 걸지
+    않는다 — 문서에는 `market_regime_evidence`의 근거 점수에 대응하는 값이 없고,
+    없는 눈금을 지어내면 판정이 그 발명 위에 선다.
+
+    과잉 판정 방지와 판정 규칙(role 풀):
       ① `neutral` role은 절대 세지 않는다 — 실측 898행 중 364행이 neutral이라
          이걸 세면 매일 confirmed가 된다.
       ② **role이 판정을 정한다**: 매칭된 supporting행은 확인 신호, challenging행은
@@ -103,20 +116,27 @@ def evaluate_checkpoint(checkpoint: dict, evidence_rows: list, *, as_of: str = "
     refuting: list = []
     for row in evidence_rows or []:
         role = str(row.get("role") or "")
-        if role not in {"supporting", "challenging"}:  # ① — neutral과 미지 role 제외
-            continue
-        try:
-            score = float(row.get("score") or 0)
-        except (TypeError, ValueError):
-            score = 0.0
-        if score < MIN_EVIDENCE_SCORE:  # ③
-            continue
+        if role_pool:
+            if role not in {"supporting", "challenging"}:  # ① — neutral과 미지 role 제외
+                continue
+            try:
+                score = float(row.get("score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            if score < MIN_EVIDENCE_SCORE:  # ③
+                continue
         evidence_date = str(row.get("evidenceDate") or "")[:10]
         if cutoff and (evidence_date < cutoff or (exclusive and evidence_date == cutoff)):
             continue
-        if not matches_checkpoint(checkpoint, row):
+        # 문서 풀은 이미 그 종목으로 걸러져 있어 ticker matcher가 모든 행에 걸린다.
+        if not matches_checkpoint(checkpoint, row, use_tickers=role_pool):
             continue
-        (confirming if role == "supporting" else refuting).append(row)  # ②
+        if role_pool:
+            (confirming if role == "supporting" else refuting).append(row)  # ②
+        elif checkpoint.get("direction") == "supporting":
+            confirming.append(row)
+        else:
+            refuting.append(row)
 
     if not confirming and not refuting:
         return {"verdict": "no_signal", "evidence": [], "at": as_of or _now()}
@@ -132,17 +152,28 @@ def evaluate_checkpoint(checkpoint: dict, evidence_rows: list, *, as_of: str = "
     # 반증 행이 사본에서 잘리면 안 된다 — challenged 배지 아래 확인 기사만 보이면
     # 사용자는 판정을 눈으로 검증할 수 없다. 반증 먼저 싣고 남은 칸을 지지로 채운다.
     hits = (_sorted(refuting) + _sorted(confirming))[:MAX_EVIDENCE_COPIES]
-    evidence = [
-        {
-            # 근거 참조는 evidence_id가 아니라 memory_id 사본이다 — 근거 행은 갱신마다
-            # DELETE 후 재삽입이라 evidence_id가 다음 갱신에 사라진다(regime_v2.py 실측).
-            "memoryId": str(row.get("memoryId") or ""),
-            "date": str(row.get("evidenceDate") or ""),
-            "title": str(row.get("title") or "")[:220],
-            "role": str(row.get("role") or ""),
-        }
-        for row in hits
-    ]
+    if role_pool:
+        evidence = [
+            {
+                # 근거 참조는 evidence_id가 아니라 memory_id 사본이다 — 근거 행은 갱신마다
+                # DELETE 후 재삽입이라 evidence_id가 다음 갱신에 사라진다(regime_v2.py 실측).
+                "memoryId": str(row.get("memoryId") or ""),
+                "date": str(row.get("evidenceDate") or ""),
+                "title": str(row.get("title") or "")[:220],
+                "role": str(row.get("role") or ""),
+            }
+            for row in hits
+        ]
+    else:
+        # 문서 풀에는 role 분류가 없다 — 없는 분류를 빈 값으로 흉내 내지 않는다.
+        evidence = [
+            {
+                "docId": str(row.get("docId") or "")[:400],
+                "date": str(row.get("evidenceDate") or ""),
+                "title": str(row.get("title") or "")[:220],
+            }
+            for row in hits
+        ]
     return {"verdict": verdict, "evidence": evidence, "at": as_of or _now()}
 
 
@@ -343,6 +374,20 @@ def merge_state_checkpoints(db_path, state_id: str, incoming, *, as_of: str = ""
             stored, incoming, scope="narrative", scope_key=scope_key,
             forbidden_keywords=forbidden, now=as_of,
         )
+        # 들어온 것 중 검증을 통과한 개수 — 호출자가 "몇 개가 버려졌는지"를 요약에
+        # 남길 수 있어야 한다(계획 A.1 결정 2). 판정은 `merge_checkpoint_lists`와
+        # 같은 validator를 다시 부르는 것뿐이라 규칙이 갈리지 않는다.
+        accepted_ids = {
+            normalized["id"]
+            for normalized in (
+                normalize_tracked_checkpoint(
+                    value, scope="narrative", scope_key=scope_key, now=as_of,
+                    forbidden_keywords=forbidden, trusted=False,
+                )
+                for value in incoming or []
+            )
+            if normalized
+        }
         # 검증 실패 dict와 템플릿 문장은 병합 대상이 아니라 보존 대상이다.
         _, invalid, templates = partition_checkpoints(
             stored, scope="narrative", scope_key=scope_key, forbidden_keywords=forbidden, now=as_of
@@ -354,4 +399,11 @@ def merge_state_checkpoints(db_path, state_id: str, incoming, *, as_of: str = ""
             )
     finally:
         conn.close()
-    return {"ok": True, "stateId": state_id, "checkpoints": merged}
+    incoming_count = len(incoming) if isinstance(incoming, list) else 0
+    return {
+        "ok": True,
+        "stateId": state_id,
+        "checkpoints": merged,
+        "accepted": len(accepted_ids),
+        "rejected": max(0, incoming_count - len(accepted_ids)),
+    }

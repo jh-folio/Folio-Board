@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from features.agent_mode import service
+from features.market_memory import service as memory_service
 from features.agent_mode import chat
 from features.market_memory.snapshot import save_market_state_snapshot
 
@@ -33,9 +34,12 @@ def test_market_memory_agent_writeback_uses_existing_normalizer():
         "internal": {"date": "2099-12-31", "usedDocs": [{"title": "Source"}]},
     }
     normalized = {"title": "Narrative", "summary": "Summary", "sources": [{"title": "Source"}]}
+    # 저장은 API 키 경로와 공유하는 `market_memory.service.save_memory_entries`가 한다.
+    # 그쪽의 `upsert_memory`를 막아야 이 테스트가 실제 워크스페이스 DB에 쓰지 않는다 —
+    # agent_mode 쪽 이름만 막으면 진짜 저장이 사용자 DB로 나간다(실측).
     with (
         patch.object(service, "normalize_llm_memory_entry", return_value=(normalized, "")),
-        patch.object(service, "upsert_memory", side_effect=lambda _path, entry: entry),
+        patch.object(memory_service, "upsert_memory", side_effect=lambda _path, entry: entry),
     ):
         result = service.write_market_memory_from_json(pack, {"entries": [{"title": "Narrative"}]})
     assert result["status"] == "ok_agent_authored"

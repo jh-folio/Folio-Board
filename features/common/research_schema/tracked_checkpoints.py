@@ -162,17 +162,34 @@ def _normalize_tickers(values) -> list:
 
 
 def _normalize_evidence_copies(values) -> list:
+    """근거 사본. **풀에 따라 키가 다르다.**
+
+    - 내러티브 풀(`market_regime_evidence`): `memoryId` + `role`. 안정 키가
+      `memory_id`인 것은 근거 행이 갱신마다 DELETE 후 재삽입이기 때문이다.
+    - thesis 풀(연구 인덱스 문서): `docId`(문서 경로 또는 URL)이고 **`role`이 없다**
+      — 문서 풀에는 supporting/challenging 분류가 없으므로, 빈 문자열로 있는 척하지
+      않는다(계획 A.2 결정).
+    """
     out: list = []
     for value in values or []:
         if not isinstance(value, dict):
             continue
-        role = str(value.get("role") or "").strip().lower()
-        out.append({
-            "memoryId": _text(value.get("memoryId") or value.get("memory_id"), 64),
-            "date": _text(value.get("date"), 32),
-            "title": _text(value.get("title"), 220),
-            "role": role if role in EVIDENCE_ROLE_CHOICES else "",
-        })
+        memory_id = _text(value.get("memoryId") or value.get("memory_id"), 64)
+        doc_id = _text(value.get("docId") or value.get("doc_id"), 400)
+        if doc_id and not memory_id:
+            out.append({
+                "docId": doc_id,
+                "date": _text(value.get("date"), 32),
+                "title": _text(value.get("title"), 220),
+            })
+        else:
+            role = str(value.get("role") or "").strip().lower()
+            out.append({
+                "memoryId": memory_id,
+                "date": _text(value.get("date"), 32),
+                "title": _text(value.get("title"), 220),
+                "role": role if role in EVIDENCE_ROLE_CHOICES else "",
+            })
         if len(out) >= MAX_EVIDENCE_COPIES:
             break
     return out
@@ -291,7 +308,13 @@ def partition_checkpoints(
     invalid: list = []
     templates: list = []
     seen_ids: set = set()
-    for value in values or []:
+    # 타입 가드 — 저장된 값이 리스트가 아니어도(단일 dict·숫자) 죽거나 dict의 키를
+    # 체크포인트로 읽으면 안 된다(`checkpoint_labels`와 같은 처방).
+    if isinstance(values, dict):
+        values = [values]
+    elif not isinstance(values, (list, tuple)):
+        values = []
+    for value in values:
         if is_tracked_checkpoint(value):
             normalized = normalize_tracked_checkpoint(
                 value, scope=scope, scope_key=scope_key, now=now, forbidden_keywords=forbidden_keywords

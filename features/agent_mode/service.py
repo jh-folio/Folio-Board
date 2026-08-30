@@ -1461,11 +1461,18 @@ def prepare_market_memory_writeback(pack: dict, payload: dict) -> dict:
 
 
 def write_market_memory_from_json(pack: dict, payload: dict) -> dict:
+    # 저장은 API 키 경로와 **같은 함수**를 쓴다 — 구조화 체크포인트 병합 계약이
+    # 한쪽 경로에만 붙는 일이 구조적으로 불가능해야 한다(§6 규칙 14).
+    from features.market_memory.service import save_memory_entries
+
     prepared = prepare_market_memory_writeback(pack, payload)
-    saved = [upsert_memory(MARKET_MEMORY_DB_PATH, entry) for entry in prepared.pop("entries")]
+    stored = save_memory_entries(prepared.pop("entries"), db_path=MARKET_MEMORY_DB_PATH)
+    saved = stored["saved"]
     return {
         **prepared,
         "saved": saved,
+        "checkpointsMerged": stored["checkpointsMerged"],
+        "checkpointsDropped": stored["checkpointsDropped"],
         "message": f"AI 에이전트 시장 내러티브 {len(saved)}건을 저장했습니다.",
     }
 

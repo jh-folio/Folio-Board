@@ -39,7 +39,15 @@ Schema:
       "tickers": ["ticker symbols when supported by input"],
       "tags": ["short tags"],
       "sourceIndexes": [1, 2],
-      "dedupeKey": "issue:YYYY-MM-DD:state_key:event_kind"
+      "dedupeKey": "issue:YYYY-MM-DD:state_key:event_kind",
+      "nextCheckpoints": [
+        {
+          "item": "Korean phrase naming one concrete, observable signal (<=120 chars).",
+          "direction": "supporting | challenging",
+          "matchers": {"tickers": ["optional ticker symbols"], "keywords": ["2-40 char Korean/English phrases that would appear in a headline or summary when this signal happens"]},
+          "dueBy": "YYYY-MM-DD (optional)"
+        }
+      ]
     }
   ]
 }
@@ -60,3 +68,10 @@ Rules:
 9. `sourceIndexes` must refer to the `sourceIndex` values shown in `candidateIssues[*].docs`. If unsure, include the most relevant documents only.
 10. The output must be JSON parseable.
 11. Never omit `story`. Use lowercase snake_case such as `ai_leadership_narrows`, `rates_dollar_liquidity`, `korea_export_fx_tension`, or `trade_policy_macro_risk`.
+12. `nextCheckpoints` is the machine-readable layer of "what to verify next". It does not replace `storyCheckpoint` — write both. `storyCheckpoint` is the one-line Korean sentence a person reads; `nextCheckpoints` is what the daily rule-based verdict pass matches against new evidence.
+12-1. At most 3 checkpoints per entry. Omit the field (or return an empty array) when no concrete observable signal exists — a vague checkpoint is worse than none, because it matches everything.
+12-2. `direction` says what the signal MEANS for this narrative if it appears: `supporting` (the narrative holds) or `challenging` (the narrative is weakening). Nothing else is accepted.
+12-3. `matchers.keywords` is required (1-6 items, each 2-40 characters). Each keyword must be a **specific phrase that carries the direction**, such as `가이던스 상향`, `증설 착공`, `수주 취소`, `감산 발표`. Never use the state label or family name itself (`AI 데이터센터 전력 병목`), a bare sector word (`반도체`), or a single generic character — those match every article about the narrative and turn the daily verdict into a rubber stamp.
+12-4. `matchers.tickers` is optional for market narratives. Use plain exchange symbols (`NVDA`, `005930`) only when the signal is company-specific.
+12-5. Do not output `id`, `status`, `createdAt`, `lastVerdict`, or `history`. The server assigns them. A checkpoint you mark as already confirmed is discarded.
+12-6. Checkpoints are attached to the market state this entry creates or updates. If the entry is too thin to become a state, its checkpoints are dropped.

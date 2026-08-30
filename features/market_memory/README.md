@@ -58,6 +58,7 @@
 - `features/market_memory/service.py`: LLM 기반 내러티브 정리와 서버 시작 시 Regime 추세 자동 갱신 스케줄링
 - `features/market_memory/regime_v2.py`: Regime 근거 분류, momentum/confidence 계산, 변화 로그, thesis 연결
 - `features/market_memory/checkpoint_verdicts.py`: 구조화 체크포인트 판정 pass(규칙 기반)와 생성·교체 쓰기 경로
+- `features/thesis_tracking/checkpoint_verdicts.py`: thesis 체크포인트 판정(근거 풀은 연구 인덱스 문서, 0건이면 인덱스를 열지 않음)
 - `features/common/research_schema/tracked_checkpoints.py`: 구조화 체크포인트 스키마·검증·병합 (market_memory와 thesis_tracking 공용)
 - `features/market_memory/prompt.md`: LLM 기반 시장 내러티브 정리 프롬프트
 - `app.py`: `/api/memory`, `/api/memory/states`, `/api/memory/regime/refresh`, `/api/memory/states/{state_id}/evidence|changes|thesis-links` API와 브리핑 생성 후 자동 저장
@@ -134,10 +135,33 @@
 
 내러티브는 기존 `market_regime_changes` 테이블에 `field="checkpoint:<id>"` 행으로 남깁니다. **근거 참조는 `evidence_id`가 아니라 `memory_id` 사본입니다** — 근거 행은 갱신마다 `DELETE` 후 재삽입이라 `evidence_id`가 다음 갱신에 사라집니다(`regime_v2.py` 실측). 같은 이유로 체크포인트의 `lastVerdict.evidence`도 `memoryId` + 날짜·제목 사본을 들고 있습니다. thesis는 체크포인트 dict 안의 `history` 배열(상한 20)과 기존 `thesis_delta`를 쓰며 새 테이블을 만들지 않습니다.
 
+### 생성 경로 — LLM 시장 메모리 업데이트
+
+구조화 체크포인트는 **시장 메모리 업데이트**에서 태어납니다. LLM 엔트리의 `nextCheckpoints` 필드이며 모양은 `[{item, direction, matchers:{tickers,keywords}, dueBy?}]`, 엔트리당 최대 3개입니다.
+
+- **LLM은 `id`·`status`·`createdAt`·`lastVerdict`·`history`를 내지 않습니다.** 서버가 찍습니다 — 맡기면 "이미 확인됨"으로 태어나는 체크포인트가 생깁니다. 입력 모양에서 그 키들을 들이지 않고(`service.llm_checkpoint_inputs`), validator가 `trusted=False`로 한 번 더 벗깁니다.
+- **프롬프트는 부탁이고 집행은 validator입니다.** `prompt.md`가 모양·direction enum·keyword 규칙(각 2~40자, 상태 라벨 전문 금지, 방향을 담은 구체어)·엔트리당 3개 상한을 지시하지만, 검증은 `tracked_checkpoints`가 병합 시점에 합니다.
+- **귀속은 엔트리의 상태를 따릅니다.** 엔트리가 active/watch 상태를 만들거나 갱신할 때 그 상태에 `merge_state_checkpoints`로 병합합니다. 상태로 승격되지 않은 issue 메모의 체크포인트는 버리고 **버린 개수만 결과 요약에 남깁니다**(`checkpointsMerged`/`checkpointsDropped`) — 체크포인트는 상태의 소유물이고, "모든 이슈를 바로 상태로 올리지 않는다"는 기존 보수 원칙이 여기에도 적용됩니다.
+- **생성 경로가 둘이라 저장을 한 함수로 모았습니다**(`service.save_memory_entries`). `/api/memory/llm`(API 키)과 Agent CLI writeback이 같은 함수를 쓰므로 병합 계약이 한쪽에만 붙는 일이 구조적으로 불가능합니다.
+- **`storyCheckpoint`(자유 문장)는 그대로 병존합니다.** 사람이 읽는 한 줄 요약이고, 구조화 체크포인트는 기계가 대조하는 층입니다. 대체하면 LLM 구조화 실패가 곧 표시 실패가 됩니다.
+- 상태 스냅샷 경로는 체크포인트를 내지 않습니다 — 생성 경로가 늘수록 병합 규칙이 갈라집니다.
+
+### thesis 판정 — 근거 풀은 연구 인덱스 문서
+
+`features/thesis_tracking/checkpoint_verdicts.py`가 소유하며 내러티브 판정과 같은 자리에서 돕니다. 판정 코어는 같고 근거 풀만 다릅니다.
+
+- 풀은 `search_documents(company=ticker, scope="news")` — Thesis Delta와 워치리스트 뉴스가 이미 쓰는 그 풀입니다. `market_memory` 행을 보조로 섞지 않습니다: 두 풀을 합치면 어느 풀이 판정했는지 설명할 수 없습니다.
+- **구조화 체크포인트를 가진 thesis가 하나도 없으면 인덱스를 열지 않습니다.** `load_index()`는 실측 4.7초라 수집 자동화 경로에서 공짜가 아닙니다.
+- 문서가 그 회사 **태그를 실제로 갖고 있어야** 근거입니다. 검색의 제목 부분일치 fallback으로 딸려 온 남의 기사는 걸러냅니다(워치리스트가 배운 것과 같은 규칙 — 연결 열쇠는 종목 코드).
+- **문서 풀에는 role 분류가 없습니다.** 그래서 체크포인트의 `direction`이 판정 방향을 정하고(supporting → `confirmed`, challenging → `challenged`), 근거 사본 키는 `memoryId`가 아니라 `docId`이며 `role`을 싣지 않습니다 — 분류가 없다는 사실을 숨기지 않습니다.
+- **여기서는 ticker matcher가 hit 판정에 쓰이지 않습니다.** 풀이 이미 그 종목으로 걸러져 있어 모든 행에 걸리고, 그러면 "그 회사 뉴스가 있다"가 곧 확인이 됩니다. 계획이 "티커 태그 문서 중 **keyword hit**이 전부"라고 적은 이유이자 thesis 체크포인트에 keyword를 필수로 건 이유입니다.
+- 판정 이력은 체크포인트 dict 안의 `history` 배열입니다(상한 20). `market_regime_changes`는 내러티브 전용이고 thesis용 새 테이블은 만들지 않습니다.
+- 쓰기는 `store.save_thesis_checkpoints`로 `next_checkpoints_json`만 제자리 교체합니다. **`last_reviewed_at`은 바꾸지 않습니다** — 기계 판정은 사용자의 검토가 아닙니다. 노트 재동기화(`upsert_thesis`)는 문자열 목록만 갈아끼우므로 판정 status와 이력이 살아남습니다.
+
 ### 남은 것
 
-- **구조화 체크포인트를 만드는 프로덕션 경로가 아직 없습니다.** LLM 시장 메모리 업데이트가 어떤 출력 계약으로 이것을 내는지가 정해지지 않아, 판정 pass는 실행되지만 현재 대상이 0건입니다(저장본 65건은 전부 템플릿 문장). 쓰기 API(`merge_state_checkpoints`)는 준비돼 있습니다.
-- **thesis 판정의 근거 풀이 정해지지 않았습니다.** 스키마·검증(`scope="thesis"`)과 판정의 순수 코어는 구현했고, 근거 목록을 만드는 부분만 남았습니다.
+- **thesis 체크포인트를 만드는 화면·API가 아직 없습니다**(Stage B). 만들 때 생성 경로는 회사명·티커를 keyword로 쓰지 못하게 막아야 합니다 — 풀이 이미 그 회사로 걸러져 있어 모든 기사가 매칭됩니다. 지금은 검증에 이 금지가 없으므로(저장·판정 양쪽이 같은 규칙을 써야 해서 한쪽만 조이지 않았습니다) 생성 경로가 그 자리를 맡습니다.
+- 화면 표시(`검증 불가` 배지, 무소식 배지, 판정 타임라인)는 Stage C입니다.
 
 ## RSS Short-Term Memory Intake
 
@@ -145,7 +169,7 @@ Market Memory can be updated from RSS/evidence before a briefing is generated. R
 
 This keeps the hierarchy explicit: RSS/evidence is short-term memory, Market Memory is medium-term memory, and reports consume both.
 
-`run_rss_market_memory_update()`는 digest 반영 후 active/watch 상태의 규칙 기반 추세 갱신(`refresh_all_regimes`)과 체크포인트 판정 pass(`run_checkpoint_verdicts`)까지 함께 실행한다. RSS 수집·Market Memory 자동화가 돌 때마다 momentum/confidence/근거 카운트가 자동으로 갱신되며, 화면에서 상태별 수동 갱신 버튼은 제공하지 않는다.
+`run_rss_market_memory_update()`는 digest 반영 후 active/watch 상태의 규칙 기반 추세 갱신(`refresh_all_regimes`)과 체크포인트 판정 pass(내러티브 `run_checkpoint_verdicts`, thesis `run_thesis_checkpoint_verdicts`)까지 함께 실행한다. 판정 실패는 수집 잡을 죽이지 않는다. RSS 수집·Market Memory 자동화가 돌 때마다 momentum/confidence/근거 카운트가 자동으로 갱신되며, 화면에서 상태별 수동 갱신 버튼은 제공하지 않는다.
 
 Market State Snapshot 생성 시에는 코드가 축별 점수로 강하게 선별하지 않는다. `build_market_state_context()`는 최신 RSS 후보를 넓게 압축한 `rssCandidates`(기본 최대 120개)를 LLM에 넘기고, 기존 축별 `shortTermDigest`는 탐색 보조 인덱스로만 제공한다. 중요한 드라이버 선택, 방향성 판단, 행동 가이드 작성은 LLM이 수행한다.
 

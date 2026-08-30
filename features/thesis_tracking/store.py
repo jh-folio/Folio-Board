@@ -167,6 +167,20 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
     return ticker
 
 
+def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
+    """`next_checkpoints_json`만 제자리 교체한다(판정 pass 전용).
+
+    `upsert_thesis`를 쓰지 않는 것은 그쪽이 문자열 목록을 받는 노트 동기화 경로라서다.
+    판정은 dict 원소의 `status`·`history`만 바꾸므로 나머지 필드를 건드릴 이유가 없고,
+    **`last_reviewed_at`은 절대 바꾸지 않는다** — 기계 판정은 사용자의 검토가 아니다.
+    """
+    conn.execute(
+        "UPDATE thesis SET next_checkpoints_json=?, updated_at=? WHERE ticker=?",
+        (json.dumps(checkpoints, ensure_ascii=False), _now(), str(ticker or "").upper()),
+    )
+    conn.commit()
+
+
 def _row_to_dict(row) -> dict:
     d = dict(row)
     for field_name, col in _LIST_COLS.items():
