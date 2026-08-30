@@ -3,12 +3,22 @@
 내러티브와 같은 pass·같은 스키마이고 판정 코어(`evaluate_checkpoint`·`apply_verdict`)
 를 그대로 재사용한다. 다른 것은 근거 풀 하나다.
 
-- 풀은 `search_documents(company=ticker, scope="news")` — Thesis Delta와 워치리스트
-  뉴스가 이미 쓰는 그 풀이다. `market_memory` 행을 보조로 섞지 않는다(계획 A.2 결정):
-  두 풀을 합치면 어느 풀이 판정했는지 설명할 수 없다.
-- **문서 풀에는 role 분류가 없다.** 그래서 `role_pool=False`로 부르고 체크포인트의
-  `direction`이 판정 방향을 정한다. 근거 사본 키도 `memoryId`가 아니라 `docId`이며
-  `role`을 넣지 않는다 — 분류가 없다는 사실을 숨기지 않는다.
+- 풀은 그 종목 **태그가 붙은** 뉴스 문서를 **날짜순**으로 모은다. `search_documents`의
+  브라우즈 경로는 관련도 점수순 상위 200건이라, 보도가 많은 종목(실측 GOOGL 9,387건
+  태그)에서는 이번 주 기사가 상한 밖으로 잘려 판정이 영영 `no_signal`이 된다 —
+  워치리스트가 이미 문서화한 바로 그 버그("검색 상위 200건 안에서만 세어 AMD가
+  297건인데 69건으로 나왔다"). 판정은 컷오프 이후의 문서만 보므로 풀도 컷오프
+  이후만 담으면 상한이 필요 없다.
+- `market_memory` 행을 보조로 섞지 않는다(계획 A.2 결정): 두 풀을 합치면 어느 풀이
+  판정했는지 설명할 수 없다.
+- **문서 풀에는 role 분류가 없다.** `role_pool=False`로 부르고 체크포인트의
+  `direction`이 판정 방향을 정한다. 근거 사본 키는 `docId`이며 `role`을 넣지 않는다.
+  `docId`는 **URL 우선**이다 — 파일 경로는 RSS 보관 기간 정리가 지우고 재수집이
+  다시 만드는 값이라, 30일 뒤 사본이 아무것도 가리키지 못한다.
+- **회사명·티커는 매칭 재료가 아니다.** 풀이 이미 그 종목이라 회사 태그를 haystack에
+  넣으면 회사명 keyword가 모든 기사에 걸려 매일 confirmed가 된다. 그래서 행에
+  matchedTerms를 싣지 않고(haystack = 제목+요약), validator에도 티커·회사명을
+  금지어로 넘긴다.
 - **구조화 체크포인트가 0건이면 인덱스를 열지 않는다.** `load_index()`는 실측 4.7초라
   수집 자동화 경로에서 공짜가 아니다. 오늘 thesis는 0행이므로 이 gate 덕에 기본
   비용이 0이다.
@@ -20,15 +30,16 @@ from __future__ import annotations
 import datetime as dt
 
 from features.common.research_schema.tracked_checkpoints import (
-    normalize_tracked_checkpoint,
     partition_checkpoints,
+    rewrite_checkpoints,
 )
 from features.market_memory.checkpoint_verdicts import apply_verdict, evaluate_checkpoint
 
 # 판정 대상 상태 — 닫힌 thesis는 확인할 것이 없다.
 JUDGED_STATUSES = ("active", "watch")
-DOC_POOL_LIMIT = 200
-MAX_MATCHED_TERMS = 12
+# 컷오프 이후 문서가 비정상적으로 많아도 판정 비용이 폭주하지 않게 하는 안전판.
+# 날짜순이라 잘리는 것은 가장 오래된 쪽이다(관련도순 상한과 달리 최신이 안 잘린다).
+DOC_POOL_CAP = 500
 
 
 def _now() -> str:
@@ -36,37 +47,26 @@ def _now() -> str:
 
 
 def _doc_id(doc: dict) -> str:
-    return str(doc.get("path") or doc.get("url") or doc.get("id") or "")
+    # URL 우선 — 경로는 보관 기간 정리(retention)가 지운다.
+    return str(doc.get("url") or doc.get("path") or doc.get("id") or "")
 
 
-def _matched_terms(doc: dict) -> list:
-    """ticker matcher가 볼 수 있는 것 — 문서에 붙은 회사 태그와 주제 태그.
-
-    본문에서 티커를 찾지 않는 규칙(`matches_checkpoint`)이 여기에도 그대로 걸린다.
-    """
-    terms: list = []
-    for company in doc.get("companies") or []:
-        for value in (company.get("ticker"), company.get("name")):
-            text = str(value or "").strip()
-            if text and text not in terms:
-                terms.append(text)
-    for tag in (doc.get("impactTags") or []) + (doc.get("sectors") or []):
-        text = str(tag or "").strip()
-        if text and text not in terms:
-            terms.append(text)
-    return terms[:MAX_MATCHED_TERMS]
+def _forbidden_terms(thesis: dict) -> list:
+    """티커·회사명은 keyword가 될 수 없다 — 풀이 이미 그 종목이라 전부 매칭된다."""
+    return [thesis.get("ticker"), thesis.get("company")]
 
 
 def _tagged_with(doc: dict, ticker: str, company: str) -> bool:
     """그 회사 **태그가 붙은** 문서만 남긴다.
 
-    `search_documents`의 회사 필터는 태그가 안 맞으면 제목·본문 부분일치로 물러서는데,
-    두 글자 티커에서는 그것이 남의 기사를 잔뜩 물어 온다(`MU`가 "무역"에 걸리는 식).
-    워치리스트가 배운 것과 같은 규칙 — 연결 열쇠는 종목 코드다.
+    제목·본문 부분일치로 물러서지 않는다 — 두 글자 티커에서는 그것이 남의 기사를
+    잔뜩 물어 온다(`MU`가 "무역"에 걸리는 식). 연결 열쇠는 종목 코드다(워치리스트 규칙).
     """
     from features.common.company_lookup import company_matches_query
 
     for tagged in doc.get("companies") or []:
+        if not isinstance(tagged, dict):
+            continue
         if ticker and company_matches_query(tagged, ticker):
             return True
         if company and company_matches_query(tagged, company):
@@ -74,18 +74,36 @@ def _tagged_with(doc: dict, ticker: str, company: str) -> bool:
     return False
 
 
-def thesis_evidence_rows(index, thesis: dict, *, limit: int = DOC_POOL_LIMIT) -> list:
-    """그 thesis 종목의 뉴스 문서를 판정 코어가 읽는 행 모양으로 만든다."""
-    from features.common.research_library.search.service import search_documents
+def earliest_cutoff_date(checkpoints: list) -> str:
+    """판정이 실제로 볼 수 있는 가장 이른 근거 날짜. 풀을 이 날짜 이후로 좁힌다."""
+    dates = []
+    for checkpoint in checkpoints or []:
+        last = (checkpoint.get("lastVerdict") or {}).get("at")
+        dates.append(str(last or checkpoint.get("createdAt") or "")[:10])
+    valid = [d for d in dates if len(d) == 10]
+    return min(valid) if valid else ""
+
+
+def thesis_evidence_rows(index, thesis: dict, *, since: str = "", cap: int = DOC_POOL_CAP) -> list:
+    """그 thesis 종목의 뉴스 문서를 판정 코어가 읽는 행 모양으로 만든다.
+
+    인덱스를 직접 훑어 **태그 일치 + 날짜 필터**로 모으고 날짜순으로 정렬한다.
+    관련도 점수는 쓰지 않는다 — 판정에서 신선도가 관련도를 이긴다.
+    """
+    # search/service.py가 쓰는 것과 같은 news 판정을 쓴다(scope="news"와 동일 경계).
+    from features.daily_briefing.service import is_news_document
 
     ticker = str(thesis.get("ticker") or "").strip()
     company = str(thesis.get("company") or "").strip()
-    query_company = ticker or company
-    if not query_company:
+    if not (ticker or company):
         return []
-    docs = search_documents(index, company=query_company, limit=limit, scope="news")
     rows: list = []
-    for doc in docs:
+    for doc in (index or {}).get("documents") or []:
+        if not is_news_document(doc):
+            continue
+        date = str(doc.get("date") or "")[:10]
+        if since and date and date < since:
+            continue
         if not _tagged_with(doc, ticker, company):
             continue
         doc_id = _doc_id(doc)
@@ -93,27 +111,14 @@ def thesis_evidence_rows(index, thesis: dict, *, limit: int = DOC_POOL_LIMIT) ->
             continue
         rows.append({
             "docId": doc_id,
-            "evidenceDate": str(doc.get("date") or "")[:10],
+            "evidenceDate": date,
             "title": str(doc.get("title") or ""),
             "summary": str(doc.get("summary") or doc.get("searchSnippet") or ""),
-            "matchedTerms": _matched_terms(doc),
+            # matchedTerms를 싣지 않는다 — 회사 태그가 haystack에 들어가면 회사명
+            # keyword가 모든 기사에 걸린다(모듈 docstring).
         })
-    return rows
-
-
-def _rewrite(stored: list, updated: dict, *, ticker: str, as_of: str) -> list:
-    """바뀐 원소만 제자리 교체 — 검증 실패 dict·템플릿·순서는 그대로 남는다."""
-    rewritten: list = []
-    for element in stored:
-        if isinstance(element, dict):
-            normalized = normalize_tracked_checkpoint(
-                element, scope="thesis", scope_key=ticker, now=as_of
-            )
-            if normalized and normalized["id"] in updated:
-                rewritten.append(updated.pop(normalized["id"]))
-                continue
-        rewritten.append(element)
-    return rewritten
+    rows.sort(key=lambda row: row["evidenceDate"], reverse=True)
+    return rows[:cap]
 
 
 def run_thesis_checkpoint_verdicts(db_path=None, *, as_of: str = "", index_loader=None) -> dict:
@@ -130,7 +135,8 @@ def run_thesis_checkpoint_verdicts(db_path=None, *, as_of: str = "", index_loade
             if not ticker:
                 continue
             structured, _invalid, _templates = partition_checkpoints(
-                thesis.get("next_checkpoints"), scope="thesis", scope_key=ticker, now=as_of
+                thesis.get("next_checkpoints"), scope="thesis", scope_key=ticker,
+                forbidden_keywords=_forbidden_terms(thesis), now=as_of,
             )
             if structured:
                 targets.append((thesis, ticker, structured))
@@ -147,34 +153,12 @@ def run_thesis_checkpoint_verdicts(db_path=None, *, as_of: str = "", index_loade
 
         results: list = []
         for thesis, ticker, structured in targets:
-            evidence_rows = thesis_evidence_rows(index, thesis)
-            changes: list = []
-            verdicts: list = []
-            updated: dict = {}
-            for checkpoint in structured:
-                outcome = evaluate_checkpoint(checkpoint, evidence_rows, as_of=as_of, role_pool=False)
-                result = apply_verdict(checkpoint, outcome, as_of=as_of)
-                verdicts.append({
-                    "checkpointId": checkpoint["id"],
-                    "item": checkpoint["item"],
-                    "verdict": outcome["verdict"],
-                    "status": checkpoint["status"],
-                })
-                if result["changed"]:
-                    updated[checkpoint["id"]] = checkpoint
-                    changes.append({"checkpointId": checkpoint["id"], **result})
-            if updated:
-                store.save_thesis_checkpoints(
-                    conn, ticker,
-                    _rewrite(thesis.get("next_checkpoints") or [], updated, ticker=ticker, as_of=as_of),
+            try:
+                results.append(
+                    _judge_one_thesis(conn, store, index, thesis, ticker, structured, as_of=as_of)
                 )
-            results.append({
-                "ticker": ticker,
-                "evaluated": len(structured),
-                "evidenceCount": len(evidence_rows),
-                "changes": changes,
-                "verdicts": verdicts,
-            })
+            except Exception as exc:  # noqa: BLE001 - thesis 하나가 나머지 판정을 막지 않는다
+                results.append({"ticker": ticker, "error": type(exc).__name__, "evaluated": 0, "changes": [], "verdicts": []})
         return {
             "ok": True,
             "asOf": as_of,
@@ -186,3 +170,37 @@ def run_thesis_checkpoint_verdicts(db_path=None, *, as_of: str = "", index_loade
         }
     finally:
         conn.close()
+
+
+def _judge_one_thesis(conn, store, index, thesis: dict, ticker: str, structured: list, *, as_of: str) -> dict:
+    evidence_rows = thesis_evidence_rows(index, thesis, since=earliest_cutoff_date(structured))
+    changes: list = []
+    verdicts: list = []
+    updated: dict = {}
+    for checkpoint in structured:
+        outcome = evaluate_checkpoint(checkpoint, evidence_rows, as_of=as_of, role_pool=False)
+        result = apply_verdict(checkpoint, outcome, as_of=as_of)
+        verdicts.append({
+            "checkpointId": checkpoint["id"],
+            "item": checkpoint["item"],
+            "verdict": outcome["verdict"],
+            "status": checkpoint["status"],
+        })
+        if result["changed"]:
+            updated[checkpoint["id"]] = checkpoint
+            changes.append({"checkpointId": checkpoint["id"], **result})
+    if updated:
+        store.save_thesis_checkpoints(
+            conn, ticker,
+            rewrite_checkpoints(
+                thesis.get("next_checkpoints"), updated, scope="thesis", scope_key=ticker,
+                forbidden_keywords=_forbidden_terms(thesis), now=as_of,
+            ),
+        )
+    return {
+        "ticker": ticker,
+        "evaluated": len(structured),
+        "evidenceCount": len(evidence_rows),
+        "changes": changes,
+        "verdicts": verdicts,
+    }

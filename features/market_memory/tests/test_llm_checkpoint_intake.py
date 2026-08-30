@@ -199,6 +199,76 @@ def test_second_run_inherits_verdict_state_for_the_same_checkpoint():
         assert again[0]["status"] == "challenged"
 
 
+# --- 계보 승계·귀속 (2026-08-30 리뷰) -------------------------------------
+
+def test_checkpoints_survive_the_daily_state_row_rotation():
+    """상태 행은 날짜별로 회전한다(state_id = sha(state_key:date)) — 승계 없이는
+    체크포인트가 매일 open으로 다시 태어나고 어제의 판정·이력은 판정 pass가 다시는
+    방문하지 않는 overridden 행에 고립된다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        S.save_memory_entries([_entry(date="2026-08-30")], db_path=db_path)
+        # 판정이 지나간 것처럼 status를 바꿔 둔다.
+        state = next(s for s in _states(db_path) if s["status"] in ("active", "watch"))
+        stored = json.loads(state["next_checkpoints_json"])
+        for element in stored:
+            if isinstance(element, dict):
+                element["status"] = "confirmed"
+                element["history"] = [{"at": "2026-08-30T01:00:00+00:00", "from": "open", "to": "confirmed", "verdict": "confirmed"}]
+        conn = M.connect(db_path)
+        with conn:
+            conn.execute(
+                "UPDATE market_narrative_states SET next_checkpoints_json=? WHERE state_id=?",
+                (json.dumps(stored, ensure_ascii=False), state["state_id"]),
+            )
+        conn.close()
+
+        # 다음 날 같은 내러티브가 다시 온다 — 새 행이 태어나고 어제 행은 밀려난다.
+        S.save_memory_entries([_entry(date="2026-08-31")], db_path=db_path)
+        live = [s for s in _states(db_path) if s["status"] in ("active", "watch")]
+        assert len(live) == 1
+        assert live[0]["state_id"] != state["state_id"]  # 실제로 회전했다
+        survived = [c for c in json.loads(live[0]["next_checkpoints_json"]) if isinstance(c, dict)]
+        assert len(survived) == 1
+        assert survived[0]["status"] == "confirmed"
+        assert len(survived[0]["history"]) == 1
+
+
+def test_checkpoints_attach_to_an_existing_live_state_by_state_key():
+    """새 상태를 파생하지 않는 엔트리(중요도 미달)라도 살아 있는 상태를 갱신하는
+    것이면 체크포인트는 그 상태로 간다 — 귀속은 stateKey를 따른다(계획 결정 2)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        S.save_memory_entries([_entry(nextCheckpoints=[])], db_path=db_path)  # 상태를 먼저 세운다
+        thin = _entry(
+            importance="low",
+            sources=[{"title": "t", "source": "s", "date": "2026-08-30", "url": "u"}],
+        )
+        out = S.save_memory_entries([thin], db_path=db_path)
+        assert "state" not in out["saved"][0]        # 새 상태는 파생되지 않았지만
+        assert out["checkpointsMerged"] == 1         # 살아 있는 상태에 붙었다
+        assert out["checkpointsDropped"] == 0
+        live = next(s for s in _states(db_path) if s["status"] in ("active", "watch"))
+        assert [c for c in json.loads(live["next_checkpoints_json"]) if isinstance(c, dict)]
+
+
+def test_merge_failures_are_not_reported_as_llm_rejections(monkeypatch):
+    """병합 실패를 dropped에 섞으면 기능 전체가 죽어도 'LLM이 나쁜 체크포인트를
+    냈다'와 구분되지 않는다."""
+    from features.market_memory import checkpoint_verdicts as CV
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db broke")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        monkeypatch.setattr(CV, "merge_state_checkpoints", boom)
+        out = S.save_memory_entries([_entry()], db_path=db_path)
+        assert out["checkpointsDropped"] == 0
+        assert out["checkpointErrors"] == 1
+        assert out["checkpointErrorCode"] == "RuntimeError"
+
+
 def _run_all():
     import pytest
     sys.exit(pytest.main([os.path.abspath(__file__), "-q"]))

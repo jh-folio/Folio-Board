@@ -23,11 +23,15 @@ from features.common.research_schema.tracked_checkpoints import (
     merge_checkpoint_lists,
     normalize_tracked_checkpoint,
     partition_checkpoints,
+    rewrite_checkpoints,
     squash,
 )
 from features.market_memory.memory import connect, init_db, parse_json_list
 
 MIN_EVIDENCE_SCORE = 0.5
+# dueBy 없는 open 체크포인트의 수명. §4 사다리의 구조 판정 창(90일)과 같은 눈금 —
+# 이 창을 한 번도 신호 없이 넘긴 "다음 확인"은 더는 확인이 아니다.
+OPEN_MAX_AGE_DAYS = 90
 
 
 def _now() -> str:
@@ -135,8 +139,12 @@ def evaluate_checkpoint(checkpoint: dict, evidence_rows: list, *, as_of: str = "
             (confirming if role == "supporting" else refuting).append(row)  # ②
         elif checkpoint.get("direction") == "supporting":
             confirming.append(row)
-        else:
+        elif checkpoint.get("direction") == "challenging":
             refuting.append(row)
+        else:
+            # direction이 enum 밖이면 판정하지 않는다 — 정규화 안 된 dict가 흘러들었을
+            # 때 기본이 challenged면, 지지 기사가 가설을 약화시켰다고 기록된다.
+            continue
 
     if not confirming and not refuting:
         return {"verdict": "no_signal", "evidence": [], "at": as_of or _now()}
@@ -211,7 +219,27 @@ def apply_verdict(checkpoint: dict, outcome: dict, *, as_of: str) -> dict:
         checkpoint["status"] = "expired"
         append_history(checkpoint, at=as_of, from_status=previous_status, to_status="expired", verdict="no_signal")
         return {"changed": True, "from": previous_status, "to": "expired", "verdict": "no_signal"}
+    # dueBy 없는 open도 영원히 살지 않는다 — LLM이 매일 문구를 조금씩 바꿔 내면
+    # open이 무한히 쌓인다(병합은 open을 자르지 않는다). 사다리의 구조 판정 창(90일,
+    # §4)을 한 번도 신호 없이 넘긴 항목은 만료가 맞다. 상태 전환이라 이력에 남는다.
+    if (
+        previous_status == CHECKPOINT_STATUS_DEFAULT
+        and not checkpoint.get("lastVerdict")
+        and _age_days(checkpoint.get("createdAt"), as_of) > OPEN_MAX_AGE_DAYS
+    ):
+        checkpoint["status"] = "expired"
+        append_history(checkpoint, at=as_of, from_status=previous_status, to_status="expired", verdict="no_signal")
+        return {"changed": True, "from": previous_status, "to": "expired", "verdict": "no_signal"}
     return {"changed": False, "from": previous_status, "to": previous_status, "verdict": "no_signal"}
+
+
+def _age_days(created_at, as_of: str) -> int:
+    try:
+        created = dt.date.fromisoformat(str(created_at or "")[:10])
+        today = dt.date.fromisoformat(str(as_of or "")[:10])
+    except ValueError:
+        return 0
+    return (today - created).days
 
 
 def _change_id(state_id: str, checkpoint_id: str, at: str) -> str:
@@ -308,18 +336,11 @@ def run_state_checkpoint_verdicts(conn, state_id: str, *, as_of: str = "") -> di
         )
 
     if updated:
-        # 바뀐 원소만 제자리 교체 — 검증 실패 dict·템플릿·순서는 그대로 남는다.
-        rewritten: list = []
-        for element in stored:
-            if isinstance(element, dict):
-                normalized = normalize_tracked_checkpoint(
-                    element, scope="narrative", scope_key=scope_key,
-                    now=as_of, forbidden_keywords=forbidden,
-                )
-                if normalized and normalized["id"] in updated:
-                    rewritten.append(updated.pop(normalized["id"]))
-                    continue
-            rewritten.append(element)
+        # 바뀐 원소만 제자리 교체 — 보존 계약은 tracked_checkpoints가 소유한다.
+        rewritten = rewrite_checkpoints(
+            stored, updated, scope="narrative", scope_key=scope_key,
+            forbidden_keywords=forbidden, now=as_of,
+        )
         conn.execute(
             "UPDATE market_narrative_states SET next_checkpoints_json=?, updated_at=? WHERE state_id=?",
             (json.dumps(rewritten, ensure_ascii=False), as_of, state_id),
@@ -374,20 +395,18 @@ def merge_state_checkpoints(db_path, state_id: str, incoming, *, as_of: str = ""
             stored, incoming, scope="narrative", scope_key=scope_key,
             forbidden_keywords=forbidden, now=as_of,
         )
-        # 들어온 것 중 검증을 통과한 개수 — 호출자가 "몇 개가 버려졌는지"를 요약에
-        # 남길 수 있어야 한다(계획 A.1 결정 2). 판정은 `merge_checkpoint_lists`와
-        # 같은 validator를 다시 부르는 것뿐이라 규칙이 갈리지 않는다.
-        accepted_ids = {
-            normalized["id"]
-            for normalized in (
-                normalize_tracked_checkpoint(
-                    value, scope="narrative", scope_key=scope_key, now=as_of,
-                    forbidden_keywords=forbidden, trusted=False,
-                )
-                for value in incoming or []
+        # 들어온 것 중 검증을 통과한 **개수**(집합이 아니다) — dropped의 의미는
+        # "검증 탈락"이다. 집합으로 세면 표기만 다른 중복이 탈락으로 잘못 보고되고,
+        # 재실행이 기존 항목을 새로 만든 것처럼 보고된다(2026-08-30 리뷰). 같은
+        # validator를 다시 부르는 것뿐이라 규칙이 갈리지 않는다.
+        accepted = sum(
+            1
+            for value in (incoming or [])
+            if normalize_tracked_checkpoint(
+                value, scope="narrative", scope_key=scope_key, now=as_of,
+                forbidden_keywords=forbidden, trusted=False,
             )
-            if normalized
-        }
+        )
         # 검증 실패 dict와 템플릿 문장은 병합 대상이 아니라 보존 대상이다.
         _, invalid, templates = partition_checkpoints(
             stored, scope="narrative", scope_key=scope_key, forbidden_keywords=forbidden, now=as_of
@@ -404,6 +423,32 @@ def merge_state_checkpoints(db_path, state_id: str, incoming, *, as_of: str = ""
         "ok": True,
         "stateId": state_id,
         "checkpoints": merged,
-        "accepted": len(accepted_ids),
-        "rejected": max(0, incoming_count - len(accepted_ids)),
+        "accepted": accepted,
+        "rejected": max(0, incoming_count - accepted),
     }
+
+
+def current_state_id_for_key(db_path, state_key: str) -> str:
+    """state_key의 현재 active/watch 행 id. 없으면 빈 문자열.
+
+    귀속은 엔트리의 stateKey를 따른다(계획 A.1 결정 2) — 엔트리가 새 상태를 파생하지
+    않아도(중요도 미달 등) 기존 살아 있는 상태를 갱신하는 것이면 체크포인트는 그
+    상태의 소유물이다. 상태 행은 날짜별로 회전하므로 id가 아니라 key로 찾아야 한다.
+    """
+    key = str(state_key or "").strip()
+    if not key:
+        return ""
+    conn = connect(db_path)
+    init_db(conn)
+    try:
+        row = conn.execute(
+            """
+            SELECT state_id FROM market_narrative_states
+            WHERE state_key=? AND status IN ('active','watch')
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (key,),
+        ).fetchone()
+        return str(row["state_id"]) if row else ""
+    finally:
+        conn.close()

@@ -1666,7 +1666,23 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
         "updatedAt": updated_at,
     }
     with nullcontext():
+        inherited_checkpoints = "[]"
         if status in {"active", "watch"}:
+            # **체크포인트는 계보(state_key)의 소유물이다.** state_id는 날짜별로 회전해
+            # 새 행이 빈 목록으로 태어나는데, 승계 없이 어제 행을 overridden으로 밀면
+            # 판정 status·이력이 판정 pass가 다시는 방문하지 않는 행에 고립되고 같은
+            # 체크포인트가 매일 open으로 다시 태어난다(2026-08-30 리뷰). 밀려나는 행의
+            # 목록을 새 행이 물려받는다 — 템플릿 문장은 refresh가 어차피 다시 만든다.
+            prior = conn.execute(
+                """
+                SELECT next_checkpoints_json FROM market_narrative_states
+                WHERE state_key = ? AND status IN ('active', 'watch') AND state_id != ?
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (state_key, state_id),
+            ).fetchone()
+            if prior and prior["next_checkpoints_json"]:
+                inherited_checkpoints = prior["next_checkpoints_json"]
             conn.execute(
                 """
                 UPDATE market_narrative_states
@@ -1679,14 +1695,17 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
         # 항상 기본값(0.55)이라, 같은 날 같은 state_key로 다시 저장하면
         # refresh_regime_state()가 근거로 계산해 넣은 값이 기본값으로 되돌아간다.
         # momentum·evidence_count_*·last_confirmed_at을 건드리지 않는 것과 같은 이유다.
+        # next_checkpoints_json도 UPDATE 목록에 없다 — 같은 날 재저장이 판정 결과가
+        # 실린 목록을 승계본으로 되돌리면 안 된다(INSERT 시에만 승계가 적용된다).
         conn.execute(
             """
             INSERT INTO market_narrative_states (
                 state_id, state_key, state_label, story, story_family, status, bias,
                 category, region, importance, net_effect, summary, rationale, confidence,
-                effective_from, effective_to, source_memory_id, updated_at
+                effective_from, effective_to, source_memory_id, updated_at,
+                next_checkpoints_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(state_id) DO UPDATE SET
                 state_label=excluded.state_label,
                 story=excluded.story,
@@ -1723,6 +1742,7 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
                 state["effectiveTo"],
                 state["sourceMemoryId"],
                 state["updatedAt"],
+                inherited_checkpoints,
             ),
         )
     return state

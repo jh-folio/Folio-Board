@@ -165,6 +165,25 @@ def test_only_new_evidence_after_last_verdict_counts():
     assert fresh["verdict"] == "confirmed"
 
 
+def test_stale_open_without_due_by_expires_after_ninety_days():
+    """LLM이 매일 문구를 조금씩 바꿔 내면 open이 무한히 쌓인다(병합은 open을 자르지
+    않는다). 구조 판정 창(90일)을 신호 없이 넘긴 open은 만료된다."""
+    old = _structured(createdAt="2026-05-01T00:00:00+00:00")
+    result = apply_verdict(old, {"verdict": "no_signal", "evidence": [], "at": AS_OF}, as_of=AS_OF)
+    assert result["to"] == "expired"
+    fresh = _structured(createdAt="2026-08-01T00:00:00+00:00")
+    result = apply_verdict(fresh, {"verdict": "no_signal", "evidence": [], "at": AS_OF}, as_of=AS_OF)
+    assert result["changed"] is False and fresh["status"] == "open"
+
+
+def test_roleless_pool_ignores_rows_when_direction_is_not_an_enum():
+    """정규화 안 된 dict가 흘러들었을 때 기본이 challenged면, 지지 기사가 가설을
+    약화시켰다고 기록된다 — enum 밖 direction은 판정하지 않는다."""
+    bad = _structured(direction="긍정")
+    out = evaluate_checkpoint(bad, [_row(role="")], as_of=AS_OF, role_pool=False)
+    assert out["verdict"] == "no_signal"
+
+
 def test_no_signal_changes_nothing():
     checkpoint = _structured(status="confirmed", lastVerdict={"verdict": "confirmed", "at": AS_OF, "evidence": []})
     result = apply_verdict(checkpoint, {"verdict": "no_signal", "evidence": [], "at": AS_OF}, as_of=AS_OF)

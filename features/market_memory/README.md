@@ -141,7 +141,8 @@
 
 - **LLM은 `id`·`status`·`createdAt`·`lastVerdict`·`history`를 내지 않습니다.** 서버가 찍습니다 — 맡기면 "이미 확인됨"으로 태어나는 체크포인트가 생깁니다. 입력 모양에서 그 키들을 들이지 않고(`service.llm_checkpoint_inputs`), validator가 `trusted=False`로 한 번 더 벗깁니다.
 - **프롬프트는 부탁이고 집행은 validator입니다.** `prompt.md`가 모양·direction enum·keyword 규칙(각 2~40자, 상태 라벨 전문 금지, 방향을 담은 구체어)·엔트리당 3개 상한을 지시하지만, 검증은 `tracked_checkpoints`가 병합 시점에 합니다.
-- **귀속은 엔트리의 상태를 따릅니다.** 엔트리가 active/watch 상태를 만들거나 갱신할 때 그 상태에 `merge_state_checkpoints`로 병합합니다. 상태로 승격되지 않은 issue 메모의 체크포인트는 버리고 **버린 개수만 결과 요약에 남깁니다**(`checkpointsMerged`/`checkpointsDropped`) — 체크포인트는 상태의 소유물이고, "모든 이슈를 바로 상태로 올리지 않는다"는 기존 보수 원칙이 여기에도 적용됩니다.
+- **귀속은 엔트리의 `stateKey`를 따릅니다.** 엔트리가 active/watch 상태를 만들거나 갱신할 때 그 상태에 `merge_state_checkpoints`로 병합하고, **새 상태를 파생하지 않아도**(중요도 미달 등) `stateKey`의 살아 있는 상태가 있으면 거기에 붙습니다(`current_state_id_for_key`). 상태로 승격되지 않은 issue 메모의 체크포인트만 버리고 **버린 개수를 결과 요약에 남깁니다**(`checkpointsMerged`/`checkpointsDropped`). 병합 **실패**는 dropped에 섞지 않고 `checkpointErrors`+`checkpointErrorCode`(예외 클래스)로 따로 셉니다 — 섞으면 기능 전체가 죽어도 "LLM이 나쁜 체크포인트를 냈다"와 구분되지 않습니다.
+- **체크포인트는 계보(state_key)의 소유물입니다.** 상태 행은 날짜별로 회전하고(state_id = sha(state_key:date)) 이전 행은 overridden으로 밀리는데, `upsert_state_from_memory`가 회전 시 밀려나는 행의 목록을 새 행에 **승계**합니다 — 없으면 같은 체크포인트가 매일 open으로 다시 태어나고 어제의 판정·이력은 판정 pass가 다시는 방문하지 않는 행에 고립됩니다. `dueBy` 없는 open도 구조 판정 창(90일)을 신호 없이 넘기면 `expired`가 됩니다(병합은 open을 자르지 않으므로 만료가 무한 누적의 유일한 출구).
 - **생성 경로가 둘이라 저장을 한 함수로 모았습니다**(`service.save_memory_entries`). `/api/memory/llm`(API 키)과 Agent CLI writeback이 같은 함수를 쓰므로 병합 계약이 한쪽에만 붙는 일이 구조적으로 불가능합니다.
 - **`storyCheckpoint`(자유 문장)는 그대로 병존합니다.** 사람이 읽는 한 줄 요약이고, 구조화 체크포인트는 기계가 대조하는 층입니다. 대체하면 LLM 구조화 실패가 곧 표시 실패가 됩니다.
 - 상태 스냅샷 경로는 체크포인트를 내지 않습니다 — 생성 경로가 늘수록 병합 규칙이 갈라집니다.
@@ -150,17 +151,17 @@
 
 `features/thesis_tracking/checkpoint_verdicts.py`가 소유하며 내러티브 판정과 같은 자리에서 돕니다. 판정 코어는 같고 근거 풀만 다릅니다.
 
-- 풀은 `search_documents(company=ticker, scope="news")` — Thesis Delta와 워치리스트 뉴스가 이미 쓰는 그 풀입니다. `market_memory` 행을 보조로 섞지 않습니다: 두 풀을 합치면 어느 풀이 판정했는지 설명할 수 없습니다.
+- 풀은 **연구 인덱스 문서를 직접 훑어** 그 회사 태그가 붙은 뉴스만 **날짜순**으로 모읍니다(컷오프 이후만, 안전판 상한 500은 가장 오래된 쪽을 자름). `search_documents` 브라우즈의 관련도순 상한 200을 쓰지 않습니다 — 보도가 많은 종목(실측 GOOGL 9,387건 태그)에서 이번 주 기사가 상한 밖으로 잘려 판정이 영영 `no_signal`이 됩니다. `market_memory` 행을 보조로 섞지 않습니다: 두 풀을 합치면 어느 풀이 판정했는지 설명할 수 없습니다.
 - **구조화 체크포인트를 가진 thesis가 하나도 없으면 인덱스를 열지 않습니다.** `load_index()`는 실측 4.7초라 수집 자동화 경로에서 공짜가 아닙니다.
-- 문서가 그 회사 **태그를 실제로 갖고 있어야** 근거입니다. 검색의 제목 부분일치 fallback으로 딸려 온 남의 기사는 걸러냅니다(워치리스트가 배운 것과 같은 규칙 — 연결 열쇠는 종목 코드).
-- **문서 풀에는 role 분류가 없습니다.** 그래서 체크포인트의 `direction`이 판정 방향을 정하고(supporting → `confirmed`, challenging → `challenged`), 근거 사본 키는 `memoryId`가 아니라 `docId`이며 `role`을 싣지 않습니다 — 분류가 없다는 사실을 숨기지 않습니다.
-- **여기서는 ticker matcher가 hit 판정에 쓰이지 않습니다.** 풀이 이미 그 종목으로 걸러져 있어 모든 행에 걸리고, 그러면 "그 회사 뉴스가 있다"가 곧 확인이 됩니다. 계획이 "티커 태그 문서 중 **keyword hit**이 전부"라고 적은 이유이자 thesis 체크포인트에 keyword를 필수로 건 이유입니다.
-- 판정 이력은 체크포인트 dict 안의 `history` 배열입니다(상한 20). `market_regime_changes`는 내러티브 전용이고 thesis용 새 테이블은 만들지 않습니다.
-- 쓰기는 `store.save_thesis_checkpoints`로 `next_checkpoints_json`만 제자리 교체합니다. **`last_reviewed_at`은 바꾸지 않습니다** — 기계 판정은 사용자의 검토가 아닙니다. 노트 재동기화(`upsert_thesis`)는 문자열 목록만 갈아끼우므로 판정 status와 이력이 살아남습니다.
+- 문서가 그 회사 **태그를 실제로 갖고 있어야** 근거입니다. 제목 부분일치로 딸려 온 남의 기사는 걸러냅니다(워치리스트가 배운 것과 같은 규칙 — 연결 열쇠는 종목 코드).
+- **문서 풀에는 role 분류가 없습니다.** 그래서 체크포인트의 `direction`이 판정 방향을 정하고(supporting → `confirmed`, challenging → `challenged`, enum 밖은 판정하지 않음), 근거 사본 키는 `memoryId`가 아니라 `docId`(**URL 우선** — 파일 경로는 보관 기간 정리가 지웁니다)이며 `role`을 싣지 않습니다.
+- **회사명·티커는 매칭 재료가 아닙니다.** 풀이 이미 그 종목으로 걸러져 있어 회사 태그가 haystack에 들어가면 회사명 keyword가 모든 기사에 걸립니다 — 행에 matchedTerms를 싣지 않고(haystack = 제목+요약) validator 금지어에 티커·회사명을 넘깁니다. **keyword가 방향을 담아야 합니다**("가이던스 상향").
+- 판정 이력은 체크포인트 dict 안의 `history` 배열입니다(상한 20). thesis 하나가 실패해도 나머지 판정은 계속됩니다(결과 행에 오류 코드).
+- 쓰기는 `store.save_thesis_checkpoints`로 `next_checkpoints_json`만 제자리 교체합니다. **`last_reviewed_at`도 `updated_at`도 바꾸지 않습니다** — Delta의 `since_last_review`가 `updated_at`으로 물러나는 폴백이 있어, 올리면 기계 판정이 사용자 검토로 읽힙니다. 노트 재동기화(`upsert_thesis`)는 문자열 목록만 갈아끼우므로 판정 status와 이력이 살아남습니다.
 
 ### 남은 것
 
-- **thesis 체크포인트를 만드는 화면·API가 아직 없습니다**(Stage B). 만들 때 생성 경로는 회사명·티커를 keyword로 쓰지 못하게 막아야 합니다 — 풀이 이미 그 회사로 걸러져 있어 모든 기사가 매칭됩니다. 지금은 검증에 이 금지가 없으므로(저장·판정 양쪽이 같은 규칙을 써야 해서 한쪽만 조이지 않았습니다) 생성 경로가 그 자리를 맡습니다.
+- **thesis 체크포인트를 만드는 화면·API가 아직 없습니다**(Stage B). 티커·회사명 keyword 금지는 이제 검증이 겁니다(`_forbidden_terms` — 저장·판정 양쪽 동일).
 - 화면 표시(`검증 불가` 배지, 무소식 배지, 판정 타임라인)는 Stage C입니다.
 
 ## RSS Short-Term Memory Intake

@@ -155,10 +155,12 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
                 "checkpointCount": int(verdicts.get("checkpointCount") or 0),
                 "changeCount": int(verdicts.get("changeCount") or 0),
             }
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - 판정 실패가 수집 잡을 죽이지 않는다
+            # 예외 종류는 코드 식별자라 남긴다 — "failed" 한 단어면 기능 전체가 죽어도
+            # 원인을 찾을 단서가 없다(원문 메시지는 담지 않는다, RSS 수집 실패와 같은 규칙).
             checkpoint_verdicts = {
                 "ok": False, "checkpointCount": 0, "changeCount": 0,
-                "error": "checkpoint_verdicts_failed",
+                "error": f"checkpoint_verdicts_failed:{type(exc).__name__}",
             }
         # thesis 체크포인트는 같은 자리에서, 다른 풀(연구 인덱스 문서)로 판정한다.
         # 대상이 0건이면 인덱스를 열지 않으므로 기본 비용이 없다.
@@ -171,11 +173,10 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
                 "checkpointCount": int(thesis_result.get("checkpointCount") or 0),
                 "changeCount": int(thesis_result.get("changeCount") or 0),
             }
-        except Exception:
-            # 판정 실패가 수집 잡을 죽이지 않는다.
+        except Exception as exc:  # noqa: BLE001 - 판정 실패가 수집 잡을 죽이지 않는다
             thesis_verdicts = {
                 "ok": False, "indexLoaded": False, "checkpointCount": 0, "changeCount": 0,
-                "error": "thesis_checkpoint_verdicts_failed",
+                "error": f"thesis_checkpoint_verdicts_failed:{type(exc).__name__}",
             }
     return {
         "ok": True,

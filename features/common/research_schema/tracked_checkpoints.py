@@ -328,9 +328,10 @@ def partition_checkpoints(
         text = _text(value, 500)
         if text:
             templates.append(text)
-    # 상한은 판정 대상 개수의 상한이지 저장 절단이 아니다 — 자르는 일은 쓰기 경로
-    # (merge_checkpoint_lists)만 한다.
-    return structured[:MAX_CHECKPOINTS], invalid, templates
+    # 상한을 여기서 걸지 않는다 — 병합이 open을 보존해 8을 넘길 수 있는데 읽기가
+    # 8에서 자르면 9번째 open은 저장·표시되면서 영영 판정받지 못한다(2026-08-30 리뷰).
+    # 자르는 일은 쓰기 경로(merge_checkpoint_lists)만 한다.
+    return structured, invalid, templates
 
 
 def split_checkpoints(values, *, scope: str = "narrative", scope_key: str = "", forbidden_keywords=(), now: str = ""):
@@ -432,6 +433,41 @@ def merge_with_templates(
     )
     fresh = [_text(t, 500) for t in templates or []]
     return structured + invalid + [t for t in fresh if t]
+
+
+def rewrite_checkpoints(
+    stored,
+    updated: dict,
+    *,
+    scope: str = "narrative",
+    scope_key: str = "",
+    forbidden_keywords=(),
+    now: str = "",
+) -> list:
+    """판정이 바꾼 원소만 제자리 교체한다 — 검증 실패 dict·템플릿·순서는 그대로.
+
+    보존 계약을 아는 곳은 이 모듈 하나여야 한다. 이 블록이 판정 모듈 두 곳(내러티브·
+    thesis)에 복사돼 있던 동안 `partition_checkpoints`에 추가된 비리스트 가드가 사본에
+    빠졌고, dict 하나가 통째로 저장된 행에서 쓰기 경로가 dict의 **키 목록**을 체크포인트
+    목록으로 저장할 뻔했다(2026-08-30 리뷰).
+    """
+    if isinstance(stored, dict):
+        stored = [stored]
+    if not isinstance(stored, (list, tuple)):
+        return []
+    updated = dict(updated or {})
+    rewritten: list = []
+    for element in stored:
+        if isinstance(element, dict):
+            normalized = normalize_tracked_checkpoint(
+                element, scope=scope, scope_key=scope_key,
+                now=now, forbidden_keywords=forbidden_keywords,
+            )
+            if normalized and normalized["id"] in updated:
+                rewritten.append(updated.pop(normalized["id"]))
+                continue
+        rewritten.append(element)
+    return rewritten
 
 
 def append_history(checkpoint: dict, *, at: str, from_status: str, to_status: str, verdict: str) -> dict:

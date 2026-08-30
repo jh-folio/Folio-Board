@@ -354,11 +354,16 @@ def save_memory_entries(entries, *, db_path=MARKET_MEMORY_DB_PATH) -> dict:
     때만 병합하고, 상태로 승격되지 않은 issue 메모의 체크포인트는 버린 개수만 남긴다 —
     "모든 이슈를 바로 상태로 올리지 않는다"는 기존 보수 원칙이 여기에도 적용된다.
     """
-    from features.market_memory.checkpoint_verdicts import merge_state_checkpoints
+    from features.market_memory.checkpoint_verdicts import (
+        current_state_id_for_key,
+        merge_state_checkpoints,
+    )
 
     saved: list = []
     merged = 0
     dropped = 0
+    errors = 0
+    first_error = ""
     for entry in entries or []:
         checkpoints = (entry or {}).get("nextCheckpoints") or []
         result = upsert_memory(db_path, entry)
@@ -368,19 +373,31 @@ def save_memory_entries(entries, *, db_path=MARKET_MEMORY_DB_PATH) -> dict:
         state = result.get("state") or {}
         state_id = str(state.get("id") or "")
         if not state_id or state.get("status") not in {"active", "watch"}:
-            dropped += len(checkpoints)
+            # 새 상태를 파생하지 않아도 **기존 살아 있는 상태를 갱신하는 엔트리**면
+            # 체크포인트는 그 상태의 소유물이다(계약: 귀속은 stateKey를 따른다).
+            # 중요도 미달로 상태 파생이 안 됐다고 드롭하면, 살아 있는 내러티브의
+            # 후속 확인이 전부 버려진다(2026-08-30 리뷰).
+            state_id = current_state_id_for_key(db_path, result.get("stateKey"))
+        if not state_id:
+            dropped += len(checkpoints)  # 상태로 승격되지 않은 issue 메모 — 계약대로 버린다
             continue
         try:
             outcome = merge_state_checkpoints(db_path, state_id, checkpoints)
-        except Exception:
-            outcome = {}
+        except Exception as exc:  # noqa: BLE001 - 병합 실패가 내러티브 저장을 되돌리지 않는다
+            outcome = {"error": type(exc).__name__}
         if outcome.get("ok"):
             merged += int(outcome.get("accepted") or 0)
             dropped += int(outcome.get("rejected") or 0)
         else:
-            # 병합 실패가 내러티브 저장을 되돌리지 않는다 — 체크포인트는 부가물이다.
-            dropped += len(checkpoints)
-    return {"saved": saved, "checkpointsMerged": merged, "checkpointsDropped": dropped}
+            # 실패를 dropped에 섞으면 기능 전체가 죽어도 "LLM이 나쁜 체크포인트를
+            # 냈다"와 구분되지 않는다. 오류는 따로 세고 코드 식별자만 남긴다.
+            errors += len(checkpoints)
+            first_error = first_error or str(outcome.get("error") or "merge_failed")
+    summary = {"saved": saved, "checkpointsMerged": merged, "checkpointsDropped": dropped}
+    if errors:
+        summary["checkpointErrors"] = errors
+        summary["checkpointErrorCode"] = first_error
+    return summary
 
 
 def run_llm_market_memory(date=None):

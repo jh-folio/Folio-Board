@@ -138,6 +138,8 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
         [x for x in row.get("next_checkpoints") or [] if isinstance(x, str)],
         scope="thesis",
         scope_key=ticker,
+        # 티커·회사명은 keyword가 될 수 없다 — 풀이 이미 그 종목이라 전부 매칭된다.
+        forbidden_keywords=[ticker, row.get("company")],
     )
     values = {
         "ticker": ticker,
@@ -172,11 +174,14 @@ def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
 
     `upsert_thesis`를 쓰지 않는 것은 그쪽이 문자열 목록을 받는 노트 동기화 경로라서다.
     판정은 dict 원소의 `status`·`history`만 바꾸므로 나머지 필드를 건드릴 이유가 없고,
-    **`last_reviewed_at`은 절대 바꾸지 않는다** — 기계 판정은 사용자의 검토가 아니다.
+    **`last_reviewed_at`도 `updated_at`도 바꾸지 않는다** — 기계 판정은 사용자의 검토가
+    아니다. `updated_at`을 올리면 `last_reviewed_at`이 빈 thesis에서 Delta의
+    `since_last_review`가 updated_at으로 물러나(delta.py) 방금 돈 기계 판정을 사용자
+    검토로 읽고, 검토 창이 1일로 접혀 `insufficient_evidence`가 된다(2026-08-30 리뷰).
     """
     conn.execute(
-        "UPDATE thesis SET next_checkpoints_json=?, updated_at=? WHERE ticker=?",
-        (json.dumps(checkpoints, ensure_ascii=False), _now(), str(ticker or "").upper()),
+        "UPDATE thesis SET next_checkpoints_json=? WHERE ticker=?",
+        (json.dumps(checkpoints, ensure_ascii=False), str(ticker or "").upper()),
     )
     conn.commit()
 

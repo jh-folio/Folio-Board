@@ -147,15 +147,18 @@ def test_due_by_must_be_iso_date_after_creation():
     assert normalize_tracked_checkpoint(_cp(dueBy="2026-08-01"), now=NOW)["dueBy"] is None
 
 
-def test_split_keeps_templates_and_caps_structured():
+def test_split_keeps_templates_and_reads_everything_stored():
     stored = ["템플릿 문장 1", _cp(), {"item": "깨진 것", "direction": "??"}, "템플릿 문장 2"]
     structured, templates = split_checkpoints(stored, now=NOW)
     assert len(structured) == 1
     assert templates == ["템플릿 문장 1", "템플릿 문장 2"]
 
+    # 읽기에는 상한이 없다 — 병합이 open을 보존해 8을 넘길 수 있는데 읽기가 자르면
+    # 9번째 open은 저장·표시되면서 영영 판정받지 못한다(2026-08-30 리뷰). 상한은
+    # 쓰기 경로(merge_checkpoint_lists)의 것이다.
     many = [_cp(item=f"확인 항목 {i}") for i in range(12)]
     structured, _ = split_checkpoints(many, now=NOW)
-    assert len(structured) == MAX_CHECKPOINTS
+    assert len(structured) == 12
 
 
 def test_merge_with_templates_preserves_structured_status():

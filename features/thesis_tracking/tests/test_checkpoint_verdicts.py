@@ -15,7 +15,6 @@ if _ROOT not in sys.path:
 
 import pytest
 
-from features.common.research_library.search import service as search_service
 from features.thesis_tracking import checkpoint_verdicts as CV
 from features.thesis_tracking import model as M
 from features.thesis_tracking import store
@@ -77,13 +76,10 @@ class _Spy:
         return self.index
 
 
-@pytest.fixture
-def stub_search(monkeypatch):
-    def _install(docs):
-        def fake(index, query="", company="", limit=50, scope="all", **filters):
-            return list(docs)
-        monkeypatch.setattr(search_service, "search_documents", fake)
-    return _install
+def _index(docs):
+    """판정 풀은 이제 인덱스 문서를 직접 훑는다(날짜순·태그 일치) — 관련도순
+    search_documents 브라우즈가 최신 기사를 상한 밖으로 자르던 결함의 수정."""
+    return {"documents": list(docs)}
 
 
 # --- 0건 gate ------------------------------------------------------------
@@ -120,12 +116,11 @@ def test_closed_thesis_is_not_judged():
 
 # --- 판정 ----------------------------------------------------------------
 
-def test_supporting_direction_confirms_and_copies_doc_id(stub_search):
+def test_supporting_direction_confirms_and_copies_doc_id():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_thesis(db_path, [_checkpoint()])
-        stub_search([_doc()])
-        spy = _Spy()
+        spy = _Spy(_index([_doc()]))
         result = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=spy)
         assert spy.calls == 1 and result["changeCount"] == 1
 
@@ -141,52 +136,51 @@ def test_supporting_direction_confirms_and_copies_doc_id(stub_search):
         assert "템플릿 문장" in _stored(db_path)
 
 
-def test_challenging_direction_reports_challenged(stub_search):
+def test_challenging_direction_reports_challenged():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_thesis(db_path, [_checkpoint(
             item="주문 취소 보도", direction="challenging",
             matchers={"tickers": [TICKER], "keywords": ["주문 취소"]},
         )])
-        stub_search([_doc(title="엔비디아 대형 고객 주문취소 보도")])
-        result = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
+        result = CV.run_thesis_checkpoint_verdicts(
+            db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc(title="엔비디아 대형 고객 주문취소 보도")])))
         assert result["changeCount"] == 1
         assert [c for c in _stored(db_path) if isinstance(c, dict)][0]["status"] == "challenged"
 
 
-def test_keyword_miss_leaves_status_open(stub_search):
+def test_keyword_miss_leaves_status_open():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_thesis(db_path, [_checkpoint()])
-        stub_search([_doc(title="엔비디아 신제품 발표", summary="행사 요약")])
-        result = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
+        result = CV.run_thesis_checkpoint_verdicts(
+            db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc(title="엔비디아 신제품 발표", summary="행사 요약")])))
         assert result["changeCount"] == 0
         assert [c for c in _stored(db_path) if isinstance(c, dict)][0]["status"] == "open"
 
 
-def test_document_without_the_company_tag_is_not_evidence(stub_search):
+def test_document_without_the_company_tag_is_not_evidence():
     """제목 부분일치로 딸려 온 남의 기사가 확인 신호가 되면 안 된다."""
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_thesis(db_path, [_checkpoint()])
-        stub_search([_doc(companies=[{"ticker": "AMD", "name": "AMD"}])])
-        result = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
+        result = CV.run_thesis_checkpoint_verdicts(
+            db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc(companies=[{"ticker": "AMD", "name": "AMD"}])])))
         assert result["results"][0]["evidenceCount"] == 0
         assert result["changeCount"] == 0
 
 
-def test_second_run_is_idempotent(stub_search):
+def test_second_run_is_idempotent():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_thesis(db_path, [_checkpoint()])
-        stub_search([_doc()])
-        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
-        second = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
+        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc()])))
+        second = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc()])))
         assert second["changeCount"] == 0
         assert len([c for c in _stored(db_path) if isinstance(c, dict)][0]["history"]) == 1
 
 
-def test_verdict_does_not_touch_last_reviewed_at(stub_search):
+def test_verdict_does_not_touch_last_reviewed_at():
     """기계 판정은 사용자의 검토가 아니다."""
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
@@ -194,23 +188,67 @@ def test_verdict_does_not_touch_last_reviewed_at(stub_search):
         conn = store.connect(db_path)
         before = conn.execute("SELECT last_reviewed_at FROM thesis WHERE ticker=?", (TICKER,)).fetchone()[0]
         conn.close()
-        stub_search([_doc()])
-        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
+        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc()])))
         conn = store.connect(db_path)
         after = conn.execute("SELECT last_reviewed_at FROM thesis WHERE ticker=?", (TICKER,)).fetchone()[0]
         conn.close()
         assert after == before
 
 
+# --- 풀·검증 경계 (2026-08-30 리뷰) ---------------------------------------
+
+def test_company_name_keyword_is_rejected():
+    """풀이 이미 그 종목이라 회사명 keyword는 모든 기사에 걸린다 — 매일 confirmed가
+    되는 과잉 확인. validator 금지어로 막는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed_thesis(db_path, [_checkpoint(matchers={"tickers": [TICKER], "keywords": ["NVIDIA"]})])
+        spy = _Spy(_index([_doc()]))
+        result = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=spy)
+        # 유일한 keyword가 금지어라 검증 실패 → 판정 대상 0건, 인덱스도 안 연다.
+        assert result["checkpointCount"] == 0
+        assert spy.calls == 0
+
+
+def test_pool_is_date_ordered_and_cap_cuts_the_oldest():
+    """관련도순 상한은 최신 기사를 잘랐다(실측 GOOGL 9,387건 태그 — 워치리스트가
+    문서화한 그 버그). 날짜순이면 잘리는 것은 가장 오래된 쪽이다."""
+    docs = [
+        _doc(path="research-inbox/rss/2026-08-10-old.md", date="2026-08-10", title="옛 기사"),
+        _doc(path="research-inbox/rss/2026-08-28-new.md", date="2026-08-28", title="가이던스상향 새 기사"),
+    ]
+    rows = CV.thesis_evidence_rows(_index(docs), {"ticker": TICKER, "company": "NVIDIA"}, cap=1)
+    assert len(rows) == 1
+    assert rows[0]["evidenceDate"] == "2026-08-28"
+
+
+def test_company_tags_do_not_enter_the_haystack():
+    """회사 태그가 haystack에 들어가면 회사명·티커 keyword가 전 기사에 걸린다 —
+    행에 matchedTerms를 싣지 않는다."""
+    rows = CV.thesis_evidence_rows(_index([_doc()]), {"ticker": TICKER, "company": "NVIDIA"})
+    assert rows and "matchedTerms" not in rows[0]
+
+
+def test_malformed_company_tag_does_not_crash_the_pass():
+    """인덱스 문서 하나가 깨져 있어도(문자열 companies) 전체 판정이 죽으면 안 된다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed_thesis(db_path, [_checkpoint()])
+        docs = [{"path": "research-inbox/rss/2026-08-20-x.md", "date": "2026-08-20",
+                 "title": "깨진 문서", "companies": ["NVDA"]}, _doc()]
+        result = CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy(_index(docs)))
+        assert result["ok"] is True
+        assert result["changeCount"] == 1  # 정상 문서로는 판정이 그대로 된다
+
+
 # --- 노트 동기화 생존 ----------------------------------------------------
 
-def test_note_resync_preserves_verdict_status(stub_search):
+def test_note_resync_preserves_verdict_status():
     """Vault/노트 재동기화는 문자열 목록만 갈아끼운다 — 판정 status와 이력이 살아남는다."""
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_thesis(db_path, [_checkpoint()])
-        stub_search([_doc()])
-        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy())
+        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy(_index([_doc()])))
 
         conn = store.connect(db_path)
         store.upsert_thesis(conn, M.Thesis(

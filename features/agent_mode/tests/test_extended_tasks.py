@@ -36,12 +36,15 @@ def test_market_memory_agent_writeback_uses_existing_normalizer():
     normalized = {"title": "Narrative", "summary": "Summary", "sources": [{"title": "Source"}]}
     # 저장은 API 키 경로와 공유하는 `market_memory.service.save_memory_entries`가 한다.
     # 그쪽의 `upsert_memory`를 막아야 이 테스트가 실제 워크스페이스 DB에 쓰지 않는다 —
-    # agent_mode 쪽 이름만 막으면 진짜 저장이 사용자 DB로 나간다(실측).
-    with (
-        patch.object(service, "normalize_llm_memory_entry", return_value=(normalized, "")),
-        patch.object(memory_service, "upsert_memory", side_effect=lambda _path, entry: entry),
-    ):
-        result = service.write_market_memory_from_json(pack, {"entries": [{"title": "Narrative"}]})
+    # agent_mode 쪽 이름만 막으면 진짜 저장이 사용자 DB로 나간다(실측). DB 경로도
+    # 임시로 바꾼다 — 스텁이 nextCheckpoints를 실으면 병합 경로가 진짜 DB를 연다.
+    with TemporaryDirectory() as tmp:
+        with (
+            patch.object(service, "normalize_llm_memory_entry", return_value=(normalized, "")),
+            patch.object(memory_service, "upsert_memory", side_effect=lambda _path, entry: entry),
+            patch.object(service, "MARKET_MEMORY_DB_PATH", Path(tmp) / "market-memory.sqlite3"),
+        ):
+            result = service.write_market_memory_from_json(pack, {"entries": [{"title": "Narrative"}]})
     assert result["status"] == "ok_agent_authored"
     assert result["saved"][0]["sourceKind"] == "agent"
     assert result["saved"][0]["generation"]["mode"] == "agent"
