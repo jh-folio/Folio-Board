@@ -83,6 +83,7 @@ from features.llm_settings.settings_service import public_settings, save_setting
 from features.llm_settings.provider_status import check_provider as check_llm_api_provider
 from features.company_analysis.cache_cleanup import cache_stats, cleanup_cache
 from features.market_memory.service import run_llm_market_memory, schedule_startup_regime_refresh
+from features.market_memory.verification_view import narrative_verification_payload
 from features.market_memory.digest import run_rss_market_memory_update
 from features.market_memory.routes import create_market_state_router
 from features.market_widgets.service import (
@@ -223,6 +224,7 @@ from features.personal_overlay.service import (
     attach_overlay_to_report,
     strip_overlay,
 )
+from features.thesis_tracking.workspace_view import thesis_workspace_payload
 from features.thesis_tracking.service import (
     list_thesis_payload,
     promote_note_to_thesis,
@@ -876,6 +878,18 @@ def api_analysis_personal_overlay(report_id: str, body: dict | None = Body(defau
 @fastapi_app.get("/api/theses")
 def api_list_theses(status: str = ""):
     return list_thesis_payload(status=status or None)
+
+
+@fastapi_app.get("/api/memory/verification")
+def api_memory_verification(status: str = "current", limit: int = 20):
+    """내러티브 검증 상태(구조화 체크포인트 판정·무소식·판정 이력) 읽기 전용 projection."""
+    return narrative_verification_payload(status=status or "current", limit=max(1, min(int(limit or 20), 50)))
+
+
+@fastapi_app.get("/api/theses/{ticker}/workspace")
+def api_thesis_workspace(ticker: str):
+    """Watchlist 상세의 종목 Thesis workspace payload(저장된 projection만 읽는다)."""
+    return thesis_workspace_payload(ticker)
 
 
 @fastapi_app.post("/api/theses")

@@ -15477,6 +15477,260 @@ main.page {
   .portfolio-backtest-fields .field { flex: 1 1 100%; }
 }
 /* ============================================================
+   0.6 Stage C — 검증 루프 표시 (내러티브 카드 · 종목 Thesis workspace)
+
+   프리미티브(.surface/.chip/.btn)가 모양을 갖고 여기서는 **배치만** 한다.
+   상태는 색만으로 전달하지 않는다 — 기호와 라벨이 함께 가고 색은 보조다.
+   ============================================================ */
+
+.verification-panel {
+  display: grid;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  padding: var(--sp-4);
+}
+.verification-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.verification-panel__head h3 {
+  margin: 2px 0 4px;
+  font-size: var(--fs-title-sm);
+  font-weight: var(--fw-bold);
+}
+.verification-panel__summary {
+  margin: 0;
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+.verification-state-list {
+  display: grid;
+  gap: var(--sp-2);
+}
+.verification-state {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+}
+.verification-state__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.verification-state__head h4 {
+  margin: 0 0 2px;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-bold);
+}
+.verification-state__meta,
+.verification-state__note,
+.verification-state__empty {
+  margin: 0;
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+}
+.verification-chip {
+  gap: 5px;
+}
+.verification-checkpoint-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.verification-checkpoint {
+  display: grid;
+  gap: 4px;
+  padding-left: var(--sp-2);
+  /* 카드·항목의 의미 표시 왼쪽 줄은 3px 하나다(0.5.1 통일). */
+  border-left: 3px solid var(--folio-border);
+}
+.verification-checkpoint__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.verification-checkpoint__head strong {
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-medium);
+}
+.verification-checkpoint__meta {
+  margin: 0;
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-label);
+}
+.verification-evidence {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.verification-evidence li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: var(--fs-label);
+  color: var(--folio-ink-soft);
+}
+.verification-evidence__date {
+  flex: none;
+  color: var(--folio-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.verification-evidence__title {
+  min-width: 0;
+}
+.verification-evidence__title small {
+  display: block;
+  color: var(--folio-ink-muted);
+}
+.verification-evidence__reason {
+  margin-top: 2px;
+}
+.verification-templates summary,
+.verification-timeline summary {
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.verification-templates ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: var(--sp-3);
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-label);
+  line-height: 1.5;
+}
+.verification-timeline__list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.verification-timeline__list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: var(--fs-label);
+  color: var(--folio-ink-soft);
+  line-height: 1.5;
+}
+.verification-timeline__date {
+  flex: none;
+  color: var(--folio-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.verification-timeline__body {
+  min-width: 0;
+}
+.verification-skeleton {
+  display: grid;
+  gap: var(--sp-2);
+}
+.verification-skeleton__line {
+  display: block;
+  height: 12px;
+  margin-bottom: 8px;
+  border-radius: var(--r-control);
+  background: var(--surface-control);
+}
+.verification-skeleton__line--title { width: 42%; height: 16px; }
+.verification-skeleton__line--short { width: 64%; margin-bottom: 0; }
+
+/* --- 종목 Thesis workspace (Watchlist 상세) --- */
+
+.thesis-workspace {
+  display: grid;
+  gap: var(--sp-2);
+}
+.thesis-workspace__block {
+  display: grid;
+  gap: 6px;
+  padding-top: var(--sp-2);
+  /* 섹션 구분은 면이 아니라 구분선과 여백이 맡는다(워치리스트 상세의 기존 문법). */
+  border-top: 1px solid var(--folio-border);
+}
+.thesis-workspace__block h4 {
+  margin: 0;
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-bold);
+}
+.thesis-workspace__block h5 {
+  margin: 6px 0 0;
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-bold);
+}
+.thesis-workspace__core {
+  margin: 0;
+  font-size: var(--fs-body-sm);
+  line-height: 1.6;
+}
+.thesis-workspace__meta,
+.thesis-workspace__empty,
+.thesis-workspace__note {
+  margin: 0;
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+}
+.thesis-workspace__list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: var(--sp-3);
+  font-size: var(--fs-label);
+  color: var(--folio-ink-soft);
+  line-height: 1.5;
+}
+.thesis-workspace__intro {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+.thesis-workspace__alerts {
+  display: grid;
+  gap: 6px;
+}
+.thesis-workspace__warning {
+  margin: 0;
+  padding-left: var(--sp-2);
+  border-left: 3px solid var(--folio-gold);
+  color: var(--folio-ink-soft);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+}
+.thesis-workspace__warning small {
+  display: block;
+  color: var(--folio-ink-muted);
+}
+.thesis-workspace__verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .verification-panel { padding: var(--sp-3); }
+  .verification-panel__head,
+  .verification-state__head { flex-direction: column; }
+}
+
+/* ============================================================
    0.5 축 B — 프리미티브 (Stage D1 / Step 2)
    "무테 문법, Folio 밀도": 테두리 없는 회색 fill 컨트롤 + 회색 트랙/흰 알약 세그먼트.
    반드시 파일 말미에 둔다 — 앞쪽 레거시 규칙이 같은 특이성으로 이기는 사고가

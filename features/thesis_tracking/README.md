@@ -110,12 +110,22 @@ run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/
 - Step 9 Data Source Reliability 이후 저장된 Delta에는 `dataGaps`와 `officialMaterials` 메타가 함께 들어갈 수 있다. 공식자료가 부족하면 `suggestedAction`으로 SEC/DART 설정 확인 또는 `research-inbox/filings/` 보강 경로를 안내한다.
 - Obsidian export: `type: thesis_delta`, `generated_by: Folio OS`, `source_layer: primary_processed`, `reuse_as_evidence: false` frontmatter로 `Thesis Delta/` 폴더에 저장한다.
 
+## 화면 — Watchlist 상세가 주 표면이다 (0.6 Stage C.2)
+
+종목 Thesis의 주 표면은 **Watchlist 상세**입니다. 기업 분석 reader의 `가설 검토 상태` 카드는 만들기·검토 진입점으로 남고 정본을 따로 두지 않습니다.
+
+- payload는 `GET /api/theses/{ticker}/workspace`(`workspace_view.py`)이며 **읽기 전용 projection**입니다. 화면 진입이 Agent를 실행하지 않습니다.
+- 순서·경계·소유권 표시·연결 내러티브 경고(A.3)의 규칙은 `features/watchlist_notes/README.md`의 "종목 Thesis workspace" 절이 갖습니다.
+- **판정 두 층을 섞지 않습니다**(계획 §3.2). `thesis_delta`의 6값 verdict와 구조화 체크포인트의 3값 판정은 payload에서도 서로 다른 키에 담깁니다.
+- thesis 체크포인트의 근거 사본은 `{docId, date, title}`이고 **role이 없습니다** — 문서 풀에는 supporting/challenging 분류가 없으므로 화면도 없는 분류를 만들어 내지 않습니다.
+
 ## API
 
 ```text
 GET  /api/theses
 POST /api/theses                                  # 직접 입력·수정(부분 갱신)
 GET  /api/theses/{ticker}
+GET  /api/theses/{ticker}/workspace               # Watchlist 상세용 읽기 projection
 POST /api/theses/{ticker}/delta
 POST /api/investment-notes/{note_id}/thesis       # 이 노트로 Thesis 만들기/갱신
 ```

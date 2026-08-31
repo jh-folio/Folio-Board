@@ -3,6 +3,7 @@ import { useContentRevision } from "./useContentRevision";
 import { getJson, postJson, type JobStatus } from "../api";
 import { MarketStateDashboard } from "../islands/MarketStateDashboard";
 import { RouteHero } from "./RouteHero";
+import { NarrativeVerificationPanel } from "./marketMemory/NarrativeVerificationPanel";
 import { InvestmentContextCard } from "./InvestmentContextCard";
 import { setReactAgentContextScope } from "./agentContext";
 import type { MarketStateContextProjection } from "./marketStateContext";
@@ -219,6 +220,10 @@ export function MarketMemoryRoute() {
       <section className="market-state-dashboard react-market-memory-dashboard" aria-label="현재 중기 시장 상황">
         <MarketStateDashboard key={`${refreshKey}:${contentRevision}`} onUpdate={runMarketMemoryUpdate} updating={busy} updateDisabled={Boolean(resumableJob)} onContext={handleMarketStateContext} />
       </section>
+
+      {/* 위 카드는 스냅샷이 쓴 해석이고, 아래는 저장된 내러티브 상태의 규칙 판정이다.
+          같은 층이 아니므로 섞지 않고 자기 자리에서 보여준다(0.6 Stage C.1). */}
+      <NarrativeVerificationPanel refreshKey={refreshKey + contentRevision} />
     </div>
   );
 }

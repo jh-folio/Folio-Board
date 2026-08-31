@@ -59,6 +59,7 @@
 - `features/market_memory/regime_v2.py`: Regime 근거 분류, momentum/confidence 계산, 변화 로그, thesis 연결
 - `features/market_memory/checkpoint_verdicts.py`: 구조화 체크포인트 판정 pass(규칙 기반)와 생성·교체 쓰기 경로
 - `features/thesis_tracking/checkpoint_verdicts.py`: thesis 체크포인트 판정(근거 풀은 연구 인덱스 문서, 0건이면 인덱스를 열지 않음)
+- `features/market_memory/verification_view.py`: 내러티브 검증 상태 읽기 projection(체크포인트 판정·무소식 배지·판정 이력)
 - `features/common/research_schema/tracked_checkpoints.py`: 구조화 체크포인트 스키마·검증·병합 (market_memory와 thesis_tracking 공용)
 - `features/market_memory/prompt.md`: LLM 기반 시장 내러티브 정리 프롬프트
 - `app.py`: `/api/memory`, `/api/memory/states`, `/api/memory/regime/refresh`, `/api/memory/states/{state_id}/evidence|changes|thesis-links` API와 브리핑 생성 후 자동 저장
@@ -159,6 +160,18 @@
 - 판정 이력은 체크포인트 dict 안의 `history` 배열입니다(상한 20). thesis 하나가 실패해도 나머지 판정은 계속됩니다(결과 행에 오류 코드).
 - 쓰기는 `store.save_thesis_checkpoints`로 `next_checkpoints_json`만 제자리 교체합니다. **`last_reviewed_at`도 `updated_at`도 바꾸지 않습니다** — Delta의 `since_last_review`가 `updated_at`으로 물러나는 폴백이 있어, 올리면 기계 판정이 사용자 검토로 읽힙니다. 노트 재동기화(`upsert_thesis`)는 문자열 목록만 갈아끼우므로 판정 status와 이력이 살아남습니다.
 
+### 화면 — 내러티브 검증 상태 (0.6 Stage C.1·C.3)
+
+시장 내러티브 탭의 드라이버 카드 **아래**에 `내러티브 검증 상태` 패널이 있습니다(`web/src/app/marketMemory/NarrativeVerificationPanel.tsx`, payload는 `GET /api/memory/verification`).
+
+- **위 카드와 같은 층이 아닙니다.** 드라이버 카드는 스냅샷이 쓴 해석이고 이 패널은 저장된 `market_narrative_states`의 규칙 판정입니다. 스냅샷 드라이버에는 상태 정체성이 없어(`snapshot-driver:N`) 체크포인트를 붙일 수 없고, 제목으로 이어 붙이는 매칭은 이 저장소가 여러 번 데인 방식입니다 — 그래서 섞지 않고 자기 자리에서 보여줍니다.
+- 상태마다 **구조화 체크포인트의 판정**(확인됨/반증 신호/확인 대기/기한 경과)과 그 판정이 쓴 **근거 제목 사본**(최대 3건), 기한을 보여줍니다.
+- **무소식 배지**가 죽어가는 이야기와 살아있는 이야기를 갈라 보여줍니다. 계획 §4의 고정 사다리를 그대로 씁니다 — 14일이면 `식어가는 중`, 30일이면 `정리 후보`입니다. **30일은 제안일 뿐 상태를 자동으로 바꾸지 않으며**, 화면이 그 문장을 함께 적습니다.
+- **검증 불가**: 저장돼 있지만 지금 규칙으로 재검증되지 않는 dict 원소는 지워지지 않고 보존됩니다. 화면은 그 건수를 밝히고 판정에서 빠진다고 말합니다 — 조용히 사라지면 사용자가 이력을 잃습니다.
+- **판정 이력**(C.3)은 기존 `market_regime_changes`를 읽습니다. `evidence_ids_json`의 `memory:` 접두 항목은 memory_id 사본이라 join하지 않고 **건수만** 보여주며, 화면에 내부 id를 흘리지 않습니다. 전환 값(`open`→`confirmed`)은 사람 말로 옮겨 보여줍니다.
+- 상태는 **색만으로 전달하지 않습니다** — 기호와 라벨이 함께 가고 색은 보조입니다(WCAG 1.4.1). 표시 언어는 Watchlist Thesis workspace와 `web/src/app/verification.ts` 하나를 공유합니다.
+- 이 패널은 **읽기 전용**입니다. 판정은 자료 수집 뒤 규칙 pass가 이미 끝냈고 화면은 그 결과를 읽을 뿐입니다.
+
 ### 남은 것
 
 - **thesis 체크포인트를 만드는 화면·API가 아직 없습니다**(Stage B). 티커·회사명 keyword 금지는 이제 검증이 겁니다(`_forbidden_terms` — 저장·판정 양쪽 동일).
@@ -232,6 +245,7 @@ GET /api/memory/audit?days=30
 GET /api/memory/report?limit=8
 GET /api/memory/state-dashboard?limit=5
 GET /api/memory/state-snapshot
+GET /api/memory/verification
 POST /api/memory
 POST /api/memory/llm
 POST /api/memory/state-snapshot

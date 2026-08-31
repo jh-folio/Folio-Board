@@ -730,6 +730,137 @@ export async function updateHypothesisCheckpoint(
   );
 }
 
+// --- 0.6 검증 루프 읽기 projection ------------------------------------------
+// 화면은 저장된 판정을 읽기만 한다 — 판정·저장은 서버의 규칙 pass가 소유한다.
+
+export type CheckpointEvidenceCopy = {
+  date: string;
+  title: string;
+  /** 내러티브 근거 풀에만 있다. thesis 풀(문서)에는 role 분류가 없다. */
+  role?: string;
+};
+
+export type TrackedCheckpointView = {
+  id: string;
+  item: string;
+  direction: string;
+  status: string;
+  statusLabel: string;
+  dueBy: string | null;
+  keywords?: string[];
+  tickers?: string[];
+  lastVerdict: {
+    verdict: string;
+    verdictLabel: string;
+    at: string;
+    evidence: CheckpointEvidenceCopy[];
+  } | null;
+  historyCount?: number;
+  history?: Array<{ at: string; from: string; to: string; verdict: string; verdictLabel: string }>;
+};
+
+export type NarrativeVerificationState = {
+  stateId: string;
+  stateKey: string;
+  label: string;
+  status: string;
+  momentum: string;
+  momentumLabel: string;
+  evidenceCounts: { d7: number; d30: number; d90: number };
+  lastEvidenceAt: string;
+  lastConfirmedAt: string;
+  lastChallengedAt: string;
+  silence: { days: number | null; level: string; label: string; note: string };
+  checkpoints: TrackedCheckpointView[];
+  checkpointCounts: Record<string, number>;
+  unverifiableCount: number;
+  templates: string[];
+  timeline: Array<{ at: string; kind: string; from: string; to: string; reason: string; evidenceCount: number }>;
+};
+
+export type NarrativeVerificationPayload = {
+  asOf: string;
+  states: NarrativeVerificationState[];
+  summary: {
+    stateCount: number;
+    checkpointCount: number;
+    confirmed: number;
+    challenged: number;
+    cooling: number;
+    unverifiable: number;
+  };
+};
+
+export type ThesisWorkspacePayload = {
+  ticker: string;
+  hasThesis: boolean;
+  thesis: {
+    ticker: string;
+    company: string;
+    coreThesis: string;
+    keyAssumptions: string[];
+    supportingSignals: string[];
+    weakeningSignals: string[];
+    falsificationTriggers: string[];
+    keyMetrics: string[];
+    linkedRegimes: string[];
+    reviewCycle: string;
+    conviction: string;
+    status: string;
+    lastReviewedAt: string;
+    notePath: string;
+  } | null;
+  ownership: {
+    source: string;
+    appOwned: boolean;
+    vaultNote: { title: string; relPath: string } | null;
+    syncPaused: boolean;
+    message: string;
+  } | null;
+  latestDelta: {
+    deltaId: string;
+    verdict: string;
+    verdictLabel: string;
+    generatedAt: string;
+    period: string;
+    summary: string;
+    supportingEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
+    counterEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
+    contradictions: string[];
+    uncertainties: string[];
+  } | null;
+  checkpoints: {
+    structured: TrackedCheckpointView[];
+    templates: string[];
+    unverifiableCount: number;
+    counts: Record<string, number>;
+  };
+  regimeAlerts: Array<{
+    stateId: string;
+    stateKey: string;
+    label: string;
+    status: string;
+    momentum: string;
+    reasons: Array<{ kind: string; detail: string }>;
+  }>;
+  deltaHistory: Array<{ deltaId: string; verdict: string; verdictLabel: string; generatedAt: string; summary: string }>;
+  layer: string;
+  reuseAsEvidence: boolean;
+};
+
+export async function getNarrativeVerification(
+  options: JsonRequestOptions = {},
+): Promise<NarrativeVerificationPayload> {
+  return getJson<NarrativeVerificationPayload>("/api/memory/verification", options);
+}
+
+export async function getThesisWorkspace(
+  ticker: string,
+  options: JsonRequestOptions = {},
+): Promise<ThesisWorkspacePayload> {
+  return getJson<ThesisWorkspacePayload>(`/api/theses/${encodeURIComponent(ticker)}/workspace`, options);
+}
+
 export type PromoteNoteToThesisResult = {
   ok: boolean;
   noteId: string;

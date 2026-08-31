@@ -4,6 +4,7 @@ import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
+import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
@@ -382,6 +383,15 @@ export function WatchlistRoute() {
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--news">
                   {newsSection}
+                </section>
+                {/* 여기부터는 사실이 아니라 개인 판단이다(0.6 Stage C.2). 같은 구분 문법
+                    (제목 + 헤어라인 + 여백)을 쓰되 hypothesis 경계를 스스로 표시한다. */}
+                <section className="watchlist-detail-section watchlist-detail-section--thesis">
+                  <ThesisWorkspace
+                    ticker={detailTicker}
+                    companyName={detailCompanyName}
+                    onCreateThesis={() => { window.location.hash = "#/analysis"; }}
+                  />
                 </section>
               </div>
             ) : (
