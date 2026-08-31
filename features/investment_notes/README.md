@@ -40,6 +40,7 @@ GET  /api/investment-notes
 GET  /api/investment-notes/{note_id}
 GET  /api/investment-notes/linked
 POST /api/investment-notes
+POST /api/investment-notes/{note_id}/thesis   # 이 노트로 Thesis 만들기/갱신
 ```
 
 기존 `/api/notes`는 호환 경로로 유지하지만 같은 native note 저장소를 사용합니다.
@@ -52,6 +53,13 @@ POST /api/investment-notes
 - 과거 일반 메모/호환 경로: `investment_note`
 
 Obsidian workflow는 계속 유지하되, 기본 저장 경로는 Folio native note입니다.
+
+### company_thesis 노트 → Thesis 레지스트리 (0.6 Stage B)
+
+- 종목 코드가 있는 `company_thesis` 노트를 저장하면, 그 종목에 Thesis가 **없을 때만** 자동으로 등록됩니다. 이미 있으면 노트 저장이 Thesis를 덮지 않습니다 — 덮는 것은 `이 노트로 Thesis 갱신` action(`POST /api/investment-notes/{note_id}/thesis`)뿐입니다.
+- 예전에는 Obsidian Vault 노트만 레지스트리와 동기화돼서, 앱 안에서만 쓰는 사용자는 노트를 성실히 써도 Thesis가 생기지 않았고 같은 화면의 `가설 검토 상태` 카드가 계속 "연결된 Thesis가 없습니다"를 표시했습니다.
+- 등록 로직은 `features/thesis_tracking/native_notes.py`가 갖습니다. **등록 실패가 노트 저장을 되돌리지 않습니다** — 레지스트리 등록은 노트의 부가물입니다.
+- 노트는 계속 hypothesis 계층이며(`reuseAsEvidence: false`), Thesis 등록이 이 경계를 바꾸지 않습니다.
 
 ## Note Intelligence (0.2.1)
 

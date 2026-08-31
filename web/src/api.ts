@@ -730,6 +730,25 @@ export async function updateHypothesisCheckpoint(
   );
 }
 
+export type PromoteNoteToThesisResult = {
+  ok: boolean;
+  noteId: string;
+  /** created = 빈자리를 채웠다 · updated = 명시적 갱신 · skipped_* = 아무것도 하지 않았다 */
+  status: string;
+  ticker: string;
+};
+
+export async function promoteNoteToThesis(
+  noteId: string,
+  options: JsonRequestOptions = {},
+): Promise<PromoteNoteToThesisResult> {
+  return postJson<PromoteNoteToThesisResult>(
+    `/api/investment-notes/${encodeURIComponent(noteId)}/thesis`,
+    {},
+    options,
+  );
+}
+
 export async function runThesisReview(
   ticker: string,
   options: JsonRequestOptions = {},

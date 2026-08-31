@@ -276,6 +276,16 @@ def save_note(payload: dict | None, *, db_path: Path | None = None) -> dict:
         _upsert_index(conn, note, path)
     finally:
         conn.close()
+    # company_thesis 노트는 thesis 레지스트리의 빈자리를 자동으로 채운다(0.6 §8.2).
+    # 이미 thesis가 있으면 덮지 않는다 — 갱신은 명시적 action뿐이다. 실패해도
+    # 노트 저장을 되돌리지 않는다(등록은 노트의 부가물이다).
+    if note.get("noteType") == "company_thesis" and note.get("ticker"):
+        from features.thesis_tracking.native_notes import link_note_on_save
+
+        # thesis 레지스트리는 이 노트 색인과 **같은 DB**에 있다 — 호출자가 준 경로를
+        # 그대로 넘긴다. 레지스트리 기본 경로를 따로 열면 임시 DB로 격리한 호출자
+        # (테스트 포함)가 실제 워크스페이스에 쓰게 된다.
+        link_note_on_save(note, db_path=db_path or MARKET_MEMORY_DB_PATH)
     return public_note(note)
 
 

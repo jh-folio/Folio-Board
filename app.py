@@ -225,8 +225,10 @@ from features.personal_overlay.service import (
 )
 from features.thesis_tracking.service import (
     list_thesis_payload,
+    promote_note_to_thesis,
     run_thesis_delta,
     thesis_detail_payload,
+    upsert_manual_thesis,
 )
 from features.topic_report.service import (
     attach_overlay_to_topic_report,
@@ -876,9 +878,29 @@ def api_list_theses(status: str = ""):
     return list_thesis_payload(status=status or None)
 
 
+@fastapi_app.post("/api/theses")
+def api_upsert_thesis(body: dict | None = Body(default=None)):
+    """Obsidian 없이 앱 안에서 Thesis를 만들고 고친다. 보낸 키만 덮는다(부분 갱신)."""
+    try:
+        return {"ok": True, "thesis": upsert_manual_thesis(body or {})}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @fastapi_app.get("/api/theses/{ticker}")
 def api_get_thesis(ticker: str):
     return thesis_detail_payload(ticker)
+
+
+@fastapi_app.post("/api/investment-notes/{note_id}/thesis")
+def api_promote_note_to_thesis(note_id: str):
+    """이 노트로 Thesis 만들기/갱신 — 명시적 action만 기존 Thesis를 덮는다(§8.2)."""
+    try:
+        return promote_note_to_thesis(note_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail="Note not found") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @fastapi_app.post("/api/theses/{ticker}/delta")

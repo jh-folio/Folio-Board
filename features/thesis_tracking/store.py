@@ -22,6 +22,11 @@ from features.common.workspace import data_dir
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = data_dir() / "market-memory.sqlite3"
 
+# thesis 행의 소유자(`source`) — 누가 덮어써도 되는지를 정한다.
+# Vault 동기화는 자기가 만든 것만 덮는다(빈자리는 자동으로 채운다).
+# 빈 문자열은 소유자를 기록하지 않던 아주 오래된 행이다.
+VAULT_OWNED_SOURCES = frozenset({"obsidian", ""})
+
 
 def connect(db_path=None) -> sqlite3.Connection:
     if db_path == ":memory:":

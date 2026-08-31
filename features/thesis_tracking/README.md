@@ -43,6 +43,25 @@ key_metrics: [WFE outlook, gross margin]
 
 헤딩은 키워드(한/영)로 매칭하며, 문서 H1 제목이 키워드에 걸려도 **내용 있는 섹션을 우선**한다.
 
+## Thesis를 만드는 경로 (0.6 Stage B)
+
+Obsidian 없이 앱 안에서 Thesis를 만들고 고칠 수 있습니다. Obsidian 경로는 그대로 유지됩니다.
+
+| 경로 | 무엇을 하는가 | `source` |
+|---|---|---|
+| `POST /api/theses` | 직접 입력·수정. **보낸 키만 덮습니다**(부분 갱신) | `manual` |
+| 네이티브 `company_thesis` 노트 저장 | thesis가 없는 종목이면 **자동 등록** | `native_note` |
+| `POST /api/investment-notes/{note_id}/thesis` | `이 노트로 Thesis 만들기/갱신` — 이미 있는 thesis를 노트 내용으로 덮는 유일한 경로 | `native_note` |
+| Vault 동기화(`sync_theses_from_vault`) | Vault의 `company_thesis` 노트 반영 | `obsidian` |
+
+- **빈자리만 자동, 갱신은 명시적입니다**(계획 §8.2). 노트를 저장할 때마다 thesis가 덮이면 공들여 쓴 Thesis가 지나가는 메모에 조용히 사라집니다. 노트 저장 훅은 빈자리만 채우고, 덮는 것은 사용자가 누른 승격 action뿐입니다.
+- **Vault 동기화는 자기가 만든 thesis만 덮습니다**(`store.VAULT_OWNED_SOURCES`). 이 동기화는 thesis를 열 때마다 도는 경로(`thesis_detail_payload(sync=True)`)라, 소유자를 보지 않으면 앱에서 만든 Thesis가 같은 티커의 옛 Vault 노트로 매 조회마다 되돌아갑니다. 빈자리는 예전처럼 자동으로 채웁니다.
+- **부분 갱신은 손실 방지 장치입니다.** 명시적 action이라고 손실 없는 action은 아닙니다 — 전체 폼을 통째로 받는 API로 두면 한 칸만 고치는 호출자가 나머지를 빈 값으로 지웁니다. `note_path`·`created_at`·`last_reviewed_at`도 보존합니다.
+- 노트 본문이 `## 핵심 Thesis` 같은 템플릿 형식이면 섹션 파서가 각 필드를 채우고, 자유 형식이면 첫 문단이 `core_thesis`가 됩니다 — 노트 쓰는 방식을 강요하지 않습니다.
+- 노트 승격이 실패해도 노트 저장은 되돌아가지 않습니다. 등록은 노트의 부가물입니다.
+- 저장된 구조화 체크포인트는 어느 경로로 갱신해도 보존됩니다(`store.upsert_thesis`의 병합).
+- 로직은 `features/thesis_tracking/native_notes.py`이며, 노트 색인과 thesis 레지스트리는 **같은 DB**(`market-memory.sqlite3`)입니다 — 저장 훅은 호출자가 준 DB 경로를 그대로 씁니다.
+
 ## 저장 위치
 
 `thesis` 테이블 — `data/market-memory.sqlite3` (지식그래프 DB 확장, 별도 파일 없음).
@@ -55,10 +74,11 @@ key_metrics: [WFE outlook, gross margin]
 ```python
 from features.thesis_tracking.service import sync_theses_from_vault, list_theses, get_thesis, upsert_manual_thesis, run_thesis_delta
 
-sync_theses_from_vault()        # Vault의 company_thesis 노트 → 레지스트리 동기화
+sync_theses_from_vault()        # Vault의 company_thesis 노트 → 레지스트리 동기화(자기 것만 덮음)
 list_theses(status="active")    # 등록된 thesis 목록
 get_thesis("LRCX")              # 티커별 조회
-upsert_manual_thesis({"ticker": "NVDA", "core_thesis": "..."})  # UI 직접 입력
+upsert_manual_thesis({"ticker": "NVDA", "core_thesis": "..."})  # UI 직접 입력(보낸 키만 덮음)
+promote_note_to_thesis("note-id")                                # 네이티브 노트 → Thesis(명시적 갱신)
 run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/저장
 ```
 
@@ -90,8 +110,10 @@ run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/
 
 ```text
 GET  /api/theses
+POST /api/theses                                  # 직접 입력·수정(부분 갱신)
 GET  /api/theses/{ticker}
 POST /api/theses/{ticker}/delta
+POST /api/investment-notes/{note_id}/thesis       # 이 노트로 Thesis 만들기/갱신
 ```
 
 `POST /api/theses/{ticker}/delta` body:
