@@ -8188,8 +8188,8 @@ async function H(e, t = {}) {
 async function U(e, t, n = {}) {
 	return V(`/api/theses/${encodeURIComponent(e)}/review/checkpoints`, t, n);
 }
-async function ee(e, t = {}) {
-	return V(`/api/investment-notes/${encodeURIComponent(e)}/thesis`, {}, t);
+async function ee(e, t = !1, n = {}) {
+	return V(`/api/investment-notes/${encodeURIComponent(e)}/thesis`, { overwrite: t }, n);
 }
 async function te(e, t = {}) {
 	return V(`/api/theses/${encodeURIComponent(e)}/delta`, { period: "90d" }, t);
@@ -10321,8 +10321,14 @@ function Fn({ identity: e, noteExists: t, refreshKey: n, agentAvailable: r = !0,
 		if (!(!e.ticker || u) && !(t && !window.confirm(`${e.ticker} Thesis를 이 노트 내용으로 덮어쓸까요?`))) {
 			d(!0), c(t ? "Thesis를 갱신하는 중..." : "Thesis를 만드는 중...");
 			try {
-				let t = await ee(e.id), n = await H(e.id);
-				o(n), c(t.status === "updated" ? "이 노트로 Thesis를 갱신했습니다." : "이 노트로 Thesis를 만들었습니다.");
+				let n = await ee(e.id, t);
+				if (n.status === "skipped_existing") {
+					let t = await H(e.id);
+					o(t), c("그 사이 이 종목의 Thesis가 생겼습니다. 내용을 확인한 뒤 갱신으로 진행하세요.");
+					return;
+				}
+				let r = await H(e.id);
+				o(r), c(n.status === "updated" ? "이 노트로 Thesis를 갱신했습니다." : "이 노트로 Thesis를 만들었습니다.");
 			} catch (e) {
 				c(e instanceof Error ? e.message : "Thesis 등록에 실패했습니다.");
 			} finally {

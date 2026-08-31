@@ -57,6 +57,93 @@ def _note(**overrides):
     return base
 
 
+# --- 2026-08-30 리뷰 계약 -------------------------------------------------
+
+def test_note_save_is_not_a_review():
+    """노트 저장 시각이 last_reviewed_at이 되면 검토한 적 없는 thesis가 '최근 검토:
+    오늘'이 되고, Delta의 since_last_review 창이 0일로 접힌다."""
+    thesis = NN.thesis_from_note(_note())
+    assert thesis.last_reviewed_at == ""
+
+
+def test_explicit_promote_keeps_fields_the_note_cannot_express():
+    """확인 대화상자는 '노트 내용으로 덮을까요'를 물었지 이탈 조건·핵심 지표를
+    지우겠다고 묻지 않았다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        conn = ST.connect(db_path)
+        TS.upsert_manual_thesis({
+            "ticker": TICKER, "coreThesis": "기존 논지",
+            "keyMetrics": ["WFE outlook", "gross margin"],
+            "supportingSignals": ["수주잔고 증가"],
+        }, db_path=db_path)
+        conn.close()
+        # 핵심 Thesis 한 섹션만 있는 노트로 명시 갱신
+        out = NN.register_thesis_from_note(
+            _note(body="## 핵심 Thesis\n\n새 논지다.\n"), db_path=db_path, overwrite=True
+        )
+        assert out["status"] == "updated"
+        assert out["thesis"]["core_thesis"] == "새 논지다."
+        assert out["thesis"]["key_metrics"] == ["WFE outlook", "gross margin"]
+        assert out["thesis"]["supporting_signals"] == ["수주잔고 증가"]
+
+
+def test_partial_manual_update_does_not_transfer_ownership():
+    """확신도 한 칸을 고쳤다고 Vault 동기화가 영구히 끊기면 안 된다 — source는
+    VAULT_OWNED_SOURCES의 판정 키다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        conn = ST.connect(db_path)
+        from features.thesis_tracking import model as M
+        ST.upsert_thesis(conn, M.Thesis(ticker=TICKER, core_thesis="Vault 논지", source="obsidian"))
+        conn.close()
+        updated = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "high"}, db_path=db_path)
+        assert updated["source"] == "obsidian"          # 소유권 유지
+        assert updated["conviction"] == "high"
+        created = TS.upsert_manual_thesis({"ticker": "AMD", "coreThesis": "새 논지"}, db_path=db_path)
+        assert created["source"] == "manual"            # 생성만 자기 source
+
+
+def test_agent_note_and_thought_only_note_do_not_auto_register():
+    """Agent 자유 텍스트·지나가는 한 줄이 확인 없이 hypothesis 정본이 되면 안 된다
+    (§3.13). 명시적 승격은 계속 가능하다."""
+    agent = NN.auto_register_block(_note(tags=["agent_assisted"]))
+    assert agent == "skipped_agent_note"
+    thought = NN.auto_register_block(_note(
+        body="", rawThoughts=[{"body": "실적 전에 좀 더 봐야 함"}]
+    ))
+    assert thought == "skipped_no_substance"
+    assert NN.auto_register_block(_note()) == ""        # 실질 있는 노트는 통과
+
+
+def test_promote_without_overwrite_skips_an_existing_thesis():
+    """덮겠다는 의사는 요청이 싣는다 — 화면 캐시가 낡았을 때 남의 thesis를 확인
+    없이 덮지 않는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        TS.upsert_manual_thesis({"ticker": TICKER, "coreThesis": "기존"}, db_path=db_path)
+        out = NN.register_thesis_from_note(_note(), db_path=db_path, overwrite=False)
+        assert out["status"] == "skipped_existing"
+        conn = ST.connect(db_path)
+        assert ST.get_thesis(conn, TICKER)["core_thesis"] == "기존"
+        conn.close()
+
+
+def test_ticker_normalization_is_shared_with_the_note_index():
+    """thesis PK와 노트 색인 티커는 join 키다 — 정규화가 갈리면 같은 회사가 두 행."""
+    from features.thesis_tracking.model import normalize_ticker
+    assert normalize_ticker("005930.KS") == "005930"
+    assert normalize_ticker(" brk.b ") == "BRK-B"
+    assert normalize_ticker("없는회사이름123!") == ""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        TS.upsert_manual_thesis({"ticker": "BRK.B", "coreThesis": "논지"}, db_path=db_path)
+        conn = ST.connect(db_path)
+        assert ST.get_thesis(conn, "BRK-B")["ticker"] == "BRK-B"
+        assert ST.get_thesis(conn, "brk.b")["ticker"] == "BRK-B"   # 어느 표기로 물어도 같은 행
+        conn.close()
+
+
 # --- 노트 → Thesis 변환 --------------------------------------------------
 
 def test_template_note_fills_every_section():

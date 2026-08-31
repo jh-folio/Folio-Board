@@ -39,12 +39,11 @@ def _clean_text(value) -> str:
 
 
 def _clean_ticker(value) -> str:
-    raw = _clean_text(value).upper().lstrip("$")
-    korean = re.fullmatch(r"(\d{6})(?:\.(?:KS|KQ))?", raw)
-    if korean:
-        return korean.group(1)
-    raw = raw.replace(".", "-")
-    return raw if re.fullmatch(r"[A-Z0-9-]{1,12}", raw) else ""
+    # 규칙 소유자는 thesis 모델이다 — 노트 색인과 thesis PK가 join 키라 두 곳이 각자
+    # 정규화하면 같은 회사가 두 행으로 갈라진다(0.6 Stage B 리뷰).
+    from features.thesis_tracking.model import normalize_ticker
+
+    return normalize_ticker(_clean_text(value))
 
 
 def _clean_note_id(value) -> str:

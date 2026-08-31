@@ -109,11 +109,21 @@ export function HypothesisReviewCard({
     if (!identity.ticker || busy) return;
     // 갱신은 기존 Thesis를 노트 내용으로 덮는다 — 명시적 action이라도 되돌릴 수 없는
     // 쪽은 한 번 묻는다. 만들기(빈자리)는 잃을 것이 없으므로 바로 진행한다.
+    // 덮겠다는 의사는 요청이 싣는다(overwrite) — 서버 기본이 덮기면, 이 카드가 마지막으로
+    // 읽은 캐시가 "thesis 없음"인 사이 다른 탭이 만든 thesis를 확인 없이 덮는다.
     if (hasThesis && !window.confirm(`${identity.ticker} Thesis를 이 노트 내용으로 덮어쓸까요?`)) return;
     setBusy(true);
     setStatus(hasThesis ? "Thesis를 갱신하는 중..." : "Thesis를 만드는 중...");
     try {
-      const result = await promoteNoteToThesis(identity.id);
+      const result = await promoteNoteToThesis(identity.id, hasThesis);
+      if (result.status === "skipped_existing") {
+        // 카드가 비어 있다고 알던 사이 다른 경로가 thesis를 만들었다 — 남의 내용을
+        // 확인 없이 덮지 않고, 최신 상태를 보여 준 뒤 사용자가 갱신으로 다시 누르게 한다.
+        const refreshedNow = await getHypothesisIntelligence(identity.id);
+        setIntelligence(refreshedNow);
+        setStatus("그 사이 이 종목의 Thesis가 생겼습니다. 내용을 확인한 뒤 갱신으로 진행하세요.");
+        return;
+      }
       const refreshed = await getHypothesisIntelligence(identity.id);
       setIntelligence(refreshed);
       setStatus(result.status === "updated" ? "이 노트로 Thesis를 갱신했습니다." : "이 노트로 Thesis를 만들었습니다.");

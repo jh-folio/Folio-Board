@@ -55,8 +55,12 @@ Obsidian 없이 앱 안에서 Thesis를 만들고 고칠 수 있습니다. Obsid
 | Vault 동기화(`sync_theses_from_vault`) | Vault의 `company_thesis` 노트 반영 | `obsidian` |
 
 - **빈자리만 자동, 갱신은 명시적입니다**(계획 §8.2). 노트를 저장할 때마다 thesis가 덮이면 공들여 쓴 Thesis가 지나가는 메모에 조용히 사라집니다. 노트 저장 훅은 빈자리만 채우고, 덮는 것은 사용자가 누른 승격 action뿐입니다.
-- **Vault 동기화는 자기가 만든 thesis만 덮습니다**(`store.VAULT_OWNED_SOURCES`). 이 동기화는 thesis를 열 때마다 도는 경로(`thesis_detail_payload(sync=True)`)라, 소유자를 보지 않으면 앱에서 만든 Thesis가 같은 티커의 옛 Vault 노트로 매 조회마다 되돌아갑니다. 빈자리는 예전처럼 자동으로 채웁니다.
+- **자동 등록은 명시 승격보다 엄격합니다**(`native_notes.auto_register_block`). `agent_assisted` 태그 노트는 자동 등록하지 않고(Agent 자유 텍스트가 확인 없이 hypothesis 정본이 되면 §3.13 위반), 본문 없이 생각 한 줄뿐인 노트도 등록하지 않습니다(지나가는 한 줄이 빈자리를 선점하면 나중의 공들인 노트·Vault 노트가 전부 막힙니다). 명시 승격은 생각 fallback을 그대로 씁니다 — 사용자가 그것을 골랐으므로.
+- **노트 저장은 검토가 아닙니다.** 자동 등록·승격이 `last_reviewed_at`을 찍지 않습니다 — 찍으면 검토한 적 없는 thesis가 "최근 검토: 오늘"이 되고 Delta의 `since_last_review` 창이 0일로 접힙니다.
+- **Vault 동기화는 자기가 만든 thesis만 덮습니다**(`store.VAULT_OWNED_SOURCES`). 이 동기화는 thesis를 열 때마다 도는 경로(`thesis_detail_payload(sync=True)`)라, 소유자를 보지 않으면 앱에서 만든 Thesis가 같은 티커의 옛 Vault 노트로 매 조회마다 되돌아갑니다. 빈자리는 예전처럼 자동으로 채웁니다. **부분 갱신은 소유권을 옮기지 않습니다** — `upsert_manual_thesis`가 기존 `source`를 보존하므로 확신도 한 칸을 고쳤다고 Vault 동기화가 끊기지 않습니다. 소유권 이전은 명시적 승격뿐이며, 그때의 "Vault에서 더 이상 갱신되지 않음" 표시는 Stage C 몫입니다.
+- **덮겠다는 의사는 요청이 싣습니다.** 승격 API의 `overwrite` 기본은 False — 기존 행을 만나면 `skipped_existing`으로 돌아가고 화면이 최신 상태를 보여준 뒤 재확인합니다(화면 캐시가 낡은 사이 다른 경로가 만든 thesis를 확인 없이 덮지 않습니다). 승격도 부분 보존입니다 — 노트가 값을 주지 않는 필드(핵심 지표·신호·이탈 조건)는 기존을 유지합니다.
 - **부분 갱신은 손실 방지 장치입니다.** 명시적 action이라고 손실 없는 action은 아닙니다 — 전체 폼을 통째로 받는 API로 두면 한 칸만 고치는 호출자가 나머지를 빈 값으로 지웁니다. `note_path`·`created_at`·`last_reviewed_at`도 보존합니다.
+- **티커 정규화는 `model.normalize_ticker` 하나입니다**(노트 색인과 동일 규칙 — `.KS/.KQ` 제거·`.`→`-`). thesis PK와 노트 색인 티커가 join 키라 정규화가 갈리면 같은 회사가 두 행으로 갈라져 카드가 영영 Thesis를 못 찾습니다.
 - 노트 본문이 `## 핵심 Thesis` 같은 템플릿 형식이면 섹션 파서가 각 필드를 채우고, 자유 형식이면 첫 문단이 `core_thesis`가 됩니다 — 노트 쓰는 방식을 강요하지 않습니다.
 - 노트 승격이 실패해도 노트 저장은 되돌아가지 않습니다. 등록은 노트의 부가물입니다.
 - 저장된 구조화 체크포인트는 어느 경로로 갱신해도 보존됩니다(`store.upsert_thesis`의 병합).

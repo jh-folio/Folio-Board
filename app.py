@@ -883,7 +883,9 @@ def api_upsert_thesis(body: dict | None = Body(default=None)):
     """Obsidian 없이 앱 안에서 Thesis를 만들고 고친다. 보낸 키만 덮는다(부분 갱신)."""
     try:
         return {"ok": True, "thesis": upsert_manual_thesis(body or {})}
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
+        # 리스트 필드에 스칼라가 오는 것 같은 형식 오류도 400이다 — 500은 호출자에게
+        # 고칠 단서를 주지 않는다.
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
@@ -893,10 +895,14 @@ def api_get_thesis(ticker: str):
 
 
 @fastapi_app.post("/api/investment-notes/{note_id}/thesis")
-def api_promote_note_to_thesis(note_id: str):
-    """이 노트로 Thesis 만들기/갱신 — 명시적 action만 기존 Thesis를 덮는다(§8.2)."""
+def api_promote_note_to_thesis(note_id: str, body: dict | None = Body(default=None)):
+    """이 노트로 Thesis 만들기/갱신 — 명시적 action만 기존 Thesis를 덮는다(§8.2).
+
+    덮겠다는 의사는 요청의 `overwrite`가 싣는다. 서버 기본이 덮기면 화면 캐시가
+    낡았을 때 남의 thesis가 확인 없이 덮인다.
+    """
     try:
-        return promote_note_to_thesis(note_id)
+        return promote_note_to_thesis(note_id, overwrite=bool((body or {}).get("overwrite")))
     except LookupError as e:
         raise HTTPException(status_code=404, detail="Note not found") from e
     except ValueError as e:

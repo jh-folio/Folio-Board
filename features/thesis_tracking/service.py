@@ -160,17 +160,17 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
     (`store.VAULT_OWNED_SOURCES`).
     """
     data = data or {}
-    ticker = str(data.get("ticker", "") or "").strip().upper()
+    ticker = M.normalize_ticker(data.get("ticker"))
     if not ticker:
-        raise ValueError("ticker는 필수입니다.")
+        raise ValueError("ticker는 필수이며 형식이 올바라야 합니다.")
     conn = ST.connect(db_path)
     try:
         existing = ST.get_thesis(conn, ticker) or {}
         raw_checkpoints, _ = _manual_field(data, "next_checkpoints", existing)
         thesis = M.Thesis(
             ticker=ticker,
-            company=str(_manual_field(data, "company", existing)[0] or "").strip(),
-            core_thesis=str(_manual_field(data, "core_thesis", existing)[0] or "").strip(),
+            company=str(_manual_field(data, "company", existing)[0] or "").strip()[:120],
+            core_thesis=str(_manual_field(data, "core_thesis", existing)[0] or "").strip()[:4000],
             key_assumptions=M._as_list(_manual_field(data, "key_assumptions", existing)[0]),
             supporting_signals=M._as_list(_manual_field(data, "supporting_signals", existing)[0]),
             weakening_signals=M._as_list(_manual_field(data, "weakening_signals", existing)[0]),
@@ -187,7 +187,11 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
             review_cycle=M.normalize_review_cycle(_manual_field(data, "review_cycle", existing)[0]),
             conviction=M.normalize_conviction(_manual_field(data, "conviction", existing)[0]),
             status=M.normalize_status(_manual_field(data, "status", existing)[0]),
-            source="manual",
+            # **부분 갱신은 소유권을 옮기지 않는다.** source는 VAULT_OWNED_SOURCES의
+            # 판정 키라, 여기서 무조건 "manual"로 덮으면 Obsidian 소유 thesis의 확신도
+            # 한 칸을 고친 것만으로 Vault 동기화가 영구히 끊긴다(되돌리는 UI도 없다).
+            # 소유권 이전은 명시적 승격(`이 노트로 Thesis 갱신`)만 한다.
+            source=str(existing.get("source") or "manual"),
             # 원본 노트 참조는 잃지 않는다 — 노트에서 승격된 thesis를 화면에서 한 칸
             # 고쳤다고 출처가 사라지면 안 된다.
             note_path=str(existing.get("note_path") or ""),
@@ -200,11 +204,15 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
         conn.close()
 
 
-def promote_note_to_thesis(note_id: str, *, overwrite: bool = True, db_path=None) -> dict:
+def promote_note_to_thesis(note_id: str, *, overwrite: bool = False, db_path=None) -> dict:
     """네이티브 노트를 Thesis로 등록하거나 갱신한다(명시적 action, §8.2).
 
     노트 저장 훅은 빈자리만 채운다. 이미 있는 thesis를 노트 내용으로 덮는 것은
-    사용자가 여기를 눌렀을 때뿐이다.
+    사용자가 여기를 눌렀을 때뿐이다 — 그리고 **덮겠다는 의사는 요청이 실어야 한다**
+    (`overwrite`, 기본 False). 기본을 덮기로 두면 화면이 마지막으로 읽은 캐시가
+    "thesis 없음"인 채로 다른 탭·Vault 동기화가 만든 thesis를 확인 없이 덮는다
+    (2026-08-30 리뷰). overwrite 없이 기존 행을 만나면 `skipped_existing`으로
+    돌아가고, 화면이 그때 확인을 받아 다시 부른다.
     """
     from features.investment_notes import service as note_service
     from features.thesis_tracking import native_notes as NN

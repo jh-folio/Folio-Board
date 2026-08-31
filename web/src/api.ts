@@ -740,11 +740,12 @@ export type PromoteNoteToThesisResult = {
 
 export async function promoteNoteToThesis(
   noteId: string,
+  overwrite = false,
   options: JsonRequestOptions = {},
 ): Promise<PromoteNoteToThesisResult> {
   return postJson<PromoteNoteToThesisResult>(
     `/api/investment-notes/${encodeURIComponent(noteId)}/thesis`,
-    {},
+    { overwrite },
     options,
   );
 }

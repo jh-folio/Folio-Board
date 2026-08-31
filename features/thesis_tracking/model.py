@@ -42,6 +42,22 @@ LIST_FIELDS = [
 ]
 
 
+def normalize_ticker(value) -> str:
+    """thesis PK용 티커 정규화 — 노트 색인(`investment_notes._clean_ticker`)과 **같은 규칙**.
+
+    thesis.ticker와 native_note_index.ticker가 join 키인데 두 경로가 다른 정규화를
+    쓰면 같은 회사가 두 행으로 갈라진다(`005930.KS` vs `005930`, `BRK.B` vs `BRK-B`) —
+    카드가 영영 "연결된 Thesis가 없습니다"를 보여주고 `만들기`가 행을 계속 늘린다.
+    규칙: 한국 6자리 코드는 `.KS`/`.KQ`를 떼고, 그 외 `.`은 `-`로, `[A-Z0-9-]{1,12}`만 허용.
+    """
+    raw = str(value or "").strip().upper().lstrip("$")
+    korean = re.fullmatch(r"(\d{6})(?:\.(?:KS|KQ))?", raw)
+    if korean:
+        return korean.group(1)
+    raw = raw.replace(".", "-")
+    return raw if re.fullmatch(r"[A-Z0-9-]{1,12}", raw) else ""
+
+
 @dataclass
 class Thesis:
     ticker: str = ""
@@ -57,7 +73,7 @@ class Thesis:
     review_cycle: str = REVIEW_CYCLE_DEFAULT
     conviction: str = CONVICTION_DEFAULT
     status: str = STATUS_DEFAULT
-    source: str = "obsidian"          # obsidian | manual
+    source: str = "obsidian"          # obsidian | manual | native_note (store.VAULT_OWNED_SOURCES가 소유권 판정)
     note_path: str = ""
     created_at: str = ""
     last_reviewed_at: str = ""

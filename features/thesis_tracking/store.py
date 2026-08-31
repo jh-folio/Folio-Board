@@ -126,9 +126,13 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
     from features.common.research_schema.tracked_checkpoints import merge_with_templates
 
     row = thesis.to_row()
-    ticker = row["ticker"]
+    # PK는 정규화된 티커다 — 노트 색인과 같은 규칙(model.normalize_ticker). Vault
+    # frontmatter의 `005930.KS`와 노트의 `005930`이 다른 행이 되면 카드가 영영
+    # thesis를 못 찾는다. 정규화가 거부하는 표기는 저장하지 않는다.
+    ticker = M.normalize_ticker(row["ticker"])
     if not ticker:
-        raise ValueError("thesis.ticker가 비어 있습니다.")
+        raise ValueError("thesis.ticker가 비어 있거나 형식이 올바르지 않습니다.")
+    row["ticker"] = ticker
     now = _now()
     existing = conn.execute(
         "SELECT first_seen, next_checkpoints_json FROM thesis WHERE ticker=?", (ticker,)
@@ -213,7 +217,9 @@ def list_theses(conn, *, status=None) -> list:
 
 
 def get_thesis(conn, ticker: str):
-    row = conn.execute("SELECT * FROM thesis WHERE ticker=?", (str(ticker or "").upper(),)).fetchone()
+    # 조회도 저장과 같은 정규화를 쓴다 — `BRK.B`로 물어도 PK `BRK-B` 행을 찾아야 한다.
+    key = M.normalize_ticker(ticker) or str(ticker or "").strip().upper()
+    row = conn.execute("SELECT * FROM thesis WHERE ticker=?", (key,)).fetchone()
     return _row_to_dict(row) if row else None
 
 
