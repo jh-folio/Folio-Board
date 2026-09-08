@@ -400,7 +400,9 @@ def _dashboard_payload_from_snapshot_view(snapshot: dict, view: dict | None = No
         source_refs = driver.get("sourceRefs") or []
         impact = driver.get("summary") or ""
         why_it_matters = driver.get("whyItMatters") or ""
-        watch = watch_items[0] if watch_items else ""
+        # snapshot의 page-level watchItems는 드라이버의 checkpoint가 아니다.
+        # 드라이버가 직접 쓴 nextMemoryCheck만 그 카드의 다음 확인으로 노출한다.
+        next_memory_check = str(driver.get("nextMemoryCheck") or "").strip()
         direction = _driver_direction(driver.get("title") or "", f"{impact} {why_it_matters}", "agent")
         direction_label = driver.get("directionLabel") or direction["label"]
         direction_tone = driver.get("directionTone") or direction["tone"]
@@ -420,11 +422,15 @@ def _dashboard_payload_from_snapshot_view(snapshot: dict, view: dict | None = No
             "whyItMatters": why_it_matters,
             "evidenceSummary": driver.get("evidenceSummary") or why_it_matters or impact,
             "elaboration": "출처: " + ", ".join(source_refs[:4]) if source_refs else "",
-            "evidenceCounts": {"d7": 0, "d30": 0, "d90": 0},
+            # 스냅샷 드라이버는 narrative state가 아니므로 7/30/90일 count를
+            # 갖지 않는다. null은 기존 렌더러를 깨지 않으면서 0이라는 가짜
+            # 내러티브 count로 보이지 않게 한다.
+            "evidenceCounts": {"d7": None, "d30": None, "d90": None},
+            "evidenceCountStatus": "unavailable",
             "linkedCompanies": [],
-            "nextCheckpoint": watch,
-            "whatToWatch": watch,
-            "nextMemoryCheck": driver.get("nextMemoryCheck") or _next_memory_check(watch, direction),
+            "nextCheckpoint": next_memory_check,
+            "whatToWatch": next_memory_check,
+            "nextMemoryCheck": next_memory_check,
             "askAgentPrompt": f"{driver.get('title') or '현재 시장 상태'}가 내 투자 판단에 주는 의미를 설명해줘",
         })
     summary = view.get("actionSummary") or snapshot.get("beginnerSummary") or _plain_conclusion(posture)

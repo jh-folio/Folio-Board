@@ -17,6 +17,7 @@ from pathlib import Path
 
 from features.common.research_schema.tracked_checkpoints import merge_with_templates
 from features.common.taxonomy import canonical_tag
+from features.market_memory.evidence_roles import current_role, is_llm_mode
 from features.market_memory.memory import connect, init_db, normalize, parse_json_list
 
 MOMENTUM_CHOICES = {"strengthening", "stable", "fading", "turning", "conflicted"}
@@ -118,20 +119,19 @@ def classify_evidence(text: str, state: dict) -> str:
     """Classify text as supporting/challenging/neutral for the state.
 
     A bearish state is supported by negative evidence; a bullish state is
-    supported by positive evidence. Mixed/neutral states require one side to be
-    clearly dominant, otherwise remain neutral.
+    supported by positive evidence. Neutral/mixed/unknown states remain
+    neutral: generic headline polarity is not a state-relative contradiction.
     """
     lower = str(text or "").lower()
     positive = sum(1 for term in POSITIVE_TERMS if term.lower() in lower)
     negative = sum(1 for term in NEGATIVE_TERMS if term.lower() in lower)
     bias = str(state.get("bias") or "").lower()
-    net_effect = str(state.get("net_effect") or state.get("netEffect") or "").lower()
-    if bias == "bearish" or any(word in net_effect for word in ("risk", "tighten", "pressure", "부담", "위험")):
+    if bias == "bearish":
         support, challenge = negative, positive
-    elif bias == "bullish" or any(word in net_effect for word in ("benefit", "tailwind", "수혜", "완화")):
+    elif bias == "bullish":
         support, challenge = positive, negative
     else:
-        support, challenge = max(positive, negative), min(positive, negative)
+        return "neutral"
     if support == 0 and challenge == 0:
         return "neutral"
     if support >= challenge + 1:
@@ -231,8 +231,13 @@ def regime_checkpoints(state: dict, evidence_rows: list[dict], momentum: str) ->
         points.append(f"강화 근거 '{top_support.get('title', '')}' 이후 같은 방향의 후속 뉴스가 반복되는지 확인")
     if top_challenge:
         points.append(f"반대 근거 '{top_challenge.get('title', '')}'가 일회성인지 추세 전환 신호인지 확인")
-    if momentum in {"conflicted", "turning", "fading"}:
-        points.append(f"momentum={momentum} 상태가 지속되면 기존 thesis 연결을 재검토")
+    momentum_checkpoint = {
+        "conflicted": "상반된 근거가 함께 이어지면",
+        "turning": "추세 전환 신호가 이어지면",
+        "fading": "추세 약화가 이어지면",
+    }.get(momentum)
+    if momentum_checkpoint:
+        points.append(f"{momentum_checkpoint} 기존 가설 연결을 재검토")
     return [p for p in points if p][:5]
 
 
@@ -256,7 +261,7 @@ _MATCH_TOKEN_EXCLUDE = (
 
 
 def _state_tokens(state: dict) -> set[str]:
-    raw = " ".join(str(state.get(k, "") or "") for k in ("state_key", "state_label", "story", "story_family", "summary", "rationale", "net_effect"))
+    raw = " ".join(str(state.get(k, "") or "") for k in ("state_key", "state_label", "story", "story_family", "summary", "rationale"))
     return _tokens(raw)
 
 
@@ -272,7 +277,7 @@ def _state_identity_tokens(state: dict) -> set[str]:
 
 
 def _memory_tokens(memory: dict) -> set[str]:
-    raw = " ".join(str(memory.get(k, "") or "") for k in ("state_key", "state_label", "story", "story_family", "title", "summary", "story_thesis", "net_effect"))
+    raw = " ".join(str(memory.get(k, "") or "") for k in ("state_key", "state_label", "story", "story_family", "title", "summary", "story_thesis"))
     raw += " " + " ".join(_json_list(memory.get("tags_json")) + _json_list(memory.get("tickers_json")) + _json_list(memory.get("industries_json")))
     return _tokens(raw)
 
@@ -300,7 +305,13 @@ def _state_row(conn: sqlite3.Connection, state_id: str):
     return conn.execute("SELECT * FROM market_narrative_states WHERE state_id=?", (state_id,)).fetchone()
 
 
-def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) -> dict:
+def refresh_regime_state(
+    db_path: str | Path,
+    state_id: str,
+    *,
+    days: int = 90,
+    role_mode: str = "auto",
+) -> dict:
     path = Path(db_path)
     conn = connect(path)
     init_db(conn)
@@ -315,20 +326,39 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
     candidates = conn.execute(
         """
         SELECT * FROM market_memory
-        WHERE date >= ?
+        WHERE date >= ? AND date <= ?
         ORDER BY date DESC, as_of DESC
         LIMIT 400
         """,
-        (min_date,),
+        (min_date, anchor.date().isoformat()),
     ).fetchall()
+    llm_mode = is_llm_mode(role_mode)
+    pending_count = 0
     evidence_rows = []
     for candidate in candidates:
         memory = dict(candidate)
         matches, matched_terms = _memory_matches_state(memory, state)
         if not matches:
             continue
-        text = " ".join(str(memory.get(k, "") or "") for k in ("title", "summary", "story_thesis", "story_checkpoint", "net_effect"))
-        role = classify_evidence(text, state)
+        # The resolved rules mode owns the projection.  Do not let a durable
+        # role leak through when ``auto`` resolves to rules either.
+        durable = current_role(conn, state, memory) if llm_mode else None
+        if durable is not None:
+            role = durable["role"]
+            role_source = durable["role_source"]
+            role_basis_hash = durable["basis_hash"]
+            role_version = durable["classifier_version"]
+        elif llm_mode:
+            # A missing durable pair is pending in LLM configurations. It is
+            # intentionally absent from role-derived evidence aggregates.
+            pending_count += 1
+            continue
+        else:
+            text = " ".join(str(memory.get(k, "") or "") for k in ("title", "summary", "story_thesis", "story_checkpoint"))
+            role = classify_evidence(text, state)
+            role_source = "rule"
+            role_basis_hash = ""
+            role_version = ""
         score = evidence_score(memory, role, as_of=as_of, matched_terms=matched_terms)
         item = {
             "evidenceId": _evidence_id(state_id, memory.get("memory_id", "")),
@@ -336,6 +366,9 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
             "memoryId": memory.get("memory_id", ""),
             "evidenceDate": memory.get("date", ""),
             "role": role,
+            "roleSource": role_source,
+            "basisHash": role_basis_hash,
+            "classifierVersion": role_version,
             "score": score,
             "title": memory.get("title", ""),
             "summary": memory.get("summary", ""),
@@ -344,6 +377,31 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
             "matchedTerms": matched_terms,
         }
         evidence_rows.append(item)
+
+    if llm_mode and pending_count and not evidence_rows:
+        # Pending-only is an absence of fresh classified signal, not evidence
+        # that the prior regime became neutral.  Clear the projection rows so
+        # readers cannot see stale pair rows, but preserve all state-derived
+        # aggregates/templates and write no change history.
+        with conn:
+            conn.execute("DELETE FROM market_regime_evidence WHERE state_id=?", (state_id,))
+        conn.close()
+        return {
+            "ok": True,
+            "stateId": state_id,
+            "momentum": normalize_momentum(state.get("momentum")),
+            "confidence": float(state.get("confidence") or 0),
+            "evidenceCount7d": int(state.get("evidence_count_7d") or 0),
+            "evidenceCount30d": int(state.get("evidence_count_30d") or 0),
+            "evidenceCount90d": int(state.get("evidence_count_90d") or 0),
+            "lastConfirmedAt": str(state.get("last_confirmed_at") or ""),
+            "lastChallengedAt": str(state.get("last_challenged_at") or ""),
+            "nextCheckpoints": parse_json_list(state.get("next_checkpoints_json")),
+            "falsificationTriggers": parse_json_list(state.get("falsification_triggers_json")),
+            "pendingEvidenceCount": pending_count,
+            "evidence": [],
+            "thesisLinks": {"linked": 0, "updated": 0},
+        }
 
     evidence_rows.sort(key=lambda item: (item.get("evidenceDate", ""), item.get("score", 0)), reverse=True)
     windows = evidence_windows(evidence_rows, as_of=as_of)
@@ -374,16 +432,17 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
                 """
                 INSERT INTO market_regime_evidence (
                     evidence_id, state_id, memory_id, evidence_date, role, score,
-                    title, summary, source_kind, sources_json, matched_terms_json, created_at
+                    title, summary, source_kind, sources_json, matched_terms_json, created_at,
+                    role_source, basis_hash, classifier_version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item["evidenceId"], state_id, item["memoryId"], item["evidenceDate"], item["role"],
                     item["score"], item["title"], item["summary"], item["sourceKind"],
                     json.dumps(item["sources"], ensure_ascii=False),
                     json.dumps(item["matchedTerms"], ensure_ascii=False),
-                    now,
+                    now, item["roleSource"], item["basisHash"], item["classifierVersion"],
                 ),
             )
         old_momentum = normalize_momentum(state.get("momentum"))
@@ -422,6 +481,29 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
                     now,
                 ),
             )
+        old_counts = {
+            "d7": int(state.get("evidence_count_7d") or 0),
+            "d30": int(state.get("evidence_count_30d") or 0),
+            "d90": int(state.get("evidence_count_90d") or 0),
+        }
+        new_counts = {"d7": windows["evidenceCount7d"], "d30": windows["evidenceCount30d"], "d90": windows["evidenceCount90d"]}
+        if old_counts != new_counts:
+            # 근거 행은 refresh 때 재작성되므로 ids가 아닌 변화량만 안정적으로 남긴다.
+            # 값이 같은 refresh에는 이력도 새로 쓰지 않는다.
+            conn.execute(
+                """
+                INSERT INTO market_regime_changes (
+                    change_id, state_id, changed_at, field, old_value, new_value, reason,
+                    evidence_ids_json, created_at
+                ) VALUES (?, ?, ?, 'evidence_count', ?, ?, ?, ?, ?)
+                """,
+                (
+                    _change_id(state_id, "evidence_count", now), state_id, now,
+                    json.dumps(old_counts, ensure_ascii=False), json.dumps(new_counts, ensure_ascii=False),
+                    "최근 7·30·90일 근거 수 변화",
+                    json.dumps([r["evidenceId"] for r in evidence_rows[:6]], ensure_ascii=False), now,
+                ),
+            )
         conn.execute(
             """
             UPDATE market_narrative_states
@@ -455,7 +537,14 @@ def refresh_regime_state(db_path: str | Path, state_id: str, *, days: int = 90) 
     }
 
 
-def refresh_all_regimes(db_path: str | Path, *, status: str = "current", limit: int = 30, days: int = 90) -> dict:
+def refresh_all_regimes(
+    db_path: str | Path,
+    *,
+    status: str = "current",
+    limit: int = 30,
+    days: int = 90,
+    role_mode: str = "auto",
+) -> dict:
     conn = connect(db_path)
     init_db(conn)
     where = "WHERE status IN ('active','watch')" if status == "current" else ""
@@ -464,7 +553,10 @@ def refresh_all_regimes(db_path: str | Path, *, status: str = "current", limit: 
         (int(limit or 30),),
     ).fetchall()
     conn.close()
-    results = [refresh_regime_state(db_path, row["state_id"], days=days) for row in rows]
+    results = [
+        refresh_regime_state(db_path, row["state_id"], days=days, role_mode=role_mode)
+        for row in rows
+    ]
     return {"ok": True, "count": len(results), "results": results}
 
 
@@ -475,6 +567,9 @@ def _evidence_row(row) -> dict:
         "memoryId": row["memory_id"],
         "evidenceDate": row["evidence_date"],
         "role": normalize_evidence_role(row["role"]),
+        "roleSource": row["role_source"] if "role_source" in row.keys() else "",
+        "basisHash": row["basis_hash"] if "basis_hash" in row.keys() else "",
+        "classifierVersion": row["classifier_version"] if "classifier_version" in row.keys() else "",
         "score": row["score"],
         "title": row["title"],
         "summary": row["summary"],

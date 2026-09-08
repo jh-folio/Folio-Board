@@ -118,6 +118,7 @@ run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/
 - 순서·경계·소유권 표시·연결 내러티브 경고(A.3)의 규칙은 `features/watchlist_notes/README.md`의 "종목 Thesis workspace" 절이 갖습니다.
 - **판정 두 층을 섞지 않습니다**(계획 §3.2). `thesis_delta`의 6값 verdict와 구조화 체크포인트의 3값 판정은 payload에서도 서로 다른 키에 담깁니다.
 - thesis 체크포인트의 근거 사본은 `{docId, date, title}`이고 **role이 없습니다** — 문서 풀에는 supporting/challenging 분류가 없으므로 화면도 없는 분류를 만들어 내지 않습니다.
+- `이 Thesis를 반박해줘`는 만들기/수정과 최신 검토와 분리된 0.6 Stage D action입니다. 명시적으로 눌렀을 때만 ticker가 붙은 새 Agent 대화와 첫 질문을 만들며, 서버가 해당 Thesis·검증·최근 90일 근거를 다시 읽습니다. 대화 결과는 verdict나 체크포인트를 자동 갱신하지 않습니다.
 
 ## API
 

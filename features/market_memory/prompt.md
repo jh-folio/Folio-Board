@@ -49,6 +49,13 @@ Schema:
         }
       ]
     }
+  ],
+  "evidenceRoles": [
+    {
+      "stateKey": "exact stateKey from roleCandidates",
+      "memoryId": "exact memoryId from roleCandidates",
+      "role": "supporting | challenging | neutral"
+    }
   ]
 }
 
@@ -75,3 +82,4 @@ Rules:
 12-4. `matchers.tickers` is optional for market narratives. Use plain exchange symbols (`NVDA`, `005930`) only when the signal is company-specific.
 12-5. Do not output `id`, `status`, `createdAt`, `lastVerdict`, or `history`. The server assigns them. A checkpoint you mark as already confirmed is discarded.
 12-6. Checkpoints are attached to the market state this entry creates or updates. If the entry is too thin to become a state, its checkpoints are dropped.
+13. `roleCandidates` is a separate, bounded classifier task. Each candidate has canonical `state` and `memory` objects; use those exact values, and return their top-level `stateKey` + `memoryId` pair. Decide the article's meaning **relative to that state**, not whether the article is generally good or bad. A negative supply-disruption article can support an energy-risk state. Return no candidate outside the supplied list and no duplicate pair. Do not return a hash, source, score, rationale, or any field other than `stateKey`, `memoryId`, and `role`.

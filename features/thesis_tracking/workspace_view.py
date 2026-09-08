@@ -175,14 +175,32 @@ def _linked_state_ids(conn, thesis: dict, ticker: str) -> set:
         if squash(row["state_key"]) in declared or squash(row["state_label"]) in declared:
             ids.add(row["state_id"])
     try:
+        # 수동 링크는 사용자가 선언한 관계라서 버리지 않는다. 다만 내러티브가 회전한
+        # 뒤 overridden state_id를 그대로 따르면 과거 checkpoint가 현재 Thesis 경고로
+        # 오귀속한다. state_key는 계보 키이므로, 이전 id가 더 이상 current가 아니면
+        # 같은 key의 active/watch 상태로만 이관한다. 새 자동 링크를 만들지 않는다.
         links = conn.execute(
             """
-            SELECT state_id FROM market_regime_thesis_links
-            WHERE UPPER(thesis_ticker) = ? AND (relationship = 'linked_regimes' OR method = 'manual')
+            SELECT linked.state_id AS linked_id, linked_state.state_key AS linked_key,
+                   current_state.state_id AS current_id
+            FROM market_regime_thesis_links AS linked
+            LEFT JOIN market_narrative_states AS linked_state
+              ON linked_state.state_id = linked.state_id
+            LEFT JOIN market_narrative_states AS current_state
+              ON current_state.state_key = linked_state.state_key
+             AND current_state.status IN ('active', 'watch')
+            WHERE UPPER(linked.thesis_ticker) = ?
+              AND (linked.relationship = 'linked_regimes' OR linked.method = 'manual')
             """,
             (ticker,),
         ).fetchall()
-        ids.update(row["state_id"] for row in links)
+        for link in links:
+            # 현재 id 자체가 살아 있으면 그 id가 authoritative하다. 회전된 id는 같은
+            # lineage의 현재 상태가 실제로 있을 때만 보존한다.
+            if link["linked_id"] in ids:
+                continue
+            if link["current_id"]:
+                ids.add(link["current_id"])
     except Exception:
         pass
     return ids

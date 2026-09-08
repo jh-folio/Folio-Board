@@ -279,8 +279,8 @@ def test_structured_checkpoint_survives_two_regime_refreshes(monkeypatch):
         _seed(db_path, memories=[("mem-s", "2026-08-20", "전력기기 가이던스상향", "AI 데이터센터 전력 수요 growth")], checkpoints=[stored, "옛 템플릿 문장"])
         monkeypatch.setattr(R, "_now", lambda: AS_OF)
 
-        R.refresh_regime_state(db_path, STATE_ID, days=90)
-        R.refresh_regime_state(db_path, STATE_ID, days=90)
+        R.refresh_regime_state(db_path, STATE_ID, days=90, role_mode="rules")
+        R.refresh_regime_state(db_path, STATE_ID, days=90, role_mode="rules")
 
         checkpoints = _stored_checkpoints(db_path)
         survived = [c for c in checkpoints if isinstance(c, dict)]
@@ -301,7 +301,7 @@ def test_verdict_pass_records_change_and_is_idempotent(monkeypatch):
             checkpoints=[_structured()],
         )
         monkeypatch.setattr(R, "_now", lambda: AS_OF)
-        R.refresh_regime_state(db_path, STATE_ID, days=90)
+        R.refresh_regime_state(db_path, STATE_ID, days=90, role_mode="rules")
 
         first = run_checkpoint_verdicts(db_path, as_of=AS_OF)
         assert first["checkpointCount"] == 1
@@ -332,7 +332,7 @@ def test_template_only_state_produces_no_verdicts(monkeypatch):
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed(db_path, memories=[("mem-s", "2026-08-20", "전력기기 가이던스상향", "growth")], checkpoints=["템플릿 문장만 있다"])
         monkeypatch.setattr(R, "_now", lambda: AS_OF)
-        R.refresh_regime_state(db_path, STATE_ID, days=90)
+        R.refresh_regime_state(db_path, STATE_ID, days=90, role_mode="rules")
 
         result = run_checkpoint_verdicts(db_path, as_of=AS_OF)
         assert result["checkpointCount"] == 0
@@ -349,7 +349,7 @@ def test_invalid_structured_checkpoint_is_preserved_but_not_judged(monkeypatch):
         broken = {"item": "방향이 없는 항목", "matchers": {"keywords": ["가이던스"]}}
         _seed(db_path, memories=[("mem-s", "2026-08-20", "가이던스상향", "growth")], checkpoints=[broken])
         monkeypatch.setattr(R, "_now", lambda: AS_OF)
-        R.refresh_regime_state(db_path, STATE_ID, days=90)
+        R.refresh_regime_state(db_path, STATE_ID, days=90, role_mode="rules")
 
         result = run_checkpoint_verdicts(db_path, as_of=AS_OF)
         assert result["checkpointCount"] == 0                     # 판정 대상 아님

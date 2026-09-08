@@ -301,6 +301,37 @@ def init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_columns(
+        conn,
+        "market_regime_evidence",
+        {
+            # Projection provenance is not a second authority.  The durable
+            # pair role below remains the source of truth; this is retained so
+            # readers can distinguish an LLM role from a conservative rule
+            # fallback without joining every evidence row.
+            "role_source": "TEXT NOT NULL DEFAULT ''",
+            "basis_hash": "TEXT NOT NULL DEFAULT ''",
+            "classifier_version": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS market_evidence_roles (
+            state_key TEXT NOT NULL,
+            memory_id TEXT NOT NULL,
+            basis_hash TEXT NOT NULL,
+            classifier_version TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('supporting','challenging','neutral')),
+            role_source TEXT NOT NULL CHECK(role_source IN ('llm','rule')),
+            classified_at TEXT NOT NULL DEFAULT '',
+            llm_failure_count INTEGER NOT NULL DEFAULT 0,
+            last_llm_attempt_at TEXT NOT NULL DEFAULT '',
+            next_llm_retry_at TEXT NOT NULL DEFAULT '',
+            last_error_code TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (state_key, memory_id)
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS market_regime_changes (
@@ -336,6 +367,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_market_regime_evidence_state ON market_regime_evidence(state_id, evidence_date DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_market_regime_evidence_role ON market_regime_evidence(state_id, role)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_market_evidence_roles_retry ON market_evidence_roles(role_source, next_llm_retry_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_market_regime_changes_state ON market_regime_changes(state_id, changed_at DESC)")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_market_regime_thesis_state_ticker ON market_regime_thesis_links(state_id, thesis_ticker)")
     conn.execute(
@@ -1666,6 +1698,9 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
         "updatedAt": updated_at,
     }
     with nullcontext():
+        prior_status = conn.execute(
+            "SELECT status FROM market_narrative_states WHERE state_id = ?", (state_id,)
+        ).fetchone()
         inherited_checkpoints = "[]"
         if status in {"active", "watch"}:
             # **체크포인트는 계보(state_key)의 소유물이다.** state_id는 날짜별로 회전해
@@ -1683,6 +1718,13 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
             ).fetchone()
             if prior and prior["next_checkpoints_json"]:
                 inherited_checkpoints = prior["next_checkpoints_json"]
+            rotated = conn.execute(
+                """
+                SELECT state_id, status FROM market_narrative_states
+                WHERE state_key = ? AND status IN ('active', 'watch') AND state_id != ?
+                """,
+                (state_key, state_id),
+            ).fetchall()
             conn.execute(
                 """
                 UPDATE market_narrative_states
@@ -1691,6 +1733,16 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
                 """,
                 (state["effectiveFrom"], updated_at, state_key, state_id),
             )
+            # 회전은 상태 전환이다. 기존 history 테이블을 재사용해 C.3 시간축에
+            # 남기며, 새 current row는 생성 이벤트로 과장하지 않는다.
+            for old in rotated:
+                change_id = hashlib.sha256(f"{old['state_id']}:status:{updated_at}".encode("utf-8")).hexdigest()[:24]
+                conn.execute(
+                    """INSERT OR IGNORE INTO market_regime_changes
+                       (change_id, state_id, changed_at, field, old_value, new_value, reason, evidence_ids_json, created_at)
+                       VALUES (?, ?, ?, 'status', ?, 'overridden', '같은 내러티브 계보의 새 상태로 교체', '[]', ?)""",
+                    (change_id, old["state_id"], updated_at, old["status"], updated_at),
+                )
         # confidence는 ON CONFLICT UPDATE 목록에 넣지 않는다. 이 경로가 넘기는 값은
         # 항상 기본값(0.55)이라, 같은 날 같은 state_key로 다시 저장하면
         # refresh_regime_state()가 근거로 계산해 넣은 값이 기본값으로 되돌아간다.
@@ -1745,6 +1797,14 @@ def upsert_state_from_memory(conn: sqlite3.Connection, memory: dict, observed_at
                 inherited_checkpoints,
             ),
         )
+        if prior_status and prior_status["status"] != state["status"]:
+            change_id = hashlib.sha256(f"{state_id}:status:{updated_at}".encode("utf-8")).hexdigest()[:24]
+            conn.execute(
+                """INSERT OR IGNORE INTO market_regime_changes
+                   (change_id, state_id, changed_at, field, old_value, new_value, reason, evidence_ids_json, created_at)
+                   VALUES (?, ?, ?, 'status', ?, ?, '내러티브 상태가 갱신됨', '[]', ?)""",
+                (change_id, state_id, updated_at, prior_status["status"], state["status"], updated_at),
+            )
     return state
 
 
@@ -1850,6 +1910,10 @@ def delete_memory(db_path: str | Path, memory_id: str) -> dict:
     state_key = row["state_key"]
     with conn:
         conn.execute("DELETE FROM market_memory WHERE memory_id = ?", (memory_id,))
+        # Durable evidence-role rows are keyed by state_key rather than the
+        # rotating state_id.  Leaving them behind after an explicit memory
+        # deletion would let a future reused id inherit an unrelated role.
+        conn.execute("DELETE FROM market_evidence_roles WHERE memory_id = ?", (memory_id,))
         conn.execute(
             """
             UPDATE market_narrative_states

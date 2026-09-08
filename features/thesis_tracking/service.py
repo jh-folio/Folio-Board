@@ -18,6 +18,13 @@ from features.thesis_tracking import delta as D
 from features.thesis_tracking import model as M
 from features.thesis_tracking import review_state as RS
 from features.thesis_tracking import store as ST
+from features.common.jobs import (
+    diagnostic_execution,
+    diagnostic_stage,
+    diagnostic_stage_end,
+    diagnostic_stage_failure,
+    diagnostic_stage_start,
+)
 
 
 def sync_theses_from_vault(db_path=None) -> dict:
@@ -241,34 +248,84 @@ def run_thesis_delta(ticker: str, body: dict | None = None, db_path=None) -> dic
     ticker = str(ticker or "").strip().upper()
     if not ticker:
         raise ValueError("ticker는 필수입니다.")
-    conn = ST.connect(db_path)
+    export_obsidian = bool(body.get("exportObsidian"))
+    reuse_latest = export_obsidian and bool(body.get("reuseLatest"))
+    conn = None
     try:
-        thesis = ST.get_thesis(conn, ticker)
-        if not thesis:
-            raise LookupError(f"Thesis not found: {ticker}")
-        export_obsidian = bool(body.get("exportObsidian"))
-        if export_obsidian and body.get("reuseLatest"):
-            latest = ST.latest_delta(conn, ticker)
-            if not latest:
-                raise LookupError(f"Thesis Delta not found: {ticker}")
-            exported = export_thesis_delta_to_obsidian(thesis, latest)
+        with diagnostic_stage("context"):
+            conn = ST.connect(db_path)
+            thesis = ST.get_thesis(conn, ticker)
+            if not thesis:
+                raise LookupError(f"Thesis not found: {ticker}")
+            if reuse_latest:
+                latest = ST.latest_delta(conn, ticker)
+                if not latest:
+                    raise LookupError(f"Thesis Delta not found: {ticker}")
+            else:
+                period = D.normalize_period(body.get("period"))
+                evidence, evidence_meta = D.gather_local_evidence(
+                    thesis, period=period, limit=int(body.get("limit") or 12),
+                )
+
+        if reuse_latest:
+            # Re-exporting a durable delta writes a Vault artifact but invokes
+            # no generation engine.  Keep the authority reads above separate
+            # from this real persistence boundary.
+            diagnostic_execution(final_engine="none")
+            commit_recorder, commit_stage = diagnostic_stage_start("commit")
+            try:
+                exported = export_thesis_delta_to_obsidian(thesis, latest)
+            except Exception as error:
+                diagnostic_stage_failure(
+                    commit_recorder, error, stage_id=commit_stage,
+                    stage_code="commit" if commit_stage is not None else None,
+                    boundary="save",
+                )
+                diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+                raise
+            diagnostic_stage_end(commit_recorder, commit_stage, "commit")
             return {"ok": True, "status": "exported", "thesis": thesis, "delta": latest, "export": exported}
 
-        delta, status = D.generate_delta(
-            thesis,
-            period=D.normalize_period(body.get("period")),
-            llm_override=bool_override(body.get("useLlm")),
-            evidence_limit=int(body.get("limit") or 12),
-        )
+        generate_recorder, generate_stage = diagnostic_stage_start("generate")
+        try:
+            delta, status = D.generate_delta(
+                thesis,
+                period=period,
+                llm_override=bool_override(body.get("useLlm")),
+                evidence_limit=int(body.get("limit") or 12),
+                prepared_evidence=evidence,
+                prepared_meta=evidence_meta,
+            )
+        except Exception as error:
+            diagnostic_stage_failure(
+                generate_recorder, error, stage_id=generate_stage,
+                stage_code="generate" if generate_stage is not None else None,
+                boundary="generic",
+            )
+            diagnostic_stage_end(generate_recorder, generate_stage, "generate")
+            raise
+        diagnostic_stage_end(generate_recorder, generate_stage, "generate")
         delta["company"] = thesis.get("company", "")
-        saved = ST.save_delta(conn, ticker, delta)
-        RS.record_completed_review(conn, thesis, saved)
-        exported = None
-        if export_obsidian:
-            exported = export_thesis_delta_to_obsidian(thesis, saved)
+        commit_recorder, commit_stage = diagnostic_stage_start("commit")
+        try:
+            saved = ST.save_delta(conn, ticker, delta)
+            RS.record_completed_review(conn, thesis, saved)
+            exported = None
+            if export_obsidian:
+                exported = export_thesis_delta_to_obsidian(thesis, saved)
+        except Exception as error:
+            diagnostic_stage_failure(
+                commit_recorder, error, stage_id=commit_stage,
+                stage_code="commit" if commit_stage is not None else None,
+                boundary="save",
+            )
+            diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+            raise
+        diagnostic_stage_end(commit_recorder, commit_stage, "commit")
         return {"ok": True, "status": status, "thesis": thesis, "delta": saved, "export": exported}
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _safe_filename(name: str) -> str:

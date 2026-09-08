@@ -250,6 +250,48 @@ def test_undeclared_regimes_do_not_raise_alerts():
         assert W.thesis_workspace_payload(TICKER, db_path, as_of=TODAY)["regimeAlerts"] == []
 
 
+def test_manual_link_to_rotated_state_uses_current_lineage_not_old_checkpoint():
+    """수동 관계는 보존하지만 overridden 행의 과거 반증을 현재 경고로 읽지 않는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed_state(db_path, checkpoints=[{
+            "id": "old-cp", "item": "과거 착공 지연", "direction": "challenging",
+            "matchers": {"keywords": ["지연"]}, "dueBy": None, "status": "challenged",
+            "createdAt": "2026-08-01T00:00:00+00:00", "lastVerdict": None, "history": [],
+        }])
+        _seed_thesis(db_path, linked_regimes=[])
+        conn = MM.connect(db_path)
+        with conn:
+            conn.execute("UPDATE market_narrative_states SET status='overridden' WHERE state_id='state-1'")
+            conn.execute(
+                """INSERT INTO market_narrative_states (state_id, state_key, state_label, story, story_family,
+                    status, bias, category, region, importance, net_effect, summary, rationale, confidence,
+                    momentum, effective_from, effective_to, source_memory_id, next_checkpoints_json, updated_at)
+                   VALUES ('state-2', 'ai_power', 'AI 데이터센터 전력 병목', 'ai_power', 'AI 데이터센터 전력 병목',
+                    'active', 'bullish', 'stock_bond', 'GLOBAL', 'high', 'benefit', '새 요약', '새 근거', .7,
+                    'stable', '2026-08-30T00:00:00+00:00', '', 'mem-2', '[]', '2026-08-30T00:00:00+00:00')"""
+            )
+            conn.execute(
+                """INSERT INTO market_regime_thesis_links
+                   (link_id, state_id, ticker, thesis_ticker, relationship, strength, method, note_path, created_at, updated_at)
+                   VALUES ('manual-old', 'state-1', '', ?, 'related', .9, 'manual', '', '2026-08-01', '2026-08-01')""",
+                (TICKER,),
+            )
+        conn.close()
+        assert W.thesis_workspace_payload(TICKER, db_path, as_of=TODAY)["regimeAlerts"] == []
+
+        conn = MM.connect(db_path)
+        with conn:
+            conn.execute("UPDATE market_narrative_states SET next_checkpoints_json=? WHERE state_id='state-2'", (json.dumps([{
+                "id": "current-cp", "item": "현재 착공 지연", "direction": "challenging",
+                "matchers": {"keywords": ["지연"]}, "dueBy": None, "status": "challenged",
+                "createdAt": "2026-08-30T00:00:00+00:00", "lastVerdict": None, "history": [],
+            }], ensure_ascii=False),))
+        conn.close()
+        alerts = W.thesis_workspace_payload(TICKER, db_path, as_of=TODAY)["regimeAlerts"]
+        assert len(alerts) == 1 and alerts[0]["stateId"] == "state-2"
+
+
 def test_propagation_does_not_change_any_stored_verdict():
     """A.3은 표시일 뿐이다 — 전파가 thesis verdict도 체크포인트 status도 바꾸지 않는다."""
     with tempfile.TemporaryDirectory() as tmp:

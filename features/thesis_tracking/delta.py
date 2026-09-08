@@ -20,6 +20,7 @@ from features.llm_settings.client import (
     strip_llm_citation_markers,
 )
 from features.common.research_library.search.service import search_documents
+from features.common.jobs import current_diagnostic_recorder, diagnostic_execution, diagnostic_stage, diagnostic_stage_failure
 from features.common.research_schema.checkpoints import checkpoints_from_thesis_delta
 from features.common.research_schema.data_gaps import data_gaps_from_messages
 from features.common.research_schema.evidence import evidence_items_from_list
@@ -366,24 +367,51 @@ def read_prompt() -> str:
         return ""
 
 
-def generate_delta(thesis: dict, *, period: str = PERIOD_DEFAULT, llm_override=None, evidence_limit: int = 12) -> tuple[dict, str]:
-    evidence, meta = gather_local_evidence(thesis, period=period, limit=evidence_limit)
+def generate_delta(
+    thesis: dict,
+    *,
+    period: str = PERIOD_DEFAULT,
+    llm_override=None,
+    evidence_limit: int = 12,
+    prepared_evidence: list | None = None,
+    prepared_meta: dict | None = None,
+) -> tuple[dict, str]:
+    """Generate from caller-prepared evidence when the producer owns context.
+
+    The optional prepared values retain the legacy standalone API while letting
+    the direct service keep authority lookup and evidence assembly in its real
+    `context` boundary.
+    """
+    if prepared_evidence is None or prepared_meta is None:
+        evidence, meta = gather_local_evidence(thesis, period=period, limit=evidence_limit)
+    else:
+        evidence, meta = prepared_evidence, prepared_meta
     if not evidence:
+        diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status="no_evidence"), "no_evidence"
     cfg = selected_llm_config()
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
+        diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status="disabled"), "disabled"
     if not cfg["apiKey"]:
+        diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status=f"missing_{cfg['provider']}_api_key"), f"missing_{cfg['provider']}_api_key"
     prompt = read_prompt()
     if not prompt:
+        diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status="missing_prompt"), "missing_prompt"
     try:
         context = build_context(thesis, evidence, meta)
         text, rid, usage = request_llm_text(cfg, prompt, context, json_mode=True, max_output_tokens=3500, include_usage=True)
-        raw = extract_json_object(text)
-        delta = normalize_delta(raw, thesis=thesis, evidence=evidence, meta=meta)
+        if not text:
+            diagnostic_execution(
+                attempted_engine="api", final_engine="rules", fallback_reason="engine_failed",
+            )
+            return fallback_delta(thesis, evidence, meta, status="generation_failed"), "generation_failed"
+        with diagnostic_stage("validate", boundary="validation"):
+            raw = extract_json_object(text)
+            delta = normalize_delta(raw, thesis=thesis, evidence=evidence, meta=meta)
         delta["generation"] = {
             "mode": "llm",
             "status": "ok",
@@ -393,8 +421,16 @@ def generate_delta(thesis: dict, *, period: str = PERIOD_DEFAULT, llm_override=N
             "sourceCount": len(evidence),
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=3500),
         }
+        diagnostic_execution(attempted_engine="api", final_engine="api")
         return delta, "ok"
-    except Exception:
+    except Exception as error:
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(), error,
+            stage_id=None, stage_code="generate", boundary="adapter",
+        )
+        diagnostic_execution(
+            attempted_engine="api", final_engine="rules", fallback_reason="engine_failed",
+        )
         return fallback_delta(thesis, evidence, meta, status="generation_failed"), "generation_failed"
 
 

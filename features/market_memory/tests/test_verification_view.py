@@ -185,6 +185,44 @@ def test_timeline_reads_existing_change_rows_including_checkpoint_field():
         assert checkpoint_row["to"] == "confirmed"
 
 
+def test_current_state_timeline_includes_old_lineage_status_but_excludes_other_keys():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed(db_path, checkpoints=[])
+        conn = M.connect(db_path)
+        with conn:
+            conn.execute("UPDATE market_narrative_states SET state_id='state-power-old', status='overridden' WHERE state_id=?", (STATE_ID,))
+            conn.execute("""INSERT INTO market_narrative_states (state_id, state_key, state_label, story, story_family, status, bias,
+                category, region, importance, net_effect, summary, rationale, confidence, momentum, effective_from, next_checkpoints_json, updated_at)
+                VALUES (?, 'ai_power', 'AI 데이터센터 전력 병목', 'ai_power', 'AI 데이터센터 전력 병목', 'active', 'bullish',
+                'stock_bond', 'GLOBAL', 'high', 'benefit', '', '', .7, 'stable', '2026-08-30T00:00:00+00:00', '[]', '2026-08-30T00:00:00+00:00')""", (STATE_ID,))
+            conn.execute("""INSERT INTO market_narrative_states (state_id, state_key, state_label, story, story_family, status, bias,
+                category, region, importance, net_effect, summary, rationale, confidence, momentum, effective_from, next_checkpoints_json, updated_at)
+                VALUES ('other-state', 'unrelated', '무관', 'unrelated', '무관', 'active', 'neutral',
+                'stock_bond', 'GLOBAL', 'low', '', '', '', .5, 'stable', '2026-08-30T00:00:00+00:00', '[]', '2026-08-30T00:00:00+00:00')""")
+            conn.execute("""INSERT INTO market_regime_changes (change_id, state_id, changed_at, field, old_value, new_value, reason, evidence_ids_json, created_at)
+                VALUES ('old-status', 'state-power-old', '2026-08-29T00:00:00+00:00', 'status', 'active', 'overridden', '회전', '[]', '2026-08-29T00:00:00+00:00')""")
+            conn.execute("""INSERT INTO market_regime_changes (change_id, state_id, changed_at, field, old_value, new_value, reason, evidence_ids_json, created_at)
+                VALUES ('other-status', 'other-state', '2026-08-30T00:00:00+00:00', 'status', 'active', 'overridden', '무관', '[]', '2026-08-30T00:00:00+00:00')""")
+        conn.close()
+        timeline = _payload(db_path)["states"][0]["timeline"]
+        assert any(row["kind"] == "status" and row["to"] == "overridden" and row["reason"] == "회전" for row in timeline)
+        assert not any(row["reason"] == "무관" for row in timeline)
+
+
+def test_blank_state_key_keeps_its_own_timeline_history():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed(db_path, checkpoints=[])
+        conn = M.connect(db_path)
+        with conn:
+            conn.execute("UPDATE market_narrative_states SET state_key='' WHERE state_id=?", (STATE_ID,))
+            conn.execute("""INSERT INTO market_regime_changes (change_id, state_id, changed_at, field, old_value, new_value, reason, evidence_ids_json, created_at)
+                VALUES ('blank-key', ?, '2026-08-30T00:00:00+00:00', 'status', 'active', 'watch', 'legacy', '[]', '2026-08-30T00:00:00+00:00')""", (STATE_ID,))
+        conn.close()
+        assert _payload(db_path)["states"][0]["timeline"][0]["reason"] == "legacy"
+
+
 def test_summary_counts_across_states():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")

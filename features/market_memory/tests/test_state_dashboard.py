@@ -205,7 +205,58 @@ def test_current_market_state_snapshot_normalizes_legacy_thin_market_views():
         loaded = current_market_state_snapshot(db_path)
 
         assert loaded["marketViews"]["us"]["keyDrivers"][0]["whyItMatters"]
-        assert loaded["marketViews"]["us"]["keyDrivers"][0]["sourceRefs"] == ["rss:1"]
+        assert loaded["marketViews"]["us"]["keyDrivers"][0]["sourceRefs"] == []
+
+
+def test_snapshot_driver_keeps_own_checkpoints_and_marks_counts_unavailable():
+    snapshot = validate_market_state_snapshot({
+        "headline": "종합 시장 판단",
+        "oneLineSummary": "시장별로 서로 다른 드라이버를 확인한다.",
+        "marketRegime": "mixed",
+        "actionPosture": "확인 후 대응",
+        "keyDrivers": [{"title": "상위 금리", "summary": "상단 압력", "sourceRefs": ["rss:top"]}],
+        "watchItems": ["페이지 전체 확인 항목"],
+        "counterEvidence": ["실적 상향"],
+        "sourceRefs": [
+            {"id": "rss:top", "title": "Top", "source": "Reuters"},
+            {"id": "rss:us", "title": "US", "source": "Reuters"},
+        ],
+        "confidence": 0.7,
+        "marketViews": {
+            "us": {
+                "headline": "미국장",
+                "marketInterpretation": "미국장은 드라이버별 확인 항목을 따로 둔다.",
+                "keyDrivers": [
+                    {
+                        "title": "드라이버 A",
+                        "summary": "A 판단",
+                        "nextMemoryCheck": "A만 다시 확인",
+                        "sourceRefs": ["rss:us"],
+                    },
+                    {"title": "드라이버 B", "summary": "B 판단"},
+                ],
+                "watchItems": ["미국장 페이지 확인 항목"],
+            },
+        },
+    })
+    from features.market_memory.state_dashboard import dashboard_payload_from_snapshot
+
+    payload = dashboard_payload_from_snapshot(snapshot)["marketViews"]["us"]
+    first, second = payload["drivers"]
+
+    assert payload["watchItems"] == ["미국장 페이지 확인 항목"]
+    assert first["nextCheckpoint"] == "A만 다시 확인"
+    assert first["whatToWatch"] == "A만 다시 확인"
+    assert first["nextMemoryCheck"] == "A만 다시 확인"
+    assert second["nextCheckpoint"] == ""
+    assert second["whatToWatch"] == ""
+    assert second["nextMemoryCheck"] == ""
+    assert first["evidenceCounts"] == {"d7": None, "d30": None, "d90": None}
+    assert first["evidenceCountStatus"] == "unavailable"
+    assert second["evidenceCounts"] == {"d7": None, "d30": None, "d90": None}
+    assert second["evidenceCountStatus"] == "unavailable"
+    assert first["elaboration"] == "출처: rss:us"
+    assert second["elaboration"] == ""
 
 
 def test_dashboard_payload_prefers_saved_snapshot_over_rule_summary():
@@ -573,7 +624,7 @@ def test_validate_market_state_snapshot_preserves_overall_us_and_kr_views():
     assert snapshot["marketViews"]["kr"]["actionSummary"] == "환율과 외국인 수급을 확인한다."
 
 
-def test_market_view_thin_drivers_are_enriched_for_display_quality():
+def test_market_view_thin_drivers_keep_missing_source_refs_empty():
     snapshot = validate_market_state_snapshot({
         "headline": "종합 시장 판단",
         "oneLineSummary": "미국장은 선별적이고 한국장은 환율 부담을 본다.",
@@ -606,10 +657,10 @@ def test_market_view_thin_drivers_are_enriched_for_display_quality():
     assert driver["whyItMatters"]
     assert driver["evidenceSummary"]
     assert driver["marketImpact"]
-    assert driver["sourceRefs"] == ["rss:1"]
+    assert driver["sourceRefs"] == []
 
 
-def test_market_view_thin_driver_prefers_matching_top_level_source_refs():
+def test_market_view_thin_driver_does_not_inherit_matching_top_level_source_refs():
     snapshot = validate_market_state_snapshot({
         "headline": "종합 시장 판단",
         "oneLineSummary": "미국장은 선별적이고 한국장은 환율 부담을 본다.",
@@ -651,7 +702,7 @@ def test_market_view_thin_driver_prefers_matching_top_level_source_refs():
     })
 
     driver = snapshot["marketViews"]["us"]["keyDrivers"][0]
-    assert driver["sourceRefs"] == ["rss:us"]
+    assert driver["sourceRefs"] == []
 
 
 def test_market_view_thin_driver_does_not_inherit_unrelated_sources_when_many_fallbacks():

@@ -74,8 +74,8 @@ def run_thesis_delta_job(
             terminal_projection=projection.model_dump(mode="json"),
             created_at=request.created_at,
         )
-    except (sqlite3.Error, ReceiptVerificationError):
-        lifecycle.fail_run(request.job_id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        lifecycle.fail_run(request.job_id, error)
         raise
     lifecycle.claim(
         request.job_id,
@@ -105,8 +105,8 @@ def run_thesis_delta_job(
             committing,
             ArtifactCompletionSource.SQLITE,
         )
-    except (sqlite3.Error, ReceiptVerificationError):
-        lifecycle.fail_commit(request.job_id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        lifecycle.fail_commit(request.job_id, error)
         raise
     lifecycle.complete(request.job_id, proof)
     return ThesisDeltaJobResult(committed.delta_id, committed.target_hash)

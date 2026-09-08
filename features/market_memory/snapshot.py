@@ -387,61 +387,6 @@ def _market_view(value, key: str, fallback: dict, lookup: dict[str, dict] | None
     }
 
 
-def _fallback_source_ref_ids(fallback: dict) -> list[str]:
-    ids: list[str] = []
-    for driver in fallback.get("keyDrivers", []) or []:
-        if not isinstance(driver, dict):
-            continue
-        for source_id in driver.get("sourceRefs") or []:
-            source_id = _text(source_id, 80)
-            if source_id and source_id not in ids:
-                ids.append(source_id)
-    for source in fallback.get("sourceRefs", []) or []:
-        if not isinstance(source, dict):
-            continue
-        source_id = _text(source.get("id"), 80)
-        if source_id and source_id not in ids:
-            ids.append(source_id)
-    return ids[:8]
-
-
-def _tokens_for_match(value: str) -> set[str]:
-    tokens = set()
-    for token in re.findall(r"[0-9A-Za-z가-힣]+", str(value or "").lower()):
-        if len(token) >= 2:
-            tokens.add(token)
-    return tokens
-
-
-def _matching_source_ref_ids(fallback: dict, driver: dict) -> list[str]:
-    target = _tokens_for_match(" ".join([
-        str(driver.get("title") or ""),
-        str(driver.get("summary") or ""),
-    ]))
-    if not target:
-        return []
-    best_score = 0
-    best_refs: list[str] = []
-    for fallback_driver in fallback.get("keyDrivers", []) or []:
-        if not isinstance(fallback_driver, dict):
-            continue
-        candidate = _tokens_for_match(" ".join([
-            str(fallback_driver.get("title") or ""),
-            str(fallback_driver.get("summary") or ""),
-            str(fallback_driver.get("evidenceSummary") or ""),
-            str(fallback_driver.get("whyItMatters") or ""),
-        ]))
-        score = len(target & candidate)
-        if score <= best_score:
-            continue
-        refs = [_text(source_id, 80) for source_id in (fallback_driver.get("sourceRefs") or [])]
-        refs = [source_id for source_id in refs if source_id]
-        if refs:
-            best_score = score
-            best_refs = refs
-    return best_refs[:8] if best_score >= 2 else []
-
-
 def _enrich_market_view_drivers(
     drivers: list[dict],
     *,
@@ -451,8 +396,6 @@ def _enrich_market_view_drivers(
 ) -> list[dict]:
     if not drivers:
         return []
-    fallback_sources = _fallback_source_ref_ids(fallback)
-    fallback_driver_count = len([driver for driver in (fallback.get("keyDrivers") or []) if isinstance(driver, dict)])
     enriched = []
     for driver in drivers:
         if not isinstance(driver, dict):
@@ -464,12 +407,9 @@ def _enrich_market_view_drivers(
             next_driver["evidenceSummary"] = interpretation or fallback.get("oneLineSummary") or next_driver.get("summary") or ""
         if not next_driver.get("marketImpact"):
             next_driver["marketImpact"] = action_summary or fallback.get("actionPosture") or next_driver.get("summary") or ""
-        if not next_driver.get("nextMemoryCheck"):
-            watch_items = fallback.get("watchItems") or []
-            next_driver["nextMemoryCheck"] = watch_items[0] if watch_items else "다음 Market Memory 업데이트에서 이 판단이 유지되는지 확인한다."
-        if not next_driver.get("sourceRefs"):
-            matched_refs = _matching_source_ref_ids(fallback, next_driver)
-            next_driver["sourceRefs"] = matched_refs or (fallback_sources if fallback_driver_count <= 1 else [])
+        # 시장별 view의 드라이버는 자기 nextMemoryCheck/sourceRefs만 말한다.
+        # 페이지 수준 watchItems나 다른 드라이버의 단어 유사도로 보완하면, 화면이
+        # 존재하지 않는 연결·출처를 사실처럼 표시하게 된다.
         enriched.append(next_driver)
     return enriched
 

@@ -125,16 +125,23 @@ def _checkpoint_projection(checkpoint: dict) -> dict:
     }
 
 
-def _timeline(conn, state_id: str, *, limit: int = TIMELINE_LIMIT) -> list:
+def _timeline(conn, state_key: str, *, limit: int = TIMELINE_LIMIT) -> list:
+    """현재 상태의 계보(state_key) 전체에서 기존 변경 이력을 읽는다.
+
+    상태 행은 회전하며, old row에 기록된 `active → overridden` 전환도 현재
+    active/watch 카드의 이력이다. 행을 복사하거나 바꾸지 않고 조인으로만 읽는다.
+    """
     rows = conn.execute(
         """
-        SELECT changed_at, field, old_value, new_value, reason, evidence_ids_json
-        FROM market_regime_changes
-        WHERE state_id = ?
-        ORDER BY changed_at DESC
+        SELECT change.changed_at, change.field, change.old_value, change.new_value,
+               change.reason, change.evidence_ids_json, change.change_id
+        FROM market_regime_changes AS change
+        JOIN market_narrative_states AS state ON state.state_id = change.state_id
+        WHERE COALESCE(NULLIF(state.state_key, ''), state.state_id) = ?
+        ORDER BY change.changed_at DESC, change.change_id DESC
         LIMIT ?
         """,
-        (state_id, int(limit or TIMELINE_LIMIT)),
+        (state_key, int(limit or TIMELINE_LIMIT)),
     ).fetchall()
     out = []
     for row in rows:
@@ -157,8 +164,16 @@ def _timeline(conn, state_id: str, *, limit: int = TIMELINE_LIMIT) -> list:
     return out
 
 
-def _state_rows(conn, *, status: str, limit: int) -> list:
-    where = "WHERE status IN ('active','watch')" if status == "current" else ""
+def _state_rows(conn, *, status: str, limit: int, state_id: str = "") -> list:
+    clauses: list[str] = []
+    params: list[object] = []
+    if status == "current":
+        clauses.append("status IN ('active','watch')")
+    if state_id:
+        clauses.append("state_id = ?")
+        params.append(state_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(int(limit or 20))
     return conn.execute(
         f"""
         SELECT * FROM market_narrative_states
@@ -166,7 +181,7 @@ def _state_rows(conn, *, status: str, limit: int) -> list:
         ORDER BY importance = 'high' DESC, updated_at DESC
         LIMIT ?
         """,
-        (int(limit or 20),),
+        tuple(params),
     ).fetchall()
 
 
@@ -184,6 +199,7 @@ def narrative_verification_payload(
     status: str = "current",
     limit: int = 20,
     as_of: str = "",
+    state_id: str = "",
 ) -> dict:
     """활성/관찰 내러티브의 검증 상태를 화면용으로 모은다."""
     anchor = _date(as_of) or _now().date()
@@ -194,7 +210,7 @@ def narrative_verification_payload(
     init_db(conn)
     try:
         states = []
-        for row in _state_rows(conn, status=status, limit=limit):
+        for row in _state_rows(conn, status=status, limit=limit, state_id=state_id):
             state_id = row["state_id"]
             state_key = str(row["state_key"] or state_id)
             structured, invalid, templates = partition_checkpoints(
@@ -231,7 +247,7 @@ def narrative_verification_payload(
                 # `검증 불가`로 말한다 — 조용히 사라지면 사용자가 이력을 잃는다.
                 "unverifiableCount": len(invalid),
                 "templates": templates[:5],
-                "timeline": _timeline(conn, state_id),
+                "timeline": _timeline(conn, state_key),
             })
     finally:
         conn.close()

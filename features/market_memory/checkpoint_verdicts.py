@@ -26,6 +26,7 @@ from features.common.research_schema.tracked_checkpoints import (
     rewrite_checkpoints,
     squash,
 )
+from features.market_memory.evidence_roles import is_llm_mode, pending_pairs_for_state
 from features.market_memory.memory import connect, init_db, parse_json_list
 
 MIN_EVIDENCE_SCORE = 0.5
@@ -185,7 +186,7 @@ def evaluate_checkpoint(checkpoint: dict, evidence_rows: list, *, as_of: str = "
     return {"verdict": verdict, "evidence": evidence, "at": as_of or _now()}
 
 
-def apply_verdict(checkpoint: dict, outcome: dict, *, as_of: str) -> dict:
+def apply_verdict(checkpoint: dict, outcome: dict, *, as_of: str, pending_match: bool = False) -> dict:
     """판정 결과를 체크포인트에 반영한다. 무엇이 바뀌었는지 요약을 돌려준다.
 
     - `no_signal`은 아무것도 바꾸지 않는다(status 불변, watermark도 전진시키지 않는다).
@@ -213,6 +214,12 @@ def apply_verdict(checkpoint: dict, outcome: dict, *, as_of: str) -> dict:
             )
             return {"changed": True, "from": previous_status, "to": verdict, "verdict": verdict}
         return {"changed": False, "from": previous_status, "to": verdict, "verdict": verdict}
+
+    # A pending matching pair is not evidence and must not create a verdict,
+    # but it is enough to prevent no-signal expiry while its classification is
+    # outstanding. Classified supporting/challenging evidence above still wins.
+    if pending_match:
+        return {"changed": False, "from": previous_status, "to": previous_status, "verdict": "no_signal"}
 
     due_by = checkpoint.get("dueBy")
     if due_by and previous_status == CHECKPOINT_STATUS_DEFAULT and str(due_by) < str(as_of)[:10]:
@@ -274,6 +281,20 @@ def _forbidden_keywords(state_row) -> list:
     return [state_row["state_label"], state_row["state_key"], state_row["story_family"], state_row["story"]]
 
 
+def _pending_matches(conn, state: dict, checkpoint: dict, *, as_of: str) -> bool:
+    """Whether an unclassified current pair would match this checkpoint."""
+    if not is_llm_mode():
+        return False
+    cutoff, exclusive = _cutoff(checkpoint)
+    for row in pending_pairs_for_state(conn, state, as_of=as_of):
+        evidence_date = str(row.get("evidenceDate") or "")[:10]
+        if cutoff and (evidence_date < cutoff or (exclusive and evidence_date == cutoff)):
+            continue
+        if matches_checkpoint(checkpoint, row):
+            return True
+    return False
+
+
 def run_state_checkpoint_verdicts(conn, state_id: str, *, as_of: str = "") -> dict:
     """한 내러티브 상태의 구조화 체크포인트를 판정한다. 커밋은 호출자가 한다.
 
@@ -301,12 +322,14 @@ def run_state_checkpoint_verdicts(conn, state_id: str, *, as_of: str = "") -> di
     updated: dict = {}
     for checkpoint in structured:
         outcome = evaluate_checkpoint(checkpoint, evidence_rows, as_of=as_of)
-        result = apply_verdict(checkpoint, outcome, as_of=as_of)
+        pending_match = _pending_matches(conn, dict(row), checkpoint, as_of=as_of)
+        result = apply_verdict(checkpoint, outcome, as_of=as_of, pending_match=pending_match)
         verdicts.append({
             "checkpointId": checkpoint["id"],
             "item": checkpoint["item"],
             "verdict": outcome["verdict"],
             "status": checkpoint["status"],
+            "pendingMatch": pending_match,
         })
         if not result["changed"]:
             continue

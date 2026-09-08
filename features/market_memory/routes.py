@@ -227,6 +227,7 @@ class MarketStateBoundary:
 def create_market_state_router(data_dir: Path) -> APIRouter:
     from features.agent_mode.bridge import submit_agent_task, submit_market_memory_update
     from features.llm_settings.client import default_generation_mode
+    from features.market_memory.direct_observer import run_direct_market_memory
     from features.market_memory.http_runtime import create_market_state_service
     from features.market_memory.service import run_llm_market_memory
 
@@ -235,6 +236,9 @@ def create_market_state_router(data_dir: Path) -> APIRouter:
         modeResolver=default_generation_mode,
         snapshotJobSubmitter=lambda task, payload, adapter: submit_agent_task(task, payload, adapter=adapter),
         combinedJobSubmitter=lambda payload, adapter: submit_market_memory_update(payload, adapter=adapter),
-        memoryRunner=lambda date_value: run_llm_market_memory(date_value or None),
+        memoryRunner=lambda date_value: run_direct_market_memory(
+            date_value,
+            generate=lambda value: run_llm_market_memory(value or None),
+        ),
     )
     return MarketStateBoundary(service, adapters).router()
