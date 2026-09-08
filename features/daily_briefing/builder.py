@@ -25,8 +25,6 @@ from features.daily_briefing.limits import (
     merged_source_limit,
     source_ref_limit,
 )
-from features.daily_briefing.claim_integrity import enforce_claim_integrity
-from features.daily_briefing.style_check import briefing_style_check
 from features.daily_briefing.source_window import scope_session_documents
 from features.daily_briefing.weekly import (
     build_weekly_rules_markdown,
@@ -459,7 +457,9 @@ def _scope_result(
             "errors": [],
         }
         claim_ledger = {"version": 1, "claims": [], "validation": {"status": "not_applicable", "reasonCodes": []}}
-    markdown, claim_ledger = enforce_claim_integrity(markdown, sources, claim_ledger)
+    # Claim-integrity semantic rewrites are explicit/offline evaluation only.
+    # Ordinary generation preserves the writer's Markdown verbatim.
+    claim_ledger = deepcopy(claim_ledger or {"version": 1, "claims": []})
     markdown = append_briefing_sources(markdown, sources, limit=ref_limit, kind=kind)
     if kind != "weekly":
         # 주간 제목은 세션 제목이 아니다. 정규화를 태우면 구간이 세션일로 바뀐다.
@@ -492,13 +492,9 @@ def _scope_result(
         "concentrationControl": concentration_control,
         "generationEvidence": generation_evidence,
         "claimLedger": claim_ledger,
-        # 웹 보완 요약과 문체 실측도 여기서 실어야 저장 JSON까지 간다. 예전에는
-        # `build_briefing`이 `results[scope].get("webLookup")`을 읽는데 이 dict에 그 키가
-        # 없어서 규칙/API 경로의 저장물은 언제나 빈 값이었고, `briefing_style_check`는
-        # import만 되고 한 번도 불리지 않았다 — 두 필드는 "배선이 죽었는지"를 저장물로
-        # 알아보려고 만든 것인데 그 탐지기가 한쪽 경로에서 꺼져 있었다(§6 규칙 14).
+        # 웹 보완 요약은 저장 JSON까지 전달한다.  본문 문체 평가는
+        # 명시적/offline 평가 경계 밖의 production 경로에서는 수행하지 않는다.
         "webLookup": deepcopy(((llm_result or {}).get("webLookup") or {}).get(scope) or {}),
-        "styleCheck": briefing_style_check(markdown),
     }
 
 
@@ -910,17 +906,13 @@ def build_briefing(
                 for scope in requested_scopes
             },
         },
-        # 시장별 웹 보완 요약과 문체 실측. generationEvidence와 같은 byMarket 계약이며
+        # 시장별 웹 보완 요약. generationEvidence와 같은 byMarket 계약이며
         # _single_market_briefing의 scope_view 복사를 그대로 타고 저장 파일까지 간다.
         # `_scope_result`가 이미 그 시장 것만 담아 주므로 여기서 다시 시장으로 들어가지
         # 않는다 — 그 이중 `.get(scope)`는 Agent 경로(전체 sink를 들고 있다)에서 베껴 온
         # 모양이라 이쪽에서는 언제나 빈 값이 됐다.
         "webLookup": {
             scope: deepcopy(results[scope].get("webLookup") or {})
-            for scope in requested_scopes
-        },
-        "styleCheck": {
-            scope: deepcopy(results[scope].get("styleCheck") or {})
             for scope in requested_scopes
         },
         "visualRecommendations": visual_result.get("visualRecommendations", []),
@@ -943,8 +935,10 @@ def build_briefing(
         briefing["newsSelection"] = {scope: safe_selection_metadata(selection_results.get(scope), selection_context, scope) for scope in requested_scopes}
     try:
         with diagnostic_stage("validate", boundary="validation"):
-            postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
-            briefing = apply_quality_loop("briefing", briefing, mode=quality_mode, preflight=postflight)
+            briefing = apply_quality_loop(
+                "briefing", briefing, mode=quality_mode,
+                preflight={"artifactType": "briefing", "status": "not_assessed", "assessmentStatus": "not_assessed"},
+            )
             briefing.setdefault("qualityGeneration", {})["generationPreflight"] = quality_preflight
     except Exception:
         briefing["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}

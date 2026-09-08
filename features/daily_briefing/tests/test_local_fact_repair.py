@@ -18,7 +18,7 @@ def _report(text):
     "오늘 KOSPI 종가는 6,995.39 (2026-09-06)이다.",
 ])
 @pytest.mark.parametrize("model_repairs", [0, 1])
-def test_only_faulty_sentence_changes_and_no_model_repair_is_spent(bad, model_repairs):
+def test_production_finalizer_preserves_authored_sentence_and_spends_no_repair(bad, model_repairs):
     first = "이 문장은 그대로 둡니다. "
     last = " 다른 근거 설명도 그대로 둡니다.\n\n## Source & Data Notes\n참고 자료 보존."
     report = _report(first + bad + last)
@@ -28,29 +28,33 @@ def test_only_faulty_sentence_changes_and_no_model_repair_is_spent(bad, model_re
     assert result["markdown"].startswith(first) and result["markdown"].endswith(last)
     assert report == original
     assert result["generation"] == report["generation"]
-    assert result["finalValidation"]["contradictionCount"] == 0
-    assert result["finalValidation"]["localCorrectionPassCount"] == 1
-    assert result["finalValidation"]["localCorrectedPassageCount"] == 1
+    assert result["markdown"] == original["markdown"]
+    assert result["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert result["finalValidation"]["contradictionCount"] is None
+    assert result["finalValidation"]["repairApplied"] is False
+    assert result["finalValidation"]["repairCount"] == 0
     assert budget.used == 0
-    assert not validate_briefing_candidate(result)["contradictions"]
+    assert validate_briefing_candidate(result)["contradictions"]
     again = finalize_briefing_candidate(result, repair_budget=budget)
     assert again["markdown"] == result["markdown"]
-    assert again["finalValidation"]["localCorrectedPassageCount"] == 1
+    assert again["finalValidation"]["repairApplied"] is False
+    assert "localCorrectedPassageCount" not in again["finalValidation"]
 
 
-def test_correct_occurrence_does_not_leave_wrong_occurrence_in_published_body():
+def test_production_finalizer_does_not_correct_a_repeated_wrong_occurrence():
     first = "KOSPI 종가는 6,995.39다.\n\n"
     result = finalize_briefing_candidate(_report(first + "KOSPI 종가는 6,500.00이다."))
     assert result["markdown"].startswith(first)
-    assert "6,500" not in result["markdown"]
-    assert result["finalValidation"]["localCorrectedPassageCount"] == 1
+    assert result["markdown"] == first + "KOSPI 종가는 6,500.00이다."
+    assert result["finalValidation"]["repairApplied"] is False
 
 
-def test_already_spent_model_repair_slot_does_not_prevent_local_correction():
+def test_already_spent_model_repair_slot_does_not_change_production_body():
     budget = SharedRepairBudget(max_repairs=1)
     budget.claim("quality")
     result = finalize_briefing_candidate(_report("KOSPI 종가는 6,500.00이다."), repair_budget=budget)
-    assert result["finalValidation"]["localCorrectedPassageCount"] == 1
+    assert result["markdown"] == "KOSPI 종가는 6,500.00이다."
+    assert result["finalValidation"]["repairApplied"] is False
     assert budget.used == 1
 
 
@@ -58,21 +62,21 @@ def test_exchange_unit_is_corrected_from_known_quote_currency():
     report = {"date": "2026-09-07", "marketScope": "kr", "markdown": "USDKRW는 1,341.73달러다.",
               "marketTape": {"items": [{"symbol": "USDKRW", "value": 1341.73, "priceUnit": "quote", "asOfDate": "2026-09-07"}]}}
     result = finalize_briefing_candidate(report)
-    assert "1,341.73원" in result["markdown"] and "달러다" not in result["markdown"]
-    assert result["finalValidation"]["contradictionCount"] == 0
+    assert result["markdown"] == report["markdown"]
+    assert result["finalValidation"]["contentAssessment"] == "not_assessed"
 
 
-def test_disagreeing_inputs_are_not_arbitrarily_selected_for_correction():
+def test_disagreeing_inputs_do_not_block_format_valid_production_body():
     report = _report("KOSPI 종가는 6,500.00이다.")
     report["marketTape"] = {"items": [{"symbol": "KOSPI", "value": 7001.00, "priceUnit": "points", "asOfDate": "2026-09-07"}]}
-    with pytest.raises(BriefingFinalizationError):
-        finalize_briefing_candidate(report)
+    result = finalize_briefing_candidate(report)
+    assert result["markdown"] == report["markdown"]
 
 
 def test_no_repair_and_cancellation_remain_explicit_boundaries():
     report = _report("KOSPI 종가는 6,500.00이다.")
-    with pytest.raises(BriefingFinalizationError):
-        finalize_briefing_candidate(report, allow_repair=False)
+    result = finalize_briefing_candidate(report, allow_repair=False)
+    assert result["markdown"] == report["markdown"]
     with pytest.raises((BriefingFinalizationError, RuntimeError)):
         finalize_briefing_candidate(report, repair_budget=SharedRepairBudget(cancelled=lambda: True))
 
@@ -86,8 +90,9 @@ def test_no_repair_and_cancellation_remain_explicit_boundaries():
 def test_table_correction_preserves_columns_and_other_cells(bad, expected):
     heading = "| 지표 | 값 | 등락률 | 메모 |\n| --- | --- | --- | --- |\n"
     result = finalize_briefing_candidate(_report(heading + bad))
-    assert result["markdown"] == heading + expected
-    assert result["finalValidation"]["contradictionCount"] == 0
+    assert result["markdown"] == heading + bad
+    assert result["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert result["finalValidation"]["contradictionCount"] is None
 
 
 def test_summary_prefix_survives_and_old_metadata_does_not_survive_changed_body():

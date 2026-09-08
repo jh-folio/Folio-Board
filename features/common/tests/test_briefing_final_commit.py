@@ -11,7 +11,7 @@ from features.daily_briefing.finalize import BriefingFinalizationError
 
 
 @pytest.mark.parametrize("repairs", [0, 1])
-def test_cli_commits_locally_corrected_writer_without_rules_fallback(monkeypatch, tmp_path, repairs):
+def test_cli_commits_contradictory_writer_verbatim_without_rules_fallback(monkeypatch, tmp_path, repairs):
     from features.common import job_json_producers
 
     # Keep the real finalizer, staging and commit; exclude unrelated semantics.
@@ -30,35 +30,27 @@ def test_cli_commits_locally_corrected_writer_without_rules_fallback(monkeypatch
         ))
         producer.workspace.commit(bundle, store, JobPrivateLifecycle(tmp_path / "job-context", clock=_clock))
     saved = json.loads((tmp_path / "briefings/2026-07-18.us.json").read_text(encoding="utf-8"))
-    assert "-1.48%" not in saved["markdown"] and "+1.48%" in saved["markdown"]
+    assert "-1.48%" in saved["markdown"] and "+1.48%" not in saved["markdown"]
     assert saved["markdown"].startswith("기존 근거 설명은 유지한다. ")
     assert saved["markdown"].endswith(" 다른 분석도 유지한다.")
     assert saved["generation"] == report["generation"]
-    assert saved["finalValidation"]["contradictionCount"] == 0
-    assert saved["finalValidation"]["localCorrectedPassageCount"] == 1
+    assert saved["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert saved["finalValidation"]["contradictionCount"] is None
+    assert saved["finalValidation"]["verifiedClaimCount"] is None
     assert budget.used == 0
 
 
-def test_cancellation_during_local_correction_aborts_all_staging(monkeypatch, tmp_path):
+def test_cancellation_boundary_aborts_all_staging(monkeypatch, tmp_path):
     from features.common import job_json_producers
-    from features.daily_briefing import local_fact_repair
 
     monkeypatch.setattr(job_json_producers, "decorate_candidate", lambda _kind, report, **kw: report)
-    cancelled = {"value": False}
-    original = local_fact_repair.correct_verified_passages
-
-    def cancel_after_correction(*args):
-        result = original(*args)
-        cancelled["value"] = True
-        return result
-
-    monkeypatch.setattr(local_fact_repair, "correct_verified_passages", cancel_after_correction)
     store = SharedJobStore(tmp_path / "jobs-v2.json", tmp_path / "jobs.json", clock=_clock)
     job = _running(store, "briefing")
     producer = JobJsonProducers(tmp_path, clock=_clock)
     request = BriefingJobRequest("2026-07-18", ("jp", "us"),
-        {"jp": {"markdown": "Japan report"}, "us": _report("us", True)}, {}, {})
-    with bind_briefing_budget(SharedRepairBudget(cancelled=lambda: cancelled["value"])), pytest.raises(BriefingFinalizationError) as raised:
+        {"jp": {"markdown": "Japan report"}, "us": _report("us", True)}, {},
+        {"artifactId": "2026-07-18", "reportId": "2026-07-18", "date": "2026-07-18"})
+    with bind_briefing_budget(SharedRepairBudget(cancelled=lambda: True)), pytest.raises(BriefingFinalizationError) as raised:
         producer.stage_briefing(job, request)
     assert "cancelled" in raised.value.validation["reasonCodes"]
     assert not (tmp_path / "briefings").exists()
@@ -104,7 +96,8 @@ def test_opening_and_threshold_prose_commits_unchanged_without_fallback(tmp_path
         producer.workspace.commit(bundle, store, JobPrivateLifecycle(tmp_path / "job-context", clock=_clock))
     saved = json.loads((tmp_path / "briefings/2026-09-07.kr.json").read_text(encoding="utf-8"))
     assert saved["markdown"] == text
-    assert saved["finalValidation"]["contradictionCount"] == 0
+    assert saved["finalValidation"]["contradictionCount"] is None
+    assert saved["finalValidation"]["contentAssessment"] == "not_assessed"
     assert saved["finalValidation"]["repairCount"] == 0
     assert not saved["generation"].get("fallbackReason")
 
@@ -127,7 +120,8 @@ def test_cli_stager_preserves_bad_market_and_commits_independent_good_market(tmp
     assert old.read_text(encoding="utf-8") == '{"markdown":"old normal"}'
     assert visual.read_bytes() == b"old sidecar"
     result = json.loads((directory / "2026-07-18.jp.json").read_text(encoding="utf-8"))
-    assert result["finalValidation"]["contradictionCount"] == 0
+    assert result["finalValidation"]["contradictionCount"] is None
+    assert result["finalValidation"]["contentAssessment"] == "not_assessed"
     assert all("us" not in item.id for item in bundle.intent.expectedArtifacts)
 
 

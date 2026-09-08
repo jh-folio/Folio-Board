@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from features.daily_briefing.finalize import finalize_briefing_candidate
+from features.daily_briefing.finalize import BriefingFinalizationError, finalize_briefing_candidate
 from features.daily_briefing.reader_hygiene import strip_provider_operational_notes
 from features.daily_briefing.service import korea_market_data_to_markdown
 
@@ -32,17 +32,29 @@ def test_only_operational_note_is_removed_and_legitimate_attribution_stays():
 
 
 def test_shared_finalizer_cleans_body_and_reader_section_without_changing_diagnostics():
-    report = {"date": "2026-09-07", "marketScope": "kr", "markdown": WARNING,
-              "briefings": {"kr": {"markdown": WARNING}},
+    body = "## 시장 요약\n\n정상 분석 본문은 유지한다."
+    report = {"date": "2026-09-07", "marketScope": "kr", "markdown": f"{WARNING}\n\n{body}",
+              "briefings": {"kr": {"markdown": f"{WARNING}\n\n{body}"}},
               "koreaMarketData": {"warnings": [RAW_WARNING]},
               "generation": {"mode": "agent", "model": "claude"}}
     original = deepcopy(report)
     result = finalize_briefing_candidate(report)
-    assert "Toss Open API" not in result["markdown"]
-    assert "Toss Open API" not in result["briefings"]["kr"]["markdown"]
+    assert result["markdown"].strip() == body
+    assert result["briefings"]["kr"]["markdown"].strip() == body
     assert result["koreaMarketData"] == report["koreaMarketData"]
     assert result["generation"] == report["generation"]
     assert report == original
+
+
+def test_shared_finalizer_rejects_warning_only_as_empty():
+    report = {"date": "2026-09-07", "marketScope": "kr", "markdown": WARNING,
+              "briefings": {"kr": {"markdown": WARNING}},
+              "koreaMarketData": {"warnings": [RAW_WARNING]}}
+
+    with pytest.raises(BriefingFinalizationError) as raised:
+        finalize_briefing_candidate(report)
+
+    assert "format_empty" in raised.value.validation["reasonCodes"]
 
 
 def test_provider_news_without_operational_state_is_not_removed():

@@ -55,12 +55,15 @@ def test_etf_price_is_not_cash_index_price():
     assert not result["verifiedClaims"]
 
 
-def test_month_return_is_not_week_return_and_real_visual_week_is_checked():
+def test_production_finalization_does_not_semantically_check_weekly_return():
     report = {"marketScope": "us", "kind": "weekly", "weekEnd": "2026-09-06", "markdown": "NVDA 5.00% 상승했다.", "marketSnapshot": {"tickers": {"NVDA": {"periodPct": 20, "fiveDayPct": 12, "asOfDate": "2026-09-04"}}}}
     assert not validate_briefing_candidate(report)["contradictions"]
     visual = {"snapshots": {"week": {"market": "US", "series": [{"ticker": "NVDA", "label": "NVIDIA", "weeklyReturn": 5, "weeklyEndDate": "2026-09-04", "weeklyReturnReason": None}]}}}
     result = finalize_briefing_candidate(report, visual_context=visual)
-    assert result["finalValidation"]["verifiedClaimCount"] >= 1
+    assert result["markdown"] == report["markdown"]
+    assert result["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert result["finalValidation"]["verifiedClaimCount"] is None
+    assert result["finalValidation"]["contradictionCount"] is None
     assert "_validationVisuals" not in result
 
 
@@ -79,8 +82,9 @@ def test_intraday_article_number_does_not_override_close_fact():
 def test_known_cash_index_is_required_but_etf_is_not_substituted():
     candidate = {"marketScope": "us", "date": "2026-09-04", "markdown": "오늘 시장을 정리합니다.", "marketSnapshot": {"tickers": {"^GSPC": {"label": "S&P 500", "oneDayPct": 1.64, "asOfDate": "2026-09-04"}}}}
     result = finalize_briefing_candidate(candidate)
-    assert "+1.64%" in result["markdown"]
-    assert result["finalValidation"]["repairCount"] == 1
+    assert result["markdown"] == candidate["markdown"]
+    assert result["finalValidation"]["repairCount"] == 0
+    assert result["finalValidation"]["contentAssessment"] == "not_assessed"
 
 
 def test_unsigned_decline_is_not_a_mismatch_but_a_wrong_direction_still_is():
@@ -177,9 +181,11 @@ def test_a_correct_number_elsewhere_does_not_excuse_a_wrong_closing_claim():
     result = validate_briefing_candidate(report)
     assert result["status"] == "reject"
     assert result["contradictions"] and not result["downgradedContradictions"]
-    repaired = finalize_briefing_candidate(report)
-    assert "6,500.00" not in repaired["markdown"]
-    assert repaired["finalValidation"]["contradictionCount"] == 0
+    finalized = finalize_briefing_candidate(report)
+    assert finalized["markdown"] == report["markdown"]
+    assert finalized["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert finalized["finalValidation"]["contradictionCount"] is None
+    assert finalized["finalValidation"]["verifiedClaimCount"] is None
     report["markdown"] = "KOSPI 종가는 6,500.00이다."
     assert validate_briefing_candidate(report)["contradictions"]
 

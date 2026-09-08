@@ -805,11 +805,6 @@ def api_get_briefing(date: str, includePersonal: bool = False, marketScope: str 
         raise HTTPException(status_code=400, detail="Invalid briefing identifier or market scope") from exc
     if not briefing:
         raise HTTPException(status_code=404, detail="Briefing not found")
-    if not briefing.get("quality"):
-        try:
-            briefing["quality"] = evaluate_research_quality_payload({"artifactType": "briefing", "artifact": briefing})["quality"]
-        except Exception:
-            briefing["quality"] = {"status": "warn", "warnings": ["quality evaluation failed"]}
     return strip_overlay(briefing_scope_view(briefing, marketScope), includePersonal)
 
 

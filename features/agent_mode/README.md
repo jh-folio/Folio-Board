@@ -12,7 +12,7 @@ Claude 작성은 `plan`이 아닌 `dontAsk`로 실행한다. 도구는 Read/Glob
 
 규칙 기반 브리핑 대체 조립은 자료 그룹이 없거나 요청 시장에 해당하는 그룹이 없어도 처리합니다. 실행 중인 서버에는 Python 변경이 자동 반영되지 않으므로, 수정 적용 시 활성 작업이 없는지 확인하고 정상 재시작한 뒤 응답을 확인합니다.
 
-브리핑 저장은 최종 본문 사실 검사 후 진행합니다. 확인된 수치·단위·방향·날짜·상대강도 오류는 같은 고정 입력으로 해당 문장만 한 번 교정하고 재검사해 원래 CLI 보고서를 저장합니다. 이 로컬 처리는 추가 모델 호출 없이 동작하며 공유 보수 슬롯 소진과 별개지만 최초 시간 제한·취소를 지킵니다. 구조 보수·집중 제어·품질 보완·필수 수치 보강은 기존 실행 단위 한 번의 보수 예산을 공유합니다. 안전하게 고칠 수 없는 시장은 기존 파일을 보존하고 정상 시장만 저장할 수 있으며, 부분 생성 결과는 별도로 표시합니다. CLI 응답 형식이나 사용자가 선택한 모델 설정은 이 검사로 변경하지 않습니다.
+브리핑 저장은 authored Markdown을 보존하면서 최종 형식·출처 URL·source ID·section whitelist를 확인합니다. 의미 기반 수치·단위·방향·날짜·상대강도 판정은 명시적 offline 평가에만 남고, 일반 CLI/API 저장 경로는 semantic/style/fact-repair/model 호출을 하지 않습니다. 취소·기한 초과·안전하지 않은 참조는 계속 저장을 막으며, 명시적 품질 보완은 별도 `quality_repair` 작업입니다. CLI 응답 형식이나 사용자가 선택한 모델 설정은 이 검사로 변경하지 않습니다.
 
 작성용 한국장 자료에는 내부 provider 경고를 넣지 않으며, 최종 저장에서도 연결 설정·provider 경고 문구만 제거합니다. 수치의 실제 출처·기준일과 원래 진단 메타데이터는 유지합니다. 저장 브리핑 차트는 API와 같은 정규장 가격 계열을 사용하며 Toss 실시간 화면 설정을 바꾸지 않습니다.
 
@@ -233,7 +233,7 @@ Claude/Antigravity 실행 정책은 그대로이며 예외가 나도 실행별 �
 
 브리핑 context pack을 준비할 때 생성 당시 가격 series와 히트맵 사이드카 payload도 고정합니다. Agent가 Markdown 작성을 마친 뒤 writeback하면 같은 snapshot을 보고서와 `{date}.visuals.json`에 저장하므로 작성 시간 동안 시장 데이터가 바뀌어도 과거 보기가 흔들리지 않습니다.
 
-CLI 브리핑은 API 브리핑과 동일한 시장별 프롬프트(`features/daily_briefing/prompt_{us,kr,europe,jp}.md`, 주간은 `prompt_weekly_{us,kr,europe,jp}.md`), 선별 context, evidence, quality preflight를 사용합니다. `outputContract`는 선택 시장별 `0~6 + 오늘의 결론 + Source & Data Notes`, 한 줄 결론, 가운뎃점 요약, 최소 분량과 코드가 계산한 정확한 `세션일 + 마감/장중` 제목을 요구합니다. 전체 자동 재작성은 하지 않습니다(`retryOnViolation: 0`). 형식 계약을 통과한 후보의 사실 오류는 먼저 동일 고정 입력으로 해당 문장만 교정하고 재검사해 원래 CLI 보고서를 저장합니다. 계약 위반 또는 로컬 교정으로 해소되지 않은 최종 검증 실패에만 같은 pack의 고정 자료로 규칙 기반 Markdown을 만들어 동일한 최종 검증·원자적 커밋을 한 번 시도합니다. 규칙 후보도 실패하거나 작업이 취소·기한 초과면 기존 저장 브리핑과 시각 snapshot을 덮어쓰지 않습니다. 규칙 대체는 durable 잡에만 적용하며 비-durable 경로는 거절합니다. 계약 미달 본문은 `BRIEFING_REJECTION_DUMP_DIR`을 설정한 경우에만 위반 목록과 함께 `contract-*.json`으로 남습니다.
+CLI 브리핑은 API 브리핑과 동일한 시장별 프롬프트(`features/daily_briefing/prompt_{us,kr,europe,jp}.md`, 주간은 `prompt_weekly_{us,kr,europe,jp}.md`), 선별 context, evidence, quality preflight를 사용합니다. `outputContract`는 선택 시장별 `0~6 + 오늘의 결론 + Source & Data Notes`, 한 줄 결론, 가운뎃점 요약, 최소 분량과 코드가 계산한 정확한 `세션일 + 마감/장중` 제목을 요구합니다. 전체 자동 재작성은 하지 않습니다(`retryOnViolation: 0`). 형식 계약·출처 whitelist를 통과한 후보의 authored Markdown은 semantic/style/fact-repair/model 호출 없이 저장하며, 취소·기한 초과·안전하지 않은 참조는 기존 파일을 보존합니다. 계약 미달 본문은 `BRIEFING_REJECTION_DUMP_DIR`을 설정한 경우에만 위반 목록과 함께 `contract-*.json`으로 남습니다.
 
 주간은 계약이 갈립니다. 섹션 골격과 제목 규칙(`{라벨} 주간 — {MM.DD}~{MM.DD}`, 마감/장중 없음)이 다르고, 자료 창이 발행일 기준 달력 7일입니다. **그 창이 비면 CLI를 부르지 않고 `WeeklyWindowEmptyError`로 먼저 멈춥니다** — 최소 분량 계약에 걸려 재작성 1회를 더 돌린 뒤 실패하므로 수십 초짜리 실행을 두 번 낭비하고 아무것도 남기지 못합니다. 주간은 세션 시각자료를 만들지 않고 시장 내러티브에도 적재하지 않습니다.
 

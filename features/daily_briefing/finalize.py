@@ -930,6 +930,93 @@ def _semantic_source_check(candidate: dict) -> tuple[dict, list[dict]]:
     }, invalid
 
 
+def _production_source_check(candidate: dict) -> tuple[dict, list[dict]]:
+    """Check only source/rendering safety needed before a production write.
+
+    This deliberately does not compare claim text with excerpts.  The
+    semantic checker above remains available through ``validate_briefing_candidate``
+    for explicit offline evaluation, but production generation must not turn
+    that judgment into a prose edit, rejection, or fallback.
+    """
+    rows = _source_rows(candidate)
+    by_id = {
+        str(row.get("sourceId") or stable_source_id(row, index)): row
+        for index, row in enumerate(rows, 1)
+    }
+    invalid: list[dict] = []
+    safe_count = 0
+    for row in rows:
+        raw = str(row.get("url") or "").strip()
+        if raw and not normalize_source_url(raw):
+            invalid.append({"kind": "unsafe_url"})
+        elif raw:
+            safe_count += 1
+
+    section_whitelist = _section_whitelist(candidate, str(candidate.get("markdown") or ""))
+    ledgers = [candidate.get("claimLedger") or {}]
+    for section in (candidate.get("briefings") or {}).values():
+        if isinstance(section, dict):
+            ledgers.append(section.get("claimLedger") or {})
+    declared_count = 0
+    for ledger in ledgers:
+        if not isinstance(ledger, dict):
+            continue
+        claims = list(ledger.get("claims") or [])
+        by_market = ledger.get("byMarket") or {}
+        for nested in by_market.values():
+            if isinstance(nested, dict):
+                claims.extend(nested.get("claims") or [])
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            declared_count += 1
+            ids = claim.get("supportingSourceIds") or claim.get("sourceIds") or claim.get("sources") or []
+            id_values = list(ids) if isinstance(ids, (list, tuple, set)) else ([ids] if ids else [])
+            for value in id_values:
+                if str(value).strip() and str(value) not in by_id:
+                    invalid.append({"kind": "source_outside_whitelist"})
+            section_values: list[str] = []
+            for field in (
+                "section", "sectionId", "sourceSection", "supportingSection",
+                "supportingSectionId", "sections", "sectionIds",
+                "supportingSections", "supportingSectionIds",
+            ):
+                value = claim.get(field)
+                if isinstance(value, (list, tuple, set)):
+                    section_values.extend(str(item) for item in value if str(item).strip())
+                elif str(value or "").strip():
+                    section_values.append(str(value))
+            for value in section_values:
+                if _normalized_phrase(value) not in section_whitelist:
+                    invalid.append({"kind": "section_outside_whitelist"})
+
+    links = markdown_external_links(str(candidate.get("markdown") or ""))
+    allowed_urls = {
+        normalize_source_url(row.get("url"))
+        for row in rows
+        if normalize_source_url(row.get("url"))
+    }
+    for link in links:
+        url = normalize_source_url(link.get("url"))
+        if not url:
+            invalid.append({"kind": "unsafe_url"})
+        elif url not in allowed_urls:
+            invalid.append({"kind": "visible_link_outside_whitelist"})
+
+    errors = sorted({str(row.get("kind") or "unknown") for row in invalid})
+    return {
+        "status": "review" if errors else "pass",
+        "assessmentStatus": "not_assessed",
+        "manifestStatus": str((candidate.get("generationEvidence") or {}).get("status") or "unknown"),
+        "whitelistCount": len(by_id),
+        "safeUrlCount": safe_count,
+        "declaredClaimCount": declared_count,
+        "semanticVerifiedClaimCount": None,
+        "unverifiedDeclarationCount": None,
+        "errors": errors,
+    }, invalid
+
+
 def _facts_for_line(line: str, facts: list[_Fact]) -> list[_Fact]:
     return [fact for fact in facts if _contains_alias(line, fact)]
 
@@ -1245,69 +1332,38 @@ def validate_briefing_candidate(candidate: dict) -> dict:
     return _evaluate(dict(candidate or {}))
 
 
-def _public_validation(validation: dict) -> dict:
-    """Keep persisted diagnostics bounded and free of article/URL payloads."""
-    reasons = []
-    for row in validation.get("contradictions") or []:
-        if isinstance(row, dict) and row.get("kind"):
-            reasons.append(str(row["kind"]))
-    reasons.extend(str(code) for code in validation.get("sourceChecks", {}).get("errors") or [])
-    if validation.get("requiredOmissions"):
-        reasons.append("required_omission")
-    if validation.get("repairSkipped"):
-        reasons.append(str(validation["repairSkipped"]))
-    output = {
-        "version": int(validation.get("version") or 1),
-        "market": str(validation.get("market") or ""),
-        "status": str(validation.get("status") or "review"),
-        "verifiedClaims": [
-            {
-                "factKey": str(row.get("factKey") or ""),
-                "kind": str(row.get("kind") or ""),
-                "precision": row.get("precision"),
-                "source": str(row.get("source") or ""),
-            }
-            for row in validation.get("verifiedClaims") or []
-            if isinstance(row, dict)
-        ],
-        "verifiedClaimCount": len(validation.get("verifiedClaims") or []),
-        "unknownClaimCount": len(validation.get("unknownClaims") or []),
-        "requiredOmissionCount": len(validation.get("requiredOmissions") or []),
-        "contradictionCount": len(validation.get("contradictions") or []),
-        # Legacy response shape only. Explicit errors are corrected, not downgraded.
-        "downgradedCount": len(validation.get("downgradedContradictions") or []),
-        "downgradedReasonCodes": sorted({
-            str(row["kind"])
-            for row in validation.get("downgradedContradictions") or []
-            if isinstance(row, dict) and row.get("kind")
-        }),
-        "reasonCodes": sorted(set(reasons)),
-        "sourceChecks": {
-            "status": str((validation.get("sourceChecks") or {}).get("status") or "review"),
-            "manifestStatus": str((validation.get("sourceChecks") or {}).get("manifestStatus") or "unknown"),
-            "whitelistCount": int((validation.get("sourceChecks") or {}).get("whitelistCount") or 0),
-            "safeUrlCount": int((validation.get("sourceChecks") or {}).get("safeUrlCount") or 0),
-            "declaredClaimCount": int((validation.get("sourceChecks") or {}).get("declaredClaimCount") or 0),
-            "semanticVerifiedClaimCount": int((validation.get("sourceChecks") or {}).get("semanticVerifiedClaimCount") or 0),
-            "unverifiedDeclarationCount": int((validation.get("sourceChecks") or {}).get("unverifiedDeclarationCount") or 0),
-            "reasonCodes": list((validation.get("sourceChecks") or {}).get("errors") or []),
-        },
-        "repairApplied": bool(validation.get("repairApplied")),
-        "repairCount": int(validation.get("repairCount") or 0),
-    }
-    if validation.get("repairAddedFacts"):
-        output["repairAddedFactCount"] = len(validation["repairAddedFacts"])
-    for field in ("localCorrectionPassCount", "localCorrectedPassageCount", "localCorrectionReasonCodes"):
-        if field in validation:
-            output[field] = validation[field]
-    return output
-
-
 def _check_budget_active(budget: SharedRepairBudget) -> None:
     checker = getattr(budget, "check_active", None)
     if not callable(checker):
         return
     checker()
+
+
+def _production_validation(candidate: dict, source_check: dict, errors: list[dict]) -> dict:
+    """Return bounded writeback metadata without claiming semantic proof."""
+    reason_codes = sorted({
+        str(row.get("kind") or "unknown")
+        for row in errors
+        if isinstance(row, dict)
+    })
+    return {
+        "version": 2,
+        "market": _scope(candidate),
+        "status": "reject" if reason_codes else "pass",
+        "assessmentStatus": "not_assessed",
+        "contentAssessment": "not_assessed",
+        "verifiedClaims": [],
+        "verifiedClaimCount": None,
+        "unknownClaimCount": None,
+        "requiredOmissionCount": None,
+        # None is intentional: zero would falsely mean that semantic content
+        # validation ran and found no contradictions.
+        "contradictionCount": None,
+        "reasonCodes": reason_codes,
+        "sourceChecks": source_check,
+        "repairApplied": False,
+        "repairCount": 0,
+    }
 
 
 def finalize_briefing_candidate(
@@ -1319,11 +1375,13 @@ def finalize_briefing_candidate(
     allow_repair: bool = True,
     visual_context: dict | None = None,
 ) -> dict:
-    """Validate, locally correct once, and optionally supplement missing facts.
+    """Apply production-safe normalization and writeback checks only.
 
-    The returned dictionary is a copy.  On failure the input remains
-    untouched, allowing the caller to preserve the previous canonical report
-    and visual sidecar.
+    Semantic fact, direction, relative-strength, claim-integrity, and quality
+    judgments are intentionally absent here.  ``validate_briefing_candidate``
+    remains an explicit offline evaluator; this production path preserves
+    authored Markdown and only blocks unsafe source references, malformed
+    storage input, or cancellation/deadline boundaries.
     """
     working = deepcopy(candidate or {})
     from features.daily_briefing.reader_hygiene import strip_provider_operational_notes
@@ -1340,115 +1398,70 @@ def finalize_briefing_candidate(
         _check_budget_active(budget)
     except (RuntimeError, TimeoutError) as exc:
         code = "cancelled" if "cancel" in str(exc).lower() else "deadline_expired"
-        validation = {"version": 1, "market": _scope(working), "status": "reject", "verifiedClaims": [], "requiredOmissions": [], "contradictions": [], "sourceChecks": {"status": "review", "errors": [code]}, "reasonCodes": [code], "repairApplied": False, "repairCount": 0}
+        validation = {
+            "version": 2, "market": _scope(working), "status": "reject",
+            "assessmentStatus": "not_assessed", "contentAssessment": "not_assessed",
+            "verifiedClaims": [], "requiredOmissions": [], "contradictions": [],
+            "sourceChecks": {"status": "review", "assessmentStatus": "not_assessed", "errors": [code]},
+            "reasonCodes": [code], "repairApplied": False, "repairCount": 0,
+        }
         raise BriefingFinalizationError("briefing final validation unavailable", validation=validation, candidate=candidate) from exc
-    first = _evaluate(working)
-    local_correction = {}
-    if first["contradictions"] and allow_repair:
-        from features.daily_briefing.local_fact_repair import correct_verified_passages
-
-        corrected, local_correction = correct_verified_passages(
-            str(working.get("markdown") or ""), first["contradictions"], _facts(working),
-        )
-        # This is a single deterministic pass, not another model repair call.
-        # It remains available when the shared model-rewrite slot is spent.
-        try:
-            _check_budget_active(budget)
-        except (RuntimeError, TimeoutError) as exc:
-            first["repairSkipped"] = "cancelled" if "cancel" in str(exc).lower() else "deadline_expired"
-            first["reasonCodes"] = [first["repairSkipped"]]
-            raise BriefingFinalizationError("briefing final validation interrupted", validation=first, candidate=candidate) from exc
-        if local_correction["localCorrectionPassCount"]:
-            working["markdown"] = corrected
-            first = _evaluate(working)
-    if first["contradictions"]:
-        raise BriefingFinalizationError("briefing final validation found confirmed contradiction", validation=first, candidate=candidate)
-    # 수치가 빠진 것은 틀린 수치를 쓴 것과 다르다 — 독자가 손해를 보지 않는다.
-    # 보강은 그대로 시도하되, 보강할 수 없거나 보강 뒤에도 남으면 경고로 남긴 채
-    # 저장한다.  토큰을 쓴 산출물을 이것 하나로 버리지 않는다.
-    repairable = bool(first["requiredOmissions"]) and allow_repair
-    if repairable:
-        try:
-            budget.claim("final_validation")
-        except RuntimeError as exc:
-            first["repairSkipped"] = str(exc)
-            repairable = False
-    if repairable:
-        omitted = []
-        for row in first["requiredOmissions"]:
-            omitted.append(_Fact(
-                key=str(row.get("factKey") or ""), label=str(row.get("label") or row.get("factKey") or ""),
-                aliases=_aliases(str(row.get("factKey") or ""), str(row.get("label") or "")),
-                value=_finite(row.get("value")), change_pct=_finite(row.get("changePct")),
-                date=str(row.get("date") or ""), unit=str(row.get("unit") or ""),
-                source=str(row.get("source") or ""), raw_value=row.get("rawValue"), required=True,
-            ))
-        working["markdown"] = _repair_markdown(str(working.get("markdown") or ""), omitted)
-        try:
-            _check_budget_active(budget)
-        except (RuntimeError, TimeoutError) as exc:
-            first["repairSkipped"] = "cancelled" if "cancel" in str(exc).lower() else "deadline_expired"
-            first["reasonCodes"] = [first["repairSkipped"]]
-            raise BriefingFinalizationError("briefing final validation interrupted", validation=first, candidate=candidate) from exc
-        second = _evaluate(working)
-        second["repairApplied"] = True
-        second["repairCount"] = 1
-        second["repairAddedFacts"] = [fact.key for fact in omitted]
-        if second["contradictions"]:
-            raise BriefingFinalizationError("briefing final validation failed after repair", validation=second, candidate=candidate)
-        validation = second
-    else:
-        validation = first
-
+    if not str(working.get("markdown") or "").strip():
+        validation = {
+            "version": 2, "market": _scope(working), "status": "reject",
+            "assessmentStatus": "not_assessed", "contentAssessment": "not_assessed",
+            "verifiedClaims": [], "requiredOmissions": [], "contradictions": [],
+            "sourceChecks": {"status": "review", "assessmentStatus": "not_assessed", "errors": ["format_empty"]},
+            "reasonCodes": ["format_empty"], "repairApplied": False, "repairCount": 0,
+        }
+        raise BriefingFinalizationError("briefing production format is empty", validation=validation, candidate=candidate)
+    source_check, source_errors = _production_source_check(working)
+    if source_errors:
+        validation = {
+            "version": 2, "market": _scope(working), "status": "reject",
+            "assessmentStatus": "not_assessed", "contentAssessment": "not_assessed",
+            "verifiedClaims": [], "requiredOmissions": [], "contradictions": source_errors,
+            "sourceChecks": source_check, "reasonCodes": source_check.get("errors") or [],
+            "repairApplied": False, "repairCount": 0,
+        }
+        raise BriefingFinalizationError("briefing production source safety failed", validation=validation, candidate=candidate)
     try:
         _check_budget_active(budget)
     except (RuntimeError, TimeoutError) as exc:
         code = "cancelled" if "cancel" in str(exc).lower() else "deadline_expired"
-        validation["repairSkipped"] = code
-        validation["reasonCodes"] = [code]
+        validation = {
+            "version": 2, "market": _scope(working), "status": "reject",
+            "assessmentStatus": "not_assessed", "contentAssessment": "not_assessed",
+            "verifiedClaims": [], "requiredOmissions": [], "contradictions": [],
+            "sourceChecks": {**source_check, "status": "review", "errors": [code]},
+            "reasonCodes": [code], "repairApplied": False, "repairCount": 0,
+        }
         raise BriefingFinalizationError("briefing final validation interrupted", validation=validation, candidate=candidate) from exc
-    validation.update(local_correction)
-    if local_correction.get("localCorrectionPassCount"):
-        validation["repairApplied"] = True
-    working["finalValidation"] = _public_validation(validation)
+    working["finalValidation"] = _production_validation(working, source_check, [])
     from hashlib import sha256
     import json
     evidence_input = sorted(
         [(str(row.get("sourceId") or ""), str(row.get("writerExcerpt") or row.get("excerpt") or ""))
          for row in _source_rows(working)], key=lambda row: row[0],
     )
-    fact_input = [(f.key, f.date, f.value, f.change_pct, f.unit, f.source_id) for f in _facts(working)]
-    encoded = json.dumps({"sources": evidence_input, "facts": fact_input}, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    encoded = json.dumps({"sources": evidence_input}, ensure_ascii=False, sort_keys=True).encode("utf-8")
     input_hash = sha256(encoded).hexdigest()
     markdown_hash = sha256(str(working.get("markdown") or "").encode("utf-8")).hexdigest()
-    previous_run = candidate.get("validationRun") or {}
-    if previous_run.get("inputHash") == input_hash and previous_run.get("markdownHash") == markdown_hash:
-        previous_validation = candidate.get("finalValidation") or {}
-        for field in ("localCorrectionPassCount", "localCorrectedPassageCount", "localCorrectionReasonCodes"):
-            if previous_validation.get(field) and not working["finalValidation"].get(field):
-                working["finalValidation"][field] = previous_validation[field]
-        if working["finalValidation"].get("localCorrectionPassCount"):
-            working["finalValidation"]["repairApplied"] = True
     working["validationRun"] = {
-        "policyVersion": "briefing-q4-q6-v1",
+        "policyVersion": "briefing-production-structure-v2",
         "inputHash": input_hash,
         "markdownHash": markdown_hash,
         "sessionDate": _target_session_date(working, _scope(working)),
         "market": _scope(working), "kind": working.get("kind", "daily"),
         "writerSourceIds": [row[0] for row in evidence_input if row[0]],
-        "repairCount": budget.snapshot().get("used", working["finalValidation"]["repairCount"]),
+        "repairCount": 0,
+        "assessmentStatus": "not_assessed",
+        "contentAssessment": "not_assessed",
+        "semanticStatus": "not_assessed",
         "finalStatus": working["finalValidation"]["status"],
         "observedModel": None,
         "observedToolUse": "unknown",
     }
-    # Recompute the stored briefing quality using the semantic verified claim
-    # set.  The import is local to keep evaluator -> finalizer imports acyclic.
-    try:
-        from features.common.research_quality.evaluator import evaluate_artifact
-
-        working["quality"] = evaluate_artifact("briefing", working)
-    except Exception:
-        pass
     working.pop("_validationVisuals", None)
     return working
 

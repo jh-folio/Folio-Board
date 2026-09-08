@@ -2509,13 +2509,8 @@ def list_briefings():
             return None
 
     rows = [_read_json(p) for p in _briefing_report_paths()]
-    out = [r for r in rows if r]
-    for row in out:
-        if row.get("quality") or not row.get("markdown"):
-            continue
-        try:
-            from features.common.research_quality.evaluator import evaluate_artifact
-            row["quality"] = evaluate_artifact("briefing", row)
-        except Exception:
-            pass
-    return out
+    # Listing is a read-only presentation path.  Do not lazily run the
+    # briefing semantic evaluator or attach a derived quality field to a
+    # loaded report; production briefing content is assessed only by the
+    # explicit offline evaluation endpoint.
+    return [r for r in rows if r]

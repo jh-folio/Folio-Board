@@ -84,37 +84,15 @@ def render_concentration_context(control: dict) -> str:
 
 
 def finalize_concentration(markdown: str, control: dict, *, agent_serialize: bool = True) -> tuple[str, dict]:
-    if not control:
-        return markdown, control
-    signatures = control.get("signatures") or []
-    decision = control.get("leaderDecision") or {}
-    by_id = {row.get("candidateId"): row for row in signatures}
-    leaders = [str(by_id[candidate].get("subject") or "") for candidate in decision.get("finalPair") or [] if candidate in by_id]
-    other = [str(row.get("subject") or "") for row in signatures if row.get("candidateId") not in set(decision.get("finalPair") or [])][:3]
-    audit = audit_concentration(markdown, leader_subjects=leaders, other_major_subjects=other)
-    if control.get("mode") == "active" and audit.get("status") == "repair_candidate":
-        from features.common.quality_generation.call_budget import current_briefing_budget
-        shared = current_briefing_budget()
-        if shared:
-            shared.check_active()
-        # 예산 소진은 보강 생략이지 실패가 아니다 — 여기서 예외를 올리면 저장 직전의
-        # 브리핑 커밋 전체가 죽는다(보강은 선택 단계다).
-        try:
-            if shared:
-                shared.claim("concentration")
-            record_call(control, "repair")
-        except RuntimeError:
-            return markdown, {**control, "audit": {**audit, "repairSkipped": "call_budget_exhausted"}}
-        markdown, audit = configured_repair(
-            markdown,
-            audit,
-            leader_subjects=leaders,
-            other_major_subjects=other,
-            serialize=agent_serialize,
-        )
-        if shared:
-            shared.check_active()
-    return markdown, {**control, "audit": audit}
+    # Post-generation concentration auditing/repair is intentionally detached
+    # from production writeback.  Selection and its internal telemetry remain
+    # available before writing, but no natural-language body may be edited or
+    # sent to another model after the writer has authored it.
+    return markdown, {**(control or {}), "audit": {
+        "status": "not_assessed",
+        "assessmentStatus": "not_assessed",
+        "repair": {"attempted": False, "applied": False, "reason": "production_detached"},
+    }}
 
 
 def finalize_audit(markdown: str, control: dict) -> dict:

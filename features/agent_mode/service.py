@@ -37,8 +37,6 @@ from features.daily_briefing.limits import (
 )
 from features.daily_briefing.source_window import scope_session_documents
 from features.daily_briefing.source_integrity import reconcile_source_ledger, source_manifest_prompt
-from features.daily_briefing.claim_integrity import enforce_claim_integrity
-from features.daily_briefing.style_check import briefing_style_check
 from features.daily_briefing.weekly_visuals import collect_weekly_visuals
 from features.daily_briefing.weekly import (
     build_weekly_rules_markdown,
@@ -935,7 +933,9 @@ def write_briefing_from_markdown(
     # 저장된 pack의 시장 목록이 권위다(아래 requested_scopes와 같은 규칙).
     resolved_sources_by_market = {}
     if len(generation_scopes) <= 1:
-        markdown, claim_ledger = enforce_claim_integrity(markdown, sources, claim_ledger)
+        # Claim-integrity semantic rewrites are explicit/offline evaluation
+        # only.  Normal Agent writeback preserves authored Markdown.
+        claim_ledger = deepcopy(claim_ledger or {"version": 1, "claims": []})
         markdown = append_briefing_sources(markdown, sources, limit=ref_limit, kind=kind)
         if generation_scopes:
             resolved_sources_by_market[generation_scopes[0]] = sources
@@ -984,9 +984,9 @@ def write_briefing_from_markdown(
             )
             resolved_sources_by_market[scope_key] = market_sources
             generation_evidence.setdefault("byMarket", {})[scope_key] = market_evidence
-            scoped_markdown, market_claims = enforce_claim_integrity(
-                scoped_markdown, market_sources, market_claims,
-            )
+            # Keep the source ledger structural; do not semantic-rewrite the
+            # market body during ordinary Agent writeback.
+            market_claims = deepcopy(market_claims or {"version": 1, "claims": []})
             claim_ledger.setdefault("byMarket", {})[scope_key] = market_claims
             if kind != "weekly":
                 scoped_markdown = append_briefing_sources(
@@ -1087,12 +1087,11 @@ def write_briefing_from_markdown(
     }
     try:
         generation_preflight = (pack.get("internal") or {}).get("qualityPreflight")
-        postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
         briefing = apply_quality_loop(
             "briefing",
             briefing,
             mode=(pack.get("internal") or {}).get("qualityMode", "diagnose_only"),
-            preflight=postflight,
+            preflight={"artifactType": "briefing", "status": "not_assessed", "assessmentStatus": "not_assessed"},
         )
         briefing.setdefault("qualityGeneration", {})["generationPreflight"] = generation_preflight
     except Exception:
@@ -1129,11 +1128,6 @@ def write_briefing_from_markdown(
             legacy = read_json(BRIEFINGS_DIR / briefing_file_name(date), None)
             existing = briefing_scope_view(legacy, scope) if isinstance(legacy, dict) else None
         scoped_briefing = merge_briefing_report(scoped_briefing, existing, scope)
-        # 이 시장 본문의 문체 실측(§builder와 같은 계약). 검사만 하고 되돌리지 않는다 —
-        # 예약 발행물이 문체 때문에 막히면 안 된다.
-        scoped_briefing["styleCheck"] = briefing_style_check(
-            str((market_markdowns.get(scope) or {}).get("markdown") or scoped_briefing.get("markdown") or "")
-        )
         scoped_briefing["webLookup"] = deepcopy((draft.get("webLookup") or {}).get(scope) or {})
         if persist:
             from features.daily_briefing.finalize import BriefingFinalizationError, finalize_briefing_candidate

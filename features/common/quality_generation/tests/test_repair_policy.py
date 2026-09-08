@@ -31,7 +31,7 @@ def test_legacy_improve_once_maps_to_llm_section_improve():
     assert out["qualityGeneration"]["mode"] == "llm_section_improve"
 
 
-def test_llm_section_improve_skips_above_80_without_calling_llm():
+def test_topic_report_llm_section_improve_skips_above_80_without_calling_llm():
     original_evaluate = loop_module.evaluate_artifact
     original_should = loop_module.should_llm_rewrite
     original_improve = loop_module.improve_sections_with_llm
@@ -48,7 +48,7 @@ def test_llm_section_improve_skips_above_80_without_calling_llm():
         loop_module.improve_sections_with_llm = fake_improve
         loop_module.detect_weak_sections = lambda *_args, **_kwargs: [{"section": "source_notes"}]
         artifact = {"markdown": "# Original\n\n본문", "sources": [], "generation": {"mode": "llm"}}
-        out = apply_quality_loop("briefing", artifact, mode="llm_section_improve", preflight={"status": "warn"})
+        out = apply_quality_loop("topic_report", artifact, mode="llm_section_improve", preflight={"status": "warn"})
     finally:
         loop_module.evaluate_artifact = original_evaluate
         loop_module.should_llm_rewrite = original_should
@@ -61,7 +61,7 @@ def test_llm_section_improve_skips_above_80_without_calling_llm():
     assert out["qualityGeneration"]["repairReason"] == "llm_section_rewrite_skipped_score_above_threshold"
 
 
-def test_llm_section_improve_rejects_quality_regression():
+def test_topic_report_llm_section_improve_rejects_quality_regression():
     original_evaluate = loop_module.evaluate_artifact
     original_should = loop_module.should_llm_rewrite
     original_improve = loop_module.improve_sections_with_llm
@@ -90,7 +90,7 @@ def test_llm_section_improve_rejects_quality_regression():
         loop_module.improve_sections_with_llm = fake_improve
         loop_module.detect_weak_sections = lambda quality, _preflight: [{"section": "x"}] if quality.get("score") < 90 else []
         artifact = {"markdown": "# Original\n\n본문", "sources": [], "generation": {"mode": "llm"}}
-        out = apply_quality_loop("briefing", artifact, mode="llm_section_improve", preflight={"status": "warn"})
+        out = apply_quality_loop("topic_report", artifact, mode="llm_section_improve", preflight={"status": "warn"})
     finally:
         loop_module.evaluate_artifact = original_evaluate
         loop_module.should_llm_rewrite = original_should

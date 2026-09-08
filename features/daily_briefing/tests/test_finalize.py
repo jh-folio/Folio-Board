@@ -50,7 +50,7 @@ def test_kospi_precision_sign_and_date_match():
     assert finalized["finalValidation"]["status"] == "pass"
 
 
-def test_nvda_change_is_checked_against_market_snapshot():
+def test_contradictory_format_valid_prose_is_saved_verbatim():
     candidate = _candidate(
         "# US Market Briefing\n\nNVDA는 +1.48% 상승으로 마감했다.",
         scope="us",
@@ -62,13 +62,11 @@ def test_nvda_change_is_checked_against_market_snapshot():
     assert validate_briefing_candidate(candidate)["status"] == "pass"
 
     bad = dict(candidate, markdown="# US Market Briefing\n\nNVDA는 -1.48% 하락했다.")
-    with pytest.raises(BriefingFinalizationError) as error:
-        finalize_briefing_candidate(bad, allow_repair=False)
-    assert any(row["kind"] in {"value_mismatch", "direction_mismatch"} for row in error.value.validation["contradictions"])
-    repaired = finalize_briefing_candidate(bad)
-    assert repaired["finalValidation"]["contradictionCount"] == 0
-    assert repaired["finalValidation"]["localCorrectedPassageCount"] == 1
-    assert "하락했다" not in repaired["markdown"]
+    finalized = finalize_briefing_candidate(bad, allow_repair=False)
+    assert finalized["markdown"] == bad["markdown"]
+    assert finalized["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert finalized["finalValidation"]["contradictionCount"] is None
+    assert finalized["finalValidation"]["verifiedClaimCount"] is None
 
 
 def test_operating_metric_percent_is_not_compared_to_stock_return():
@@ -100,12 +98,10 @@ def test_relative_strength_accepts_less_negative_move_but_rejects_hyundai_case()
     assert validate_briefing_candidate(valid)["status"] == "pass"
 
     bad = _candidate("현대차 -5.62%, KOSPI -3.99% 대비 상대 방어와 강세가 이어졌다.", tape=tape)
-    with pytest.raises(BriefingFinalizationError) as error:
-        finalize_briefing_candidate(bad, allow_repair=False)
-    assert any(row["kind"] == "relative_strength_mismatch" for row in error.value.validation["contradictions"])
-    repaired = finalize_briefing_candidate(bad)
-    assert repaired["finalValidation"]["contradictionCount"] == 0
-    assert "상대 방어" not in repaired["markdown"]
+    finalized = finalize_briefing_candidate(bad, allow_repair=False)
+    assert finalized["markdown"] == bad["markdown"]
+    assert finalized["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert finalized["finalValidation"]["contradictionCount"] is None
 
 
 def test_relative_strength_without_known_benchmark_is_unknown_not_rejected():
@@ -195,7 +191,7 @@ def test_future_historical_and_intraday_numbers_are_not_current_price_claims():
         assert validate_briefing_candidate(_candidate(text, scope="us", snapshot=base))["status"] in {"pass", "warn"}
 
 
-def test_required_korea_facts_are_repaired_once_from_same_input():
+def test_required_korea_facts_do_not_trigger_production_repair():
     candidate = _candidate(
         "# Korea Market Briefing\n\n오늘 한국장 흐름을 정리했다.",
         korea={
@@ -217,11 +213,10 @@ def test_required_korea_facts_are_repaired_once_from_same_input():
         }],
     )
     finalized = finalize_briefing_candidate(candidate)
-    text = finalized["markdown"]
-    assert "+1.64%" in text and "+2.95%" in text
-    assert "5034억원" in text and "1조6690억원" in text and "6거래일" in text
-    assert finalized["finalValidation"]["repairApplied"] is True
-    assert finalized["finalValidation"]["repairCount"] == 1
+    assert finalized["markdown"] == candidate["markdown"]
+    assert finalized["finalValidation"]["repairApplied"] is False
+    assert finalized["finalValidation"]["repairCount"] == 0
+    assert finalized["finalValidation"]["contentAssessment"] == "not_assessed"
 
 
 def test_manifest_declaration_is_not_semantic_verification_and_unsafe_url_blocks():
@@ -276,15 +271,14 @@ def test_manifest_section_must_be_in_final_body_whitelist():
     assert validation["status"] == "reject"
 
 
-def test_shared_repair_budget_stops_a_second_repair_but_keeps_the_report():
-    """수치 누락은 저장을 막지 않는다.  보강 예산이 없으면 사유만 남기고 저장한다."""
+def test_production_finalization_does_not_spend_repair_budget():
     korea = {"ok": True, "date": "2026-09-04", "indices": {"KOSPI": {"close": 6820.02, "changePct": 1.64, "asOfDate": "2026-09-04"}}}
     budget = SharedRepairBudget()
     first = _candidate("본문", korea=korea)
-    repaired = finalize_briefing_candidate(first, repair_budget=budget)
-    assert repaired["finalValidation"]["repairCount"] == 1
-    assert "확인된 시장 수치" not in first["markdown"]
-    second = finalize_briefing_candidate(_candidate("본문", korea=korea), repair_budget=budget)
-    assert "shared_repair_budget_exhausted" in second["finalValidation"]["reasonCodes"]
-    assert second["finalValidation"]["status"] == "warn"
-    assert second["finalValidation"]["requiredOmissionCount"]
+    first_result = finalize_briefing_candidate(first, repair_budget=budget)
+    second_result = finalize_briefing_candidate(_candidate("본문", korea=korea), repair_budget=budget)
+    assert first_result["markdown"] == first["markdown"]
+    assert second_result["markdown"] == "본문"
+    assert first_result["finalValidation"]["repairCount"] == 0
+    assert second_result["finalValidation"]["repairCount"] == 0
+    assert budget.used == 0

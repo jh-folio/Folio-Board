@@ -3,8 +3,9 @@
 This is deliberately narrower than a general fact checker.  It catches claim
 shapes that routinely overstate what market-news evidence can establish:
 capital moving from one asset to another and broad sector participation inferred
-from a handful of companies.  Unsupported wording is downgraded without another
-LLM call; the audit stays in report metadata, never in reader Markdown.
+from a handful of companies.  It is an explicit/offline assessment helper;
+production briefing generation does not call it because authored prose must be
+preserved verbatim.
 """
 from __future__ import annotations
 

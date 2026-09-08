@@ -59,13 +59,13 @@ def test_api_valid_market_survives_other_market_final_rejection(monkeypatch, tmp
     assert "NVDA -1.48" not in result["markdown"]
 
 
-def test_api_corrects_known_error_and_saves_both_markets(monkeypatch, tmp_path):
+def test_api_saves_contradictory_format_valid_prose_verbatim(monkeypatch, tmp_path):
     directory = _configure(monkeypatch, tmp_path, True)
     monkeypatch.setattr(builder, "upsert_memory", lambda *args: None)
     result = builder.build_briefing("2026-06-10", strict_date=True, llm_override=False, persist=True, market_scope="both")
     saved = json.loads((directory / "2026-06-09.us.json").read_text(encoding="utf-8"))
     assert set(result["includedMarkets"]) == {"US", "KR"}
     assert (directory / "2026-06-10.kr.json").exists()
-    assert "-1.48%" not in saved["markdown"] and "+1.48%" in saved["markdown"]
-    assert saved["finalValidation"]["contradictionCount"] == 0
-    assert saved["finalValidation"]["localCorrectedPassageCount"] == 1
+    assert "-1.48%" in saved["markdown"] and "+1.48%" not in saved["markdown"]
+    assert saved["finalValidation"]["contentAssessment"] == "not_assessed"
+    assert saved["finalValidation"]["contradictionCount"] is None
