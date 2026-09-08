@@ -13,13 +13,21 @@ classifies each one into exactly one of five buckets:
     dual-read   A stored or compared VALUE — a provenance `generated_by`
                 value, or a `~/Documents/FolioOS` workspace-folder
                 reference — where both the old and the new value must
-                keep being recognized going forward.
+                keep being recognized going forward. Also covers prose
+                that explicitly names both the old and new display name
+                to explain one of those compatibility rules, and test
+                fixtures that name an app-root/install folder with an
+                old-style versioned name to exercise the same
+                compatibility scenario — these will never be "renamed
+                away" either, for the same reason.
     retain      A stable internal identifier that is not renamed at all
                 (e.g. the OS keyring credential-store service name).
     historical  A citation inside a frozen/completed record (a
                 docs/superpowers design doc, a reference to a local-only
-                or gitignored past-planning file, or LICENSE's copyright
-                holder line) that is never retroactively edited.
+                or gitignored past-planning file, LICENSE's copyright
+                holder line, or a worked-example citation of a version
+                that genuinely shipped under the old name, e.g.
+                `FolioOS-v0.5.0`) that is never retroactively edited.
     external    A surface outside this repository's control (a GitHub
                 URL, or a mention of the separate FolioOS_Sites
                 deployment repo).
@@ -230,6 +238,81 @@ CLASSIFICATION_RULES: tuple[Rule, ...] = (
         ),
         content_pattern=re.compile(r"""["']folioos["']"""),
     ),
+    # -- Phase D classification cleanup (plan §6 Phase D "분류 부채 정리"): these
+    # occurrences were flagged in a 2026-09-08 review as *permanently* old-name
+    # text that a `replace`-bucket default rule was wrongly promising to rename
+    # away — leaving them in `replace` would make `--expect-clean` unpassable
+    # forever and hand Phase F an ungated exemption. Reclassified by exact path,
+    # each verified line-by-line (not by "this file is mostly X") against the
+    # live inventory before being added — see docs/rename-inventory.md.
+    Rule(
+        id="dual-read-self-reference-and-importer-compat-prose",
+        bucket="dual-read",
+        reason=(
+            "Prose that explicitly names both the old and new display name in "
+            "the same sentence to explain a self-reference/provenance "
+            "compatibility rule that must keep recognizing both forever — the "
+            "self_reference.py module docstring's 'must keep recognizing the "
+            "OLD value... forever' paragraph, the Obsidian importer's "
+            "self-reference classifier docstring/comments, and the TS rename-"
+            "compat regression test's explanatory comment. Every other "
+            "occurrence in each of these five files is already `dual-read` via "
+            "the `generated_by`/`folioos`-literal content rules above; these "
+            "are the sibling lines in the same explanatory paragraphs that "
+            "just don't happen to repeat those literal substrings on the same "
+            "line (plan §4.3, §6 Phase D)."
+        ),
+        path_exact=(
+            "features/common/self_reference.py",
+            "features/obsidian/README.md",
+            "features/obsidian/importer/parser.py",
+            "features/obsidian/importer/service.py",
+            "web/src/app/renameCompat.test.ts",
+        ),
+    ),
+    Rule(
+        id="dual-read-legacy-app-root-fixture",
+        bucket="dual-read",
+        reason=(
+            "Test fixture that names the *app-root* folder itself with an "
+            "old-style versioned name (e.g. `FolioOS-v0.5.1`) to exercise "
+            "workspace/first-run discovery against a folder a real user who "
+            "hasn't updated yet would still have on disk — a compatibility "
+            "scenario, not decorative test data. Every other occurrence in "
+            "these three files is already `dual-read` via the "
+            "`~/Documents/FolioOS` discovery-order rule below; these are the "
+            "sibling app-root fixture lines in the same test modules (plan §4.4, "
+            "§6 Phase D)."
+        ),
+        path_exact=(
+            "features/common/tests/test_workspace.py",
+            "features/common/tests/test_workspace_service.py",
+            "features/onboarding/tests/test_service.py",
+        ),
+    ),
+    Rule(
+        id="historical-shipped-version-citation",
+        bucket="historical",
+        reason=(
+            "Citation of `FolioOS-v0.5.0` as a worked example of the version-"
+            "named release folder a real user actually unzipped — that release "
+            "genuinely shipped under the old name, so this is the same "
+            "non-retroactive-editing rule as past FolioOS-* package/tag names "
+            "(plan §3, §4.2), not a display string to rename. Scoped to the "
+            "exact line via a content match so it doesn't swallow the "
+            "`~/Documents/FolioOS` discovery-order sentences that sit right "
+            "next to it in the same three files and are `dual-read` instead "
+            "(plan §6 Phase D 분류 부채 정리 — 'discovery-order lines... name "
+            "`~/Documents/FolioOS` as a live compatibility path — that is "
+            "dual-read, not historical')."
+        ),
+        path_exact=(
+            "features/common/workspace.py",
+            "docs/agent-guides/workspace.md",
+            "features/common/README.md",
+        ),
+        content_pattern=re.compile(r"FolioOS-v0\.5\.0"),
+    ),
     Rule(
         id="external-github-url",
         bucket="external",
@@ -286,6 +369,22 @@ CLASSIFICATION_RULES: tuple[Rule, ...] = (
             "'historical', not 'replace' — never retroactively edited."
         ),
         path_exact=("LICENSE",),
+    ),
+    Rule(
+        id="historical-qa-evidence-claim-path",
+        bucket="historical",
+        reason=(
+            "scripts/qa_deep_research_execution.py's _claim() writes to a "
+            "hardcoded absolute evidence path from a completed 0.2.0-era QA "
+            "task (.omo/evidence/folio-os-0-2-0/task-7). It cites a past "
+            "task's directory, so renaming it would only produce a different "
+            "path that does not exist either. Classified 'historical' so it "
+            "cannot block --expect-clean. NOTE: the hardcoded personal "
+            "absolute path is a pre-existing defect unrelated to the rename "
+            "and is tracked separately."
+        ),
+        path_exact=("scripts/qa_deep_research_execution.py",),
+        content_pattern=re.compile(r"\.omo"),
     ),
     Rule(
         id="dual-read-documents-workspace-folder",

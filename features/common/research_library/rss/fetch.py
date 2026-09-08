@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 
-FEED_USER_AGENT = "Folio-OS-Evidence-Intake/1.0"
+FEED_USER_AGENT = "Folio-Board-Evidence-Intake/1.0"
 # Standard browser UA: several free outlets (MarketWatch, CNBC 등) return
 # 403 to unknown tool UAs on public article pages. Paywalled content is still
 # out of scope — paywall gates are detected downstream and never bypassed.

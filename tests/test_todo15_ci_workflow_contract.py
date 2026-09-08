@@ -118,12 +118,12 @@ jobs:
       - name: Build and verify canonical source-only package
         run: |
           python scripts/package_release.py --output dist/release
-          python scripts/verify_release.py --release-dir dist/release/FolioOS-v0.2.0 --expected-commit "${{ github.sha }}"
-          gitleaks dir dist/release/FolioOS-v0.2.0 --redact=100 --report-path .qa/gitleaks/artifact.sarif
+          python scripts/verify_release.py --release-dir dist/release/FolioBoard-v0.2.0 --expected-commit "${{ github.sha }}"
+          gitleaks dir dist/release/FolioBoard-v0.2.0 --redact=100 --report-path .qa/gitleaks/artifact.sarif
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: FolioOS-v0.2.0
-          path: dist/release/FolioOS-v0.2.0.zip
+          name: FolioBoard-v0.2.0
+          path: dist/release/FolioBoard-v0.2.0.zip
 """
 
 
