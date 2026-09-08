@@ -4,11 +4,56 @@
 
 ## 현재 프론트엔드 구조
 
+기업 분석은 생성 응답의 본문을 목록 갱신보다 먼저 표시한다. 목록 조회 실패가 이미 받은
+본문을 숨기거나 생성 실패로 바꾸지 않으며, `saved: true`인 경우에만 자동 저장 성공을
+안내하고 저장본 URL로 이동한다. 미저장 결과도 기존 리더에서 읽고 닫을 수 있지만
+영구 보관으로 표시하지 않는다. 검수 미완료 안내는 기존 보고서 상태 줄에 표시한다.
+
 **React SPA가 기본 프론트엔드다.** 기본 URL(`/`)에서 `web/`(Vite+React+TS, 빌드 산출물 `public/react/folio-react.js`)의 React shell이 렌더되고, route(home/dashboard/watchlist/briefing/rss/market-memory/analysis/deep-research/settings)는 React 네이티브다. 0.2 기본 nav에는 home/briefing/rss/market-memory/analysis/deep-research/settings를 노출하고 dashboard/watchlist는 딥링크 호환 route로 유지한다. `public/index.html`은 `#folioReactRoot`와 script/style 로딩만 갖는 최소 entrypoint이며, `public/app.js`는 React가 재사용하는 bridge-only 파일이다(`FolioBridge`: `renderMarkdown`, `splitReportTitle`, `briefingSourcePanelHtml`, `renderBriefingVisuals`, `updateAgentContext`, `openAgentDock` 등).
 
 우측 전역 Action Panel은 제거되었다. 보고서 조작은 리더 내부 조작 레일과 노트 패널에서 처리한다.
 
+## Portfolio 현황과 편집 흐름
+
+Portfolio는 `보유·평가 | 투자 리뷰 | 프리셋 | 백테스트`를 유지한다. 기본 화면은 저장된
+평가/집중도와 읽기 전용 보유 행이며 `보유 편집`에서 초안을 연다. 투자 리뷰는 요약·변화·
+중요 반증/위험 뒤에 행동을 배치하고 자료·이력은 펼침으로 제공한다. 빈 화면의 바로가기는
+기존 하위 탭만 이동하며 자동 생성/저장을 하지 않는다. 기존 프리미티브와 토큰을 사용하고
+모바일 보유 표는 좁은 화면에 맞춰 재배치한다. API/권위와 계산 계약은 변경하지 않는다.
+
+투자 리뷰는 투자 논리 미작성·최신 검토 미작성·검토 후 자료 부족을 구분한다. 반복되는
+자료 부족 문구는 묶되 중요한 반증과 기한 경과는 작업 버튼 앞에 남긴다. 연결 자료는
+기존 보고서 reader로, 날짜 이력은 해당 날짜의 저장본으로 이동한다. 이전 형식 revision 0은
+읽을 수 있지만 검토 완료/Agent 반박은 비활성화하며 새 생성은 명시적 갱신에서만 실행한다.
+
 ## 설정 화면의 결과 알림
+
+설정의 `AI` 탭에서 `AI Agent 연동`과 `AI Agent 모델 설정`을 편집한다.
+AI Agent 모델 설정에는 `전역 모델 설정`과 `작업별 모델 설정`이 있으며, 작업별 화면에는 브리핑·기업분석·딥 리서치·시장 내러티브 네 행만 보인다.
+`별도 설정 사용`을 켠 작업은 실행 방식·제공자·모델·추론 강도를 별도로 저장하고,
+끄면 전역 설정을 따른다. 끄더라도 이전 별도 설정은 남으며,
+`작업별 변경 취소`는 저장 전 변경을 되돌린다. 전역 패널과 작업별 패널은 저장·취소가
+서로 독립적이다. 각 작업의 `연결 확인`은 API에서는 선택 모델 조회만, CLI에서는
+설치·로그인 상태만 확인한다. 전역 AI Agent가 꺼져 있어도 작업 설정은 편집할 수 있지만
+AI 실행은 허용하지 않는다.
+저장 오류는 해당 패널 알림으로 표시하며 Agent 대화 설정은 별도로 유지한다.
+
+`AI Agent 모델 설정`의 모양 계약(2026-09-07 정리):
+
+- 패널 머리는 다른 설정 패널과 같은 `.input-panel-header`다. `.settings-provider-head`는 Toss처럼
+  패널 **안** 하위 블록의 `strong` 제목용이라, 거기에 `h3`를 넣으면 규칙이 없어 브라우저 기본값
+  (19.89px/700 + 위아래 여백)으로 떨어진다 — 옆 패널의 24px/800과 어긋났다.
+- 위계는 패널 제목 24px → 하위 단 제목(`.settings-subsection-heading h4`) `--fs-title` 20px →
+  행 제목 17px → 요약 15px이다. 하위 단을 16.5px으로 두면 자기가 묶는 행보다 작아진다.
+- 작업 목록은 같은 탭 위쪽 CLI 제공자 목록(`.cli-provider-list`)과 같은 리듬을 쓴다 —
+  목록이 윗선, 행이 아랫선, 행 패딩 `--sp-4`.
+- 필드 열 수는 뷰포트가 아니라 **남은 폭**이 정한다(`repeat(auto-fit, minmax(150px, 1fr))`).
+  창이 1100px이어도 도크가 열리면 패널이 372px까지 좁아지는데, 뷰포트 미디어 쿼리는 그때
+  발동하지 않아 셀렉트가 42px로 줄어 값이 아예 보이지 않았다. 안내·검증·확인 결과는 이 격자
+  **밖**, 행의 직접 자식으로 둔다 — 전 열을 점유하는 자식이 있으면 `auto-fit`이 빈 열을 접지
+  못해 넓은 화면에서 오른쪽에 빈 열이 남는다.
+- 패널의 면·자식 간격·패널 사이 간격은 `.settings-panel`과 `.sub-tab-panel`이 이미 갖는다.
+  다시 선언하면 이 패널만 위 패널과의 거리가 18px에서 34px로 벌어진다.
 
 각 패널의 저장·정리 결과는 **그 패널 안, 누른 버튼 바로 아래**에 뜹니다(`PanelNote`). 예전에는 화면 맨 위 한 곳에 모았는데, 문서상 1,991px에 있는 `자동화 저장`을 눌러도 메시지가 54px에 떠 뷰포트 720px 기준 두 화면 반 위에 있었습니다 — 보이지 않는 확인입니다.
 
@@ -30,7 +75,11 @@ Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우�
 
 `#/briefing`은 React 저장 브리핑 route다. 목록 화면은 공통 `RouteHero`와 브리핑 생성 설정 패널, 저장 브리핑 검색 패널을 사용한다. 검색 패널은 `/api/briefings/index`의 `q`, `marketScope`, `briefingType`, `dateFrom`, `dateTo` 파라미터를 직접 사용한다. `#/briefing/{date}/{us|kr|both}` detail hash에서는 `/api/briefings/{date}?includePersonal=true&marketScope=...`를 호출해 `ReportReaderShell` 안에서 Canonical markdown을 표시한다. 브리핑 detail action rail은 AI/노트/내보내기 그룹으로 분류하고, Personal Overlay 생성, Agent 문의, Notion/Obsidian export를 직접 처리한다. note slot은 Native Notes API(`/api/investment-notes`)에 `market_memo`를 저장하고 linked notes를 조회한다. 리더 본문(`ReportBody`)은 별도 파서를 두지 않고 `FolioBridge`의 `renderMarkdown()`·`splitReportTitle()`·`briefingSourcePanelHtml()`·`renderBriefingVisuals()`를 재사용해 표·링크·리스트·가격 차트·히트맵·소스패널 parity를 확보한다.
 
-브리핑 리더와 아카이브 카드의 시장별 제목은 `시장 세션일 + 마감/장중`을 표시하고, 리더 hero에는 `YYYY.MM.DD KST 발행`을 별도 보조 정보로 표시한다. URL·삭제 대상·기본 정렬은 발행일(`reportDate`) 기준을 유지한다.
+브리핑 리더와 아카이브 카드의 시장별 제목은 `시장 세션일 + 마감/장중`을 표시한다. 리더 hero는 보고서 날짜와 실제 생성 시각(KST)을 구분하고, 구 저장본에 생성 시각이 없으면 미상으로 표시한다. URL·삭제 대상·기본 정렬은 발행일(`reportDate`) 기준을 유지한다.
+
+브리핑 본문의 HTML 객체는 내용이 같으면 유지해 외부 차트 DOM이 관련 없는 재렌더에 지워지지 않게 한다. 주간 이야기 비중은 기존 저장 비중을 재계산하지 않는 주제별 선그래프(0–100%)이며, 결측은 선을 끊고 0과 구별한다. 날짜 선택·기사 수·전체 값 표로 터치/키보드에서도 읽고, PNG 내보내기는 선과 범례·날짜별 분모를 포함한다. 첫 문장을 차트 앞에서 읽고, 지수와 히트맵 사이에는 본문 설명을 둔다. 주간 지수의 주초 종가 기준 흐름과 전주 종가 기준 전체 성과는 범례에서 구별한다.
+
+참고자료는 작성 입력·연결 기사·본문 참고자료의 합집합을 접어서 제공하고, 추적 query만 다른 링크는 중복 제거한다. 목록 자체를 검증된 주장 근거로 표시하지 않는다. 모바일 일정표는 내부 가로 스크롤을 사용하고 날짜·상태를 글자 단위로 접지 않는다. 인라인 본문은 페이지 세로 스크롤을 공유한다. 데스크톱 `읽기에 집중`은 조작·노트를 접고 다시 펼치며 작성 중 노트를 유지한다. 노트 닫기는 모바일 노트에만 표시한다.
 
 `#/rss`는 React RSS route다. `/api/rss/items`로 20개 단위 feed를 읽고, 시작/종료/소스 필터와 페이지네이션을 관리한다. `POST /api/rssarchive/import` job polling으로 RSS 수집을 실행하고, `/api/rss/merge`를 통해 현재 필터 범위의 Markdown 병합 파일을 다운로드한다.
 
@@ -166,7 +215,7 @@ public/react/folio-react.js
 
 - `renderMarkdown()` 변경은 브리핑과 기업분석 모두에 영향을 줍니다.
 - 표 렌더링은 `<div class="table-wrap"><table>...</table></div>` 구조입니다.
-- Plotly는 브리핑 트리맵 히트맵(`public/briefing-visuals.js::renderHeatmap`) 한 곳에서만 씁니다. 그 밖의 화면 차트는 Lightweight Charts(대시보드·워치리스트 `MarketChartFigure`, 브리핑 가격 계열) 또는 손으로 그린 SVG(기업분석 `AnalysisCharts`, 워치리스트 분기 지표 `FundamentalsPanel`, 포트폴리오 비교/스파크라인)입니다. 글꼴·색은 각 컴포넌트가 CSS 변수를 `getComputedStyle`로 읽어 옵션에 넣습니다(캔버스는 CSS 변수를 직접 읽지 못합니다).
+- Plotly는 브리핑 트리맵 히트맵(`public/briefing-visuals.js::renderHeatmap`) 한 곳에서만 씁니다. 그 밖의 화면 차트는 Lightweight Charts(대시보드·워치리스트 `MarketChartFigure`, 브리핑 가격 계열) 또는 SVG(기업분석 `AnalysisCharts`, 워치리스트 분기 지표 `FundamentalsPanel`)입니다. Portfolio 백테스트 단일/비교 결과는 `BacktestChart`를 공유하며 실제 컨테이너 폭, 날짜/값 축, 범례, 날짜 hover·터치·키보드 선택과 데이터 표를 제공합니다. 앱 전체 차트 엔진을 이전하지 않습니다. 캔버스 글꼴·색은 컴포넌트가 CSS 변수를 `getComputedStyle`로 읽고, Portfolio SVG는 기존 CSS 토큰을 직접 따릅니다.
 - 기업분석 본문 폭은 기본적으로 `markdown-brief`의 제한 폭을 따릅니다.
 
 ## 보고서 가설 검토 표면 (0.2.1)
@@ -230,6 +279,17 @@ public/react/folio-react.js
 - 근거 부족 확인(zero-evidence confirm)과 수정 제안 승인 절차는 단순화 후에도 숨기지 않는다.
 
 ## Agent 작업 기록 표시 규칙 (0.3.x)
+
+D4 로컬 수용 완료(2026-09-08): 기존 실행 상세 안에 진단 정보 미리보기·로컬 다운로드,
+설정에 진단 보존 관리 패널을 연결했다. 삭제와 설정 저장은 각각 미리보기·확인을 거치며
+실제 자동 삭제는 기본 off다. 중첩 펼침과 모바일 체크박스 배치를 보완하고
+desktop/mobile × Light/Dark 및 접근성을 검증했다. 운영 서버/실제 자료 변경은 하지 않았다.
+
+- `DiagnosticDetail`은 기존 작업 기록과 설정의 마지막 자동화 실행에서 실행 상세를 조회한다. 작업 기록의 전체 새로고침은 항목의 수정 시각이 같아도 열린 상세를 함께 갱신한다. 로그마다 새로고침 버튼을 두지 않으며, 조회 실패의 `다시 시도`는 유지한다. 실행 ID 변경·펼침 재개에서도 현재 기록을 다시 읽고 이전 요청의 늦은 응답은 버린다.
+- 실행 성공/실패/취소와 진단 범위 제한/실제 기록 손실은 구분한다. 현재 작업 상태를 확인하지 못하면 완료를 단정하지 않는다. 규칙 대체 뒤 저장에 실패한 실행을 완료로 표시하지 않으며, 실패한 단계의 종료 이벤트를 성공 완료 단계로 세지 않는다.
+- 브리핑·기업분석·딥 리서치의 생성 오류는 서버가 제공한 유효한 실행 ID가 있을 때 같은 `실행 상세`를 연다. 요청 ID만 있으면 접힌 개발자 정보에 표시하고 실행 ID로 추측하지 않는다. 네트워크/응답 읽기 문제는 서버 처리 결과를 확인할 수 없는 상태로 안내하며 자동 재전송하지 않는다. 오류가 바뀌거나 새 작업으로 넘어가면 이전 진단 연결을 지운다. 일반 목록·삭제·내보내기 오류와 전역 팝업으로 범위를 넓히지 않는다.
+- 진단의 다음 행동은 기존 화면으로만 연결한다. 설정 확인은 `설정에서 확인`, 결과 확인은 해당 기능의 목록(`자동화`는 설정 화면)으로 표시하며, 대기·재시도·알 수 없는 행동에는 링크를 만들지 않는다.
+- 공통 실행 목록은 기존 Work Log 안의 `실패·대체 실행 찾기`를 펼쳐서 연다. `실패만`·`대체 실행만`·기간·`모든 실행 보기`로 목록을 전환하며, 현재 스냅샷·부분 검사·조회 실패·cursor 재조회 상태를 구분한다. 기존 Work Log 26필드와 숨기기 범위, 직접 실행·재생성 경계는 바꾸지 않는다.
 
 - Work Log API는 계속 안전한 코드 값만 준다. 화면 문구는 `web/src/app/workLogCopy.ts`의
   `workLogItemCopy()`가 그 코드를 사람이 읽는 문장으로 바꿔서 만든다. 컴포넌트는 코드 값을

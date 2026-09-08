@@ -120,13 +120,27 @@ Below that sits the market calendar — economic releases, central bank meetings
 
 Track companies, sectors, and themes in a local Watchlist, then inspect the related news cards and market response. Type a company by name and it is stored under that company's full name, so the same company does not end up as two entries; a subject that is not a company stays exactly as you typed it. Watchlist data stays in the local workspace.
 
+In a company detail, `My Thesis` lets you create or edit your thesis and use `Review with latest evidence`. Read current facts, your Thesis, the latest review, supporting and counter evidence, what to check next, and review history separately. Loading the screen does not run AI. `Challenge this Thesis` starts only when you explicitly select it, and its conversation does not automatically change a saved verdict.
+
 Cards and detail views show the next earnings date with a countdown. When the date is a third-party estimate rather than something the company announced, it says so — check the company's own IR notice in that case.
 
 ### Portfolio
 
-Enter your holdings and see their value in a single currency, along with the weight across markets, sectors, and currencies. The screen has three tabs: holdings, presets, and backtest.
+Enter your holdings and see their value in a single currency, along with the weight across markets, sectors, and currencies. The screen has four tabs: holdings, investment review, presets, and backtest.
+
+Start with the saved holdings overview, then choose `Edit holdings` to make changes and save or cancel them. Unsaved edits do not change the basis used for valuation or conversation.
+
+`Investment review` is a saved, date-by-date check of the inputs used, changes since the previous review, priority positions, shared risks, sources, and history. Rule refresh, `Mark reviewed`, and `Challenge the weakest assumption` are separate actions: marking a review complete does not automatically change holdings, your Thesis, or saved check items. It helps you inspect your own reasoning; it does not provide buy, sell, hold, target-price, recommended-allocation or position-size instructions, entry, exit, or order instructions.
 
 Presets hold target weights. You can turn today's weights into a preset, then see how far each holding has drifted from the target and what you would need to buy or sell to close the gap. The backtest tab runs a preset over past prices against a benchmark, and can place several presets side by side. Backtests are for research: they have limits around taxes, fees, slippage, and dividends, and a result is kept only when you press save.
+
+Investment review distinguishes a missing Thesis, an unreviewed Thesis, and insufficient evidence after a review. Linked sources open their saved reports; history opens the selected date. Overdue counts describe the saved snapshot, not every currently unresolved item.
+
+### Optional Toss Securities holdings import
+
+The Toss Open API import is an explicit, read-only local integration: it can preview and confirm holdings into Portfolio, but never submits orders. Register a WTS Open API client with Toss Securities, allow this PC's IP address, then open **Settings > Integrations > API integration**, turn on `Use Toss Open API`, and save the issued Client ID and Client Secret. The secret is kept in the operating system credential store and only a masked state is shown in the UI. `.env.example` remains available for manual setup, but never share `.env`.
+
+The Settings screen does not activate OAuth or read accounts. Select one account in Portfolio, review the preview, and explicitly confirm before Portfolio changes. Real credential/account end-to-end verification has not yet been performed.
 
 Holdings you enter stay in your local workspace.
 

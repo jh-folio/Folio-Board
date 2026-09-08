@@ -233,7 +233,9 @@ accent 위 글자는 `--folio-on-accent`를 쓴다 — accent는 다크에서 �
 
 ## 7. 구현 주의
 
-프리미티브 블록은 **반드시 styles.css 파일 말미에 둔다.** 앞쪽 레거시 규칙이 같은 특이성으로 이기는 사고가 실재했다(`.cockpit-change-feed li > div`). 프리미티브 뒤에 새 화면 CSS를 추가하지 말고, 화면 CSS는 프리미티브 블록 앞에 둔다.
+프리미티브 블록은 **반드시 styles.css 파일 말미에 둔다.** 앞쪽 레거시 규칙이 같은 특이성으로 이기는 사고가 실재했다. 프리미티브 뒤에 새 화면 CSS를 추가하지 말고, 화면 CSS는 프리미티브 블록 앞에 둔다.
+
+**같은 특이성의 텍스트 클래스를 콜아웃 클래스에 겹쳐 걸지 않는다.** 두 클래스가 같은 속성을 선언하면 파일 뒤쪽이 이긴다 — `class="settings-hint react-dashboard-error"`는 빨간 테두리·분홍 면은 그대로인데 글자만 회색 400이 되어(실측 `rgb(68,80,95)`), 오류처럼 보이지 않는 오류 상자가 됐다. 콜아웃은 콜아웃 클래스 하나만 건다.
 
 관련 자동 검사: `web/tests/reactTypographySource.test.mjs`(타이포), `web/tests/themePreferenceSource.test.mjs`(테마), `web/tests/workLogCopySource.test.mjs`(토큰 정의 누락), `web/tests/tooltipHitArea.test.mjs`(히트 영역). 새 계약을 추가하면 검사도 함께 늘린다.
 
