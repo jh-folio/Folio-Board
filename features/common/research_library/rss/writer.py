@@ -1,4 +1,4 @@
-"""Markdown archive IO for Folio OS Evidence Intake items.
+"""Markdown archive IO for Folio Board Evidence Intake items.
 
 Owns the on-disk archive format: rendering an ``IntakeEvidenceItem`` to a
 YAML front matter Markdown file, resolving collision-free filenames, indexing

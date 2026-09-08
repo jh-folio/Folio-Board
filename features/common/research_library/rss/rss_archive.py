@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Folio OS Evidence Intake — CLI entrypoint and orchestration.
+"""Folio Board Evidence Intake — CLI entrypoint and orchestration.
 
 This module is intentionally thin: it wires together the intake layers
 (fetch → parser → article → relevance → normalizer → policy → writer/store)
@@ -155,7 +155,7 @@ def _record_rejection(samples, title, url, source, score):
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(description="Folio OS Evidence Intake: collect RSS/official evidence to Markdown.")
+    parser = argparse.ArgumentParser(description="Folio Board Evidence Intake: collect RSS/official evidence to Markdown.")
     parser.add_argument("--archive-dir", default=None, help="Archive directory (defaults to project_root/research-inbox/rss).")
     parser.add_argument("--dry-run", action="store_true", help="Validate CLI setup without fetching or writing files.")
     parser.add_argument("--save-full-text", action="store_true", help="Save extracted full text in Markdown for local/private archives.")

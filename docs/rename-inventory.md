@@ -48,12 +48,20 @@ Which mode runs where (plan §11.1):
 
 | Bucket | Occurrences | Files |
 |---|---:|---:|
-| `replace` | 280 | 113 |
+| `replace` | 279 | 112 |
 | `dual-read` | 45 | 24 |
 | `retain` | 1 | 1 |
-| `historical` | 48 | 12 |
+| `historical` | 49 | 13 |
 | `external` | 4 | 3 |
 | **Total** | **378** | **135** |
+
+Updated 2026-09-08 (Phase C, before Phase C's own edits): `LICENSE:3` moved from
+`replace` to `historical` per the plan §4.2 owner decision recorded below — the
+`replace`/`historical` occurrence and file counts shift by one each, everything
+else (including the 378/135 grand total) is unchanged from the original Phase A
+count. This table still describes the Phase A baseline at commit `ceedbf1`, not
+live HEAD — Phase B and Phase C have both since renamed many of the `replace`
+occurrences counted here; re-run the script (below) for current counts.
 
 378 occurrences = 376 pattern matches inside file content + 2 matches
 where the old name appears in a **filename itself**
@@ -70,7 +78,7 @@ those citations aren't silently missed.
 
 ## Per-bucket breakdown
 
-### `replace` (280 occurrences / 113 files) — swap to the new name, no compat concern
+### `replace` (279 occurrences / 112 files) — swap to the new name, no compat concern
 
 The dominant bucket by far: display strings, screen-reader labels,
 console/startup messages, FastAPI title, package/CI naming, LLM prompt
@@ -195,8 +203,15 @@ and correctly never appear in this inventory at all. This is expected,
 not a gap: this script inventories occurrences of the *old brand name*,
 not every `folio`-prefixed identifier in the codebase.
 
-### `historical` (48 occurrences / 12 files) — frozen records, never retroactively edited
+### `historical` (49 occurrences / 13 files) — frozen records, never retroactively edited
 
+- **`LICENSE:3` — `Copyright (c) 2026, Folio OS contributors`.** Moved here from
+  `replace` on 2026-09-08 (Phase C) per the plan §4.2 owner decision: a
+  copyright-holder line is a legal record of attribution, not a product
+  display name, and releases have already shipped under it — the same
+  non-retroactive-editing rule §3 applies to past `FolioOS-*` package/tag
+  names applies here. See "Notable / ambiguous" below for the original
+  Phase A framing of this as an open question.
 - **45 occurrences across 10 files under `docs/superpowers/`** (both
   `plans/` and `specs/`), matched by path alone regardless of content —
   plan §5 is explicit that these are never edited retroactively. This
@@ -232,10 +247,14 @@ not every `folio`-prefixed identifier in the codebase.
 
 ## Notable / ambiguous — reviewer should decide, not silently assumed
 
-- **`LICENSE:3` — `Copyright (c) 2026, Folio OS contributors`.** Classified
-  `replace` by the generic default rule, but a license copyright-holder
-  line is a legal continuity question, not a purely mechanical rename.
-  Worth an explicit yes/no before Phase B touches it.
+- **`LICENSE:3` — `Copyright (c) 2026, Folio OS contributors`.** Originally
+  classified `replace` by the generic default rule pending an explicit
+  yes/no on whether a license copyright-holder line is a legal continuity
+  question rather than a purely mechanical rename. **Resolved 2026-09-08
+  (Phase C, plan §4.2):** the project owner decided this line is kept —
+  it is a legal record of attribution, not a product display name, and
+  releases have already shipped under it. Reclassified `historical`; see
+  that bucket's section above.
 - **`web/package.json` / `web/package-lock.json` (`"folio-os-web"`).**
   Bucketed `replace`, but plan §6 Phase D makes the rename to
   `folio-board-web` conditional on confirming there's no external

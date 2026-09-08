@@ -1,4 +1,4 @@
-"""Folio OS 공통 research_schema enum — Step 6 Data Foundation Lite.
+"""Folio Board 공통 research_schema enum — Step 6 Data Foundation Lite.
 
 대시보드(Step 8)·품질 평가(Step 7)가 의존하는 구조화 데이터의 enum을 한 곳에서
 정의한다. 모든 normalize_*는 잘못된 값을 안전한 기본값으로 떨어뜨린다

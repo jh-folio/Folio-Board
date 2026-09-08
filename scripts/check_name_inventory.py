@@ -17,9 +17,9 @@ classifies each one into exactly one of five buckets:
     retain      A stable internal identifier that is not renamed at all
                 (e.g. the OS keyring credential-store service name).
     historical  A citation inside a frozen/completed record (a
-                docs/superpowers design doc, or a reference to a
-                local-only or gitignored past-planning file) that is
-                never retroactively edited.
+                docs/superpowers design doc, a reference to a local-only
+                or gitignored past-planning file, or LICENSE's copyright
+                holder line) that is never retroactively edited.
     external    A surface outside this repository's control (a GitHub
                 URL, or a mention of the separate FolioOS_Sites
                 deployment repo).
@@ -274,6 +274,20 @@ CLASSIFICATION_RULES: tuple[Rule, ...] = (
         content_pattern=re.compile(r"SECRET_STORE_SERVICE"),
     ),
     Rule(
+        id="historical-license-copyright",
+        bucket="historical",
+        reason=(
+            "LICENSE's 'Copyright (c) 2026, Folio OS contributors' line — "
+            "plan §4.2 (2026-09-08 owner decision): a copyright notice is a "
+            "legal record of attribution, not a product display name, and "
+            "releases have already shipped under it. §3's non-goal against "
+            "retroactively renaming historical records applies the same way "
+            "it does to past FolioOS-* package/tag names, so this is "
+            "'historical', not 'replace' — never retroactively edited."
+        ),
+        path_exact=("LICENSE",),
+    ),
+    Rule(
         id="dual-read-documents-workspace-folder",
         bucket="dual-read",
         reason=(
@@ -342,7 +356,6 @@ CLASSIFICATION_RULES: tuple[Rule, ...] = (
             "AGENTS.md",
             "CLAUDE.md",
             "SECURITY.md",
-            "LICENSE",
             "THIRD_PARTY_NOTICES.md",
             "installation.md",
             ".env.example",

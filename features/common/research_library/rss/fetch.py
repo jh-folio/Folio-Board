@@ -1,4 +1,4 @@
-"""HTTP fetch layer for Folio OS Evidence Intake collectors.
+"""HTTP fetch layer for Folio Board Evidence Intake collectors.
 
 Network access is isolated here so the parser/article/policy layers stay
 pure and testable. Retries use a short capped backoff and never bypass
