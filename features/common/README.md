@@ -25,6 +25,8 @@
 | `research_quality/` | 저장 산출물의 source grounding, hallucination risk, personal bias risk 평가 |
 | `quality_generation/` | 생성 전 품질 목표, preflight, 약한 섹션 1회 보강, telemetry |
 | `data_reliability/` | 공식자료 우선순위, provider 상태, 한국 수동 데이터 보강 경로 |
+| `diagnostics/` | 실행별 bounded privacy-safe diagnostic record, OS writer lease, SharedJob/direct producer observer와 headless safe projection (0.6 L1a/L1b/L1c; UI 없음) |
+| `execution_result.py` | provider 본문/response ID를 메모리에만 두는 additive structured execution facts; 기존 tuple/string API는 변경하지 않음 |
 
 ## workspace.py / workspace_service.py
 
@@ -89,13 +91,24 @@ py -3 -m features.common.market_data.nikkei225_universe
 브리핑이 기사 표현에만 의존하지 않도록 시장 데이터 provider 경계를 둡니다.
 
 - `MarketDataProvider`: 날짜별 시장 수치를 가져오는 인터페이스입니다.
-- `TossOpenApiKoreaMarketProvider`: 0.2 사용자 표면에서는 숨긴 내부 검증 adapter입니다. `FOLIO_ENABLE_TOSS_OPEN_API=1`이 켜진 경우에만 설정 상태를 확인하고, 공식 OpenAPI에서 KOSPI/KOSDAQ aggregate 지수·투자자 수급 endpoint가 확인되지 않으면 경고를 남기고 다음 provider로 넘깁니다.
+- `TossOpenApiKoreaMarketProvider`: 현재 집계 보고서 경로에서는 준비 상태만 확인하고 yfinance로 넘기는 내부 adapter입니다. Toss 지수 분봉은 별도 native chart 경로에서 사용합니다. 이 공급원 구분은 운영 메타데이터이며 브리핑 작성용 본문에 경고로 전달하지 않습니다.
 - `YFinanceKoreaMarketProvider`: KOSPI/KOSDAQ/KOSPI200 지수 종가·등락률과 원·달러 환율을 조회합니다.
 - `PyKrxKoreaMarketProvider`는 2026-08-12에 제거했습니다. pykrx 1.2.x부터 지수 조회에 KRX 계정(`KRX_ID`/`KRX_PW`)이 필요해 자격증명 없는 설치에서는 항상 실패했고, 거래대금·투자자별 수급·업종 등락률은 그래서 실제로 채워진 적이 없습니다.
 - `fetch_korea_market_data(date)`: provider chain을 실행하고, 별도 FX 보조 경로로 원·달러 환율(`USDKRW=X`)을 붙입니다.
+- `YFinanceKoreaMarketProvider`의 KOSPI·KOSDAQ·KOSPI200 등락률은 요청 세션의 정확한 직전 KRX 세션 봉을 찾을 때만 채웁니다. 직전 봉이 없으면 종가·기준일은 보존하되 `changePct`는 비우고 비교일·사유를 함께 남깁니다.
 - **환율도 지수와 같은 세션일로 부릅니다.** Toss 경로가 켜져 있으면 `fetch_usdkrw_exchange_rate(date_time=<세션일>)`로 요청하고, 응답 `asOfDate`가 세션일보다 미래면 그 세션의 값이 아니므로 버리고 yfinance로 폴백합니다. 예전에는 무인자 호출이라 지난 세션 브리핑에 오늘 환율이 섞였습니다(yfinance 경로는 원래 `as_of <= date`로 잘라 왔습니다).
 
 provider가 실패해도 호출자는 빈 payload와 warning을 받아야 하며, 보고서 생성 경로는 수치를 추정하지 않고 한계를 명시해야 합니다.
+
+### 저장 브리핑의 정규장 가격 계열
+
+`market_data/price_history.py::build_price_history()`는 저장 보고서용 5분봉·1시간봉·일봉을 같은 yfinance 정규장·비수정 가격 기준으로 받습니다(`prepost=False`, `auto_adjust=False`). Toss의 최근 200개 1분봉과 장후까지 포함하는 일봉을 혼합하지 않습니다. 요청한 날짜·봉 간격을 유지하고 없는 구간을 만들지 않습니다. `chart_service.py`의 실시간 Toss bootstrap·분봉 집계·WebSocket 및 공급원 설정은 이 변경과 별개로 유지합니다.
+
+### market_data/snapshot.py 수익률 기준
+
+`fetch_market_snapshot()`은 기존 `last`, `asOfDate`, `oneDayPct`, `fiveDayPct`, `periodPct` 필드를 유지합니다. 주식·지수·ETF의 1일·5일 값은 미국 거래소 캘린더의 정확한 비교 세션을 사용하며, 해당 봉이 없으면 수치를 만들지 않고 `oneDayReason`/`fiveDayReason`과 비교일을 함께 남깁니다. 정렬되지 않은 행·중복일·비유한 값·미래 봉·휴장일 봉은 계산에서 제외합니다. 과거 `as_of_date` 조회는 요청 기간에 비교용 warmup만 더하고 `periodStartDate`/`periodPct`는 원래 `period` 경계에서 계산하므로, 짧은 기간이 조용히 장기 수익률로 늘어나지 않습니다.
+
+FX·선물·금리에는 주식 캘린더가 없으므로 1일·5일 비교율을 만들지 않고 사유만 남깁니다. 24시간 암호화폐는 정확한 달력일이 있는 경우에만 비교합니다. 캘린더 범위를 확인할 수 없는 경우 평일을 거래일로 추측하지 않습니다. yfinance 스냅샷은 `oneDayComparisonValue`/`fiveDayComparisonValue`와 비교일, `comparisonSource`, `priceUnit`, `priceBasis`를 함께 남기며, 선물처럼 단위를 확정할 수 없는 값은 `unknown`으로 표시합니다. Toss/custom 행은 선언하지 않은 조정 기준을 새로 만들지 않습니다. 이 순수 계산 경로는 연결 provider를 호출하지 않으며, provider·Market Tape·차트 전달은 각 기능의 계약을 따릅니다.
 
 ## taxonomy.py
 

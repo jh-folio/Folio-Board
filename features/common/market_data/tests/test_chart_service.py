@@ -145,3 +145,82 @@ def test_intraday_bars_have_no_moving_averages(monkeypatch):
     payload = chart_service._download("NVDA", "1d", "5m")
 
     assert all("ma20" not in row for row in payload["series"])
+
+
+def test_toss_1m_bootstrap_aggregates_exchange_local_five_minute_bars_with_rest_snapshot_volume():
+    rows = chart_service.aggregate_toss_1m_to_5m([
+        {"timestamp": "2026-09-01T09:30:00-04:00", "openPrice": "10", "highPrice": "11", "lowPrice": "9", "closePrice": "10.5", "volume": "50"},
+        {"timestamp": "2026-09-01T09:34:00-04:00", "openPrice": "10.5", "highPrice": "12", "lowPrice": "10", "closePrice": "11.5", "volume": "60"},
+        {"timestamp": "2026-09-01T09:35:00-04:00", "openPrice": "11.5", "highPrice": "13", "lowPrice": "11", "closePrice": "12", "volume": "70"},
+        # Prior session and pre-market are not joined into today's chart.
+        {"timestamp": "2026-08-29T15:55:00-04:00", "openPrice": "8", "highPrice": "8", "lowPrice": "8", "closePrice": "8"},
+        {"timestamp": "2026-09-01T09:00:00-04:00", "openPrice": "8", "highPrice": "8", "lowPrice": "8", "closePrice": "8"},
+    ], market="US")
+    assert rows == [
+        {"time": "2026-09-01T09:30:00-04:00", "open": 10.0, "high": 12.0, "low": 9.0, "close": 11.5, "volume": 110.0},
+        {"time": "2026-09-01T09:35:00-04:00", "open": 11.5, "high": 13.0, "low": 11.0, "close": 12.0, "volume": 70.0},
+    ]
+
+
+def test_one_day_chart_uses_toss_bootstrap_only_when_injected_and_keeps_safe_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(chart_service, "_download", lambda symbol, range_key, interval: {
+        "symbol": symbol, "range": range_key, "interval": interval,
+        "series": [{"time": "2026-09-01T09:30:00-04:00", "close": 100}], "asOf": "2026-09-01T09:30:00-04:00", "provider": "yfinance",
+    })
+    payload = chart_service.get_chart(
+        tmp_path, symbol="NVDA", range_key="1d", interval="5m", runtime=ProviderFetchRuntime(tmp_path / "cache"),
+        toss_candle_loader=lambda _symbol: [
+            {"timestamp": "2026-09-01T09:30:00-04:00", "openPrice": "100", "highPrice": "102", "lowPrice": "99", "closePrice": "101"},
+        ],
+    )
+    assert payload["provider"] == "toss_open_api"
+    assert payload["liveStatus"] == "available"
+    assert payload["delayed"] is False
+    assert payload["series"][0]["volume"] is None
+
+    requested = []
+    index = chart_service.get_chart(
+        tmp_path, symbol="^KS11", range_key="1d", interval="5m", runtime=ProviderFetchRuntime(tmp_path / "index"),
+        toss_candle_loader=lambda target: requested.append(target) or [
+            {"timestamp": "2026-09-01T09:00:00+09:00", "openPrice": "2800", "highPrice": "2810", "lowPrice": "2795", "closePrice": "2805"},
+        ],
+    )
+    assert requested == ["KOSPI"]
+    assert index["provider"] == "toss_open_api"
+    assert index["liveEligible"] is True
+    assert index["realtimeEligible"] is False
+    assert index["liveStatus"] == "available"
+
+    unsupported = chart_service.get_chart(tmp_path, symbol="^GSPC", range_key="1d", interval="5m", runtime=ProviderFetchRuntime(tmp_path / "other"))
+    assert unsupported["provider"] == "yfinance"
+    assert unsupported["liveEligible"] is False
+    assert unsupported["fallbackReason"] == "unsupported"
+
+
+def test_us_timestamp_is_converted_from_kst_and_full_regular_session_has_78_bars():
+    import datetime as dt
+
+    # Official-shaped AAPL instant is 10:30 EDT, despite its +09:00 text.
+    first = chart_service.aggregate_toss_1m_to_5m([
+        {"timestamp": "2026-06-18T23:30:00+09:00", "openPrice": "1", "highPrice": "1", "lowPrice": "1", "closePrice": "1"},
+    ], market="US")
+    assert first[0]["time"] == "2026-06-18T10:30:00-04:00"
+    base = dt.datetime(2026, 6, 18, 9, 30, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+    candles = []
+    for minute in range(390):
+        stamp = base + dt.timedelta(minutes=minute)
+        candles.append({"timestamp": stamp.isoformat(), "openPrice": minute, "highPrice": minute + 1, "lowPrice": minute, "closePrice": minute + 0.5, "volume": 1})
+    rows = chart_service.aggregate_toss_1m_to_5m(candles, market="US")
+    assert len(rows) == 78
+    assert rows[0]["time"] == "2026-06-18T09:30:00-04:00"
+    assert rows[-1]["time"] == "2026-06-18T15:55:00-04:00"
+
+
+def test_next_before_loader_deduplicates_and_stops_on_no_progress(monkeypatch):
+    pages = [
+        {"candles": [{"timestamp": "2026-06-18T10:00:00-04:00"}, {"timestamp": "2026-06-18T09:59:00-04:00"}], "nextBefore": "one"},
+        {"candles": [{"timestamp": "2026-06-18T09:59:00-04:00"}, {"timestamp": "2026-06-18T09:58:00-04:00"}], "nextBefore": "one"},
+    ]
+    monkeypatch.setattr("features.common.market_data.toss_open_api.fetch_toss_candle_page", lambda *_args, **_kwargs: pages.pop(0))
+    rows = chart_service.load_toss_session_pages("AAPL")
+    assert [row["timestamp"] for row in rows] == ["2026-06-18T10:00:00-04:00", "2026-06-18T09:59:00-04:00", "2026-06-18T09:58:00-04:00"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import math
 
 try:
     import polars as pl
@@ -98,79 +99,126 @@ def filter_archive_records(records: Iterable[dict], start_iso: str = "", end_iso
         return out
 
 
+def _finite_number(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _finite_sum(values: Iterable[object]) -> float | None:
+    total = 0.0
+    for value in values:
+        number = _finite_number(value)
+        if number is None:
+            return None
+        total += number
+        if not math.isfinite(total):
+            return None
+    return total
+
+
+def _finite_difference(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    result = left - right
+    return result if math.isfinite(result) else None
+
+
+def _finite_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    result = numerator / denominator
+    return result if math.isfinite(result) else None
+
+
+def _append_calculation_reason(row: dict, reason: str) -> None:
+    existing = row.get("calculationUnavailable")
+    reasons = list(existing) if isinstance(existing, list) else []
+    if reason not in reasons:
+        reasons.append(reason)
+    row["calculationUnavailable"] = reasons
+
+
+def _has_calculation_reason(row: dict, reasons: set[str]) -> bool:
+    value = row.get("calculationUnavailable")
+    return isinstance(value, list) and any(reason in reasons for reason in value)
+
+
 def aggregate_portfolio(rows: Iterable[dict]) -> dict:
+    """Aggregate display floats without ever returning ``NaN`` or infinity.
+
+    Portfolio authority strings remain untouched in ``items``.  The derived
+    values have already been projected to floats; when an aggregate or ratio
+    exceeds that display domain it is explicitly unavailable rather than a
+    JSON-unsafe pseudo-number.
+    """
     items = list(rows or [])
     if not items:
         return {"rows": [], "summary": []}
-    if pl is None:
-        totals = {}
-        costs = {}
-        counts = {}
-        for row in items:
-            currency = row.get("quoteCurrency") or row.get("currency") or "USD"
-            market_value = row.get("marketValue")
-            cost = row.get("cost")
-            if market_value is not None:
-                totals[currency] = totals.get(currency, 0.0) + float(market_value)
-                counts[currency] = counts.get(currency, 0) + 1
-            if cost is not None:
-                costs[currency] = costs.get(currency, 0.0) + float(cost)
-        for row in items:
-            currency = row.get("quoteCurrency") or row.get("currency") or "USD"
-            total = totals.get(currency, 0.0)
-            row["weight"] = (row.get("marketValue") / total) if total and row.get("marketValue") is not None else None
-        summary = []
-        for currency, total in totals.items():
-            cost = costs.get(currency, 0.0)
-            summary.append({
-                "currency": currency,
-                "marketValue": total,
-                "cost": cost,
-                "pnl": total - cost if cost else None,
-                "pnlPct": ((total - cost) / cost) if cost else None,
-                "positions": counts.get(currency, 0),
-            })
-        return {"rows": items, "summary": summary}
-    try:
-        frame = pl.DataFrame(items)
-        frame = frame.with_columns([
-            pl.col("quoteCurrency").fill_null(pl.col("currency")).fill_null("USD").alias("_currency"),
-            pl.col("marketValue").cast(pl.Float64, strict=False).alias("_marketValue"),
-            pl.col("cost").cast(pl.Float64, strict=False).alias("_cost"),
-        ])
-        totals = frame.group_by("_currency").agg([
-            pl.col("_marketValue").sum().alias("_total"),
-            pl.col("_cost").sum().alias("_costTotal"),
-            pl.col("_marketValue").is_not_null().sum().alias("_positions"),
-        ])
-        frame = frame.join(totals.select(["_currency", "_total"]), on="_currency", how="left")
-        frame = frame.with_columns(
-            pl.when((pl.col("_total") > 0) & pl.col("_marketValue").is_not_null())
-            .then(pl.col("_marketValue") / pl.col("_total"))
-            .otherwise(None)
-            .alias("weight")
-        )
-        out_rows = frame.drop(["_currency", "_marketValue", "_cost", "_total"]).to_dicts()
-        summary = []
-        for row in totals.to_dicts():
-            total = row.get("_total") or 0.0
-            cost = row.get("_costTotal") or 0.0
-            summary.append({
-                "currency": row.get("_currency") or "USD",
-                "marketValue": total,
-                "cost": cost,
-                "pnl": total - cost if cost else None,
-                "pnlPct": ((total - cost) / cost) if cost else None,
-                "positions": int(row.get("_positions") or 0),
-            })
-        return {"rows": out_rows, "summary": summary}
-    except Exception:
-        saved = pl
-        try:
-            globals()["pl"] = None
-            return aggregate_portfolio(items)
-        finally:
-            globals()["pl"] = saved
+
+    groups: dict[str, dict] = {}
+    for row in items:
+        currency = str(row.get("quoteCurrency") or row.get("currency") or "USD")
+        group = groups.setdefault(currency, {"market": [], "cost": [], "positions": 0, "rows": []})
+        group["rows"].append(row)
+        market_value = row.get("marketValue")
+        if market_value is not None:
+            if _finite_number(market_value) is None:
+                _append_calculation_reason(row, "market_value_unavailable")
+            else:
+                group["market"].append(market_value)
+                group["positions"] += 1
+        cost = row.get("cost")
+        if cost is not None:
+            if _finite_number(cost) is None:
+                _append_calculation_reason(row, "cost_unavailable")
+            else:
+                group["cost"].append(cost)
+
+    summary = []
+    for currency, group in groups.items():
+        # A missing quote has long been a partial-display condition.  In
+        # contrast, a U.1 arithmetic failure proves that this currency total
+        # would be incomplete, so never present the remaining rows as a total.
+        market_incomplete = any(_has_calculation_reason(row, {"market_value_unavailable"}) for row in group["rows"])
+        cost_incomplete = any(_has_calculation_reason(row, {"cost_unavailable"}) for row in group["rows"])
+        pnl_incomplete = market_incomplete or cost_incomplete or any(_has_calculation_reason(row, {"pnl_unavailable"}) for row in group["rows"])
+        total = None if market_incomplete else _finite_sum(group["market"])
+        cost = None if cost_incomplete else _finite_sum(group["cost"])
+        reasons: list[str] = []
+        if total is None:
+            reasons.append("market_value_total_unavailable")
+            for row in group["rows"]:
+                if row.get("marketValue") is not None:
+                    _append_calculation_reason(row, "market_value_total_unavailable")
+        if cost is None:
+            reasons.append("cost_total_unavailable")
+        pnl = None if pnl_incomplete else (_finite_difference(total, cost) if cost not in (None, 0.0) else None)
+        if cost not in (None, 0.0) and pnl is None:
+            reasons.append("pnl_unavailable")
+        pnl_pct = _finite_ratio(pnl, cost)
+        if pnl is not None and cost not in (None, 0.0) and pnl_pct is None:
+            reasons.append("pnl_pct_unavailable")
+        for row in group["rows"]:
+            market_value = _finite_number(row.get("marketValue"))
+            weight = _finite_ratio(market_value, total)
+            row["weight"] = weight
+            if market_value is not None and total is None:
+                _append_calculation_reason(row, "weight_unavailable")
+            elif market_value is not None and total not in (None, 0.0) and weight is None:
+                _append_calculation_reason(row, "weight_unavailable")
+        summary.append({
+            "currency": currency,
+            "marketValue": total,
+            "cost": cost,
+            "pnl": pnl,
+            "pnlPct": pnl_pct,
+            "positions": group["positions"],
+            "calculationUnavailable": reasons,
+        })
+    return {"rows": items, "summary": summary}
 
 
 def aggregate_counts(records: Iterable[dict], key_fn: Callable[[dict], str], latest_field: str = "date") -> list[dict]:

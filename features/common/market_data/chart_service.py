@@ -4,6 +4,8 @@ from __future__ import annotations
 import datetime as dt
 import re
 from pathlib import Path
+from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from features.common.data_reliability.fetch_runtime import FetchPolicy, ProviderFetchRuntime
 
@@ -97,7 +99,115 @@ def _download(symbol: str, range_key: str, interval: str) -> dict:
     return {"symbol": symbol, "range": range_key, "interval": interval, "series": rows, "asOf": rows[-1]["time"] if rows else "", "provider": "yfinance"}
 
 
-def get_chart(data_dir: Path, *, symbol: str, range_key: str = "3m", interval: str = "1d", runtime: ProviderFetchRuntime | None = None) -> dict:
+def _live_target(symbol: str) -> tuple[str, str, bool]:
+    """Return Toss REST target, market, and whether trade streaming applies."""
+    from .toss_open_api import toss_market_indicator_for
+    from .toss_realtime_hub import subscription_target
+
+    indicator = toss_market_indicator_for(symbol)
+    if indicator:
+        # Official REST 1m candles cover KOSPI/KOSDAQ. Async trade topics are
+        # equity-only, so these snapshots must not open the trade socket.
+        return indicator, "KR", False
+    normalized, market, reason = subscription_target(symbol)
+    return (normalized, market, True) if not reason else (normalized, "", False)
+
+
+def _parse_toss_stamp(value: object) -> dt.datetime | None:
+    text = str(value or "").strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _number(value: object) -> float | None:
+    try:
+        value = float(value)
+        return None if value != value else value
+    except (TypeError, ValueError):
+        return None
+
+
+def aggregate_toss_1m_to_5m(candles: list[dict[str, Any]], *, market: str) -> list[dict]:
+    """Aggregate official REST 1m snapshots in the exchange timezone.
+
+    REST candle volume is a provider snapshot and is summed into its completed
+    five-minute candle. Realtime stream volume is never passed here or stored.
+    """
+    zone = ZoneInfo("Asia/Seoul" if market == "KR" else "America/New_York")
+    source: list[tuple[dt.datetime, dict[str, Any]]] = []
+    for candle in candles:
+        stamp = _parse_toss_stamp(candle.get("timestamp"))
+        close = _number(candle.get("closePrice"))
+        if stamp is None or close is None:
+            continue
+        stamp = stamp.astimezone(zone)
+        local = stamp.timetz().replace(tzinfo=None)
+        if market == "KR" and not (dt.time(9, 0) <= local < dt.time(15, 30)):
+            continue
+        if market == "US" and not (dt.time(9, 30) <= local < dt.time(16, 0)):
+            continue
+        source.append((stamp, candle))
+    if not source:
+        return []
+    latest_day = max(stamp.date() for stamp, _ in source)
+    buckets: dict[dt.datetime, list[tuple[dt.datetime, dict[str, Any]]]] = {}
+    for stamp, candle in sorted(source, key=lambda item: item[0]):
+        if stamp.date() != latest_day:
+            continue
+        bucket = stamp.replace(minute=stamp.minute - stamp.minute % 5, second=0, microsecond=0)
+        buckets.setdefault(bucket, []).append((stamp, candle))
+    rows = []
+    for bucket, values in sorted(buckets.items()):
+        first, last = values[0][1], values[-1][1]
+        opens = _number(first.get("openPrice"))
+        highs = [_number(value.get("highPrice")) for _, value in values]
+        lows = [_number(value.get("lowPrice")) for _, value in values]
+        close = _number(last.get("closePrice"))
+        if opens is None or close is None:
+            continue
+        volumes = [_number(value.get("volume")) for _, value in values]
+        rows.append({
+            "time": bucket.isoformat(), "open": opens,
+            "high": max(value for value in highs if value is not None) if any(value is not None for value in highs) else None,
+            "low": min(value for value in lows if value is not None) if any(value is not None for value in lows) else None,
+            "close": close,
+            "volume": sum(value for value in volumes if value is not None) if any(value is not None for value in volumes) else None,
+        })
+    return rows
+
+
+def load_toss_session_pages(symbol: str, *, max_pages: int = 4) -> list[dict[str, Any]]:
+    """Bounded `nextBefore` walk: enough for a 390-minute US regular session."""
+    from .toss_open_api import fetch_toss_candle_page
+
+    before, seen_before, by_timestamp = "", set(), {}
+    for _ in range(max_pages):
+        page = fetch_toss_candle_page(symbol, interval="1m", count=200, before=before or None)
+        for candle in page.get("candles") or []:
+            if isinstance(candle, dict) and candle.get("timestamp"):
+                by_timestamp[str(candle["timestamp"])] = candle
+        next_before = str(page.get("nextBefore") or "")
+        if not next_before or next_before == before or next_before in seen_before:
+            break
+        seen_before.add(next_before)
+        before = next_before
+    return list(by_timestamp.values())
+
+
+def get_chart(
+    data_dir: Path,
+    *,
+    symbol: str,
+    range_key: str = "3m",
+    interval: str = "1d",
+    runtime: ProviderFetchRuntime | None = None,
+    toss_candle_loader: Callable[[str], list[dict[str, Any]]] | None = None,
+) -> dict:
     symbol, range_key, interval = normalize_chart_request(symbol, range_key, interval)
     runtime = runtime or ProviderFetchRuntime(Path(data_dir) / "provider-cache" / "charts", max_workers=3)
     ttl = 60 if interval == "5m" else 900
@@ -108,8 +218,44 @@ def get_chart(data_dir: Path, *, symbol: str, range_key: str = "3m", interval: s
         background_refresh=True,
     )
     value = result.get("value") if isinstance(result.get("value"), dict) else {"symbol": symbol, "range": range_key, "interval": interval, "series": [], "asOf": "", "provider": "yfinance"}
-    return {
+    response = {
         **value, "freshness": result.get("status"), "fetchedAt": result.get("fetchedAt") or "",
         "fallbackReason": result.get("fallbackReason") or "", "delayed": True,
         "notice": "yfinance 일봉/분봉은 실시간 체결가가 아닙니다.",
     }
+    normalized, market, realtime_eligible = _live_target(symbol)
+    response.update({
+        "liveEligible": bool(market),
+        "realtimeEligible": realtime_eligible,
+        "liveStatus": "unsupported" if not market else "unavailable",
+    })
+    if not market:
+        response["fallbackReason"] = "unsupported"
+        return response
+    if range_key != "1d" or interval != "5m":
+        response.update({"liveStatus": "not_requested", "fallbackReason": "live_interval_ineligible"})
+        return response
+    try:
+        if toss_candle_loader is not None:
+            candles = toss_candle_loader(normalized)
+        else:
+            from .toss_open_api import toss_credentials_available
+
+            if not toss_credentials_available():
+                response["fallbackReason"] = "credentials_missing_or_disabled"
+                return response
+            candles = load_toss_session_pages(normalized)
+        rows = aggregate_toss_1m_to_5m(candles, market=market)
+        if not rows:
+            response["fallbackReason"] = "live_candles_unavailable"
+            return response
+        response.update({
+            "series": rows, "asOf": rows[-1]["time"], "provider": "toss_open_api",
+            "freshness": "live_bootstrap", "delayed": False, "liveStatus": "available",
+            "fallbackReason": "", "notice": "Toss 1분 REST 봉을 5분 단위로 집계한 표시용 시세입니다.",
+        })
+    except Exception:
+        # Provider details never escape the local chart endpoint; yfinance is
+        # still a valid delayed series while the realtime provider is down.
+        response["fallbackReason"] = "live_provider_unavailable"
+    return response

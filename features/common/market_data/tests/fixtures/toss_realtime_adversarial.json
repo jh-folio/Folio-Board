@@ -1,0 +1,7 @@
+{
+  "message": {
+    "type": "message",
+    "topic": "trade:us:AAPL",
+    "data": {"price": "210.5", "timestamp": "2026-06-18T23:30:00+09:00", "currency": "USD", "account": "do-not-forward", "order": {"id": "do-not-forward"}}
+  }
+}

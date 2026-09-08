@@ -7,6 +7,8 @@ from fastapi import APIRouter, Body, HTTPException, Query
 
 from .service import (
     PortfolioRevisionConflict,
+    PortfolioValidationError,
+    PresetRevisionConflict,
     delete_portfolio_backtest,
     delete_portfolio_preset,
     get_portfolio,
@@ -24,21 +26,55 @@ from .service import (
     save_portfolio_preset,
     search_portfolio_tickers,
 )
+from .toss_import import TossHoldingsImport, TossImportError
 
 
-def create_portfolio_router(data_dir: Path) -> APIRouter:
+def create_portfolio_router(data_dir: Path, toss_import: TossHoldingsImport | None = None) -> APIRouter:
     router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
+    imports = toss_import or TossHoldingsImport(data_dir)
+
+    def toss_error(exc: TossImportError):
+        detail = {"code": exc.code}
+        if exc.latest is not None:
+            detail["latest"] = exc.latest
+        if exc.metadata_status:
+            detail["metadataStatus"] = exc.metadata_status
+        raise HTTPException(status_code=exc.status, detail=detail) from exc
 
     @router.get("")
     def read_portfolio():
-        return get_portfolio(data_dir)
+        return imports.recover_portfolio()
 
     @router.post("")
     def write_portfolio(body: dict | None = Body(default=None)):
         try:
             return save_portfolio(body or {}, data_dir=data_dir)
+        except PortfolioValidationError as exc:
+            raise HTTPException(status_code=422, detail={"code": "portfolio_validation_failed", "errors": exc.errors}) from exc
         except PortfolioRevisionConflict as exc:
             raise HTTPException(status_code=409, detail={"code": "portfolio_revision_conflict", "latest": exc.latest}) from exc
+
+    @router.get("/toss/accounts")
+    def toss_accounts():
+        try:
+            return imports.accounts()
+        except TossImportError as exc:
+            toss_error(exc)
+
+    @router.post("/toss/preview")
+    def toss_preview(body: dict | None = Body(default=None)):
+        try:
+            return imports.preview((body or {}).get("selectionId"))
+        except TossImportError as exc:
+            toss_error(exc)
+
+    @router.post("/toss/confirm")
+    def toss_confirm(body: dict | None = Body(default=None)):
+        payload = body or {}
+        try:
+            return imports.confirm(payload.get("previewId"), payload.get("expectedRevision"))
+        except TossImportError as exc:
+            toss_error(exc)
 
     @router.get("/summary")
     def summary():
@@ -62,18 +98,23 @@ def create_portfolio_router(data_dir: Path) -> APIRouter:
 
     @router.post("/presets")
     def save_preset(body: dict | None = Body(default=None)):
-        return save_portfolio_preset(body or {})
+        try:
+            return save_portfolio_preset(body or {})
+        except PortfolioValidationError as exc:
+            raise HTTPException(status_code=422, detail={"code": "preset_validation_failed", "errors": exc.errors}) from exc
+        except PresetRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail={"code": "preset_revision_conflict", "latest": exc.latest}) from exc
 
     @router.post("/presets/from-current")
     def preset_from_current(body: dict | None = Body(default=None)):
         return preset_from_current_portfolio((body or {}).get("name") or "현재 포트폴리오 목표 비중")
 
     @router.delete("/presets/{preset_id}")
-    def delete_preset(preset_id: str):
-        result = delete_portfolio_preset(preset_id)
-        if not result.get("deleted"):
-            raise HTTPException(status_code=404, detail="Portfolio preset not found")
-        return result
+    def delete_preset(preset_id: str, body: dict | None = Body(default=None)):
+        try:
+            return delete_portfolio_preset(preset_id, body or {})
+        except PresetRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail={"code": "preset_revision_conflict", "latest": exc.latest}) from exc
 
     @router.get("/backtests")
     def backtests():

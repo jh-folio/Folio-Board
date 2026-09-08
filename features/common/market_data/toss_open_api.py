@@ -5,7 +5,7 @@ import os
 """Toss Securities Open API market-data client.
 
 Official docs: https://developers.tossinvest.com/docs
-Machine-readable source of truth: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
+Pinned contract: REST OpenAPI 1.2.14 and realtime AsyncAPI 1.2.2.
 
 The API uses OAuth2 Client Credentials:
 POST /oauth2/token with client_id/client_secret, then
@@ -13,23 +13,67 @@ Authorization: Bearer {access_token} for market data endpoints.
 """
 
 import datetime as dt
+from decimal import Decimal, InvalidOperation
 import json
 import re
-import time
+import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
 from features.llm_settings.client import (
+    TOSS_OPEN_API_DEFAULT_BASE_URL,
     toss_open_api_base_url,
     toss_open_api_client_id,
     toss_open_api_client_secret,
     toss_open_api_enabled,
 )
+from features.common.workspace import data_dir
+from features.common.market_data.toss_token_manager import TokenLease, TossProviderError, TossTokenError, TossTokenManager
 
 
 Transport = Callable[..., dict]
-_TOKEN_CACHE: dict[str, Any] = {}
+_TOKEN_MANAGER: TossTokenManager | None = None
+_TOKEN_MANAGER_INIT_LOCK = threading.Lock()
+TOSS_REST_OPENAPI_VERSION = "1.2.14"
+TOSS_REALTIME_ASYNCAPI_VERSION = "1.2.2"
+
+# Extracted from the pinned OpenAPI 1.2.14 fixture. Keep this explicit schema
+# beside the adapter: importing must never infer wire types from mutable docs.
+_ACCOUNT_REQUIRED_FIELDS = {
+    "accountNo": "nonempty_string",
+    "accountSeq": "int64",
+    "accountType": "nonempty_string",
+}
+_HOLDINGS_OVERVIEW_OBJECT_FIELDS = (
+    "totalPurchaseAmount", "marketValue", "profitLoss", "dailyProfitLoss",
+)
+_HOLDINGS_ITEM_STRING_FIELDS = ("symbol", "name", "marketCountry", "currency")
+_HOLDINGS_ITEM_DECIMAL_FIELDS = (
+    "quantity", "lastPrice", "averagePurchasePrice",
+)
+_HOLDINGS_ITEM_OBJECT_FIELDS = ("marketValue", "profitLoss", "dailyProfitLoss", "cost")
+_TOSS_MARKET_INDICATORS = {
+    "^KS11": "KOSPI",
+    "KOSPI": "KOSPI",
+    "^KQ11": "KOSDAQ",
+    "KOSDAQ": "KOSDAQ",
+}
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
+
+
+class _LegacyTokenCache(dict):
+    """Compatibility reset hook for existing focused tests and internal tools."""
+
+    def clear(self) -> None:  # type: ignore[override]
+        super().clear()
+        if _TOKEN_MANAGER is not None:
+            _TOKEN_MANAGER.clear_cached_token_for_tests()
+
+
+_TOKEN_CACHE: dict[str, Any] = _LegacyTokenCache()
 
 
 def _safe_float(value: Any) -> float | None:
@@ -54,6 +98,11 @@ def toss_symbol_for(symbol: str) -> str:
     return raw if re.fullmatch(r"[A-Z0-9.\-]+", raw) else ""
 
 
+def toss_market_indicator_for(symbol: str) -> str:
+    """Map Folio/yfinance index symbols to Toss market-indicator symbols."""
+    return _TOSS_MARKET_INDICATORS.get(str(symbol or "").strip().upper(), "")
+
+
 def toss_credentials_available() -> bool:
     return bool(toss_open_api_enabled() and toss_open_api_client_id() and toss_open_api_client_secret())
 
@@ -68,20 +117,41 @@ def _default_transport(method: str, url: str, *, headers=None, data=None, timeou
 
 
 def _base_url() -> str:
-    return toss_open_api_base_url().rstrip("/") or "https://openapi.tossinvest.com"
+    # ``toss_open_api_base_url`` is the one settings boundary that normalizes
+    # a missing or whitespace-only configured origin to this pinned default.
+    return toss_open_api_base_url().rstrip("/") or TOSS_OPEN_API_DEFAULT_BASE_URL
 
 
-def issue_access_token(*, transport: Transport | None = None) -> str:
-    if not toss_open_api_enabled():
-        raise ValueError("Toss Open API is disabled for this release")
-    client_id = toss_open_api_client_id()
-    client_secret = toss_open_api_client_secret()
-    if not client_id or not client_secret:
-        raise ValueError("Toss Open API client_id/client_secret is not configured")
-    now = time.time()
-    cached = _TOKEN_CACHE.get("access_token")
-    if cached and float(_TOKEN_CACHE.get("expires_at") or 0) > now + 60:
-        return str(cached)
+def token_manager() -> TossTokenManager:
+    """The sole process-local token owner, shared by REST and future WebSocket."""
+    global _TOKEN_MANAGER
+    manager = _TOKEN_MANAGER
+    if manager is not None:
+        return manager
+    with _TOKEN_MANAGER_INIT_LOCK:
+        if _TOKEN_MANAGER is None:
+            _TOKEN_MANAGER = TossTokenManager(
+                workspace_dir=data_dir(),
+                enabled=toss_open_api_enabled,
+                client_id=toss_open_api_client_id,
+                client_secret=toss_open_api_client_secret,
+            )
+        return _TOKEN_MANAGER
+
+
+def _set_token_manager_for_tests(manager: TossTokenManager | None) -> None:
+    """Focused-test seam; production code always uses :func:`token_manager`."""
+    global _TOKEN_MANAGER
+    _TOKEN_MANAGER = manager
+    _TOKEN_CACHE.clear()
+
+
+def toss_provider_health() -> dict:
+    """Safe health only; it never issues a token or attempts a process lock."""
+    return token_manager().health_snapshot()
+
+
+def _token_payload(*, transport: Transport | None = None) -> tuple[str, int]:
     fetch = transport or _default_transport
     payload = fetch(
         "POST",
@@ -89,25 +159,246 @@ def issue_access_token(*, transport: Transport | None = None) -> str:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data={
             "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": toss_open_api_client_id(),
+            "client_secret": toss_open_api_client_secret(),
         },
         timeout=10,
     )
-    token = str(payload.get("access_token") or "").strip()
-    if not token:
-        raise RuntimeError("Toss Open API token response did not include access_token")
-    expires_in = int(payload.get("expires_in") or 3600)
-    _TOKEN_CACHE.update({"access_token": token, "expires_at": now + max(60, expires_in)})
-    return token
+    return str(payload.get("access_token") or "").strip(), int(payload.get("expires_in") or 3600)
 
 
-def request_json(path: str, params: dict[str, Any] | None = None, *, transport: Transport | None = None) -> dict:
+def issue_access_token(*, transport: Transport | None = None) -> str:
+    try:
+        lease = token_manager().get_token(lambda: _token_payload(transport=transport))
+    except TossTokenError as exc:
+        if exc.code == "disabled":
+            raise ValueError("Toss Open API is disabled for this release") from exc
+        if exc.code == "credentials_missing":
+            raise ValueError("Toss Open API client_id/client_secret is not configured") from exc
+        raise RuntimeError(exc.code) from exc
+    # Legacy private cache is not an authority.  Keep it process-memory-only so
+    # existing focused tests/tools that clear it still reset the new manager.
+    _TOKEN_CACHE.update({"access_token": lease.token, "generation": lease.generation})
+    return lease.token
+
+
+def _issue_lease(*, transport: Transport | None = None) -> TokenLease:
+    try:
+        return token_manager().get_token(lambda: _token_payload(transport=transport))
+    except TossTokenError as exc:
+        if exc.code == "disabled":
+            raise ValueError("Toss Open API is disabled for this release") from exc
+        if exc.code == "credentials_missing":
+            raise ValueError("Toss Open API client_id/client_secret is not configured") from exc
+        raise RuntimeError(exc.code) from exc
+
+
+def issue_access_token_lease() -> TokenLease:
+    """Safe realtime seam: shares the REST manager and its generation."""
+    return _issue_lease()
+
+
+def active_token_generation() -> int:
+    """Read-only generation marker for the realtime owner; never issues a token."""
+    return int(getattr(token_manager(), "_generation", 0))
+
+
+def _explicit_token_error_code(payload: dict) -> str | None:
+    error = payload.get("error") if isinstance(payload, dict) else None
+    code = payload.get("code") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        code = error.get("code") or code
+    elif isinstance(error, str) and not code:
+        code = error
+    normalized = str(code or "").strip().lower().replace("-", "_")
+    if normalized in {"invalid_token", "invalid_access_token"}:
+        return "invalid_token"
+    if normalized in {"access_token_expired", "token_expired"}:
+        return "token_expired"
+    return None
+
+
+def _retry_authorization_failure(lease: TokenLease, *, code: str, retried: bool, headers: object | None = None) -> bool:
+    """Return whether this request may make its one safe auth retry."""
+    manager = token_manager()
+    manager.record_http_error(401, headers, error_code=code)
+    manager.invalidate_if_generation(lease.generation, error_code=code)
+    if retried:
+        raise TossProviderError(code)
+    # A stale request must not clear a newer token, but its first GET still
+    # failed.  It receives one retry even while the matching request is issuing
+    # the next generation; `_issue_lease()` waits on that single-flight issuer.
+    return True
+
+
+def request_json(
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    transport: Transport | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict:
     fetch = transport or _default_transport
-    token = issue_access_token(transport=fetch)
     query = urllib.parse.urlencode({k: v for k, v in (params or {}).items() if v is not None})
     url = f"{_base_url()}{path}" + (f"?{query}" if query else "")
-    return fetch("GET", url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+    retried = False
+    while True:
+        lease = _issue_lease(transport=fetch)
+        try:
+            request_headers = {"Authorization": f"Bearer {lease.token}"}
+            request_headers.update(headers or {})
+            payload = fetch("GET", url, headers=request_headers, timeout=10)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                # Record exactly once per failed GET; the manager's invalidate
+                # operation only clears a matching generation.
+                try:
+                    retry = _retry_authorization_failure(lease, code="invalid_token", retried=retried, headers=exc.headers)
+                except TossProviderError as terminal:
+                    # Do not retain provider reason/body through exception
+                    # chaining after the one permitted auth retry is spent.
+                    raise terminal from None
+                if retry:
+                    retried = True
+                    continue
+            token_manager().record_http_error(exc.code, exc.headers)
+            raise
+        token_error = _explicit_token_error_code(payload)
+        if token_error:
+            retry = _retry_authorization_failure(lease, code=token_error, retried=retried)
+            if retry:
+                retried = True
+                continue
+        return payload
+
+
+def fetch_toss_accounts(*, transport: Transport | None = None) -> list[dict]:
+    """Read the pinned 1.2.14 account envelope for the import feature.
+
+    This adapter intentionally returns the wire values only to the server-side
+    caller.  Routes must use :mod:`features.portfolio.toss_import` to mask the
+    account number and keep the sequence in its short-lived process store.
+    """
+    try:
+        payload = request_json("/api/v1/accounts", transport=transport)
+    except Exception as exc:
+        # Never attach a provider response/body to the public error surface.
+        status = getattr(exc, "code", None)
+        code = {401: "invalid_token", 403: "ip_allowlist_or_permission_denied", 429: "rate_limited"}.get(status, getattr(exc, "code", "provider_error"))
+        raise TossProviderError(code) from None
+    rows = payload.get("result") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise TossProviderError("provider_contract_invalid")
+    normalized = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise TossProviderError("provider_contract_invalid")
+        number, sequence, account_type = row.get("accountNo"), row.get("accountSeq"), row.get("accountType")
+        if (
+            not isinstance(number, str) or not number.strip()
+            or isinstance(sequence, bool) or not isinstance(sequence, int)
+            or not _INT64_MIN <= sequence <= _INT64_MAX
+            or not isinstance(account_type, str) or not account_type.strip()
+        ):
+            raise TossProviderError("provider_contract_invalid")
+        normalized.append(dict(row))
+    return normalized
+
+
+def fetch_toss_holdings(account_seq: int, *, transport: Transport | None = None) -> dict:
+    """Read one account's pinned holdings overview without optional queries."""
+    try:
+        sequence = int(account_seq)
+        payload = request_json(
+            "/api/v1/holdings",
+            transport=transport,
+            headers={"X-Tossinvest-Account": str(sequence)},
+        )
+    except Exception as exc:
+        status = getattr(exc, "code", None)
+        code = {401: "invalid_token", 403: "ip_allowlist_or_permission_denied", 429: "rate_limited"}.get(status, getattr(exc, "code", "provider_error"))
+        raise TossProviderError(code) from None
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if (
+        not isinstance(result, dict)
+        or any(key not in result for key in (*_HOLDINGS_OVERVIEW_OBJECT_FIELDS, "items"))
+        or not isinstance(result.get("items"), list)
+        or not _valid_holdings_overview(result)
+    ):
+        raise TossProviderError("provider_contract_invalid")
+    for item in result["items"]:
+        if (
+            not isinstance(item, dict)
+            or any(key not in item for key in (*_HOLDINGS_ITEM_STRING_FIELDS, *_HOLDINGS_ITEM_DECIMAL_FIELDS, *_HOLDINGS_ITEM_OBJECT_FIELDS))
+            or any(not isinstance(item.get(key), str) or not item.get(key).strip() for key in _HOLDINGS_ITEM_STRING_FIELDS)
+            or any(not _finite_decimal_string(item.get(key)) for key in _HOLDINGS_ITEM_DECIMAL_FIELDS)
+            or not _valid_holding_item_objects(item)
+        ):
+            raise TossProviderError("provider_contract_invalid")
+    return dict(result)
+
+
+def _finite_decimal_string(value: object) -> bool:
+    """OpenAPI 1.2.14 monetary values are finite decimal strings, not JSON numbers."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        return Decimal(value).is_finite()
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def _decimal_fields(value: object, required: tuple[str, ...], *, nullable: tuple[str, ...] = ()) -> bool:
+    if not isinstance(value, dict) or any(key not in value for key in required):
+        return False
+    for key in required:
+        field = value.get(key)
+        if key in nullable and field is None:
+            continue
+        if not _finite_decimal_string(field):
+            return False
+    return True
+
+
+def _price(value: object) -> bool:
+    """Official Price requires KRW; USD may be absent or null."""
+    if not _decimal_fields(value, ("krw",)):
+        return False
+    return not isinstance(value, dict) or "usd" not in value or value.get("usd") is None or _finite_decimal_string(value.get("usd"))
+
+
+def _valid_holdings_overview(value: dict) -> bool:
+    market_value = value.get("marketValue")
+    profit_loss = value.get("profitLoss")
+    daily = value.get("dailyProfitLoss")
+    return (
+        _price(value.get("totalPurchaseAmount"))
+        and isinstance(market_value, dict)
+        and _price(market_value.get("amount"))
+        and _price(market_value.get("amountAfterCost"))
+        and isinstance(profit_loss, dict)
+        and _price(profit_loss.get("amount"))
+        and _price(profit_loss.get("amountAfterCost"))
+        and _decimal_fields(profit_loss, ("rate", "rateAfterCost"))
+        and isinstance(daily, dict)
+        and _price(daily.get("amount"))
+        and _decimal_fields(daily, ("rate",))
+    )
+
+
+def _valid_holding_item_objects(value: dict) -> bool:
+    return (
+        _decimal_fields(value.get("marketValue"), ("purchaseAmount", "amount", "amountAfterCost"))
+        and _decimal_fields(value.get("profitLoss"), ("amount", "amountAfterCost", "rate", "rateAfterCost"))
+        and _decimal_fields(value.get("dailyProfitLoss"), ("amount", "rate"))
+        and _decimal_fields(value.get("cost"), ("commission",))
+        and (
+            not isinstance(value.get("cost"), dict)
+            or "tax" not in value["cost"]
+            or value["cost"].get("tax") is None
+            or _finite_decimal_string(value["cost"].get("tax"))
+        )
+    )
 
 
 def _calendar_day_date(value: Any) -> str:
@@ -196,23 +487,44 @@ def fetch_toss_candles(
     adjusted: bool = True,
     transport: Transport | None = None,
 ) -> list[dict]:
-    toss_symbol = toss_symbol_for(symbol)
-    if not toss_symbol:
-        return []
+    return fetch_toss_candle_page(symbol, interval=interval, count=count, before=before, adjusted=adjusted, transport=transport)["candles"]
+
+
+def fetch_toss_candle_page(
+    symbol: str,
+    *,
+    interval: str = "1d",
+    count: int = 200,
+    before: str | None = None,
+    adjusted: bool = True,
+    transport: Transport | None = None,
+) -> dict[str, object]:
+    """Pinned REST 1.2.14 page shape; no mutable specification fetches."""
+    # The REST adapter has no hourly candle contract.  Returning an empty page
+    # is safer than issuing a daily request and letting callers mislabel it as
+    # 1h data.
+    if interval == "1h":
+        return {"candles": [], "nextBefore": ""}
+    indicator = toss_market_indicator_for(symbol)
+    toss_symbol = toss_symbol_for(symbol) if not indicator else ""
+    if not indicator and not toss_symbol:
+        return {"candles": [], "nextBefore": ""}
     api_interval = "1m" if interval in {"1m", "5m"} else "1d"
+    path = f"/api/v1/market-indicators/{indicator}/candles" if indicator else "/api/v1/candles"
+    params = {
+        "interval": api_interval,
+        "count": max(1, min(int(count or 200), 200)),
+        "before": before,
+    }
+    if not indicator:
+        params.update({"symbol": toss_symbol, "adjusted": str(bool(adjusted)).lower()})
     payload = request_json(
-        "/api/v1/candles",
-        {
-            "symbol": toss_symbol,
-            "interval": api_interval,
-            "count": max(1, min(int(count or 200), 200)),
-            "before": before,
-            "adjusted": str(bool(adjusted)).lower(),
-        },
+        path,
+        params,
         transport=transport,
     )
     result = payload.get("result") or {}
-    return result.get("candles") or []
+    return {"candles": result.get("candles") or [], "nextBefore": str(result.get("nextBefore") or "")}
 
 
 def _row_date(timestamp: str) -> str:
@@ -227,6 +539,8 @@ def download_toss_candle_rows(
     interval: str,
     transport: Transport | None = None,
 ) -> list[dict]:
+    if interval == "1h":
+        return []
     if not toss_credentials_available():
         return []
     api_interval = "1m" if interval in {"1m", "5m"} else "1d"
