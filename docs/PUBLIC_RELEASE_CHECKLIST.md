@@ -41,6 +41,15 @@ once; the order is cheapest-first so a failure stops you early.
       found after a push means rewriting history, not just fixing a file.
 - [ ] `git status --porcelain` is clean and no build tool, binary, or downloaded artifact
       is tracked. `.tools/` and `dist/` must stay ignored.
+- [ ] `py -3 scripts/check_name_inventory.py --expect-clean` exits 0. This catches the
+      product's pre-2026-09 name reappearing on a user-facing surface. Ordinary feature
+      work reintroduces it easily -- a new prompt, a new doc, a copied string -- and
+      nothing else looks for it. Occurrences that must survive (compatibility prose,
+      legacy-folder tests, citations of versions that shipped under the old name, the
+      keyring service) are already classified and do not fail this check; only
+      unrenamed display surfaces do. The script's own rules table spells out which is
+      which -- read it there rather than repeating the old name here, so this file
+      stays clean under its own check.
 - [ ] `python -m py_compile app.py` passes.
 - [ ] Python tests pass.
 - [ ] `py -3 scripts/public_release_audit.py` passes.
