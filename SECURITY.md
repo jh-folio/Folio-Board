@@ -8,7 +8,7 @@ Do not open a public GitHub issue for vulnerabilities, exposed credentials, pers
 
 ## Supported Versions
 
-Folio OS is currently in early public release.
+Folio Board is currently in early public release.
 
 | Version | Supported |
 |---|---|
@@ -17,11 +17,11 @@ Folio OS is currently in early public release.
 
 ## Local-First Security Model
 
-Folio OS is designed as a local-first investment research workspace.
+Folio Board is designed as a local-first investment research workspace.
 
-Do not expose Folio OS directly to the public internet.
+Do not expose Folio Board directly to the public internet.
 
-By default, Folio OS should run on:
+By default, Folio Board should run on:
 
 ```text
 127.0.0.1
@@ -51,7 +51,7 @@ Never commit or share:
 
 ## Third-Party Services
 
-Folio OS can optionally integrate with LLM providers, Notion, market data providers, and image hosting services.
+Folio Board can optionally integrate with LLM providers, Notion, market data providers, and image hosting services.
 
 When AI/LLM features are enabled, selected report context or summarized evidence may be sent to the configured provider.
 

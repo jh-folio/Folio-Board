@@ -13,7 +13,7 @@ from features.common.quality_generation.telemetry import normalize_token_usage
 from features.common.research_schema.data_gaps import data_gap_rows
 
 
-PROMPT = """당신은 Folio OS의 투자 리서치 품질 편집자입니다.
+PROMPT = """당신은 Folio Board의 투자 리서치 품질 편집자입니다.
 
 목표:
 - 기존 Canonical 보고서의 약한 섹션만 개선합니다.
@@ -35,7 +35,7 @@ JSON 객체 하나만 반환하세요.
 
 
 def _json_repair_prompt() -> str:
-    return """You convert a model response into valid JSON for Folio OS.
+    return """You convert a model response into valid JSON for Folio Board.
 
 Return only one JSON object:
 {

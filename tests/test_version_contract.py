@@ -35,7 +35,7 @@ def test_release_cli_defaults_to_version_file() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "FolioOS-v0.5.4" in result.stdout
+    assert "FolioBoard-v0.5.4" in result.stdout
 
 
 def test_public_research_navigation_is_exposed_for_043() -> None:

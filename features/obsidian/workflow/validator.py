@@ -1,4 +1,4 @@
-"""Validate Obsidian frontmatter for Folio OS workflow notes."""
+"""Validate Obsidian frontmatter for Folio Board workflow notes."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,7 +40,7 @@ def validate_note(path: Path, vault: Path) -> dict:
     generated_by = str(meta.get("generated_by") or "").strip()
     source_layer = str(meta.get("source_layer") or "").strip()
     if generated_by and source_layer == "user_synthesis":
-        add("error", "generated_by가 있는 노트가 user_synthesis로 표시되어 있습니다.", "Folio OS 생성 노트는 source_layer: primary_processed로 유지하세요.")
+        add("error", "generated_by가 있는 노트가 user_synthesis로 표시되어 있습니다.", "Folio Board 생성 노트는 source_layer: primary_processed로 유지하세요.")
 
     if parsed.layer == P.LAYER_HYPOTHESIS or note_type in P.HYPOTHESIS_TYPES:
         if source_layer != "user_synthesis":
@@ -49,7 +49,7 @@ def validate_note(path: Path, vault: Path) -> dict:
             add("error", "reuse_as_hypothesis: true가 없습니다.", "reuse_as_hypothesis: true를 추가하세요.")
     if parsed.layer == P.LAYER_SELF_GENERATED:
         if meta.get("reuse_as_evidence") is not False:
-            add("warning", "Folio OS 생성 노트는 reuse_as_evidence: false를 명시하는 편이 안전합니다.", "reuse_as_evidence: false를 추가하세요.")
+            add("warning", "Folio Board 생성 노트는 reuse_as_evidence: false를 명시하는 편이 안전합니다.", "reuse_as_evidence: false를 추가하세요.")
 
     if note_type == "company_thesis":
         if not str(meta.get("ticker") or "").strip():

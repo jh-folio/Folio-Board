@@ -66,7 +66,7 @@ def audit_repo(tmp_path: Path) -> Path:
     (root / "research-inbox").mkdir()
     (root / ".gitignore").write_text("/config/\n/data/\n/research-inbox/\n", encoding="utf-8")
     manifest = {
-        "packageName": "FolioOS",
+        "packageName": "FolioBoard",
         "runtimeFiles": ["VERSION"],
         "runtimeDirectories": ["features", "defaults"],
         "emptyDirectories": ["data", "research-inbox"],

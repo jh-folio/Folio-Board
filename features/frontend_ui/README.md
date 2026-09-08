@@ -67,7 +67,7 @@ AI 실행은 허용하지 않는다.
 
 `#/office`는 0.3.0의 기본 Home인 Pixel Office다. read-only `/api/pixel-office` 요약을 7개 의미 있는 오브젝트로 표시하고, 기존 `/api/jobs`의 redacted 프론트 모델을 이용해 Agent 활동·완료·실패 상태를 갱신한다. 데스크톱에서는 lazy-loaded PixiJS 게임 장면+React semantic hotspot+overlay 상세 패널을 사용하고, 980px 이하에서는 Agent 미니 장면+상태 카드+하단 시트를 사용한다. Agent는 authored waypoint 경로로 대응 가구까지 실제 이동하며 발 위치로 Y-depth를 정렬한다. 상세 dialog는 Escape, focus trap, 원래 오브젝트 focus 복귀를 지원한다. 캐릭터 preset은 프로젝트 원본 `Classic Analyst`와 `Economics Student` 두 개만 노출하며, 사용자 이름과 움직임 줄이기 설정을 함께 저장한다.
 
-`#/home`은 React가 직접 렌더하는 기존 Agent Home이다. Home은 큰 `Folio OS` hero, 빠른 실행, 최근 보고서 칩 디자인을 유지하면서 hero와 빠른 실행 사이에 Codex/검색 메인 화면형 프롬프트 박스를 둔다. 프롬프트 전송은 `/api/agent/chat`으로 job을 만들고 `/api/jobs/{id}`를 polling하며, 수정 proposal은 `/api/agent/proposals/{id}` 승인/거절 API를 사용한다. 모델 선택은 `/api/agent-bridge/settings`의 현재 provider/adapter `modelChoices`를 따른다. 대화 로그는 보고서 evidence와 분리해 브라우저 localStorage에 저장하고, 사용자가 `새 대화`로 즉시 비울 수 있다. Home 하단에는 `/api/jobs` 기반 최근 Agent/빠른 실행 작업 목록을 표시한다.
+`#/home`은 React가 직접 렌더하는 기존 Agent Home이다. Home은 큰 `Folio Board` hero, 빠른 실행, 최근 보고서 칩 디자인을 유지하면서 hero와 빠른 실행 사이에 Codex/검색 메인 화면형 프롬프트 박스를 둔다. 프롬프트 전송은 `/api/agent/chat`으로 job을 만들고 `/api/jobs/{id}`를 polling하며, 수정 proposal은 `/api/agent/proposals/{id}` 승인/거절 API를 사용한다. 모델 선택은 `/api/agent-bridge/settings`의 현재 provider/adapter `modelChoices`를 따른다. 대화 로그는 보고서 evidence와 분리해 브라우저 localStorage에 저장하고, 사용자가 `새 대화`로 즉시 비울 수 있다. Home 하단에는 `/api/jobs` 기반 최근 Agent/빠른 실행 작업 목록을 표시한다.
 
 Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우저 대화·모델·proposal·최근 작업 상태를 사용한다. 첫 실행 chooser, 각 Home의 전환 버튼, Settings > 화면에서 기본 Home을 선택한다. 명시한 보고서 딥링크는 이 선택으로 바뀌지 않는다. 두 Home에서는 전역 Agent Dock을 표시하지 않는다.
 
@@ -89,7 +89,7 @@ Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우�
 
 React Shell은 레거시 shell과 같은 큰 구조를 직접 렌더한다: dark topbar, 접을 수 있는 floating 좌측 navigation rail, 가운데 scrollable route host, 우측 Agent Dock. 0.2 노출 화면인 브리핑·RSS 피드·시장 내러티브·기업분석·딥리서치·설정 목록 화면은 공통 `RouteHero`를 사용한다. 대시보드·워치리스트 route 구현은 유지하지만 기본 nav에는 노출하지 않는다. 레거시 기업분석 탭과 같은 흰색 hero 카드(골드 eyebrow, 제목, 설명, 우측 액션 슬롯)를 기준으로 맞추며, 브리핑 목록은 hero 아래에 레거시 브리핑 탭의 생성/검색 패널을 유지하고, 보고서 reader 내부의 dark report hero와 본문 레이아웃은 별도로 유지한다.
 
-React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토큰을 따른다. 좌측 navigation title/item은 `--fs-base`, 그룹 라벨은 `--fs-xs`, route hero 제목은 `--fs-xl`, 설명은 `--fs-base`를 사용한다. 홈 화면의 큰 `Folio OS` title은 레거시 `.home-hero` display scale을 유지하되, React Home에서는 prompt 위치를 고정하고 hero만 위로 당겨 title과 prompt 사이 여백을 확보한다.
+React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토큰을 따른다. 좌측 navigation title/item은 `--fs-base`, 그룹 라벨은 `--fs-xs`, route hero 제목은 `--fs-xl`, 설명은 `--fs-base`를 사용한다. 홈 화면의 큰 `Folio Board` title은 레거시 `.home-hero` display scale을 유지하되, React Home에서는 prompt 위치를 고정하고 hero만 위로 당겨 title과 prompt 사이 여백을 확보한다.
 
 좌측 navigation 아이콘은 알파벳 배지가 아니라 탭 의미에 맞춘 outline SVG를 사용한다. 개별 아이콘 선택은 실제 UI 디자인에서 지정한 매핑을 따른다.
 
@@ -175,7 +175,7 @@ public/react/folio-react.js
 
 ```text
 .hero
- ├─ .hero-brand          좌: 브랜드(Folio OS)
+ ├─ .hero-brand          좌: 브랜드(Folio Board)
  ├─ .hero-status-group   중앙: 상태 텍스트(#status) + 진행바(#jobProgress) + 작업 취소(#cancelAgentJobBtn)
  └─ .hero-meta-group     우: 마지막 인덱싱 시각 + 서버 재시작(#restartServerBtn)
 ```

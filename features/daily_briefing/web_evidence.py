@@ -108,7 +108,7 @@ def fetch_public_html(url: str, scope: SourceScope, *, fetcher: Callable | None 
             return str(fetcher(url) or "")[:MAX_BYTES]
     if not _public_host(host):
         raise ValueError("private_or_unresolved_host")
-    request = urllib.request.Request(url, headers={"User-Agent": "Folio-OS-Briefing-Evidence/1.0", "Accept": "text/html"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Folio-Board-Briefing-Evidence/1.0", "Accept": "text/html"})
     opener = urllib.request.build_opener(_ScopedRedirect(scope))
     with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
         deadline = time.monotonic() + TIMEOUT_SECONDS

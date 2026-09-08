@@ -58,6 +58,43 @@ def test_documents_is_found_after_an_update(app, tmp_path):
     assert workspace.is_outside_app_folder()
 
 
+def test_an_empty_new_name_documents_folder_does_not_shadow_the_legacy_one(app, tmp_path):
+    """빈 `~/Documents/FolioBoard`가 어떤 이유로 생겨도 자료가 든
+    `~/Documents/FolioOS`를 가리면 안 된다(§4.4) — `has_user_data()`가 아니라
+    `.exists()`로 물으면 이 사고가 난다."""
+    (tmp_path / "home" / "Documents" / "FolioBoard").mkdir(parents=True)
+    legacy = tmp_path / "home" / "Documents" / "FolioOS"
+    (legacy / "data").mkdir(parents=True)
+    (legacy / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+
+    assert workspace.workspace_root() == legacy
+    assert workspace.discover_documents_workspace() == legacy
+
+
+def test_both_documents_folders_populated_the_new_name_wins(app, tmp_path):
+    """새 이름은 사용자가 새 버전에서 직접 옮겼을 때만 생기므로 더 최근의 의사다."""
+    new_name = tmp_path / "home" / "Documents" / "FolioBoard"
+    (new_name / "data").mkdir(parents=True)
+    (new_name / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+    legacy = tmp_path / "home" / "Documents" / "FolioOS"
+    (legacy / "data").mkdir(parents=True)
+    (legacy / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+
+    assert workspace.workspace_root() == new_name
+    assert workspace.discover_documents_workspace() == new_name
+
+
+def test_documents_workspace_is_the_move_destination_only(app, tmp_path):
+    """`documents_workspace()`는 옮기기 목적지(새 이름 하나)이고, 탐색과는 다른
+    함수다 — 구 이름 폴더에만 자료가 있어도 목적지는 여전히 새 이름이다."""
+    legacy = tmp_path / "home" / "Documents" / "FolioOS"
+    (legacy / "data").mkdir(parents=True)
+    (legacy / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+
+    assert workspace.documents_workspace() == tmp_path / "home" / "Documents" / "FolioBoard"
+    assert not workspace.documents_workspace().exists()
+
+
 def test_the_app_folder_wins_when_both_have_content(app, tmp_path):
     """옮기기는 원본을 지우지 않는다. 옛 폴더를 직접 실행하면 그 자료를 쓴다."""
     (app / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
@@ -98,6 +135,12 @@ def test_unknown_directory_names_are_rejected(app):
         assert workspace.workspace_dir(name).name == name
     with pytest.raises(ValueError):
         workspace.workspace_dir("secrets")
+
+
+def test_the_marker_filename_and_env_var_are_rename_compatibility_contracts():
+    """리네이밍이 절대 건드리지 않는 두 이름을 고정한다(plan §4.2) — `workspace.json`은
+    기존 설치의 표지 포맷이고, `FOLIO_HOME`은 사용자 환경·자동화가 이미 참조 중이다."""
+    assert workspace.MARKER_NAME == "workspace.json"
 
 
 class TestResolutionDoesNotStrandTheUser:

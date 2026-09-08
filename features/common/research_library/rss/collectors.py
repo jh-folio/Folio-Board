@@ -1,4 +1,4 @@
-"""Collector adapters for Folio OS Evidence Intake."""
+"""Collector adapters for Folio Board Evidence Intake."""
 from __future__ import annotations
 
 import json

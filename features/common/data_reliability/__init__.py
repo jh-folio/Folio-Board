@@ -1,2 +1,2 @@
-"""Data source reliability helpers for Folio OS Step 9."""
+"""Data source reliability helpers for Folio Board Step 9."""
 

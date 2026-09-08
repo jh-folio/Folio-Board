@@ -17,7 +17,7 @@ from features.common.workspace import data_dir
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKET_MEMORY_DB_PATH = data_dir() / "market-memory.sqlite3"
-MARKET_STATE_SNAPSHOT_PROMPT = """You are writing Folio OS Market Memory v3.
+MARKET_STATE_SNAPSHOT_PROMPT = """You are writing Folio Board Market Memory v3.
 
 Return one JSON object only. Do not use Markdown fences.
 
@@ -69,7 +69,7 @@ Rules:
 - Prefer "changed / weakened / invalidated / still supported" reasoning over recursively repeating old summaries.
 - directionLabel should be one of: 도움, 부담, 부담 완화, 변동성, 혼재, 중립.
 - marketImpact must explain whether the driver helps, hurts, or makes the market volatile.
-- nextMemoryCheck describes what Folio OS should check in the next Market Memory update, not what the user must manually search.
+- nextMemoryCheck describes what Folio Board should check in the next Market Memory update, not what the user must manually search.
 - Do not treat user notes or hypotheses as evidence.
 - Do not invent missing facts or numbers.
 - Include counter-evidence even when the main stance is constructive.
@@ -730,7 +730,7 @@ def build_market_state_context(
     sparse_note = (" " + " ".join(evidence_coverage["warnings"])) if evidence_coverage["warnings"] else ""
     return {
         "instruction": (
-            "Synthesize one medium-term MarketStateSnapshot for Folio OS. "
+            "Synthesize one medium-term MarketStateSnapshot for Folio Board. "
             f"This request is for marketScope={market_scope}. "
             "Use the broad rssCandidates list as the primary short-term evidence pool; it is lightly compacted but not scored or preselected by importance. "
             "shortTermDigest is only a navigation aid, not a selection result. "
@@ -923,7 +923,7 @@ def render_market_memory_context(db_path: str | Path = MARKET_MEMORY_DB_PATH, *,
         return ""
     lines = [
         "## Market Memory Context",
-        "이 블록은 Folio OS의 중기 시장 배경입니다. 기업 고유 사실의 evidence가 아니라 시장 배경/context로만 사용하세요.",
+        "이 블록은 Folio Board의 중기 시장 배경입니다. 기업 고유 사실의 evidence가 아니라 시장 배경/context로만 사용하세요.",
         f"- source: {pack.get('source', '')}",
         f"- headline: {pack.get('headline', '')}",
         f"- summary: {pack.get('summary', '')}",

@@ -1,6 +1,6 @@
 """Thesis Tracking — 기업 투자 thesis를 추적하고, 최신 자료 대비 강화/유지/약화/이탈을 판정한다.
 
-Folio OS Personal Overlay 계층의 기업 단위 적용(개선안 02).
+Folio Board Personal Overlay 계층의 기업 단위 적용(개선안 02).
 
 - thesis는 사용자의 가설(hypothesis)이다. Obsidian `company_thesis` 노트 또는 UI 직접 입력에서 온다.
 - Thesis Delta는 thesis를 최신 외부 자료와 대조해 verdict(enum)로 판정한다 — 옹호가 아니라 검증.

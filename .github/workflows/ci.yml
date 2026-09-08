@@ -151,7 +151,7 @@ jobs:
         run: |
           # Read the release name from VERSION so a version bump cannot leave the
           # verify/scan/upload steps pointing at a package that no longer exists.
-          name="FolioOS-v$(cat VERSION)"
+          name="FolioBoard-v$(cat VERSION)"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           python scripts/package_release.py --output dist/release
           python scripts/verify_release.py --release-dir "dist/release/$name" --expected-commit "${{ github.sha }}"

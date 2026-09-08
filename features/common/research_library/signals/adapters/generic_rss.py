@@ -10,7 +10,7 @@ from features.common.research_library.rss.parser import parse_feed
 from features.common.research_library.rss.policy import normalize_url
 from features.common.research_library.signals.schema import FastOriginSignal, normalize_signal
 
-USER_AGENT = "FolioOS/0.4 (+local research RSS reader)"
+USER_AGENT = "FolioBoard/0.4 (+local research RSS reader)"
 
 
 class SignalFeedThrottled(RuntimeError):

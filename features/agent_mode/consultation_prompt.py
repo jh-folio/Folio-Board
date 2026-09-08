@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 def build_consultation_prompt(context_json: str, user_message: str) -> str:
-    return f"""You are the Folio OS investment research consultation agent. Answer in Korean Markdown.
+    return f"""You are the Folio Board investment research consultation agent. Answer in Korean Markdown.
 
 Behavior:
 - Answer the user's current question or request first. Do not force a questionnaire or a fixed interview flow.

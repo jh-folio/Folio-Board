@@ -260,7 +260,7 @@ browser markup.
    is documented. The 0.5 fallback is representative line indices with explicit
    provider attribution.
 4. Public official filings may be downloaded into a user's private
-   `research-inbox/filings/`; Folio OS does not republish those filings in its source
+   `research-inbox/filings/`; Folio Board does not republish those filings in its source
    distribution.
 5. Repository fixtures are synthetic or aggressively minimized structural samples.
    They contain no private titles, browsing history, local paths, credentials, or

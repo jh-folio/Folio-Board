@@ -255,7 +255,7 @@ def briefing_doc_score(doc, market_windows):
 
     # 1-b. Evidence Intake 신뢰도 계층(reliability_tier) 보너스. Tier 1(공식자료)·
     #      Tier 2(주요 매체)는 소폭 우대한다. 단, 공식자료(source_type=official_*/
-    #      macro_data)는 브리핑의 "직접 근거"로 쓰지 않는다는 Folio OS 원칙에 따라
+    #      macro_data)는 브리핑의 "직접 근거"로 쓰지 않는다는 Folio Board 원칙에 따라
     #      여기서 가산하지 않고, 브리핑 본문 근거 후보에서 강하게 내린다.
     source_type = str(doc.get("sourceType", "") or "")
     is_official = source_type.startswith("official_") or source_type == "macro_data"

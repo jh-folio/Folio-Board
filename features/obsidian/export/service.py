@@ -12,6 +12,7 @@ from features.common.taxonomy import normalize_tag
 from features.daily_briefing.schema import MARKET_TAGS, briefing_export_units
 from features.obsidian.export.formatter import build_frontmatter, inject_wikilinks, preserve_user_notes, charts_to_markdown, strip_duplicate_h1
 from features.common.workspace import data_dir
+from features.common.self_reference import GENERATED_BY_MARKER
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = data_dir()
@@ -188,7 +189,7 @@ def _write_briefing_note(folder, date, unit, chart_images):
         "type": "briefing",
         "market": market_scope,
         "briefing_type": unit.get("briefingType", "default"),
-        "generated_by": "Folio OS",
+        "generated_by": GENERATED_BY_MARKER,
         "source_layer": "primary_processed",
         "reuse_as_evidence": False,
         "tags": tags,
@@ -310,7 +311,7 @@ def export_analysis_to_obsidian(report: dict) -> dict:
         "sector": sector or None,
         "market": market or None,
         "date": saved_at or None,
-        "generated_by": "Folio OS",
+        "generated_by": GENERATED_BY_MARKER,
         "source_layer": "primary_processed",
         "reuse_as_evidence": False,
         "tags": tags,
@@ -349,7 +350,7 @@ def export_analysis_to_obsidian(report: dict) -> dict:
 def export_topic_report_to_obsidian(report: dict) -> dict:
     """테마 보고서를 Vault의 Topic Reports/ 폴더로 내보낸다 (설계 04 §15).
 
-    자기참조 방지(Folio OS 원칙 5): generated_by / source_layer: primary_processed /
+    자기참조 방지(Folio Board 원칙 5): generated_by / source_layer: primary_processed /
     reuse_as_evidence: false 를 frontmatter에 붙여, Obsidian importer가 이 노트를
     evidence로 재사용하지 않게 한다.
     """
@@ -375,7 +376,7 @@ def export_topic_report_to_obsidian(report: dict) -> dict:
         "topic": label,
         "report_type": plan.get("reportType") or report.get("topicKey") or None,
         "date": date or None,
-        "generated_by": "Folio OS",
+        "generated_by": GENERATED_BY_MARKER,
         "source_layer": "primary_processed",
         "reuse_as_evidence": False,
         "quality_score": quality.get("score") if quality else None,
@@ -440,7 +441,7 @@ def export_narratives_to_obsidian() -> dict:
             "importance": top.get("importance", "medium"),
             "region": top.get("region", "GLOBAL"),
             "updated": (top.get("updatedAt") or "")[:10] or None,
-            "generated_by": "Folio OS",
+            "generated_by": GENERATED_BY_MARKER,
             "source_layer": "primary_processed",
             "reuse_as_evidence": False,
         }

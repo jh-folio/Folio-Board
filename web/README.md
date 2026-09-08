@@ -1,6 +1,6 @@
-# Folio OS React SPA (web/)
+# Folio Board React SPA (web/)
 
-`web/` owns the Folio OS frontend. It is a Vite + React + TypeScript app that
+`web/` owns the Folio Board frontend. It is a Vite + React + TypeScript app that
 builds into `public/react/folio-react.js`, which is loaded by the FastAPI static
 entrypoint at `public/index.html`.
 
@@ -9,7 +9,7 @@ entrypoint at `public/index.html`.
 ```text
 public/index.html      # minimal static entrypoint with #folioReactRoot
 public/app.js          # bridge-only helpers used by React readers and Agent context
-public/styles.css      # shared Folio OS design tokens and component styles
+public/styles.css      # shared Folio Board design tokens and component styles
 web/src/main.tsx       # mounts the React SPA
 web/src/app/           # AppShell, routes, Agent Home, readers, feature screens
 web/src/islands/       # reusable React surfaces consumed by routes
@@ -25,7 +25,7 @@ public/react/          # committed Vite build output
   bridge for `FolioBridge` methods such as `renderMarkdown`,
   `briefingSourcePanelHtml`, `renderBriefingVisuals`, `updateAgentContext`, and
   `openAgentDock`.
-- The built bundle in `public/react/` is committed so users can run Folio OS
+- The built bundle in `public/react/` is committed so users can run Folio Board
   without a local Node build step.
 
 ## Build

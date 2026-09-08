@@ -1,7 +1,7 @@
 """RSS feed configuration loader.
 
 The loader accepts the small YAML subset used by ``config/rss_feeds.yaml`` and
-uses PyYAML when available. Keeping the fallback local lets Folio OS run without
+uses PyYAML when available. Keeping the fallback local lets Folio Board run without
 an extra dependency.
 """
 from __future__ import annotations

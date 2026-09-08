@@ -93,8 +93,13 @@ test("hypothesis-shaped ledger rows are rejected and malformed Market State warn
   const hypothesis = { ...fixture.sourceLedger[0], sourceId: "note-1", artifactType: "", type: "user_note", evidenceRole: "hypothesis", source_layer: "hypothesis" };
   const selfReference = { ...fixture.sourceLedger[0], sourceId: "folio-1", generated_by: "folio_os", source_layer: "primary_processed" };
   const exportedSelfReference = { ...fixture.sourceLedger[0], sourceId: "folio-export-1", generated_by: "Folio OS" };
+  // 2026-09 리네이밍 이후 새로 내보낸 노트는 이 값들을 쓴다 — 신·구 표시명 모두
+  // 자기참조로 걸러져야 한다(dual-read, plan §4.3). 이름이 바뀌었다고 새로 내보낸
+  // 자기 노트가 source ledger에 evidence로 남으면 원칙 5(자기참조 금지) 위반이다.
+  const newMarkerSelfReference = { ...fixture.sourceLedger[0], sourceId: "folio-board-1", generated_by: "folio_board", source_layer: "primary_processed" };
+  const newMarkerExportedSelfReference = { ...fixture.sourceLedger[0], sourceId: "folio-board-export-1", generated_by: "Folio Board" };
   const unrelatedPublisher = { ...fixture.sourceLedger[0], sourceId: "publisher-1", generated_by: "Folio Observer" };
-  const report = parseTopicReportPayload({ ...fixture, sourceLedger: [fixture.sourceLedger[0], hypothesis, selfReference, exportedSelfReference, unrelatedPublisher], marketStateResolution: { injected: true, ref: {} } });
+  const report = parseTopicReportPayload({ ...fixture, sourceLedger: [fixture.sourceLedger[0], hypothesis, selfReference, exportedSelfReference, newMarkerSelfReference, newMarkerExportedSelfReference, unrelatedPublisher], marketStateResolution: { injected: true, ref: {} } });
   assert.equal(report.sourceLedger.length, 2);
   assert.equal(report.sourceLedger[0].artifactType, "topic_report");
   assert.equal(report.sourceLedger[1].sourceId, "publisher-1");

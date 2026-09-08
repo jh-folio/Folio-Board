@@ -216,7 +216,7 @@ def load_last_good_snapshot(path: Path | str) -> dict | None:
 
 def fetch_nasdaq_screener() -> list[dict]:
     request = urllib.request.Request(NASDAQ_SCREENER_URL, headers={
-        "User-Agent": "Mozilla/5.0 Folio-OS/1.0",
+        "User-Agent": "Mozilla/5.0 Folio-Board/1.0",
         "Accept": "application/json",
         "Referer": "https://www.nasdaq.com/market-activity/stocks/screener",
     })

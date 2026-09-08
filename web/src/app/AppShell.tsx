@@ -620,7 +620,7 @@ export function AppShell() {
             <path d="M10 3.5 L5.5 8 L10 12.5" />
           </svg>
         </button>
-        <nav className="react-left-nav" aria-label="Folio OS 화면">
+        <nav className="react-left-nav" aria-label="Folio Board 화면">
           <div className="react-left-nav-title">Navigate</div>
           {NAV_GROUPS.map((group) => (
             <section className="react-left-nav-group" data-nav-group={group.id} key={group.id}>

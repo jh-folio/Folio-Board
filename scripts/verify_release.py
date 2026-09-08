@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a Folio OS release package artifact.
+"""Verify a Folio Board release package artifact.
 
 The verifier checks the packaged directory, not the repository checkout. It is
 intentionally stricter than the packager so it can catch hand-edited artifacts.
@@ -299,7 +299,7 @@ def verify_release(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify a Folio OS release package directory.")
+    parser = argparse.ArgumentParser(description="Verify a Folio Board release package directory.")
     parser.add_argument("--release-dir", type=Path, required=True, help="Release directory to verify.")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST, help="Release manifest path.")
     parser.add_argument("--skip-gitleaks", action="store_true", help="Skip Gitleaks scan for tests or diagnostics.")

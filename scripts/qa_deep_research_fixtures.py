@@ -349,7 +349,7 @@ def _write_sitecustomize(adapters: Path) -> None:
 
 def prepare_fixture(source_root: Path, runtime: Path) -> Fixture:
     runtime.mkdir(parents=True, exist_ok=False)
-    (runtime / ".folio-qa-owned").write_text("folio-os-0-2-0\n", encoding="utf-8")
+    (runtime / ".folio-qa-owned").write_text("folio-board-0-2-0\n", encoding="utf-8")
     workspace = runtime / "workspace"
     _copy_tree(source_root.resolve(), workspace)
     data = workspace / "data"

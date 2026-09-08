@@ -4,7 +4,7 @@
   새 경로/설정을 만들지 않는다 (export와 같은 Vault를 양방향으로 사용).
 - research-inbox는 절대 건드리지 않는다 — 인덱서(research-index.sqlite3)와 독립된 read 경로다.
   Vault 노트를 research-inbox로 인덱싱하면 hypothesis가 evidence로 빨려 들어가 원칙 2·5를 위반한다.
-- 사용자 hypothesis 노트만 importable로 적재하고, Folio OS가 내보낸 노트는 self_generated로 표시해 건너뛴다.
+- 사용자 hypothesis 노트만 importable로 적재하고, Folio Board(구 Folio OS)가 내보낸 노트는 self_generated로 표시해 건너뛴다.
 """
 from __future__ import annotations
 

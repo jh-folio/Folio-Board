@@ -1,10 +1,10 @@
-# Folio OS 0.3.0 Smoke Tests
+# Folio Board 0.3.0 Smoke Tests
 
 Run these checks against a clean local workspace or a synthetic packaged fixture. Do not use real credentials, private notes, portfolio data, or provider transcripts as evidence.
 
 ## Startup and identity
 
-1. Start Folio OS with `start.ps1`, `start.sh`, or `start-archive.cmd`.
+1. Start Folio Board with `start.ps1`, `start.sh`, or `start-archive.cmd`.
 2. Open `http://127.0.0.1:8787/api/health` and confirm `status=ok`, `version=0.3.0`, the expected commit, PID, and workspace identity.
 3. Confirm Home, Dashboard, Watchlist, Briefing, RSS Feed, Market Memory, Company Analysis, Deep Research, and Settings are visible.
 

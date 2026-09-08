@@ -245,7 +245,7 @@ def normalize_delta(raw, *, thesis: dict, evidence: list, meta: dict, fallback_m
         out["counterEvidence"] = [
             {
                 "title": "로컬 인덱스 반대 근거 점검",
-                "source": "Folio OS",
+                "source": "Folio Board",
                 "date": "",
                 "reason": "이번 evidence window에서 명시적인 반대 근거가 제한적이거나 식별되지 않았습니다.",
             }

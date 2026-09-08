@@ -81,7 +81,7 @@ def _result_summary(result: Any) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m features.agent_mode.cli",
-        description="Prepare Folio OS Agent Context Packs and write agent-authored outputs back to the normal stores.",
+        description="Prepare Folio Board Agent Context Packs and write agent-authored outputs back to the normal stores.",
     )
     parser.add_argument("task_type", choices=sorted(schema.TASK_TYPES), help="Agent task type")
     action = parser.add_mutually_exclusive_group(required=True)

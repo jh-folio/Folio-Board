@@ -82,7 +82,7 @@ Claude: Claude Fable 5, Claude Sonnet 5, Claude Opus 5, Claude Haiku 4.5, Claude
 Gemini: Gemini 3.6 Flash, Gemini 3.5 Flash, Gemini 3.5 Flash-Lite, Gemini 3.1 Pro Preview
 ```
 
-## GPT-6 Astra 사용과 Folio OS 설정
+## GPT-6 Astra 사용과 Folio Board 설정
 
 2026-09-05 확인한 [공식 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model)와
 [모델 사양](https://developers.openai.com/api/docs/models/gpt-6-astra)에 따라 `gpt-6-astra`를 선택할 수 있다.

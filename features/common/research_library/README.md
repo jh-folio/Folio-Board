@@ -1,6 +1,6 @@
 # Research Library
 
-Research Library는 Folio OS가 자료를 읽고 찾는 공통 기반입니다. 사용자가 넣은 기사·RSS·리포트·공시·PDF를 스캔해 `research-index.sqlite3`에 저장하고, 브리핑·RSS 피드·뉴스 검색·기업분석·0.2 Deep Research·Thesis Delta가 같은 자료 기반을 읽도록 해줍니다.
+Research Library는 Folio Board가 자료를 읽고 찾는 공통 기반입니다. 사용자가 넣은 기사·RSS·리포트·공시·PDF를 스캔해 `research-index.sqlite3`에 저장하고, 브리핑·RSS 피드·뉴스 검색·기업분석·0.2 Deep Research·Thesis Delta가 같은 자료 기반을 읽도록 해줍니다.
 
 ## 사용 흐름
 
@@ -48,7 +48,7 @@ research-inbox/
 ## Evidence Intake / RSS 수집
 
 RSS 피드 탭의 `RSS 수집/가져오기`는 공개 RSS를 읽어 `research-inbox/rss/`에 Markdown으로 저장합니다.
-내부 수집기는 Folio OS Evidence Intake 경로를 사용하며, RSS는 `collector=rss`인 입력원입니다.
+내부 수집기는 Folio Board Evidence Intake 경로를 사용하며, RSS는 `collector=rss`인 입력원입니다.
 
 수집 범위는 설정의 **관심 시장**(`features/common/market_scope.py`, `data/market-scope.json`, 기본 US/KR)이
 정합니다. 범위 밖 시장 전용 피드는 수집에서 제외되고(GLOBAL 피드는 항상 수집), 시장을 다시 켜면

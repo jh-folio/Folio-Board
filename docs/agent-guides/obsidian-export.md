@@ -13,5 +13,5 @@
 - `config/company_master.json`은 최상위가 배열이 아니라 `{"companies": [...]}` 구조다. 직접 iterate하지 말고 `.get("companies", [])`로 접근한다.
 - `## 사용자 메모` 구분자 이하 내용은 재내보내기 시 보존한다.
 - 회사명·별칭을 `[[wikilink]]`로 자동 변환한다. 길이 역순으로 처리해 부분 매칭을 방지한다.
-- **자기참조 주의(Folio OS 원칙 5)**: 내보내는 노트에는 `generated_by`, `source_layer: primary_processed`, `reuse_as_evidence: false`를 붙여, 향후 Obsidian importer가 이를 evidence로 재사용하지 않도록 한다.
+- **자기참조 주의(Folio Board 원칙 5)**: 내보내는 노트에는 `generated_by`, `source_layer: primary_processed`, `reuse_as_evidence: false`를 붙여, 향후 Obsidian importer가 이를 evidence로 재사용하지 않도록 한다. `generated_by` 값은 `features/common/self_reference.py::GENERATED_BY_MARKER`(`"Folio Board"`) 하나로 쓰지만, 과거 `Folio OS` 값도 importer와 `web/src/app/deepResearchPayload.ts::parseLedger`가 계속 자기참조로 인식한다(dual-read, plan §4.3).
 

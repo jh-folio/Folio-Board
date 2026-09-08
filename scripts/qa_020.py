@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-side Folio OS 0.2 QA evidence orchestrator.
+"""Host-side Folio Board 0.2 QA evidence orchestrator.
 
 This file is deliberately not part of the release package.  It only operates
 inside a marker-owned attempt directory and never opens the repository's real
@@ -1761,7 +1761,7 @@ def command_cleanup(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Prepare, supervise, fault, and verify Folio OS QA-020 evidence.")
+    parser = argparse.ArgumentParser(description="Prepare, supervise, fault, and verify Folio Board QA-020 evidence.")
     commands = parser.add_subparsers(dest="command", required=True)
 
     prepare = commands.add_parser("prepare", help="Extract a synthetic release artifact and emit fixture-manifest.json.")

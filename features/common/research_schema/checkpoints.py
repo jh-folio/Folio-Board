@@ -1,4 +1,4 @@
-"""Common Checkpoint schema for Folio OS research artifacts.
+"""Common Checkpoint schema for Folio Board research artifacts.
 
 Checkpoint objects are intentionally small: they let dashboards and quality
 checks read "what to monitor next" without scraping arbitrary report markdown.

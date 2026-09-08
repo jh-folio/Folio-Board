@@ -170,7 +170,7 @@ def build_chat_prompt(message: str, context: dict, options: dict, markdown: str 
         _market_state_query(),
     ))
     return "\n\n".join(filter(None, [
-        "You are the Folio OS in-app research assistant. Folio OS is a local investment research workspace. Answer in Korean, in Markdown.",
+        "You are the Folio Board in-app research assistant. Folio Board is a local investment research workspace. Answer in Korean, in Markdown.",
         f"응답 지침: {effort}",
         "규칙: 제공된 자료(보고서 본문·첨부)에 없는 수치·출처를 만들어내지 않는다. 모르는 것은 data gap으로 명시한다. "
         "사용자 메모·첨부는 hypothesis(가설)이며 객관적 근거처럼 단정하지 않는다. 저장된 파일을 수정하라는 요청이라도 이 응답에서는 수정하지 말고 답변만 한다.",
@@ -193,7 +193,7 @@ def build_revision_prompt(message: str, context: dict, options: dict, markdown: 
     effort = EFFORT_HINTS.get(options.get("effort", "medium"), EFFORT_HINTS["medium"])
     attachments = _attachment_block(options)
     return "\n\n".join(filter(None, [
-        "You are the Folio OS report revision assistant. Revise the saved report markdown according to the user's request.",
+        "You are the Folio Board report revision assistant. Revise the saved report markdown according to the user's request.",
         f"수정 강도 지침: {effort}",
         "Hard rules:",
         "- Return ONLY a JSON object: {\"summary\": \"한국어 한두 문장 변경 요약\", \"revisedMarkdown\": \"수정된 전체 markdown\"}.",

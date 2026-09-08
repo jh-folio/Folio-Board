@@ -206,7 +206,7 @@ def _assert_no_report(session: Session, report_id: str, requests: list[JsonValue
 
 def _copy_clean_marker(runtime: Path) -> bool:
     marker = runtime / ".folio-qa-owned"
-    return marker.is_file() and marker.read_text(encoding="utf-8") == "folio-os-0-2-0\n"
+    return marker.is_file() and marker.read_text(encoding="utf-8") == "folio-board-0-2-0\n"
 
 
 def _remove_owned(runtime: Path) -> None:

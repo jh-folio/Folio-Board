@@ -1,4 +1,4 @@
-# Folio OS Public Release Checklist
+# Folio Board Public Release Checklist
 
 Use this checklist before changing the repository visibility to Public.
 
@@ -45,7 +45,7 @@ once; the order is cheapest-first so a failure stops you early.
 - [ ] Python tests pass.
 - [ ] `py -3 scripts/public_release_audit.py` passes.
 - [ ] `py -3 scripts/package_release.py --version v0.3.0` creates a verified ZIP under `dist/`.
-- [ ] `py -3 scripts/verify_release.py --release-dir dist/FolioOS-v0.3.0` passes.
+- [ ] `py -3 scripts/verify_release.py --release-dir dist/FolioBoard-v0.3.0` passes.
 - [ ] Web typecheck passes.
 - [ ] Web tests pass.
 - [ ] Web build passes.

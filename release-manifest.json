@@ -1,5 +1,5 @@
 {
-  "packageName": "FolioOS",
+  "packageName": "FolioBoard",
   "runtimeFiles": [
     ".env.example",
     "VERSION",

@@ -172,7 +172,7 @@ def attempt_cli(
     )
     agent_prompt = "\n".join(
         [
-            "Write the final Folio OS Topic Report from this approved context pack.",
+            "Write the final Folio Board Topic Report from this approved context pack.",
             f"Read the UTF-8 pack at: {pack_path}",
             boundary,
             "Return final Markdown only and do not write files.",

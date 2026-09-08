@@ -20,11 +20,11 @@ Claude 작성은 `plan`이 아닌 `dontAsk`로 실행한다. 도구는 Read/Glob
 
 브리핑은 자료 보완 검색과 본문 작성을 분리합니다. Codex 작성 명령은 `web_search="disabled"`, 보완 조회는 `web_search="live"`를 명시하고 Claude 작성에서는 WebSearch/WebFetch를 제한합니다. 다른 작업의 검색 정책은 그대로입니다. 실행 도구 사용이 관측되지 않으면 미확인으로 기록하며, 명령에 설정했다고 실제 검색 증거로 계산하지 않습니다. API와 CLI는 같은 시장별 이전 확인 사항 및 제한 뉴스 선별 컨텍스트를 사용합니다.
 
-AI Agent Mode는 OpenAI/Gemini/Claude API Key 없이도 Codex, Claude Code 같은 구독형 AI 에이전트를 Folio OS의 최종 작성자로 쓰기 위한 보조 기능입니다.
+AI Agent Mode는 OpenAI/Gemini/Claude API Key 없이도 Codex, Claude Code 같은 구독형 AI 에이전트를 Folio Board의 최종 작성자로 쓰기 위한 보조 기능입니다.
 
 0.2에서는 Home과 Deep Research에서 Agent를 사용하고, 두 화면이 같은 metadata-only Work Log를 공유합니다. Work Log에는 prompt, reply transcript, Markdown, diff, attachment, 로컬 path, credential, raw stdout/stderr가 저장되지 않습니다. Canonical 보고서는 generate/regenerate 또는 명시적으로 승인된 proposal만 수정할 수 있습니다.
 
-Folio OS는 자료 선별, context pack 생성, 저장 포맷, 품질 metadata를 맡고, 현재 채팅 중인 AI 에이전트가 context pack을 읽어 보고서/overlay/delta를 작성합니다. 앱 내부 LLM API를 호출하지 않는 경로입니다.
+Folio Board는 자료 선별, context pack 생성, 저장 포맷, 품질 metadata를 맡고, 현재 채팅 중인 AI 에이전트가 context pack을 읽어 보고서/overlay/delta를 작성합니다. 앱 내부 LLM API를 호출하지 않는 경로입니다.
 
 ## Phase 1 흐름
 
@@ -141,7 +141,7 @@ mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissio
 in settings.json (e.g. read_file(<target>)).
 ```
 
-**Folio OS의 Agent task는 전부 컨텍스트 팩 파일을 읽는 것으로 시작한다.** 팩이 5.2MB라 프롬프트에 넣을 수 없고(게다가 agy는 프롬프트를 명령 인자로 받아 Windows 32,767자 한계가 걸린다), `--add-dir`로도 열리지 않는다(실측). 그래서 antigravity로는 브리핑·기업분석을 만들 수 없다. 파일을 읽지 않는 호출(도크 대화, 테마 계획)은 정상 동작한다 — 실측으로 짧은 프롬프트는 20초에 응답했다.
+**Folio Board의 Agent task는 전부 컨텍스트 팩 파일을 읽는 것으로 시작한다.** 팩이 5.2MB라 프롬프트에 넣을 수 없고(게다가 agy는 프롬프트를 명령 인자로 받아 Windows 32,767자 한계가 걸린다), `--add-dir`로도 열리지 않는다(실측). 그래서 antigravity로는 브리핑·기업분석을 만들 수 없다. 파일을 읽지 않는 호출(도크 대화, 테마 계획)은 정상 동작한다 — 실측으로 짧은 프롬프트는 20초에 응답했다.
 
 브리핑 Agent pack의 출처 카탈로그는 컨텍스트에 실제로 렌더링된 writer 자료 집합에서 만들어집니다. API와 CLI 모두 같은 `sourceId` 집합을 사용하고, 시장별 ledger도 해당 시장 writer 자료만 보존합니다. Summary와 Full Text는 분리된 제한 발췌로 전달되며 페이지 메뉴·추천·자동 요약 문구는 제외됩니다.
 
@@ -154,7 +154,7 @@ Antigravity CLI는 [공식 페이지](https://antigravity.google/product/antigra
 
 **버전 게이트는 지웠다(0.5.3).** 예전에는 `AGY_HEADLESS_FIXED = (1, 1, 7)` 이상이면 브리지를 열었다. 1.0.10의 Windows `--print`가 모델 응답을 stdout으로 반환하지 못하던 업스트림 버그(`transcript.jsonl`을 POSIX 경로로 열려다 실패)가 1.1.7에서 고쳐진 것을 확인하고 연 것이다.
 
-**그 확인이 틀린 것은 아니지만 충분하지 않았다.** 짧은 프롬프트 하나로 "출력이 돌아오는가"만 재고 열었는데, Folio OS의 Agent task는 예외 없이 컨텍스트 팩 **파일을 읽는 것으로 시작**한다. 그 경로는 한 번도 돌려보지 않았고, 1.1.12는 그 읽기를 거부한다. 결과는 기록에 그대로 남아 있다 — 게이트를 연 뒤 실행된 Agent 잡 두 건이 모두 실패했고, 그전까지 antigravity로 성공한 잡은 한 건도 없다.
+**그 확인이 틀린 것은 아니지만 충분하지 않았다.** 짧은 프롬프트 하나로 "출력이 돌아오는가"만 재고 열었는데, Folio Board의 Agent task는 예외 없이 컨텍스트 팩 **파일을 읽는 것으로 시작**한다. 그 경로는 한 번도 돌려보지 않았고, 1.1.12는 그 읽기를 거부한다. 결과는 기록에 그대로 남아 있다 — 게이트를 연 뒤 실행된 Agent 잡 두 건이 모두 실패했고, 그전까지 antigravity로 성공한 잡은 한 건도 없다.
 
 **버전 비교는 권한 문제를 구조적으로 볼 수 없다.** 그래서 게이트를 `features/agent_mode/agy_capability.py`의 **실측**으로 바꿨다.
 
@@ -222,7 +222,7 @@ Claude/Antigravity 실행 정책은 그대로이며 예외가 나도 실행별 �
 이 제한은 알려진 Codex 브라우저 도구 경로를 제외하는 조치이며 임의의 사용자 정의 MCP나
 셸 명령까지 막는 OS 수준 격리는 아니다. 실행별 설정 방식은
 [Codex 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)를 따른다.
-변경은 Folio OS 서버를 재시작한 뒤 시작하는 작업부터 적용되며, 이미 실행 중인 브리핑을
+변경은 Folio Board 서버를 재시작한 뒤 시작하는 작업부터 적용되며, 이미 실행 중인 브리핑을
 취소하거나 열린 브라우저 탭을 닫지 않는다.
 
 ## 사용 예시

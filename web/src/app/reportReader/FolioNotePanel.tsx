@@ -143,7 +143,7 @@ export function buildAgentNotePrompt(
     return `${index + 1}. ${item.summary || "Agent"}: ${message || (note ? "(투자 노트 전체를 업데이트함)" : "")}`;
   }).join("\n\n");
   return [
-    "현재 열린 보고서와 Folio OS Market Memory를 함께 참고해, 사용자와 대화하면서 투자 노트를 완성해줘.",
+    "현재 열린 보고서와 Folio Board Market Memory를 함께 참고해, 사용자와 대화하면서 투자 노트를 완성해줘.",
     "사용자가 적은 생각은 근거가 아니라 hypothesis다. 옹호하지 말고 검증 가능한 투자 노트로 다듬어줘.",
     "없는 사실은 지어내지 말고, 추가 확인 필요로 표시해줘.",
     "사용자 판단과 Agent가 제안하는 해석을 구분하고, 반대 근거와 다음 체크포인트를 포함해줘.",
