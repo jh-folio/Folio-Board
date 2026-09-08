@@ -1,6 +1,6 @@
 """Obsidian 노트 frontmatter 파싱 + 계층(hypothesis / self_generated) 분류.
 
-PyYAML 의존 없이 Folio OS가 다루는 frontmatter 부분집합만 파싱한다:
+PyYAML 의존 없이 Folio Board가 다루는 frontmatter 부분집합만 파싱한다:
 - `key: value` 스칼라 (따옴표 가능)
 - `key: [a, b]` 인라인 리스트
 - 블록 리스트:
@@ -10,8 +10,12 @@ PyYAML 의존 없이 Folio OS가 다루는 frontmatter 부분집합만 파싱한
 
 분류 규칙(CLAUDE.md §5, IMPLEMENTATION_PLAN Step 1):
 - `company_thesis` / `market_memo` (또는 source_layer: user_synthesis) → hypothesis (import 대상)
-- Folio OS가 생성·내보낸 노트(generated_by 있음 / source_layer: primary_processed /
-  reuse_as_evidence: false / 생성 타입) → self_generated (import 제외, 자기참조 금지)
+- Folio Board(구 Folio OS)가 생성·내보낸 노트(generated_by 있음 / source_layer: primary_processed /
+  reuse_as_evidence: false / 생성 타입) → self_generated (import 제외, 자기참조 금지).
+  `classify()`는 `generated_by` 값을 비교하지 않고 `bool()`로만 판정하므로, 신·구 표시명
+  중 어느 쪽이 적혀 있어도(과거 export가 쓴 `Folio OS`, 새 export가 쓰는 `Folio Board`)
+  똑같이 self_generated로 걸린다 — 값 비교가 필요한 곳은 이 파일이 아니라
+  web/src/app/deepResearchPayload.ts::parseLedger 하나뿐이다.
 - 그 외 → unknown (import 제외)
 """
 from __future__ import annotations
@@ -21,7 +25,7 @@ from dataclasses import dataclass, field
 
 # 사용자 2차 사고(hypothesis)로 취급하는 노트 타입
 HYPOTHESIS_TYPES = {"company_thesis", "market_memo", "topic_review", "investment_journal"}
-# Folio OS가 생성·내보낸 노트 타입 (self-reference 방지 — import 제외)
+# Folio Board(구 Folio OS)가 생성·내보낸 노트 타입 (self-reference 방지 — import 제외)
 GENERATED_TYPES = {"source_note", "briefing", "company_analysis", "narrative", "thesis_delta", "topic_report"}
 
 LAYER_HYPOTHESIS = "hypothesis"

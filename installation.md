@@ -178,7 +178,7 @@ Releases unzip into a **version-named folder** such as `FolioOS-v0.5.4/`. The ne
 
 ### If you moved your data (Settings > “자료 위치”)
 
-Nothing to copy. Start the new folder and Folio OS finds `~/Documents/FolioOS` on its own. Copy `.env` across if you use API keys.
+Nothing to copy. Start the new folder and Folio Board finds `~/Documents/FolioBoard` on its own — or the older `~/Documents/FolioOS`, if that's still where your data is. Copy `.env` across if you use API keys.
 
 Moving is a one-time choice that makes every later update a plain unzip. It **copies** your data and never deletes the original.
 

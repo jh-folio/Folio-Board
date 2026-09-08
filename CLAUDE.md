@@ -118,7 +118,7 @@ Python 패키지명에는 하이픈을 쓸 수 없으므로 런타임 코드는 
 2. **3계층 데이터 위계** — evidence / source-grounded / hypothesis를 섞지 않는다. 사용자 노트와 userContext는 근거가 아니라 가설·관심 방향이다.
 3. **확증편향 방지** — Overlay·Thesis·Regime·Topic 산출물에는 `counterEvidence`/`contradictions`/`uncertainties`(또는 challenging evidence)를 항상 포함한다. 사용자 생각을 옹호하지 말고 검증한다.
 4. **결론은 enum으로 통제** — verdict·momentum·report_type·evidenceRole 등 결론·분류는 코드에서 enum/길이/출처를 검증한다. LLM 자유 텍스트로 결론을 확정하지 않는다.
-5. **자기참조 금지** — Folio OS가 Obsidian으로 내보낸 노트(`generated_by`, `source_layer: primary_processed`, `reuse_as_evidence: false`)를 다시 evidence로 쓰지 않는다.
+5. **자기참조 금지** — Folio Board(구 Folio OS)가 Obsidian으로 내보낸 노트(`generated_by`, `source_layer: primary_processed`, `reuse_as_evidence: false`)를 다시 evidence로 쓰지 않는다. `generated_by`는 신·구 표시명 중 어느 쪽이 적혀 있어도 자기참조로 인식한다 — 과거 내보내기가 남긴 `Folio OS` 값도 영구히 걸러진다.
 
 ---
 

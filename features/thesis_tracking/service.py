@@ -14,6 +14,7 @@ from features.obsidian.export.formatter import build_frontmatter, preserve_user_
 from features.obsidian.export.service import get_vault_settings
 from features.llm_settings.client import bool_override
 from features.common.utils import now_iso
+from features.common.self_reference import GENERATED_BY_MARKER
 from features.thesis_tracking import delta as D
 from features.thesis_tracking import model as M
 from features.thesis_tracking import review_state as RS
@@ -353,7 +354,7 @@ def export_thesis_delta_to_obsidian(thesis: dict, delta: dict) -> dict:
     verdict = delta.get("verdict", M.VERDICT_DEFAULT)
     meta = {
         "type": "thesis_delta",
-        "generated_by": "Folio OS",
+        "generated_by": GENERATED_BY_MARKER,
         "source_layer": "primary_processed",
         "reuse_as_evidence": False,
         "ticker": ticker,

@@ -108,7 +108,7 @@ run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/
 - Step 6 Data Foundation Lite 이후 저장된 Delta에는 공통 `checkpoints`, `evidenceItems`, `sourceLedger` 필드가 함께 들어간다. `checkpoints`는 기존 `nextCheckpoints`를 구조화한 별도 필드이며, thesis/user note는 계속 hypothesis로만 취급한다.
 - Step 7 Research Quality 이후 저장된 Delta에는 공통 `quality` 필드가 함께 들어간다. 평가는 반대 근거, 체크포인트, sourceGrounding, personalBiasRisk를 규칙 기반으로 점검한다.
 - Step 9 Data Source Reliability 이후 저장된 Delta에는 `dataGaps`와 `officialMaterials` 메타가 함께 들어갈 수 있다. 공식자료가 부족하면 `suggestedAction`으로 SEC/DART 설정 확인 또는 `research-inbox/filings/` 보강 경로를 안내한다.
-- Obsidian export: `type: thesis_delta`, `generated_by: Folio OS`, `source_layer: primary_processed`, `reuse_as_evidence: false` frontmatter로 `Thesis Delta/` 폴더에 저장한다.
+- Obsidian export: `type: thesis_delta`, `generated_by: Folio Board`, `source_layer: primary_processed`, `reuse_as_evidence: false` frontmatter로 `Thesis Delta/` 폴더에 저장한다. 과거(리네이밍 전)에 내보낸 노트는 `generated_by: Folio OS`를 그대로 가지며, importer는 둘 다 자기참조로 인식한다.
 
 ## 화면 — Watchlist 상세가 주 표면이다 (0.6 Stage C.2)
 

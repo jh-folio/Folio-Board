@@ -27,6 +27,7 @@
 | `data_reliability/` | 공식자료 우선순위, provider 상태, 한국 수동 데이터 보강 경로 |
 | `diagnostics/` | 실행별 bounded privacy-safe diagnostic record, OS writer lease, SharedJob/direct producer observer와 headless safe projection (0.6 L1a/L1b/L1c; UI 없음) |
 | `execution_result.py` | provider 본문/response ID를 메모리에만 두는 additive structured execution facts; 기존 tuple/string API는 변경하지 않음 |
+| `self_reference.py` | `generated_by` 자기참조 마커(`GENERATED_BY_MARKER`)와 신·구 이름 별칭 집합(`SELF_GENERATED_MARKER_ALIASES`) 단일 출처. Obsidian/Notion export writer가 값을 쓸 때 쓴다 |
 
 ## workspace.py / workspace_service.py
 
@@ -39,7 +40,7 @@
 1. `FOLIO_HOME` 환경변수 — 화면에 노출하지 않는 탈출구. 이 값이 있으면 설정 화면의 옮기기를 막습니다(표지를 써도 다음 시작에서 환경변수가 이기므로, 옮겼다고 말하면 거짓말이 됩니다).
 2. 앱 폴더의 `workspace.json` 표지 — 옮기기가 성공했을 때만 생깁니다. 배포 zip에는 없습니다.
 3. 앱 폴더 `data/`에 **파일이 있으면** 앱 폴더.
-4. `~/Documents/FolioOS`에 자료가 있으면 거기.
+4. `~/Documents/FolioBoard`(새 이름) 또는 `~/Documents/FolioOS`(구 이름, 새 이름에 자료가 없을 때만)에 자료가 있으면 거기. 옮기기의 목적지는 새 이름 하나뿐이지만, 이 탐색만은 구 이름을 계속 본다 — 옮겨 둔 사용자가 새 버전을 풀었을 때 자료를 잃지 않기 위해서다.
 5. 아니면 앱 폴더 — 기본값.
 
 **기본값은 앱 폴더입니다.** 옮기는 것은 선택이며 아무것도 새로 만들지 않습니다.
