@@ -21,7 +21,7 @@ Give your AI Agent the repository link and the prompt below.
 Install and run Folio Board on my local PC.
 
 Repository:
-https://github.com/jh-folio/FolioOS
+https://github.com/jh-folio/Folio-Board
 
 Please:
 1. Clone the repository.
@@ -73,8 +73,8 @@ Optional but recommended:
 ### Clone The Repository
 
 ```powershell
-git clone https://github.com/jh-folio/FolioOS.git
-cd FolioOS
+git clone https://github.com/jh-folio/Folio-Board.git
+cd Folio-Board
 ```
 
 If you downloaded a ZIP release instead, extract it and open a terminal in the extracted folder.
