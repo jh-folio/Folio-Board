@@ -33,13 +33,44 @@ meant to be run again after 0.6 work resumes, and again at the 0.6
 release gate, to catch any old-name text introduced by habit after the
 rename lands.
 
-Usage:
-    py -3 scripts/check_name_inventory.py             # human-readable report
-    py -3 scripts/check_name_inventory.py --json       # machine-readable report
+Two modes, two different questions, two different exit contracts:
 
-Exit code is non-zero iff one or more occurrences could not be matched
-by any rule in CLASSIFICATION_RULES (i.e. are "unclassified"). A large
-"replace" count is expected and is not itself a failure.
+    Gate A / default mode
+        Question: "did every occurrence get classified?" Used while the
+        old name is still everywhere on purpose (nothing has been
+        renamed yet). A large `replace` count is expected and is NOT a
+        failure — `replace` just means "this text will be swapped to
+        the new name in a later phase." Exit code is non-zero iff
+        `unclassified_count` > 0.
+
+    --expect-clean mode
+        Question: "is the old name gone from everywhere it was supposed
+        to be renamed?" Used AFTER the rename has actually shipped, per
+        plan §11.1, where a `replace`-bucket hit no longer means "will
+        be renamed later" — it means "should already be gone and isn't"
+        (old name reintroduced by habit, or a rename step missed). Exit
+        code is non-zero if `unclassified_count` > 0 OR the `replace`
+        bucket is non-empty. `dual-read` / `retain` / `historical` /
+        `external` occurrences are expected to survive the rename
+        permanently, so they are reported as informational counts and
+        never fail this mode.
+
+Usage (see docs/rename-inventory.md "Re-running this check" for the
+three concrete run contexts and which mode each one uses):
+    py -3 scripts/check_name_inventory.py                   # Gate A: human-readable
+    py -3 scripts/check_name_inventory.py --json             # Gate A: machine-readable
+    py -3 scripts/check_name_inventory.py --expect-clean     # post-rename: human-readable
+    py -3 scripts/check_name_inventory.py --expect-clean --json  # post-rename: machine-readable
+
+Run-context -> mode mapping:
+    Gate A (Phase A, now — old name still everywhere on purpose)
+        -> default mode, no flag.
+    Rename merge (Phase F, first run — right after the rename branch
+    merges into 0.6; plan §11.1 "리네이밍을 0.6에 병합할 때 한 번")
+        -> --expect-clean
+    0.6 release gate (Phase F, second run — after 0.6 work has resumed
+    and shipped; plan §11.1 "0.6 발행 게이트에서 한 번 더")
+        -> --expect-clean
 """
 
 from __future__ import annotations
@@ -79,9 +110,34 @@ EXCLUDED_PATH_PREFIXES = (
     ".playwright-mcp/",
 )
 
+# This script's own two record files are exempt from the scan — deliberately,
+# not by oversight. They are the durable, permanent record of where the old
+# name lived and how each occurrence was classified: this file's own
+# CLASSIFICATION_RULES table (rule ids, "reason" strings, and the
+# OLD_NAME_PATTERN source itself all spell the old name on purpose), and
+# docs/rename-inventory.md's occurrence tables and per-bucket prose. Neither
+# file's old-name text is ever meant to be renamed:
+#   - If they were scanned like ordinary source, every hit inside them would
+#     fall to the `replace-default` rule (neither file matches any
+#     dual-read/retain/historical/external content or path rule), inflating
+#     the totals with the checker counting itself.
+#   - Worse, that misclassification would poison --expect-clean (see main()):
+#     a post-rename run would see this file's own "replace" hits and refuse
+#     to exit 0 forever, demanding the classifier's rule table and the
+#     historical inventory report be rewritten to erase the very record they
+#     exist to preserve.
+# Excluded by exact path (not a directory prefix), so any other file later
+# added under scripts/ or docs/ is still scanned normally.
+RENAME_RECORD_FILES = (
+    "scripts/check_name_inventory.py",
+    "docs/rename-inventory.md",
+)
+
 
 def is_excluded(rel_posix: str) -> bool:
     if rel_posix.startswith(".tmp-"):
+        return True
+    if rel_posix in RENAME_RECORD_FILES:
         return True
     for prefix in EXCLUDED_PATH_PREFIXES:
         if rel_posix == prefix.rstrip("/") or rel_posix.startswith(prefix):
@@ -444,8 +500,10 @@ def build_report(occurrences: list[Occurrence]) -> dict:
     }
 
 
-def print_human_report(report: dict) -> None:
-    print(f"Folio OS name inventory — {report['total_occurrences']} occurrences across {report['total_files']} files\n")
+def print_human_report(report: dict, expect_clean: bool) -> None:
+    mode_label = "--expect-clean (post-rename verification)" if expect_clean else "default (Gate A)"
+    print(f"Folio OS name inventory — {report['total_occurrences']} occurrences across {report['total_files']} files")
+    print(f"Mode: {mode_label}\n")
     width = max(len(b) for b in BUCKETS)
     for bucket in BUCKETS:
         count = report["bucket_counts"][bucket]
@@ -463,8 +521,31 @@ def print_human_report(report: dict) -> None:
             "\nAdd a CLASSIFICATION_RULES entry (or extend an existing default "
             "prefix) in scripts/check_name_inventory.py for the location(s) above."
         )
+
+    if expect_clean:
+        replace_count = report["bucket_counts"]["replace"]
+        survivors = ", ".join(
+            f"{b}={report['bucket_counts'][b]}" for b in ("dual-read", "retain", "historical", "external")
+        )
+        print(
+            f"\n{survivors} are expected to survive the rename permanently and "
+            "are informational only — they do not fail --expect-clean."
+        )
+        if replace_count or report["unclassified_count"]:
+            print(
+                f"\n--expect-clean: FAIL. {replace_count} `replace`-bucket "
+                f"occurrence(s) (old-name text that should already have been "
+                f"renamed away) and {report['unclassified_count']} unclassified "
+                "occurrence(s) found. Run without --json to see `replace` rows, "
+                "or --json for the full occurrence list."
+            )
+        else:
+            print("\n--expect-clean: PASS. No `replace`-bucket or unclassified occurrences remain.")
     else:
-        print("\nAll occurrences classified. Gate A: PASS.")
+        if report["unclassified_count"]:
+            print("\nGate A: FAIL. See UNCLASSIFIED occurrences above.")
+        else:
+            print("\nAll occurrences classified. Gate A: PASS.")
 
 
 def occurrence_to_json(occ: Occurrence) -> dict:
@@ -479,8 +560,9 @@ def occurrence_to_json(occ: Occurrence) -> dict:
     }
 
 
-def print_json_report(report: dict) -> None:
+def print_json_report(report: dict, expect_clean: bool) -> None:
     payload = {
+        "mode": "expect-clean" if expect_clean else "gate-a",
         "total_occurrences": report["total_occurrences"],
         "total_files": report["total_files"],
         "bucket_counts": report["bucket_counts"],
@@ -488,6 +570,14 @@ def print_json_report(report: dict) -> None:
         "unclassified_count": report["unclassified_count"],
         "occurrences": [occurrence_to_json(o) for o in report["occurrences"]],
     }
+    if expect_clean:
+        # In this mode, dual-read/retain/historical/external are expected to
+        # survive the rename permanently and are informational only; only
+        # `replace` (old-name text that should already be gone) and
+        # unclassified occurrences make `passed` false. See module docstring.
+        payload["passed"] = not (report["bucket_counts"]["replace"] or report["unclassified_count"])
+    else:
+        payload["passed"] = not report["unclassified_count"]
     print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=False))
 
 
@@ -506,16 +596,33 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of the human report.")
+    parser.add_argument(
+        "--expect-clean",
+        action="store_true",
+        help=(
+            "Post-rename verification mode (plan §11.1): exit non-zero if any "
+            "occurrence is in the `replace` bucket or unclassified. "
+            "dual-read/retain/historical/external occurrences are expected to "
+            "survive the rename permanently and are reported as informational "
+            "counts, never a failure. Use this at the rename-merge check and "
+            "again at the 0.6 release gate. Without this flag, the default "
+            "Gate A mode only checks that every occurrence was classified — "
+            "a large `replace` count is expected there and is not a failure."
+        ),
+    )
     args = parser.parse_args()
 
     occurrences = scan_repo()
     report = build_report(occurrences)
 
     if args.json:
-        print_json_report(report)
+        print_json_report(report, expect_clean=args.expect_clean)
     else:
-        print_human_report(report)
+        print_human_report(report, expect_clean=args.expect_clean)
 
+    if args.expect_clean:
+        failed = report["unclassified_count"] or report["bucket_counts"]["replace"]
+        return 1 if failed else 0
     return 1 if report["unclassified_count"] else 0
 
 

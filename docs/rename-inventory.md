@@ -6,17 +6,43 @@ repository, produced by [`scripts/check_name_inventory.py`](../scripts/check_nam
 No renaming happened in this phase; see `plan/FOLIO_BOARD_RENAME_PLAN.md`
 (local, gitignored) §6 Phase B onward for the actual rename work.
 
-Re-run the check with:
+This file and the script itself are excluded from the scan by exact path
+(`RENAME_RECORD_FILES` in `scripts/check_name_inventory.py`). Both spell the
+old name permanently on purpose — this is the durable classification record,
+and the script's own rule table and reasons need the old name to describe
+what they match. Counting them as ordinary `replace` hits would inflate the
+totals with the checker counting itself (an earlier version of this script
+did exactly that: 433 occurrences / 137 files, 55 more than the 378 / 135
+below, all inside these two files) and would make `--expect-clean` (below)
+never pass, since it would demand this record be rewritten to erase itself.
+
+The script has two run modes with different exit contracts:
+
+- **Default (Gate A) mode** — "did every occurrence get classified?" Used
+  now, while the old name is still everywhere on purpose. Exit code is
+  non-zero iff any occurrence is unclassified; a large `replace` count is
+  expected and is not a failure.
+- **`--expect-clean` mode** — "is the old name gone from everywhere it was
+  supposed to be renamed?" Used *after* the rename has shipped. Exit code is
+  non-zero if any occurrence is unclassified **or** the `replace` bucket is
+  non-empty; `dual-read`/`retain`/`historical`/`external` are expected to
+  survive the rename permanently and are reported as informational counts
+  only.
 
 ```powershell
-py -3 scripts/check_name_inventory.py          # human-readable
-py -3 scripts/check_name_inventory.py --json   # machine-readable
+py -3 scripts/check_name_inventory.py                        # Gate A: human-readable
+py -3 scripts/check_name_inventory.py --json                  # Gate A: machine-readable
+py -3 scripts/check_name_inventory.py --expect-clean           # post-rename: human-readable
+py -3 scripts/check_name_inventory.py --expect-clean --json    # post-rename: machine-readable
 ```
 
-Exit code is `0` iff every occurrence found landed in one of the five
-buckets below. Per plan §11.1 this script is meant to be run again after
-0.6 work resumes (to catch old-name text reintroduced by habit) and again
-at the 0.6 release gate.
+Which mode runs where (plan §11.1):
+
+| When | Command | What it's checking |
+|---|---|---|
+| **Gate A** (Phase A, now) | `py -3 scripts/check_name_inventory.py` | Every old-name hit is classified into one of the five buckets. |
+| **Rename merge** (Phase F, right after the rename branch merges into 0.6 — "리네이밍을 0.6에 병합할 때 한 번") | `py -3 scripts/check_name_inventory.py --expect-clean` | The rename actually finished: no `replace`-bucket hits remain. |
+| **0.6 release gate** (Phase F, after 0.6 work resumes and ships — "0.6 발행 게이트에서 한 번 더") | `py -3 scripts/check_name_inventory.py --expect-clean` | Nobody reintroduced the old name by habit while working on 0.6. |
 
 ## Totals (as of 2026-09-08, branch `codex/folio-board-rename` @ `ceedbf1`)
 
@@ -221,13 +247,16 @@ not every `folio`-prefixed identifier in the codebase.
   reviewer should not treat its `replace` bucket as "do this in Phase B
   independent of the repo transfer."
 - **`features/thesis_tracking/delta.py:248` — `"source": "Folio OS"`.**
-  Classified `replace` (a display citation label on a synthesized
-  counter-evidence item), not `dual-read`, because nothing filters on
-  this specific field's value the way the importer filters on
+  Verified `replace`, not `dual-read`: no code anywhere compares a
+  `source` field value against the literal `Folio OS` (checked across
+  every `*.py`, `*.ts`, and `*.tsx` file in the repo — the many other
+  `source`-field reads and comparisons found are unrelated `source`
+  fields on news items, price snapshots, and data-quality metadata,
+  none of them testing for this string). It is a display citation label
+  on a synthesized counter-evidence item, not a value any filter
+  branches on the way the importer's self-reference check branches on
   `generated_by`. Same file's `service.py:356` *does* write
-  `generated_by` and is correctly `dual-read`. Flagging the distinction
-  in case a reviewer disagrees that this particular field is purely
-  cosmetic.
+  `generated_by` and is correctly `dual-read`.
 - **`features/common/research_library/indexing/tests/test_index_cache.py:153`.**
   Routed to `dual-read` via an explicit path-specific rule
   (`dual-read-index-cache-relocation-test`) rather than a content match,
@@ -266,3 +295,7 @@ rule (or, if it's truly a new display string, let it fall through to the
 existing default-prefix rules) rather than special-casing individual
 lines — the existing rules already cover every directory family present
 in this repo as of Phase A.
+
+See the top of this document for the two run modes (default/Gate A vs.
+`--expect-clean`) and which of the three run contexts — Gate A, the
+rename merge, and the 0.6 release gate — uses which one.
