@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { legacyBridge } from "../legacyBridge";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
@@ -27,8 +27,11 @@ function stripInlineReferenceSections(markdown = "") {
 export function ReportBody({ markdown = "", marketScope = "both", briefing, sourcePanelHtml = "" }: ReportBodyProps) {
   const ref = useRef<HTMLElement>(null);
   const bridge = legacyBridge();
-  const bodyMarkdown = stripInlineReferenceSections(markdown);
+  const bodyMarkdown = sourcePanelHtml ? stripInlineReferenceSections(markdown) : markdown;
   const html = bridge.renderMarkdown?.(bodyMarkdown);
+  // React must not replace the article's HTML on unrelated route updates: the
+  // visual renderer owns chart DOM inserted after the Markdown was committed.
+  const innerHtml = useMemo(() => ({ __html: html || "" }), [html]);
 
   useEffect(() => {
     const article = ref.current;
@@ -47,7 +50,7 @@ export function ReportBody({ markdown = "", marketScope = "both", briefing, sour
         ref={ref}
         className="markdown-brief report-body"
         data-market-scope={marketScope}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={innerHtml}
       />
       {sourcePanelHtml && <div dangerouslySetInnerHTML={{ __html: sourcePanelHtml }} />}
     </>

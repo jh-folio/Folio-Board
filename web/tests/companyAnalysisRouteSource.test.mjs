@@ -79,6 +79,19 @@ test("Company Analysis route polls agent jobs for generated reports", async () =
   assert.match(source, /includePersonal=true/);
 });
 
+test("Company Analysis keeps an unsaved candidate visible and refreshes the feed second", async () => {
+  const source = await readFile(new URL("../src/app/CompanyAnalysisRoute.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /setSelected\(report\);\s*const saved = report\.saved === true;/s);
+  assert.match(source, /if \(saved && report\.id\) setAnalysisHash\(report\.id\);/);
+  assert.match(source, /await loadReports\(\);/);
+  assert.match(source, /생성했지만 저장 여부를 확인하지 못했습니다/);
+  assert.match(source, /function closeSelectedReport\(\)/);
+  assert.match(source, /onClick=\{closeSelectedReport\}/);
+  assert.match(source, /onClose=\{closeSelectedReport\}/);
+  assert.doesNotMatch(source, /if \(report\.id\) setAnalysisHash\(report\.id\);/);
+});
+
 test("AppShell renders CompanyAnalysisRoute on the analysis route", async () => {
   const source = await readFile(new URL("../src/app/AppShell.tsx", import.meta.url), "utf8");
 

@@ -48,8 +48,9 @@ test("Settings route preserves legacy settings visual class contracts", async ()
   assert.match(source, /Market Memory/);
   assert.match(source, /Daily Briefing/);
   assert.match(source, /cli-provider-list/);
-  assert.match(source, /selectedAgentChoices\.length \? selectedAgentChoices\.map/);
-  assert.match(source, /providerChoices\.length \? providerChoices\.map/);
+  assert.match(source, /AI Agent 연동/);
+  assert.match(source, /AI Agent 모델 설정/);
+  assert.match(source, /전역 모델 설정/);
   assert.doesNotMatch(source, /datalist id="reactAgentModelChoices"/);
   assert.doesNotMatch(source, /datalist id="reactProviderModelChoices"/);
   assert.doesNotMatch(source, /list="reactAgentModelChoices"/);
@@ -57,9 +58,46 @@ test("Settings route preserves legacy settings visual class contracts", async ()
   assert.match(source, /folio:agent-settings-updated/);
   assert.match(source, /캐시 관리/);
   assert.match(source, /cleanupCache/);
-  assert.doesNotMatch(source, /Toss Open API/);
-  assert.doesNotMatch(source, /tossClientId/);
-  assert.doesNotMatch(source, /tossClientSecret/);
+  assert.match(source, /Toss Open API/);
+  assert.match(source, /tossDraft\.clientId/);
+  assert.match(source, /tossDraft\.clientSecret/);
+  assert.match(source, /ariaLabel="Toss Open API 사용"/);
+  assert.match(source, /계좌 조회와 Portfolio 반영은 Portfolio에서 직접 눌렀을 때만 시작/);
+});
+
+test("AI model settings keep global and visible task policies in one panel", async () => {
+  const source = await readFile(new URL("../src/app/SettingsRoute.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const SETTINGS_TABS:[\s\S]*id: "ai"[\s\S]*id: "admin"[\s\S]*id: "integrations"/);
+  assert.match(source, /useState<SettingsTab>\("ai"\)/);
+  assert.match(source, /const TASK_POLICY_VISIBLE_ORDER = \[[\s\S]*"daily_briefing"[\s\S]*"company_analysis"[\s\S]*"topic_report"[\s\S]*"market_memory"[\s\S]*\] as const/);
+  assert.match(source, /data-qa="ai-agent-model-settings"/);
+  assert.match(source, /data-qa="global-model-settings"/);
+  assert.match(source, /data-qa="task-policy-settings"/);
+  assert.match(source, /<h4>전역 모델 설정<\/h4>/);
+  assert.match(source, /<h4>작업별 모델 설정<\/h4>/);
+  assert.match(source, /globalReasoningChoices/);
+  assert.match(source, /llm: \{ reasoningEffort: globalReasoningEffort \}/);
+  assert.match(source, /agent: \{ mode: agentMode \}/);
+  assert.match(source, /agent\.provider = agentProvider/);
+  assert.match(source, /agent\.model = agentModel/);
+  assert.doesNotMatch(source, /<h3>AI Agent 설정<\/h3>/);
+  assert.doesNotMatch(source, /<button[^>]*>모델\/상태 새로고침<\/button>/);
+  assert.match(source, /TASK_POLICY_VISIBLE_KEYS\.has\(key\) && row\.enabled === true/);
+  assert.match(source, /normalizeTaskPoliciesForFrontend\(rawTaskPolicies\)/);
+  assert.match(source, /async function saveTaskPolicies/);
+  assert.match(source, /function cancelAiAgentSettings/);
+  assert.match(source, /onSave=\{saveTaskPolicies\}/);
+  assert.match(source, /onCancel=\{cancelTaskPolicies\}/);
+  assert.match(source, /\/api\/settings\/task-policies\/check/);
+  assert.match(source, /reasoningByModel/);
+  assert.match(source, /function saveGlobalModelSettings/);
+  assert.match(source, /function cancelGlobalModelSettings/);
+  assert.match(source, /loadAll\(true, true\)/);
+  assert.match(source, /refreshDraftRef/);
+  assert.match(source, /className="task-policy-section"/);
+  assert.match(source, /className="global-model-section"/);
+  assert.doesNotMatch(source, /saveAiAgentSettings[\s\S]{0,180}taskPolicyRequest/);
 });
 
 test("each settings panel reports its own outcome next to its own button", async () => {

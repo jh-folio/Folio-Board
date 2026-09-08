@@ -58,6 +58,16 @@ export function useDockThreads(welcome: AgentMessage) {
     return rows.length ? rows.map(toAgentMessage) : [{ ...welcome, createdAt: new Date().toISOString() }];
   }, [welcome]);
 
+  const deleteEmptyThread = useCallback(async (id: string) => {
+    await deleteJson(`/api/agent/threads/${encodeURIComponent(id)}`, { confirm: true });
+    if (threadId === id) {
+      setThreadId("");
+      setScope(null);
+      setPending(null);
+    }
+    bumpList();
+  }, [bumpList, threadId]);
+
   /** 브라우저에만 있던 대화를 서버 스레드로 한 번 옮긴다. 실패하면 원본을 지우지 않는다. */
   const migrateLocalThread = useCallback(async () => {
     if (migratedRef.current) return;
@@ -108,5 +118,5 @@ export function useDockThreads(welcome: AgentMessage) {
 
   useEffect(() => { void migrateLocalThread(); }, [migrateLocalThread]);
 
-  return { threadId, setThreadId, scope, setScope, pending, setPending, refreshKey, bumpList, createThread, openThread, latestReply };
+  return { threadId, setThreadId, scope, setScope, pending, setPending, refreshKey, bumpList, createThread, openThread, deleteEmptyThread, latestReply };
 }

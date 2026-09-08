@@ -48,6 +48,21 @@ export const THESIS_VERDICT_DISPLAY: Record<string, Display> = {
   insufficient_evidence: { icon: "?", label: "판단 보류", tone: "muted" },
 };
 
+/**
+ * Portfolio 투자 리뷰의 검토 상태(4값). Thesis verdict·체크포인트 판정과 다른 층이라
+ * 한 배지로 합치지 않지만, **같은 표시 문법**(기호 + 라벨 + 보조색)을 쓴다.
+ */
+export const REVIEW_STATE_DISPLAY: Record<string, Display> = {
+  draft: { icon: "·", label: "초안", tone: "muted" },
+  reviewed: { icon: "✓", label: "검토 완료", tone: "teal" },
+  due: { icon: "!", label: "확인 예정", tone: "gold" },
+  stale: { icon: "↻", label: "오래됨", tone: "gold" },
+};
+
+export function reviewStateDisplay(state: string | undefined): Display {
+  return REVIEW_STATE_DISPLAY[state || "draft"] || REVIEW_STATE_DISPLAY.draft;
+}
+
 export const MOMENTUM_LABELS: Record<string, string> = {
   strengthening: "강화",
   stable: "유지",
@@ -85,7 +100,23 @@ export function transitionLabel(kind: string, value: string | undefined): string
   if (!raw) return "—";
   if (kind === "momentum") return MOMENTUM_LABELS[raw] || raw;
   if (kind === "confidence") return raw;
+  if (kind === "status") return NARRATIVE_STATUS_LABELS[raw] || "상태 정보 없음";
+  if (kind === "evidence_count") return evidenceCountLabel(raw);
   return CHECKPOINT_STATUS_DISPLAY[raw as CheckpointStatus]?.label || THESIS_VERDICT_DISPLAY[raw]?.label || raw;
+}
+
+function evidenceCountLabel(raw: string) {
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    const parts = (["d7", "d30", "d90"] as const).flatMap((key) => {
+      const count = value[key];
+      return typeof count === "number" && Number.isFinite(count) && count >= 0
+        ? [`${key.slice(1)}일 ${Math.floor(count)}`] : [];
+    });
+    return parts.length ? parts.join(" · ") : "근거 수 정보 없음";
+  } catch {
+    return "근거 수 정보 없음";
+  }
 }
 
 /** 날짜 한 줄. 두 화면이 같은 자리에서 같은 모양으로 시각을 말한다. */

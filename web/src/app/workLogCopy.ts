@@ -50,7 +50,7 @@ const ENGINE_LABELS: Record<string, string> = {
   none: "실행 없음",
 };
 
-const ADAPTER_LABELS: Record<string, string> = {
+export const ADAPTER_LABELS: Record<string, string> = {
   auto: "자동 선택",
   codex: "Codex",
   claude: "Claude",
@@ -72,7 +72,7 @@ const ARTIFACT_LABELS: Record<string, string> = {
   thesis_delta: "투자 논거 변화",
 };
 
-const FALLBACK_REASONS: Record<string, string> = {
+export const FALLBACK_REASONS: Record<string, string> = {
   engine_unavailable: "선택한 AI를 쓸 수 없어 다른 방법으로 실행했습니다.",
   engine_failed: "AI 실행이 실패해 다른 방법으로 대체했습니다.",
   confirmed_zero_evidence: "근거가 없는 상태를 확인하고 규칙 기반으로 실행했습니다.",

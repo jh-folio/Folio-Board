@@ -82,13 +82,27 @@ function briefingSources(briefing) {
   const rows = [];
   const seen = new Set();
   const add = (source) => {
-    const key = source?.url || source?.path || source?.title;
+    let key = source?.url || source?.path || source?.title;
+    if (source?.url) {
+      try {
+        const url = new URL(source.url);
+        url.hash = "";
+        for (const name of [...url.searchParams.keys()]) {
+          if (/^(utm_.+|mod|ref|referrer|fbclid|gclid)$/i.test(name)) url.searchParams.delete(name);
+        }
+        url.searchParams.sort();
+        key = url.href;
+      } catch (_) { /* Keep the original identity for non-URL sources. */ }
+    }
     if (!key || seen.has(key)) return;
     seen.add(key);
     rows.push(source);
   };
   (briefing?.sources || []).forEach(add);
   (briefing?.headlines || []).forEach((headline) => (headline.sources || []).forEach(add));
+  for (const match of markdownSourceSection(briefing?.markdown).matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
+    add({ title: match[1], url: match[2] });
+  }
   // 서버가 이미 종류별 상한(일간 24·주간 40)으로 선별했다. 여기서 14로 다시 자르면
   // 프롬프트가 본 근거의 절반이 어느 화면에도 보이지 않는다 — "참고자료는 프롬프트가
   // 본 문서 전부"(2026-08-20 결정)를 패널이 마지막에 배반하고 있었다.
@@ -97,12 +111,13 @@ function briefingSources(briefing) {
 
 function renderSourcePanel(sources) {
   if (!sources.length) return "";
-  return `<article class="headline markdown-brief source-panel">
-    <h3>참고자료</h3>
+  return `<article class="headline markdown-brief source-panel"><details>
+    <summary>참고자료 ${sources.length}건</summary>
+    <p class="meta">작성에 전달한 자료와 연결된 기사 목록입니다. 목록에 있다는 이유만으로 본문의 모든 주장을 뒷받침하는 것은 아닙니다.</p>
     <div class="sources">
-      ${sources.map((source) => `<div class="meta">${escapeHtml(source.source || "")} · ${escapeHtml(source.date || "")} · ${escapeHtml(source.type || "")} · ${sourceLink(source)}</div>`).join("")}
+      ${sources.map((source) => `<div class="source-panel-row">${sourceLink(source)}<div class="meta">${[source.source, source.date, source.type].filter(Boolean).map(escapeHtml).join(" · ")}</div></div>`).join("")}
     </div>
-  </article>`;
+  </details></article>`;
 }
 
 function unescapeMarkdownText(text) {
@@ -151,6 +166,7 @@ function renderMarkdown(value) {
   const html = [];
   let listOpen = false;
   let tableOpen = false;
+  let calendarTable = false;
   const closeList = () => {
     if (listOpen) {
       html.push("</ul>");
@@ -170,7 +186,7 @@ function renderMarkdown(value) {
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    const bulletMatch = rawLine.match(/^(\s*)[-*]\s+(.+)$/);
+    const bulletMatch = rawLine.match(/^(\s*)[-*·]\s+(.+)$/);
     if (!line) {
       closeList();
       closeTable();
@@ -181,10 +197,12 @@ function renderMarkdown(value) {
       closeList();
       const cells = tableCells(line);
       if (!tableOpen) {
-        html.push(`<div class="table-wrap"><table><thead><tr>${cells.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead><tbody>`);
+        calendarTable = cells.some((cell) => /일정|이벤트/.test(cell)) && cells.some((cell) => /날짜|일자/.test(cell));
+        html.push(`<div class="table-wrap${calendarTable ? " briefing-calendar-table" : ""}"><table><thead><tr>${cells.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead><tbody>`);
         tableOpen = true;
       } else {
-        html.push(`<tr>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`);
+        const statuses = { confirmed: "확정", estimated: "예상", actual: "발표됨", tentative: "잠정" };
+        html.push(`<tr>${cells.map((cell) => `<td>${calendarTable ? statuses[cell] || cell : cell}</td>`).join("")}</tr>`);
       }
       continue;
     }
@@ -203,7 +221,7 @@ function renderMarkdown(value) {
     if (line.startsWith("## ")) {
       closeList();
       closeTable();
-      html.push(`<h3>${inlineMarkdown(line.slice(3))}</h3>`);
+      html.push(`<h3>${inlineMarkdown(line.slice(3).replace(/^Source & Data Notes$/, "자료 기준과 한계"))}</h3>`);
       continue;
     }
     if (line.startsWith("### ")) {

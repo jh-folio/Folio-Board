@@ -10,6 +10,7 @@
   const renderGate = createRequestGate();
 
   function finite(value) {
+    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
   }
@@ -35,10 +36,24 @@
       intraday: row.intraday && Array.isArray(row.intraday.points)
         ? row.intraday
         : { interval: "5m", points: [] },
+      // 주 단위 1시간봉. 없는 저장본은 `1W`도 일봉으로 그린다.
+      hourly: row.hourly && Array.isArray(row.hourly.points)
+        ? row.hourly
+        : { interval: "1h", points: [] },
       daily: row.daily && Array.isArray(row.daily.points)
         ? row.daily
         : { interval: "1d", points: legacyPoints },
     };
+  }
+
+  /** 분·시간 단위면 참이다. `1d`는 거짓. 그리는 방식(시각 축·wall-clock 변환)과
+   *  값 요약 방식(종가 기준)이 이 하나로 갈린다. */
+  function isIntradayInterval(interval) {
+    return /^\d+\s*[mh]$/i.test(String(interval || ""));
+  }
+
+  function pointsAreIntraday(points) {
+    return (points || []).some((row) => /\d{2}:\d{2}/.test(String(row.time || "")));
   }
 
   function periodPoints(subject, period, asOf) {
@@ -47,19 +62,25 @@
     const end = new Date(`${String(asOf || "").slice(0, 10)}T00:00:00Z`);
     if (Number.isNaN(end.getTime())) return { interval: "1d", points: [] };
     const starts = {
+      // 주간 보고서의 기본 구간. asOf가 그 주 마지막 세션이라 달력 7일이면 월~금(주말
+      // 포함)이 정확히 들어오고 직전 주 세션은 들어오지 않는다.
+      "1W": new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - 6)),
       "1M": new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, end.getUTCDate())),
       "3M": new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 3, end.getUTCDate())),
       YTD: new Date(Date.UTC(end.getUTCFullYear(), 0, 1)),
       "1Y": new Date(Date.UTC(end.getUTCFullYear() - 1, end.getUTCMonth(), end.getUTCDate())),
     };
     const start = starts[period] || starts["1Y"];
-    return {
-      interval: "1d",
-      points: normalized.daily.points.filter((row) => {
-        const value = new Date(`${String(row.time || "").slice(0, 10)}T00:00:00Z`);
-        return !Number.isNaN(value.getTime()) && value >= start && value <= end;
-      }),
+    const inWindow = (row) => {
+      const value = new Date(`${String(row.time || "").slice(0, 10)}T00:00:00Z`);
+      return !Number.isNaN(value.getTime()) && value >= start && value <= end;
     };
+    // `1W`만 시간봉으로 그린다. 한 주는 일봉으로는 5점이라 선이 아니라 꺾인 선분 넷이고,
+    // 그 주 안에서 언제 움직였는지를 말하지 못한다. 더 긴 구간은 시간봉이 없거나(저장 창이
+    // 한 주다) 너무 촘촘해 일봉 그대로다.
+    const hourly = period === "1W" ? normalized.hourly.points.filter(inWindow) : [];
+    if (hourly.length >= 2) return { interval: normalized.hourly.interval || "1h", points: hourly };
+    return { interval: "1d", points: normalized.daily.points.filter(inWindow) };
   }
 
   function priceSummary(points) {
@@ -88,14 +109,33 @@
     return daily.length >= 2 ? daily.slice(-2) : [];
   }
 
+  /** 그린 날들의 **일봉 종가**만 남긴다.
+   *
+   *  값 요약은 봉을 잘게 쪼개도 종가 기준이어야 한다. 1W를 시간봉으로 그리면 첫 점이
+   *  월요일 09시 봉의 종가라 월요일 **종가**와 다르고(실측 KOSPI 6631.82 vs 6820.02,
+   *  2.8%p), 그대로 두면 머리 숫자가 −1.95%에서 +0.8%로 뛰어 같은 카드의 캡션·본문이
+   *  말하는 주간 등락과 어긋난다. 1D가 세션 5분봉을 그리면서 값은 전일 종가 대비로
+   *  말하는 것과 같은 규칙이다. */
+  function closeWindowForDrawn(subject, points) {
+    const days = new Set((points || []).map((row) => String(row.time || "").slice(0, 10)).filter(Boolean));
+    if (!days.size) return [];
+    return normalizePriceSubject(subject).daily.points
+      .filter((row) => days.has(String(row.time || "").slice(0, 10)) && finite(row.close) !== null);
+  }
+
+  function closeWindow(subject, period, points) {
+    if (period === "1D") return dailyCloseWindow(subject);
+    return pointsAreIntraday(points) ? closeWindowForDrawn(subject, points) : [];
+  }
+
   function priceSummaryForPeriod(subject, period, points) {
-    const dailyWindow = period === "1D" ? dailyCloseWindow(subject) : [];
-    return priceSummary(dailyWindow.length ? dailyWindow : points);
+    const dailyWindow = closeWindow(subject, period, points);
+    return priceSummary(dailyWindow.length >= 2 ? dailyWindow : points);
   }
 
   function hoverBaseline(subject, period, points) {
-    const dailyWindow = period === "1D" ? dailyCloseWindow(subject) : [];
-    if (dailyWindow.length) return finite(dailyWindow[0].close);
+    const dailyWindow = closeWindow(subject, period, points);
+    if (dailyWindow.length >= 2) return finite(dailyWindow[0].close);
     const first = (points || []).find((row) => finite(row.close) !== null || finite(row.value) !== null);
     return finite(first?.close ?? first?.value);
   }
@@ -148,6 +188,12 @@
     return formatHoverTime(value);
   }
 
+  /** 봉 라벨을 **봉 끝**으로 옮길 때 쓰는 분 수.
+   *
+   *  분봉만 옮긴다. 5분봉은 봉 길이가 정확히 5분이라 마지막 봉 `15:55`가 장 마감 `16:00`으로
+   *  읽혀 맞지만, 시간봉의 마지막 봉은 한 시간이 아니다 — 미국장 `15:30` 봉은 30분(마감 16:00),
+   *  한국장 `14:00` 봉은 90분(마감 15:30)이라 한 시간을 더하면 장이 끝난 뒤 시각이 된다.
+   *  그래서 시간봉은 **봉 시작** 시각 그대로 쓴다(`1h`는 여기서 0이다). */
   function intervalMinutes(interval) {
     const match = String(interval || "").match(/^(\d+)m$/i);
     return match ? Number(match[1]) : 0;
@@ -196,16 +242,32 @@
     return Math.floor((wallClock + intervalMinutes(interval) * 60 * 1000) / 1000);
   }
 
-  function initialPriceState(snapshot) {
+  /** 저장본이 실제로 답할 수 있는 기간만 남긴다.
+   *
+   *  주간 스냅샷에는 분봉이 없다(`granularities: ["1d"]`). 1D 버튼을 그대로 두면
+   *  누르는 순간 빈 차트가 되므로, 있는 자료로만 버튼을 만든다. */
+  function availablePeriods(snapshot) {
+    const series = snapshot?.series || [];
+    const has = (kind) => series.some((row) => (normalizePriceSubject(row)[kind].points || []).length > 0);
+    const periods = [];
+    if (has("intraday")) periods.push("1D");
+    if (has("daily")) periods.push("1W", "1M", "3M", "YTD", "1Y");
+    return periods.length ? periods : ["1D"];
+  }
+
+  function initialPriceState(snapshot, defaultPeriod) {
+    const periods = availablePeriods(snapshot);
+    const requested = String(defaultPeriod || "");
     return {
       selectedTicker: snapshot?.series?.[0]?.ticker || "",
-      period: "1D",
+      // 저장본이 권하는 기간(주간은 `1W`)을 쓰되, 그 저장본이 답할 수 있을 때만 쓴다.
+      period: periods.includes(requested) ? requested : periods[0],
       chartType: "line",
     };
   }
 
   function lightweightRows(points, chartType, interval) {
-    const intraday = interval === "5m";
+    const intraday = isIntradayInterval(interval);
     return (points || []).map((point) => {
       const rawTime = String(point.time || "");
       const time = intraday ? intradayChartTime(rawTime, interval) : rawTime.slice(0, 10);
@@ -284,7 +346,8 @@
   }
 
   function insertSectionSlot(heading, slot) {
-    heading.insertAdjacentElement("afterend", slot);
+    const lead = heading.nextElementSibling;
+    (lead?.tagName === "P" ? lead : heading).insertAdjacentElement("afterend", slot);
   }
 
   function buildSectionSlots(article) {
@@ -473,7 +536,7 @@
     const weightedChange = (items) => {
       const usable = items.filter((row) => finite(row.changePct) !== null);
       const total = usable.reduce((sum, row) => sum + capOf(row), 0);
-      return total ? usable.reduce((sum, row) => sum + finite(row.changePct) * capOf(row), 0) / total : 0;
+      return total ? usable.reduce((sum, row) => sum + finite(row.changePct) * capOf(row), 0) / total : null;
     };
     const normalizedGroupName = (value) => String(value || "Other").trim() || "Other";
     const shouldSkipIndustryLayer = (sector, industry) => {
@@ -901,8 +964,8 @@
   function metaText(snapshot) {
     const coverage = snapshot.coverage || {};
     const ratio = finite(coverage.ratio);
-    const coverageText = ratio === null ? coverage.status || "확인 불가" : `${Math.round(ratio * 100)}%`;
-    return `${snapshot.asOf || snapshot.marketSessionDate || "기준일 없음"} · ${snapshot.provider || "provider 미상"} · coverage ${coverageText}`;
+    const coverageText = ratio === null ? "확인 불가" : `${Math.round(ratio * 100)}%`;
+    return `${snapshot.asOf || snapshot.marketSessionDate || "기준일 없음"} · 저장 자료 범위 ${coverageText}`;
   }
 
   function cardShell(snapshot, title, kind) {
@@ -914,9 +977,10 @@
     card.innerHTML = `
       <header class="briefing-visual-header">
         <div><span class="briefing-visual-kicker">${escapeHtml(snapshot.market || "MARKET")}</span><h3>${escapeHtml(title)}</h3></div>
-        <span class="briefing-visual-freshness" data-state="${escapeHtml(snapshot.freshness || "unavailable")}">${escapeHtml(snapshot.freshness || "unavailable")}</span>
+        <span class="briefing-visual-freshness" data-state="${escapeHtml(snapshot.freshness || "unavailable")}">${escapeHtml(snapshot.type === "story_share_series" ? "수집 기사 기준" : ({ close_snapshot: "종가 기준", snapshot: "저장 시점", delayed: "지연 자료", stale: "오래된 자료", unavailable: "자료 없음" }[snapshot.freshness] || "저장 자료"))}</span>
       </header>
       <p class="briefing-visual-meta">${escapeHtml(metaText(snapshot))}</p>
+      <details class="briefing-visual-data-details"><summary>자료 정보</summary><p>${escapeHtml(snapshot.provider || "제공처 미상")} · 자료 범위는 수집 대상 기준이며 사실의 정확성이나 모든 거래일 확보를 뜻하지 않습니다.</p></details>
       <div class="briefing-visual-stage" role="img" aria-label="${escapeHtml(title)}"></div>`;
     return { id, card, stage: card.querySelector(".briefing-visual-stage") };
   }
@@ -945,7 +1009,7 @@
     card.append(footer);
   }
 
-  function renderTrend(snapshot, title, variant, comparison) {
+  function renderTrend(snapshot, title, variant, comparison, options = {}) {
     if (!shouldRenderTrend(snapshot)) {
       // 본문이 부른 이름을 어느 기업인지 확정하지 못한 경우와, 기업은 알지만 가격이
       // 없는 경우는 원인이 다르다. 같은 문구로 덮으면 읽는 사람이 무엇을 확인해야
@@ -965,7 +1029,8 @@
     const controls = document.createElement("div");
     controls.className = "briefing-price-controls";
     originalStage.before(controls);
-    const state = initialPriceState(snapshot);
+    const periods = availablePeriods(snapshot);
+    const state = initialPriceState(snapshot, options.defaultPeriod);
     let chart = null;
     let stopAutoFit = null;
 
@@ -996,7 +1061,7 @@
       const indexButtons = (snapshot.series || []).length > 1
         ? `<div class="briefing-index-strip" role="group" aria-label="지수 선택">${snapshot.series.map((row) => `<button type="button" data-ticker="${escapeHtml(row.ticker)}" aria-pressed="${row.ticker === state.selectedTicker}"><span>${escapeHtml(row.label || row.ticker)}</span><small>${escapeHtml(row.ticker)}</small></button>`).join("")}</div>`
         : "";
-      controls.innerHTML = `${indexButtons}<div class="briefing-chart-controls"><div role="group" aria-label="차트 기간">${["1D", "1M", "3M", "YTD", "1Y"].map((period) => controlButton(period, period === state.period, "period")).join("")}</div><div role="group" aria-label="차트 유형">${controlButton("라인", state.chartType === "line", "chart-type", "line")}${controlButton("캔들", state.chartType === "candle", "chart-type", "candle")}</div></div>`;
+      controls.innerHTML = `${indexButtons}<div class="briefing-chart-controls"><div role="group" aria-label="차트 기간">${periods.map((period) => controlButton(period, period === state.period, "period")).join("")}</div><div role="group" aria-label="차트 유형">${controlButton("라인", state.chartType === "line", "chart-type", "line")}${controlButton("캔들", state.chartType === "candle", "chart-type", "candle")}</div></div>`;
       controls.querySelectorAll("[data-ticker]").forEach((button) => button.addEventListener("click", () => { state.selectedTicker = button.dataset.ticker; draw(); }));
       controls.querySelectorAll("[data-period]").forEach((button) => button.addEventListener("click", () => { state.period = button.dataset.period; draw(); }));
       controls.querySelectorAll("[data-chart-type]").forEach((button) => button.addEventListener("click", () => { state.chartType = button.dataset.chartType; draw(); }));
@@ -1022,6 +1087,7 @@
       const pointByTime = new Map();
       values.forEach((row, index) => {
         const original = selected.points[index] || {};
+        // 5분봉만 봉 끝으로 옮긴다(`intervalMinutes` 주석). 시간봉·일봉은 저장된 시각 그대로다.
         const displayTime = selected.interval === "5m"
           ? intradayDisplayTime(original.time || row.time, selected.interval)
           : (original.time || row.time);
@@ -1034,7 +1100,12 @@
         layout: { background: { type: "solid", color: theme.background }, textColor: theme.text, attributionLogo: true },
         grid: { vertLines: { visible: false }, horzLines: { color: theme.grid, style: LC.LineStyle?.Dotted ?? 1 } },
         rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.08 } },
-        timeScale: { borderVisible: false, rightOffset: 1, barSpacing: state.period === "1D" ? 6 : 8, minBarSpacing: 2, timeVisible: state.period === "1D", secondsVisible: false },
+        // 오른쪽 여백은 **한 봉 너비**다. 봉이 수십 개면 눈에 띄지 않지만 주간 `1W`처럼
+        // 다섯 개뿐이면 `fitContent()`가 자리를 1/6이나 비워 두어(실측 462px 중 116px)
+        // 그 주가 수요일에 끝난 것처럼 보인다. 봉이 적을 때만 여백을 없앤다.
+        // 축의 시각 표시는 **기간 이름이 아니라 실제 봉 단위**가 정한다. `1W`가 시간봉으로
+        // 내려오는데 날짜만 찍으면 하루에 봉 예닐곱 개가 같은 라벨 아래 겹쳐 선다.
+        timeScale: { borderVisible: false, rightOffset: values.length <= 8 ? 0 : 1, barSpacing: state.period === "1D" ? 6 : 8, minBarSpacing: 2, timeVisible: isIntradayInterval(selected.interval), secondsVisible: false },
         localization: { locale: "ko-KR", dateFormat: "yyyy-MM-dd", timeFormatter: lightweightTimeLabel },
         crosshair: { mode: LC.CrosshairMode?.Normal ?? 0 },
         handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
@@ -1089,10 +1160,11 @@
 
   // ── 주간 그림 ─────────────────────────────────────────────────────────────
   //
-  // 일간 차트(`renderTrend`)는 **하루 세션**의 계약이다 — 지수 하나를 골라 절대가로
-  // 그리고 1D/1M/3M/YTD/1Y 기간을 고른다. 주간은 묻는 것이 다르다: "이번 주 시장이
-  // 어디서 어디로 갔나". 그래서 대표 지수를 **함께** 겹치고, 값은 주초 대비 %이며,
-  // 기간 버튼이 없다(기간이 곧 그 주다).
+  // `renderWeeklyFlow`는 이제 **옛 저장본 전용**이다. 대표 지수를 함께 겹쳐 주초 대비
+  // %로 그리고 기간 버튼이 없다(그 저장본이 가진 것이 그 주 5점뿐이라 기간이 곧 그 주다).
+  // 자기 일봉 이력을 담은 새 저장본은 `renderTrend`가 일간과 **같은 차트**로 그리고
+  // 기본 구간만 `1W`로 둔다(`hasStoredDailyHistory`가 둘을 가른다). 저장 시각자료는
+  // 불변이므로 이 함수를 지우면 옛 주간 보고서의 그림이 사라진다.
 
   // 색은 이 파일이 이미 쓰는 `PALETTE`를 그대로 쓴다. 차트는 canvas에 그려 CSS 변수를
   // 못 읽으므로 hex가 필요한데, 목록을 따로 두면 두 그림이 서서히 다른 색이 된다.
@@ -1140,6 +1212,7 @@
         <i style="background:${PALETTE[index % PALETTE.length]}" aria-hidden="true"></i>
         <b>${escapeHtml(row.label || row.ticker)}</b>
         <em data-direction="${signedPercent(row.changePct) === "—" ? "flat" : (finite(row.changePct) || 0) > 0 ? "up" : finite(row.changePct) < 0 ? "down" : "flat"}">${escapeHtml(signedPercent(row.changePct))}</em>
+        <small>${escapeHtml(String(row.points?.[0]?.time || "주초"))} 종가=0 · 전체 주간 ${escapeHtml(signedPercent(row.weeklyReturn))}${finite(row.weeklyReturn) === null ? " (비교 자료 없음)" : ""}</small>
       </span>`).join("");
     stage.before(legend);
 
@@ -1170,7 +1243,7 @@
         lastValueVisible: false,
         crosshairMarkerVisible: true,
       });
-      api.setData((row.points || []).map((point) => ({ time: point.time, value: finite(point.changePct) ?? 0 })));
+      api.setData((row.points || []).map((point) => finite(point.changePct) === null ? { time: point.time } : { time: point.time, value: finite(point.changePct) }));
       return { api, row };
     });
 
@@ -1217,49 +1290,159 @@
     return card;
   }
 
+  function heatmapHoverText(row) {
+    const parts = [escapeHtml(row[0]), `등락 ${signedPercent(row[1])}`];
+    if (finite(row[2]) !== null) parts.push(`종가 ${formatNumber(row[2])}`);
+    if (row[3]) parts.push(escapeHtml(row[3]));
+    return parts.join("<br>");
+  }
+
+  function storyShareValue(day, label, otherLabel) {
+    const value = finite(label === otherLabel ? day.otherShare : day.shares?.[label]);
+    return value !== null && value >= 0 && value <= 1 ? value : null;
+  }
+
+  /** 이야기 비중 그림의 좌표계 — **1 user unit = 1 CSS px**.
+   *
+   *  이 그림만 SVG라 viewBox를 고정폭(640)으로 두면 카드 폭에 비례해 글자·선·점이
+   *  함께 줄어든다. 옆 차트들은 CSS 픽셀로 그리므로 같은 카드 안에서 서식이 갈렸다 —
+   *  실측으로 축 글자 11.2px(데스크톱)/12.0px(모바일), 선 1.79px/**0.96px**였고
+   *  히트맵 라벨 13px·LWC 선 2~3px과 어긋났다. 모바일 글자만 미디어 쿼리로 두 배
+   *  키우고 선·점은 그대로 둔 보정이 그 어긋남을 더 벌렸다.
+   *
+   *  viewBox를 실제 폭에 맞추면 `--fs-meta`에 적은 12.5px가 그대로 12.5px로 나온다.
+   *  폭을 아직 재지 못한 첫 렌더는 640으로 그리고 `relayout()`/ResizeObserver가 고친다. */
+  const STORY_SHARE_HEIGHT = 275;
+  function storyShareGeometry(width) {
+    const measured = Math.round(finite(width) || 0);
+    const box = measured >= 240 ? measured : 640;
+    // 여백은 실제 글자 크기가 정한다. `100%`(12.5px에서 약 34px)가 왼쪽 밖으로 나가지
+    // 않고, 가운데 정렬한 마지막 날짜 라벨의 절반(약 17px)이 오른쪽에서 잘리지 않아야
+    // 한다 — 실측으로 오른쪽 12px에서는 `09.06`이 잘렸다.
+    return {
+      width: box,
+      height: STORY_SHARE_HEIGHT,
+      left: 52,
+      right: Math.max(160, box - 24),
+      baseline: 234,
+      span: 210,
+    };
+  }
+
   function renderStoryShareBars(snapshot, title) {
-    const days = (snapshot.days || []).filter((row) => row.date);
+    const days = (snapshot.days || []).filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date || "") && Number.isFinite(Date.parse(`${row.date}T00:00:00Z`)));
     if (!days.length) {
       return unavailableCard(snapshot, title, "그 주 수집된 뉴스가 없어 이야기 비중을 그리지 못했습니다.");
     }
-    const { card, stage } = cardShell(snapshot, title, "story-share");
+    const { id, card, stage } = cardShell(snapshot, title, "story-share");
     card.classList.add("briefing-story-share-card");
     const drivers = [...(snapshot.drivers || [])];
     const otherLabel = snapshot.otherLabel || "그 외 이야기";
     const rows = [...drivers, otherLabel];
     const colorOf = (index) => index < drivers.length
-      ? PALETTE[index % PALETTE.length]
-      : "var(--folio-border-strong, #9aa4b2)";
-    const shareOf = (day, label) => label === otherLabel
-      ? finite(day.otherShare) || 0
-      : finite((day.shares || {})[label]) || 0;
-
-    // Plotly를 쓰지 않는다. 다섯 칸짜리 쌓은 막대라 라이브러리가 필요 없고, 축·글자가
-    // 앱 토큰을 그대로 쓰는 편이 히트맵보다 정직하다.
+      ? `var(--folio-chart-${index % 5 + 1})`
+      : "var(--folio-ink-muted)";
+    const shareOf = (day, label) => storyShareValue(day, label, otherLabel);
+    const shareText = (day, label) => {
+      const share = shareOf(day, label);
+      return share === null ? "자료 없음" : `${(share * 100).toFixed(1)}%`;
+    };
+    const countText = (day) => finite(day.docCount) === null ? "기사 수 미상" : `${day.docCount}건`;
+    const dates = days.map((day) => Date.parse(`${day.date}T00:00:00Z`));
+    const start = Math.min(...dates), end = Math.max(...dates);
+    let geometry = storyShareGeometry(0);
+    const x = (index) => end === start
+      ? (geometry.left + geometry.right) / 2
+      : geometry.left + (dates[index] - start) / (end - start) * (geometry.right - geometry.left);
+    const y = (share) => geometry.baseline - share * geometry.span;
+    const chartMarkup = () => {
+      const paths = rows.map((label, index) => {
+        let connected = false;
+        const path = days.map((day, dayIndex) => {
+          const value = shareOf(day, label);
+          if (value === null) { connected = false; return ""; }
+          if (dayIndex && dates[dayIndex] - dates[dayIndex - 1] > 86400000) connected = false;
+          const command = `${connected ? "L" : "M"}${x(dayIndex)},${y(value)}`;
+          connected = true;
+          return command;
+        }).join(" ");
+        const points = days.map((day, dayIndex) => {
+          const value = shareOf(day, label);
+          return value === null ? "" : `<circle cx="${x(dayIndex)}" cy="${y(value)}" r="3" />`;
+        }).join("");
+        return `<g style="color:${colorOf(index)}"><path d="${path}" fill="none" stroke="currentColor" stroke-width="2"/>${points.replaceAll('<circle ', '<circle fill="currentColor" ')}</g>`;
+      }).join("");
+      // 날짜 라벨은 **카드 폭**이 정한다. 뷰포트 미디어 쿼리로 감추면 도크·노트 패널이
+      // 열려 카드만 좁아진 경우를 놓친다. 감춘 라벨은 아예 그리지 않는다 — CSS로만
+      // 숨기면 내보낸 PNG(스타일 없는 SVG)에서 도로 겹쳐 나온다.
+      const spacing = (geometry.right - geometry.left) / Math.max(days.length - 1, 1);
+      const dateLabels = days.map((day, index) => (spacing < 44 && index % 2 && index !== days.length - 1)
+        ? ""
+        : `<text class="story-share-date" x="${x(index)}" y="${geometry.baseline + 29}" text-anchor="middle">${escapeHtml(day.date.slice(5).replace("-", "."))}</text>`).join("");
+      return `<svg class="briefing-story-share-lines" viewBox="0 0 ${geometry.width} ${geometry.height}" width="${geometry.width}" height="${geometry.height}" role="img" aria-label="${escapeHtml(title)}: 기사 비중 0~100%, 수집 날짜별 추이">
+        ${[0, 25, 50, 75, 100].map((value) => `<line x1="${geometry.left}" x2="${geometry.right}" y1="${y(value / 100)}" y2="${y(value / 100)}" class="story-share-grid"/><text x="${geometry.left - 10}" y="${y(value / 100) + 4}" text-anchor="end">${value}%</text>`).join("")}
+        ${paths}
+        ${dateLabels}
+      </svg>`;
+    };
     stage.classList.add("briefing-story-share-stage");
     stage.innerHTML = `
-      <div class="briefing-story-share-bars">${days.map((day) => `
-        <div class="briefing-story-share-col">
-          <div class="briefing-story-share-stack" role="presentation">${rows.map((label, index) => {
-            const share = shareOf(day, label);
-            return share <= 0 ? "" : `<span style="height:${(share * 100).toFixed(2)}%;background:${colorOf(index)}" title="${
-              escapeHtml(label)} ${(share * 100).toFixed(1)}%"></span>`;
-          }).join("")}</div>
-          <div class="briefing-story-share-axis">
-            <b>${escapeHtml(String(day.date).slice(5).replace("-", "."))}</b>
-            <small>${escapeHtml(String(day.docCount))}건</small>
-          </div>
-        </div>`).join("")}
-      </div>
+      <p class="briefing-visual-caption">수집 기사 주제 비중 · 날짜별 수집 기사 수가 분모입니다. 시장 수익률이나 주가 기여도가 아닙니다.</p>
+      <div class="briefing-story-share-plot"></div>
       <div class="briefing-story-share-legend">${rows.map((label, index) => `
         <span><i style="background:${colorOf(index)}" aria-hidden="true"></i>${escapeHtml(label)}</span>`).join("")}
-      </div>`;
-    // 색만으로 알리지 않는다. 그림을 못 읽는 환경에서도 같은 값을 말한다.
-    stage.setAttribute("role", "img");
-    stage.setAttribute("aria-label", `${title}: ${days.map((day) => `${day.date} ${rows.map((label) =>
-      `${label} ${(shareOf(day, label) * 100).toFixed(0)}%`).join(", ")}`).join(" / ")}`);
-
-    let note = "거래일별 수집 뉴스의 동인 비중입니다. 보도량의 이동이지 내용의 변화가 아닙니다.";
+      </div>
+      <label class="briefing-story-share-selection">수집 날짜 <select aria-label="이야기 비중 수집 날짜">${days.map((day, index) => `<option value="${index}">${escapeHtml(day.date)} · ${escapeHtml(countText(day))}</option>`).join("")}</select></label>
+      <div class="briefing-story-share-values" aria-live="polite"></div>
+      <details><summary>날짜별 전체 값</summary><div class="table-wrap"><table><thead><tr><th>수집 날짜</th><th>기사 수</th>${rows.map((label) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${days.map((day) => `<tr><th scope="row">${escapeHtml(day.date)}</th><td>${escapeHtml(countText(day))}</td>${rows.map((label) => `<td>${shareText(day, label)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details>`;
+    stage.removeAttribute("role");
+    stage.removeAttribute("aria-label");
+    // 그림만 다시 그린다. 고른 날짜와 펼쳐 둔 표는 폭이 바뀌어도 그대로 남는다.
+    const plot = stage.querySelector(".briefing-story-share-plot");
+    const drawChart = () => {
+      geometry = storyShareGeometry(plot.clientWidth || stage.clientWidth);
+      plot.innerHTML = chartMarkup();
+    };
+    const select = stage.querySelector("select");
+    let activeDay = -1;
+    const showDay = (index) => {
+      // 같은 날을 다시 그리지 않는다 — hover가 픽셀마다 aria-live 영역을 새로 쓰면
+      // 스크린 리더가 같은 값을 계속 읽는다.
+      if (index === activeDay || !days[index]) return;
+      activeDay = index;
+      select.value = String(index);
+      const day = days[index];
+      stage.querySelector(".briefing-story-share-values").innerHTML = `<b>${escapeHtml(day.date)} · ${escapeHtml(countText(day))}</b><ul>${rows.map((label) => `<li><span>${escapeHtml(label)}</span><b>${shareText(day, label)}</b></li>`).join("")}</ul>`;
+    };
+    select.addEventListener("change", () => showDay(Number(select.value)));
+    plot.addEventListener("pointermove", (event) => {
+      if (event.pointerType === "touch") return;
+      const rect = plot.getBoundingClientRect();
+      if (!rect.width) return;
+      const position = (event.clientX - rect.left) / rect.width * geometry.width;
+      showDay(days.reduce((best, _, index) => Math.abs(x(index) - position) < Math.abs(x(best) - position) ? index : best, 0));
+    });
+    drawChart();
+    showDay(0);
+    let observer = null;
+    if (typeof root.ResizeObserver === "function") {
+      let lastWidth = geometry.width;
+      observer = new root.ResizeObserver(() => {
+        const width = storyShareGeometry(plot.clientWidth || stage.clientWidth).width;
+        if (width === lastWidth) return;
+        lastWidth = width;
+        drawChart();
+      });
+      observer.observe(plot);
+    }
+    chartRecords.set(id, {
+      kind: "svg",
+      title,
+      element: stage,
+      redraw: drawChart,
+      cleanup: () => observer?.disconnect(),
+    });
+    let note = "주말을 포함한 수집 날짜별 보도량입니다. 저장된 비중을 그대로 표시하며 자료가 없는 값은 선을 연결하지 않습니다.";
     if (snapshot.smallSample) {
       // 표본이 적으면 기사 한두 건이 비중을 수십 %p 움직인다. 그 사실을 숨기면
       // 수집량 변동이 이야기의 변화처럼 읽힌다.
@@ -1269,10 +1452,59 @@
     return card;
   }
 
-  /** 추천의 `variant`가 어떤 그림인지 정한다. 주간 두 종은 일간 렌더러로 그릴 수
-   *  없다 — 계약이 다르다(기간 버튼 없음, 값이 %, 막대). */
+  /** 주간 지수 카드의 "전체 주간" 값. 창 안 첫 종가(=0%)가 아니라 **직전 주 종가**가
+   *  기준이라 그림의 곡선과는 다른 수치다. 그래서 값과 기준일을 함께 적는다. */
+  function weeklyReturnSummary(snapshot) {
+    const parts = (snapshot?.series || []).map((row) => {
+      const label = row.label || row.ticker || "";
+      if (finite(row.weeklyReturn) === null) return `${label} 전체 주간 비교 자료 없음`;
+      const baseline = String(row.weeklyBaselineDate || "").slice(5);
+      return `${label} 전체 주간 ${signedPercent(row.weeklyReturn)}${baseline ? `(${baseline} 종가 대비)` : ""}`;
+    });
+    return parts.join(" · ");
+  }
+
+  /** 새 주간 저장본만 일간 차트로 보낸다.
+   *
+   *  옛 주간 저장본은 계열마다 `points`(주초=0%로 재기준한 **퍼센트**) 하나뿐인데
+   *  그 점에도 원 종가가 함께 들어 있어 `shouldRenderTrend`는 통과한다. 게다가
+   *  `normalizePriceSubject`가 `daily`가 없으면 그 `points`를 일봉 자리에 되돌려주므로,
+   *  통과시키면 5점짜리 주간 계열이 1M·3M·1Y 버튼을 단 지수 차트로 그려진다 —
+   *  버튼은 답할 자료가 없고 그림은 그 주만 반복한다. 그래서 **자기 일봉 이력을 가진**
+   *  저장본만 새 경로로 보내고, 기준은 저장본이 스스로 밝힌 최소 점수(`minimumTrendPoints`)다.
+   *  한 주의 거래일보다 많은 값이라 이 문턱을 넘으면 기간 버튼이 실제로 답할 수 있다. */
+  /** `1W`가 실제로 어떤 봉으로 그려지는지. 시간봉 조회가 실패한 저장본은 일봉으로
+   *  그리므로 캡션이 없는 단위를 말하지 않게 저장본을 보고 정한다. */
+  function weekBarUnit(snapshot) {
+    const hourly = (snapshot?.series || [])
+      .some((row) => (normalizePriceSubject(row).hourly.points || []).length >= 2);
+    return hourly ? "1시간봉" : "일봉";
+  }
+
+  function hasStoredDailyHistory(snapshot) {
+    const declared = finite(snapshot?.dataSufficiency?.minimumTrendPoints);
+    const minimum = Math.max(2, Math.round(declared || 8));
+    return (snapshot?.series || []).some((row) => {
+      const points = row && row.daily && Array.isArray(row.daily.points) ? row.daily.points : [];
+      return points.filter((point) => finite(point.close) !== null).length >= minimum;
+    });
+  }
+
+  /** 추천의 `variant`가 어떤 그림인지 정한다.
+   *
+   *  주간 지수는 예전에 전용 렌더러(주초=0% 겹쳐 그리기)를 썼다. 지금은 저장본이
+   *  일간과 같은 가격 이력을 담으므로 **같은 차트**로 그리고 기본 구간만 그 주로 둔다.
+   *  이력이 없는 옛 저장본은 저장 시각자료가 불변이므로 예전 그림 그대로 읽힌다. */
   function renderRecommendation(snapshot, recommendation, comparison) {
-    if (recommendation.variant === "weekly_flow_chart") return renderWeeklyFlow(snapshot, recommendation.title);
+    if (recommendation.variant === "weekly_flow_chart") {
+      if (!hasStoredDailyHistory(snapshot)) return renderWeeklyFlow(snapshot, recommendation.title);
+      const card = renderTrend(snapshot, recommendation.title, recommendation.variant, comparison, {
+        defaultPeriod: recommendation.defaultPeriod || "1W",
+      });
+      const summary = weeklyReturnSummary(snapshot);
+      appendCaption(card, weeklyCaption(snapshot, `${summary ? `${summary}. ` : ""}기본은 그 주 구간(${weekBarUnit(snapshot)})이고, 기간 버튼으로 더 긴 흐름을 함께 봅니다.`));
+      return card;
+    }
     if (recommendation.variant === "story_share_bars") return renderStoryShareBars(snapshot, recommendation.title);
     if (recommendation.variant === "treemap_heatmap") {
       const card = renderHeatmap(snapshot, recommendation.title, comparison);
@@ -1300,6 +1532,10 @@
     const groupedNodes = heatmapNodes(rows);
     const { id, card, stage } = cardShell(snapshot, title, "heatmap");
     stage.classList.add("briefing-heatmap-stage");
+    const values = document.createElement("details");
+    values.className = "briefing-visual-values";
+    values.innerHTML = `<summary>종목별 수치</summary><div class="table-wrap"><table><thead><tr><th>종목</th><th>등락</th><th>종가</th></tr></thead><tbody>${rows.map((row) => `<tr><th scope="row">${escapeHtml(row.label || row.ticker)}</th><td>${signedPercent(row.changePct)}</td><td>${finite(row.close) === null ? "자료 없음" : escapeHtml(formatNumber(row.close))}</td></tr>`).join("")}</tbody></table></div>`;
+    card.append(values);
     const nav = document.createElement("nav");
     nav.className = "briefing-heatmap-path";
     nav.setAttribute("aria-label", "히트맵 위치");
@@ -1338,7 +1574,7 @@
       marker: { colors: nodes.colors, line: { color: "#ffffff", width: 0.45 } },
       textfont: { family: HEATMAP_FONT_FAMILY, color: "#ffffff", size: HEATMAP_BASE_FONT_PX },
       textposition: "middle center",
-      hovertemplate: "%{customdata[0]}<br>등락 %{customdata[1]:+.2f}%<br>종가 %{customdata[2]:,.2f}<br>%{customdata[3]}<extra></extra>",
+      hovertemplate: nodes.customdata.map((row) => heatmapHoverText(row) + "<extra></extra>"),
       tiling: { packing: "squarify", pad: 0 },
       // Plotly pathbar는 글자도 비어 있는 얇은 띠라 나갈 방법이 보이지 않는다.
       // 좁은 화면에서 쓰던 우리 경로 버튼을 넓은 화면에서도 그대로 쓴다.
@@ -1500,6 +1736,9 @@
           record.chart.timeScale().fitContent();
         } else if (record.kind === "plotly" && root.Plotly?.Plots?.resize) {
           root.Plotly.Plots.resize(el);
+        } else if (record.kind === "svg") {
+          // 1:1 좌표계라 폭이 바뀌면 다시 그려야 글자·선 두께가 유지된다.
+          record.redraw?.();
         }
       } catch (_) {}
     }
@@ -1561,7 +1800,51 @@
         if (/^data:image\/png;base64,/i.test(dataUrl || "")) return dataUrl;
       } catch (_) {}
     }
-    return "";
+    return card?._storySharePng || "";
+  }
+
+  async function captureStoryShare(card) {
+    const original = card.querySelector?.(".briefing-story-share-lines");
+    if (!original) return;
+    const clone = original.cloneNode(true);
+    const sources = [original, ...original.querySelectorAll("*")];
+    [clone, ...clone.querySelectorAll("*")].forEach((element, index) => {
+      const style = getComputedStyle(sources[index]);
+      for (const name of ["fill", "stroke", "color", "font-family", "font-size"]) element.style.setProperty(name, style.getPropertyValue(name));
+    });
+    const lines = [...card.querySelectorAll(".briefing-story-share-legend span")].map((item) => item.textContent);
+    lines.push(...[...card.querySelectorAll("select option")].map((item) => item.textContent));
+    // viewBox는 이제 카드 폭을 따라간다(1:1 좌표계). 640을 다시 적으면 내보낸 그림만
+    // 화면과 다른 축척으로 나온다.
+    const [, , boxWidth, boxHeight] = String(original.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+    const plotWidth = Number.isFinite(boxWidth) && boxWidth > 0 ? boxWidth : 640;
+    const plotHeight = Number.isFinite(boxHeight) && boxHeight > 0 ? boxHeight : STORY_SHARE_HEIGHT;
+    const height = plotHeight + 25 + lines.length * 20;
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("viewBox", `0 0 ${plotWidth} ${height}`);
+    clone.setAttribute("width", String(plotWidth)); clone.setAttribute("height", String(height));
+    lines.forEach((line, index) => {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", "48"); text.setAttribute("y", String(plotHeight + 17 + index * 20));
+      text.setAttribute("fill", getComputedStyle(card).color); text.setAttribute("font-size", "14");
+      text.textContent = line;
+      if (index < card.querySelectorAll(".briefing-story-share-legend i").length) {
+        text.setAttribute("fill", getComputedStyle(card.querySelectorAll(".briefing-story-share-legend i")[index]).backgroundColor);
+      }
+      clone.append(text);
+    });
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" }));
+    try {
+      const bitmap = new Image(); bitmap.src = url;
+      await bitmap.decode();
+      const canvas = document.createElement("canvas"); canvas.width = plotWidth * 2; canvas.height = height * 2;
+      const context = canvas.getContext("2d");
+      context.fillStyle = chartTheme().background; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      card._storySharePng = canvas.toDataURL("image/png");
+    } catch (_) {
+      // 그림 하나를 못 만들었다고 나머지 내보내기까지 멈추지 않는다.
+    } finally { URL.revokeObjectURL(url); }
   }
 
   async function render(container, briefing, mode = "snapshot", currentPayload = null) {
@@ -1648,7 +1931,11 @@
         && (placement.sectionRole !== "leading_company" || Number(candidate.dataset.ordinal) === Number(placement.ordinal))
       );
       const stored = snapshots[recommendation.snapshotId];
-      if (!slot || !stored) continue;
+      if (!slot) continue;
+      if (!stored) {
+        slot.append(unavailableCard({ market: recommendation.market, id: recommendation.snapshotId }, recommendation.title, "이 시각자료의 저장 데이터를 찾지 못했습니다."));
+        continue;
+      }
       let snapshot = stored;
       if (placement.sectionRole === "market_flow" && stored.type === "price_series" && (stored.series || []).length > 1) {
         const preferred = preferredIndexTicker(slot._sectionText, stored.series, stored.market);
@@ -1658,7 +1945,17 @@
         };
       }
       const card = renderRecommendation(snapshot, recommendation, comparisons[snapshot.id]);
-      slot.append(card);
+      // Keep the section's interpretation between its two large figures.
+      let anchor = slot.nextElementSibling;
+      if (recommendation.variant === "treemap_heatmap") {
+        while (anchor && !isSectionBoundaryTag(anchor.tagName) && anchor.tagName !== "P") anchor = anchor.nextElementSibling;
+      }
+      if (recommendation.variant === "treemap_heatmap" && anchor?.tagName === "P") {
+        const later = document.createElement("div");
+        later.className = "briefing-inline-visual-slot";
+        anchor.insertAdjacentElement("afterend", later);
+        later.append(card);
+      } else slot.append(card);
     }
 
     // 주간 지수 흐름도 Lightweight Charts로 그린다 — 같은 credit이 붙어야 한다.
@@ -1675,6 +1972,7 @@
   async function captureImages(container) {
     const images = [];
     for (const card of visualCards(container).slice(0, 12)) {
+      await captureStoryShare(card);
       const dataUrl = visualCardCanvasDataUrl(card);
       if (!dataUrl) continue;
       images.push({
@@ -1689,6 +1987,7 @@
 
   async function replaceWithStaticImages(clone, original) {
     const originals = visualCards(original);
+    await Promise.all(originals.map(captureStoryShare));
     visualCards(clone).forEach((card, index) => {
       const dataUrl = visualCardCanvasDataUrl(originals[index]);
       const stage = card.querySelector?.(".briefing-visual-stage");
@@ -1731,6 +2030,14 @@
     renderRecommendation,
     weeklyCaption,
     signedPercent,
+    heatmapHoverText,
+    storyShareValue,
+    storyShareGeometry,
+    availablePeriods,
+    weeklyReturnSummary,
+    hasStoredDailyHistory,
+    isIntradayInterval,
+    weekBarUnit,
     preferredIndexTicker,
     buildSectionSlots,
     heatmapNodes,

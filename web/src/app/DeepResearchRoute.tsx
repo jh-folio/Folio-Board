@@ -3,6 +3,8 @@ import { useContentRevision } from "./useContentRevision";
 import { engineNote, groupMeta, listDate } from "./savedListFormat";
 import {
   ApiRequestError,
+  deleteJson,
+  isAbortError,
   FALLBACK_POLICY,
   getJson,
   isActiveJobStatus,
@@ -29,6 +31,7 @@ import { ReportBody } from "./reportReader/ReportBody";
 import { ReportReaderShell } from "./reportReader/ReportReaderShell";
 import { PersonalOverlayView } from "./reportReader/PersonalOverlayView";
 import { RouteHero } from "./RouteHero";
+import { captureReportError, isResponseLessError, ReportErrorDiagnostic, reportErrorMessage, type CapturedReportError } from "./reportErrorDiagnostic";
 import { marketStateContextProjection, readMarketStateRef } from "./marketStateContext";
 import {
   deepResearchCollectionHash,
@@ -391,6 +394,9 @@ function errorCode(error: unknown): string {
 function errorCopy(kind: ErrorKind, error: unknown): string {
   const code = errorCode(error);
   if (kind === "validation") return "투자 질문을 1~500자로 입력하세요.";
+  // 질문이 아니라 **플래너가 쓴 계획**이 계약을 어긴 경우다. 입력을 고치라고 안내하면
+  // 사용자는 멀쩡한 질문을 계속 고쳐 쓰게 된다.
+  if (code === "plan_invalid") return "AI가 쓴 실행 계획이 형식을 벗어나 저장하지 못했습니다. 다시 시도하거나 빠른 계획으로 만들어 보세요.";
   if (code === "evidence_confirmation_required" || code === "resolution_changed") return "자료 상태가 계획 미리보기와 달라졌습니다. 최신 계획을 다시 미리보고 확인하세요.";
   if (code === "no_index" || code === "index_unavailable") return "연구 인덱스를 아직 읽을 수 없습니다. RSS 자료를 수집하고 인덱스를 만든 뒤 다시 시도하세요.";
   if (code === "rss_unavailable") return "RSS 자료를 읽을 수 없습니다. RSS 수집 상태를 확인한 뒤 다시 시도하세요.";
@@ -400,10 +406,14 @@ function errorCopy(kind: ErrorKind, error: unknown): string {
     return "이 계획의 승인이 더 이상 유효하지 않습니다. 계획을 다시 미리보고 진행하세요.";
   }
   if (kind === "degraded") return "근거가 없는 규칙 기반 보고서를 실행하려면 근거 부족 확인이 필요합니다.";
-  if (kind === "generation") return "생성 작업에 실패했습니다. 입력과 승인 계획은 유지되므로 다시 실행할 수 있습니다.";
+  if (kind === "generation") return reportErrorMessage(error, "생성 작업에 실패했습니다.");
   if (kind === "report") return "저장된 리서치를 열지 못했습니다. 목록으로 돌아가 다시 시도하세요.";
   if (error instanceof Error && error.message) return error.message;
   return "요청을 처리하지 못했습니다. 입력을 확인하고 다시 시도하세요.";
+}
+
+function reportActionErrorCopy(error: unknown, fallback: string): string {
+  return isResponseLessError(error) ? reportErrorMessage(error, fallback) : errorCopy("report", error);
 }
 
 function approvalReference(envelope: PlanPreviewEnvelope): ApprovalReference {
@@ -610,6 +620,15 @@ export function DeepResearchRoute() {
   const [degradedConfirming, setDegradedConfirming] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [generationError, setGenerationError] = useState<CapturedReportError | null>(null);
+  const generationOperationId = useRef(0);
+  const generationErrorRef = useRef<CapturedReportError | null>(null);
+  generationErrorRef.current = generationError;
+  const [reportListError, setReportListError] = useState("");
+  const [reportListErrorDiagnostic, setReportListErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const [readErrorDiagnostic, setReadErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState("");
+  const [actionErrorDiagnostic, setActionErrorDiagnostic] = useState<CapturedReportError | null>(null);
   const [errorKind, setErrorKind] = useState<ErrorKind | null>(null);
   const [errorReason, setErrorReason] = useState("");
   const [readinessKind, setReadinessKind] = useState<"no-index" | "rss" | "api" | null>(null);
@@ -626,9 +645,30 @@ export function DeepResearchRoute() {
   const [reportView, setReportView] = useState<SavedViewMode>("recent");
   const requestId = useRef(0);
   const requestController = useRef<AbortController | null>(null);
+  const listRequestId = useRef(0);
+  const listController = useRef<AbortController | null>(null);
+  const actionRequestId = useRef(0);
+  const actionController = useRef<AbortController | null>(null);
+  const phaseRef = useRef<DeepResearchPhase>(phase);
+  phaseRef.current = phase;
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
   const openingReportId = useRef("");
   const restoreFocusPending = useRef(false);
+
+  const clearGenerationDiagnostic = useCallback(() => {
+    setGenerationError(null);
+  }, []);
+
+  const beginGenerationDiagnostic = useCallback(() => {
+    generationOperationId.current += 1;
+    clearGenerationDiagnostic();
+    return generationOperationId.current;
+  }, [clearGenerationDiagnostic]);
+
+  const invalidateGenerationDiagnostic = useCallback(() => {
+    generationOperationId.current += 1;
+    clearGenerationDiagnostic();
+  }, [clearGenerationDiagnostic]);
 
   const topicKey = DEFAULT_TOPIC_KEY;
   const customLabel = question;
@@ -639,42 +679,85 @@ export function DeepResearchRoute() {
     const controller = new AbortController();
     requestController.current = controller;
     requestId.current += 1;
+    invalidateGenerationDiagnostic();
     return { id: requestId.current, signal: controller.signal };
-  }, []);
+  }, [invalidateGenerationDiagnostic]);
 
   const isCurrentRequest = useCallback((id: number) => id === requestId.current, []);
 
-  const loadReports = useCallback(async (signal?: AbortSignal) => {
+  function beginReportAction() {
+    actionController.current?.abort();
+    const id = ++actionRequestId.current;
+    const controller = new AbortController();
+    actionController.current = controller;
+    setActionErrorMessage("");
+    setActionErrorDiagnostic(null);
+    return { id, controller };
+  }
+
+  function isCurrentReportAction(id: number, controller: AbortController) {
+    return id === actionRequestId.current && actionController.current === controller && !controller.signal.aborted;
+  }
+
+  function invalidateReportAction() {
+    actionRequestId.current += 1;
+    actionController.current?.abort();
+    actionController.current = null;
+    setActionErrorMessage("");
+    setActionErrorDiagnostic(null);
+    setActionBusy("");
+  }
+
+  const loadReports = useCallback(async () => {
+    const sequence = ++listRequestId.current;
+    listController.current?.abort();
+    const controller = new AbortController();
+    listController.current = controller;
     setLoading(true);
+    setReportListError("");
+    setReportListErrorDiagnostic(null);
     try {
-      const payload = await getJson<unknown>("/api/topic-reports", { signal });
+      const payload = await getJson<unknown>("/api/topic-reports", { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== listRequestId.current) return;
       setReports(parseTopicReportSummaries(payload));
       setReadinessKind(null);
       setPhase((current) => current === "readiness" ? "draft" : current);
       setReactAgentContextScope("deep-research", { surface: "topic_report", viewId: "topicrpt", reportKind: "", reportId: "", collectionId: null, collectionRevision: null });
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      setError(errorCopy("readiness", err));
-      setErrorKind("readiness");
-      setErrorReason(errorCode(err));
+      if (isAbortError(err, controller.signal) || sequence !== listRequestId.current) return;
+      const message = errorCopy("readiness", err);
+      setReportListError(message);
+      setReportListErrorDiagnostic(captureReportError(err, sequence));
       const code = errorCode(err);
-      setReadinessKind(code === "no_index" || code === "index_unavailable" ? "no-index" : code === "rss_unavailable" ? "rss" : "api");
-      setPhase("recoverable-error");
+      if (!generationErrorRef.current && phaseRef.current === "readiness") {
+        setError(message);
+        setErrorKind("readiness");
+        setErrorReason(code);
+        setReadinessKind(code === "no_index" || code === "index_unavailable" ? "no-index" : code === "rss_unavailable" ? "rss" : "api");
+        setPhase("recoverable-error");
+      }
     } finally {
-      setLoading(false);
+      if (sequence === listRequestId.current) {
+        listController.current = null;
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void loadReports(controller.signal);
-    return () => controller.abort();
+    void loadReports();
+    return () => {
+      listRequestId.current += 1;
+      listController.current?.abort();
+      listController.current = null;
+    };
   // 생성·수집이 어디서 일어나든 목록이 따라온다(자동화, 다른 탭, Agent 도크 포함).
   }, [loadReports, contentRevision]);
 
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
+    const operationId = beginGenerationDiagnostic();
     void (async () => {
       const recovery = await recoverDeepResearchJob((id) => getJson<AgentJob>(`/api/jobs/${encodeURIComponent(id)}`, { signal: controller.signal }));
       if (!current || recovery.kind === "none") return;
@@ -710,8 +793,9 @@ export function DeepResearchRoute() {
         setStatus("딥 리서치를 생성하고 자동 저장했습니다.");
         setTopicHash(report.id);
       } catch (err) {
-        if (!current || (err instanceof DOMException && err.name === "AbortError")) return;
+        if (!current || isAbortError(err, controller.signal) || operationId !== generationOperationId.current) return;
         if (err instanceof JobTerminalError) clearDeepResearchJobId();
+        setGenerationError(captureReportError(err, operationId));
         setError(errorCopy("generation", err));
         setErrorKind("generation");
         setPhase("recoverable-error");
@@ -719,7 +803,7 @@ export function DeepResearchRoute() {
       }
     })();
     return () => { current = false; controller.abort(); };
-  }, []);
+  }, [beginGenerationDiagnostic]);
 
   useEffect(() => {
     const ownedCollectionIdentity = {
@@ -742,6 +826,7 @@ export function DeepResearchRoute() {
     const handleHashChange = () => {
       if (!isDeepResearchHash()) return;
       const route = parseDeepResearchLocation(window.location.hash);
+      if (route.malformed || route.kind === "report" || route.kind === "collection") invalidateGenerationDiagnostic();
       setMalformedRoute(route.malformed);
       setDetailId(route.kind === "report" ? route.id : "");
       setCollectionDetailId(route.kind === "collection" ? route.id : "");
@@ -758,17 +843,20 @@ export function DeepResearchRoute() {
     window.addEventListener("hashchange", handleHashChange);
     handleHashChange();
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [invalidateGenerationDiagnostic]);
 
   const returnToReportList = useCallback(() => {
     restoreFocusPending.current = true;
+    invalidateGenerationDiagnostic();
+    invalidateReportAction();
+    setReadErrorDiagnostic(null);
     setSelected(null);
     setMalformedRoute(false);
     setError("");
     setErrorKind(null);
     setErrorReason("");
     setTopicHash();
-  }, []);
+  }, [invalidateGenerationDiagnostic]);
 
   useEffect(() => {
     if (detailId || malformedRoute || !restoreFocusPending.current) return;
@@ -793,11 +881,14 @@ export function DeepResearchRoute() {
 
   useEffect(() => {
     const controller = new AbortController();
+    if (detailId || malformedRoute || collectionDetailId) invalidateGenerationDiagnostic();
+    invalidateReportAction();
     requestController.current?.abort();
     const detailRequest = requestId.current + 1;
     requestId.current = detailRequest;
     async function loadDetail(reportId: string) {
       setLoading(true);
+      setReadErrorDiagnostic(null);
       setError("");
       setErrorKind(null);
       setErrorReason("");
@@ -809,8 +900,10 @@ export function DeepResearchRoute() {
         setPhase("report");
         setReactAgentContextScope("deep-research", { surface: "topic_report_reader", viewId: "topicrpt", reportKind: "topic_report", reportId: report.id || reportId, collectionId: selectedCollectionRef?.id || null, collectionRevision: selectedCollectionRef?.revision || null });
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (isAbortError(err, controller.signal)) return;
         if (controller.signal.aborted || requestId.current !== detailRequest) return;
+        clearGenerationDiagnostic();
+        setReadErrorDiagnostic(captureReportError(err, detailRequest));
         setSelected(null);
         setError(errorCopy("report", err));
         setErrorKind("report");
@@ -823,18 +916,20 @@ export function DeepResearchRoute() {
     if (detailId && !malformedRoute) {
       void loadDetail(detailId);
     } else if (!malformedRoute && !collectionDetailId) {
+      setReadErrorDiagnostic(null);
       setSelected(null);
       setPhase((current) => current === "report" ? "draft" : current);
       setReactAgentContextScope("deep-research", { surface: "topic_report", viewId: "topicrpt", reportKind: "", reportId: "", collectionId: selectedCollectionRef?.id || null, collectionRevision: selectedCollectionRef?.revision || null });
       setLoading(false);
     }
     return () => controller.abort();
-  }, [collectionDetailId, detailId, malformedRoute, proposalReloadKey]);
+  }, [clearGenerationDiagnostic, collectionDetailId, detailId, invalidateGenerationDiagnostic, malformedRoute, proposalReloadKey]);
 
   const handlePreview = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedQuestion = question.normalize("NFKC").trim();
     if (!normalizedQuestion || normalizedQuestion.length > 500) {
+      invalidateGenerationDiagnostic();
       setError(errorCopy("validation", new Error("question_invalid")));
       setErrorKind("validation");
       setErrorReason("question_invalid");
@@ -868,7 +963,7 @@ export function DeepResearchRoute() {
       setPhase("plan-review");
       setStatus("실행 계획을 확인하세요.");
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (isAbortError(err, request.signal)) return;
       if (!isCurrentRequest(request.id)) return;
       setError(errorCopy("plan", err));
       setErrorKind("plan");
@@ -881,6 +976,7 @@ export function DeepResearchRoute() {
 
   const executeEnvelope = async (envelope: PlanPreviewEnvelope) => {
     const request = beginRequest();
+    const operationId = generationOperationId.current;
     setPhase("generation");
     setError("");
     setErrorKind(null);
@@ -916,11 +1012,14 @@ export function DeepResearchRoute() {
       setTopicHash(report.id);
       setReactAgentContextScope("deep-research", { surface: "topic_report_reader", viewId: "topicrpt", reportKind: "topic_report", reportId: report.id || "", collectionId: selectedCollectionRef?.id || null, collectionRevision: selectedCollectionRef?.revision || null });
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (isAbortError(err, request.signal)) return;
       if (!isCurrentRequest(request.id)) return;
       if (err instanceof JobTerminalError) clearDeepResearchJobId();
+      const degraded = err instanceof ApiRequestError && (err.code === "evidence_confirmation_required" || err.code === "resolution_changed");
+      if (operationId !== generationOperationId.current) return;
+      if (!degraded) setGenerationError(captureReportError(err, operationId));
       setError(errorCopy("generation", err));
-      setErrorKind(err instanceof ApiRequestError && (err.code === "evidence_confirmation_required" || err.code === "resolution_changed") ? "degraded" : "generation");
+      setErrorKind(degraded ? "degraded" : "generation");
       setErrorReason(errorCode(err));
       setPhase("recoverable-error");
       setStatus("");
@@ -931,6 +1030,7 @@ export function DeepResearchRoute() {
     if (!planEnvelope) return;
     if (planEnvelope.preview.zeroEvidence.required) {
       if (!planEnvelope.preview.zeroEvidence.reasonCode || !planEnvelope.preview.zeroEvidence.resolutionFingerprint) {
+        invalidateGenerationDiagnostic();
         setError("근거 부족 확인 정보가 없어 실행을 중단했습니다. 계획을 다시 미리보세요.");
         setErrorKind("degraded");
         setErrorReason("invalid_zero_evidence");
@@ -971,7 +1071,7 @@ export function DeepResearchRoute() {
         ? (editing ? "요청하신 대로 계획을 고쳤습니다." : "AI가 계획을 다시 썼습니다.")
         : "AI 엔진을 쓸 수 없어 계획을 그대로 두었습니다.");
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (isAbortError(err, request.signal)) return;
       if (!isCurrentRequest(request.id)) return;
       setError(errorCopy("plan", err));
       setErrorKind("plan");
@@ -1014,7 +1114,7 @@ export function DeepResearchRoute() {
       setDegradedConfirming(false);
       await executeEnvelope(replacement);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (isAbortError(err, request.signal)) return;
       if (!isCurrentRequest(request.id)) return;
       setError(errorCopy("degraded", err));
       setErrorKind("degraded");
@@ -1026,38 +1126,59 @@ export function DeepResearchRoute() {
 
   async function deleteReport(report: TopicReportSummary) {
     if (!report.id || !window.confirm(`${reportLabel(report)} 보고서를 삭제할까요?`)) return;
+    const action = beginReportAction();
     setActionBusy(`delete-${report.id}`);
+    invalidateGenerationDiagnostic();
     setError("");
     try {
-      const response = await fetch(`/api/topic-reports/${encodeURIComponent(report.id)}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(`삭제 실패: ${response.status}`);
+      const result = await deleteJson<{ readonly deleted?: boolean }>(
+        `/api/topic-reports/${encodeURIComponent(report.id)}`,
+        {},
+        { signal: action.controller.signal },
+      );
+      if (!result || result.deleted !== true) throw new Error("딥 리서치 삭제 결과를 확인하지 못했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller)) return;
       if (selected?.id === report.id) setTopicHash();
       setReports((current) => current.filter((item) => item.id !== report.id));
       setStatus("저장된 딥 리서치를 삭제했습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "보고서 삭제에 실패했습니다.");
-      setErrorKind("report");
-      setErrorReason(errorCode(err));
+      if (!isCurrentReportAction(action.id, action.controller) || isAbortError(err, action.controller.signal)) return;
+      // A transport/body-read loss has no server execution to inspect. Keep the
+      // action message neutral and do not create a diagnostic/retry affordance.
+      setActionErrorDiagnostic(isResponseLessError(err) ? null : captureReportError(err, action.id));
+      setActionErrorMessage(reportActionErrorCopy(err, "보고서 삭제에 실패했습니다."));
     } finally {
-      setActionBusy("");
+      if (isCurrentReportAction(action.id, action.controller)) {
+        actionController.current = null;
+        setActionBusy("");
+      }
     }
   }
 
   async function exportTopicReport(target: "notion" | "obsidian") {
     if (!selected) return;
+    const action = beginReportAction();
     setActionBusy(target);
     setStatus(target === "notion" ? "Notion으로 내보내는 중..." : "Obsidian으로 내보내는 중...");
     try {
       const result = target === "notion"
-        ? await postJson<ExportResult>("/api/export-notion/topic-report", selected)
-        : await postJson<ExportResult>("/api/export-obsidian/topic-report", selected);
+        ? await postJson<ExportResult>("/api/export-notion/topic-report", selected, { signal: action.controller.signal })
+        : await postJson<ExportResult>("/api/export-obsidian/topic-report", selected, { signal: action.controller.signal });
+      if (!isCurrentReportAction(action.id, action.controller)) return;
       setStatus(target === "notion"
         ? `Notion으로 내보냈습니다${result.title ? `: ${result.title}` : ""}`
         : `Obsidian으로 내보냈습니다${result.topic || result.filename ? `: ${result.topic || result.filename}` : ""}`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "내보내기에 실패했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller) || isAbortError(err, action.controller.signal)) return;
+      setActionErrorDiagnostic(captureReportError(err, action.id));
+      const message = reportErrorMessage(err, "내보내기에 실패했습니다.");
+      setActionErrorMessage(message);
+      setStatus(message);
     } finally {
-      setActionBusy("");
+      if (isCurrentReportAction(action.id, action.controller)) {
+        actionController.current = null;
+        setActionBusy("");
+      }
     }
   }
 
@@ -1166,6 +1287,7 @@ export function DeepResearchRoute() {
           <p className="section-kicker">DEEP RESEARCH</p>
           <h1>{notFound ? "저장된 리서치를 찾을 수 없습니다" : "리서치를 열 수 없습니다"}</h1>
           <p data-qa={notFound ? "dr-not-found" : undefined}>{error || "보고서 주소나 저장 데이터를 확인한 뒤 목록에서 다시 여세요."}</p>
+          {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
           <button className="btn" type="button" data-qa="dr-report-return" onClick={returnToReportList}>딥 리서치 목록으로 돌아가기</button>
         </section>
       </div>
@@ -1176,6 +1298,7 @@ export function DeepResearchRoute() {
     return (
       <div className="react-deep-research-route" data-deep-research-route data-qa="dr-report">
         {error && <p className="react-dashboard-error" data-qa="dr-error-report">{error}</p>}
+        {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
         {(selected.mode === "fallback" || selected.generation?.mode === "rules") && <p className="react-dashboard-warning" data-qa="dr-degraded-rules" role="status">근거 부족을 확인한 규칙 기반 보고서입니다. 자료 공백과 반대 근거를 함께 확인하세요.</p>}
         <ReportReaderShell
           eyebrow={`DEEP RESEARCH${selected.date ? ` · ${selected.date}` : ""}`}
@@ -1203,6 +1326,8 @@ export function DeepResearchRoute() {
               </ReaderActionGroup>
               {selected.generation?.message && <p className="react-reader-status">{selected.generation.message}</p>}
               {status && <p className="react-reader-status">{status}</p>}
+              {actionErrorMessage && <p className="react-reader-status react-dashboard-error">{actionErrorMessage}</p>}
+              {actionErrorDiagnostic && <ReportErrorDiagnostic diagnostic={actionErrorDiagnostic} />}
             </>
           )}
           noteIdentity={{ id: stableNoteKey("topic", reportLabel(selected)), noteType: "topic_review", title: reportLabel(selected) ? `${reportLabel(selected)} 리서치 노트` : "딥 리서치 노트", topic: reportLabel(selected), label: reportLabel(selected), reportKind: "topic_report", reportId: reportLabel(selected), linkedReports: [readerContent.title].filter(Boolean) }}
@@ -1219,6 +1344,7 @@ export function DeepResearchRoute() {
 
   const isBusy = phase === "plan-loading" || phase === "generation" || loading || collectionBusy;
   const showError = phase === "recoverable-error" && error;
+  const generationOutcomeUnknown = Boolean(showError && errorKind === "generation" && generationError?.responseLess);
   return (
     <div className="react-deep-research-route" data-deep-research-route>
       <RouteHero
@@ -1230,7 +1356,11 @@ export function DeepResearchRoute() {
 
       {phase === "readiness" && <p className="react-dashboard-warning" data-qa="dr-readiness-loading" role="status">저장된 리서치와 자료 상태를 확인하는 중입니다.</p>}
       {readinessKind && phase === "recoverable-error" && <p className="react-dashboard-error" data-qa={`dr-readiness-${readinessKind}`}>{error}</p>}
-      {showError && <div className="react-dashboard-error topicrpt-recoverable-error" data-qa={`dr-error-${errorKind || "request"}`} role="alert"><strong>다시 시도할 수 있습니다</strong><span data-qa={`dr-error-${(errorReason || "request").replace(/_/g, "-")}`} data-error-code={errorReason || "request"}>{error}</span><p>입력한 질문과 컨텍스트, 마지막 계획은 유지됩니다.</p><button className="btn" type="button" onClick={() => { setError(""); setErrorKind(null); setErrorReason(""); setPhase(planEnvelope ? "plan-review" : "draft"); }}>돌아가서 수정</button></div>}
+      {reportListError && !(readinessKind && phase === "recoverable-error") && <p className="react-dashboard-error" data-qa="dr-report-list-error" role="alert">{reportListError}</p>}
+      {reportListErrorDiagnostic && <ReportErrorDiagnostic diagnostic={reportListErrorDiagnostic} />}
+      {!selected && actionErrorMessage && <p className="react-dashboard-error" data-qa="dr-report-action-error" role="alert">{actionErrorMessage}</p>}
+      {!selected && actionErrorDiagnostic && <ReportErrorDiagnostic diagnostic={actionErrorDiagnostic} />}
+      {showError && <div className="react-dashboard-error topicrpt-recoverable-error" data-qa={`dr-error-${errorKind || "request"}`} role="alert"><strong>{generationOutcomeUnknown ? "서버 상태를 확인하세요" : "다시 시도할 수 있습니다"}</strong><span data-qa={`dr-error-${(errorReason || "request").replace(/_/g, "-")}`} data-error-code={errorReason || "request"}>{error}</span>{errorKind === "generation" && generationError && <ReportErrorDiagnostic diagnostic={generationError} />}<p>{generationOutcomeUnknown ? "응답이 없어 생성 결과를 확인하지 못했습니다. 현재 저장 상태를 확인한 뒤 필요할 때 직접 실행하세요." : "입력한 질문과 컨텍스트, 마지막 계획은 유지됩니다."}</p><button className="btn" type="button" onClick={() => { invalidateGenerationDiagnostic(); setError(""); setErrorKind(null); setErrorReason(""); setPhase(planEnvelope ? "plan-review" : "draft"); }}>돌아가서 수정</button></div>}
 
       {phase !== "plan-review" && phase !== "generation" && (
         <form className="input-panel topicrpt-form" onSubmit={handlePreview} noValidate>

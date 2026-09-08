@@ -437,9 +437,11 @@ export function RssRoute() {
                   ) : item.title || "제목 없음"}
                 </h2>
                 <div className="react-rss-card-meta">
-                  {(item.media || item.source) && <span className="pill">{item.media || item.source}</span>}
+                  {/* 매체 이름은 고유명사다 — 대문자로 바꾸거나 자간을 벌리지 않는다.
+                      레거시 `.pill`이 그렇게 했고 한글 매체명은 자간만 늘어났다. */}
+                  {(item.media || item.source) && <span className="chip">{item.media || item.source}</span>}
                   {marketTags.length ? (
-                    <span className="pill">{marketTags.join(" · ")}</span>
+                    <span className="chip">{marketTags.join(" · ")}</span>
                   ) : null}
                   <span>{displayTimestamp(item)}</span>
                 </div>

@@ -33,6 +33,7 @@ export function ReportReaderShell({
   children,
 }: ReportReaderShellProps) {
   const [mobileNoteOpen, setMobileNoteOpen] = useState(false);
+  const [readingFocus, setReadingFocus] = useState(false);
   const readerRef = useRef<HTMLElement>(null);
   const noteTriggerRef = useRef<HTMLButtonElement>(null);
   const notePanelRef = useRef<HTMLElement>(null);
@@ -48,6 +49,7 @@ export function ReportReaderShell({
   const agentContextKey = agentContext ? JSON.stringify(agentContext) : "";
   const stageClass = [
     "report-reader-stage",
+    readingFocus ? "is-reading-focus" : "",
     !actionSlot && !resolvedNoteSlot ? "no-side" : "",
     !actionSlot ? "no-rail" : "",
     !resolvedNoteSlot ? "no-note" : "",
@@ -116,6 +118,7 @@ export function ReportReaderShell({
       <div className={stageClass}>
         <section ref={readerRef} className="report-reader-dialog report-reader-main" aria-labelledby={titleId} tabIndex={-1}>
           <div className="report-reader-head">
+            {(actionSlot || resolvedNoteSlot) && <button className="btn report-reading-focus" type="button" aria-pressed={readingFocus} onClick={() => setReadingFocus((value) => !value)}>{readingFocus ? "조작·노트 펼치기" : "읽기에 집중"}</button>}
             {onClose && (
               <button className="btn btn--icon icon-btn" type="button" onClick={onClose} aria-label="리더 닫기" data-qa="dr-report-close" data-tooltip="닫기" data-tooltip-pos="left">
                 ×

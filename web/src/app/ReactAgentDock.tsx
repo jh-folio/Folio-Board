@@ -275,6 +275,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const contextRef = useRef<DockContextState>({ ownerSurface: surface, patch: {} });
   const pollControllers = useRef(new Map<string, AbortController>());
+  const scopedAutoSubmitInFlight = useRef(new Set<string>());
 
   useEffect(() => () => {
     for (const controller of pollControllers.current.values()) controller.abort();
@@ -395,9 +396,14 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
   const accentStyle = useMemo(() => ({ "--react-agent-accent": meta.color } as CSSProperties), [meta.color]);
   const failedPreflightChecks = (preflight?.checks || []).filter((check) => !check.ok);
 
-  const submitAgentMessage = useCallback(async (rawText: string, contextPatch: Record<string, unknown> = {}) => {
+  const submitAgentMessage = useCallback(async (
+    rawText: string,
+    contextPatch: Record<string, unknown> = {},
+    explicitThreadId = "",
+    lifecycle?: { onAccepted?: () => void; onRejected?: () => void },
+  ) => {
     const text = rawText.trim();
-    if (!text || busy) return;
+    if (!text || busy) return false;
 
     contextRef.current = resetDockContextForSurface(contextRef.current, surface);
     const requestContext = buildAgentRequestContext(
@@ -430,11 +436,13 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
     setError("");
 
     let controller: AbortController | null = null;
+    let accepted = false;
     try {
       // 대화는 스레드 경로로 보낸다. 서버가 user turn을 먼저 저장하므로 재시작 후에도
       // 질문이 남고, 다음 세션의 Agent가 이 대화를 context로 읽는다.
       const threadId =
-        threads.threadId
+        explicitThreadId
+        || threads.threadId
         || (await threads.createThread({
           title: threads.pending?.title || text.slice(0, 40),
           scope: threads.pending?.scope,
@@ -443,6 +451,11 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
         `/api/agent/threads/${encodeURIComponent(threadId)}/messages`,
         { message: text, operationId: messageId(), context: requestContext, options: { model, effort, adapter: providerOverride } },
       );
+      // The server has durably accepted both the user turn and its job at this
+      // point.  Scoped actions must resolve now: Dock owns the longer-running
+      // poll and its terminal presentation.
+      accepted = true;
+      lifecycle?.onAccepted?.();
       controller = new AbortController();
       replacePollController(pollControllers.current, assistantId, controller);
       const done = await pollAgentJobBounded(submitted.job, { signal: controller.signal });
@@ -469,6 +482,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
             : message,
         ),
       );
+      return true;
     } catch (err) {
       if (controller) releasePollController(pollControllers.current, assistantId, controller);
       if (err instanceof AgentPollTimeout) {
@@ -481,9 +495,12 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
           runMeta: `${modelLabel} · ${effortLabel(effort)} · ${elapsedSeconds(startedAt)}`,
           jobId: err.job.id,
         } : message));
-        return;
+        // The first message was accepted before polling began; only the
+        // bounded wait elapsed, so the scoped action may acknowledge it.
+        return true;
       }
       const messageText = err instanceof Error ? err.message : "Agent 요청에 실패했습니다.";
+      if (!accepted) lifecycle?.onRejected?.();
       setError(messageText);
       setMessages((current) =>
         current.map((message) =>
@@ -499,6 +516,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
             : message,
         ),
       );
+      return false;
     } finally {
       setBusy(false);
     }
@@ -574,17 +592,65 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
     async function handleScopedThread(event: Event) {
       const detail = (event as CustomEvent<ScopedThreadRequest>).detail || ({} as ScopedThreadRequest);
       if (!detail.scope) return;
+      // auto-submit은 새 thread를 만든 뒤에야 busy가 된다. 서로 다른 상태 버튼을
+      // 빠르게 누르면 key별 dedupe만으로는 두 번째 빈 thread가 남으므로, 생성 전부터
+      // 전역으로 하나만 허용한다. openScopedThread는 뒤이어 dock을 열어 현재 작업은 보인다.
+      if (detail.autoSubmit && detail.initialMessage && (busy || scopedAutoSubmitInFlight.current.size > 0)) {
+        window.dispatchEvent(new CustomEvent("folio:agent-thread-ack", { detail: { requestId: detail.requestId, ok: false, error: "Agent가 다른 요청을 처리 중입니다. 잠시 후 다시 시도하세요." } }));
+        return;
+      }
       // 주제만 들고 있다가 첫 메시지에서 만든다. 여기서 만들면 사용자가 아무것도
       // 묻지 않고 화면을 떠났을 때 빈 대화가 목록에 남는다.
       threads.setThreadId("");
       threads.setPending({ title: detail.title, scope: detail.scope });
       setMessages([{ ...WELCOME_AGENT_MESSAGE, createdAt: new Date().toISOString() }]);
       setThreadsOpen(false);
-      if (detail.initialMessage) setInput(detail.initialMessage);
+      if (!detail.initialMessage) return;
+      const autoSubmitKey = detail.autoSubmit ? "scoped-auto-submit" : "";
+      if (autoSubmitKey) scopedAutoSubmitInFlight.current.add(autoSubmitKey);
+      if (!detail.autoSubmit) {
+        // 기존 `짚어보기`는 입력만 채우는 동작이다. Stage D 반박 action과 섞지 않는다.
+        setInput(detail.initialMessage);
+        window.dispatchEvent(new CustomEvent("folio:agent-thread-ack", { detail: { requestId: detail.requestId, ok: true } }));
+        return;
+      }
+      try {
+        // 상태 업데이트를 기다리지 않고 방금 만든 thread ID를 명시 전달한다. 그렇지 않으면
+        // 첫 auto-submit이 이전 대화의 stale threadId에 저장될 수 있다.
+        const created = await threads.createThread({ title: detail.title, scope: detail.scope });
+        const releaseScopedAction = () => scopedAutoSubmitInFlight.current.delete(autoSubmitKey);
+        const fail = async (reason: string) => {
+          let actionError = reason;
+          try {
+            await threads.deleteEmptyThread(created.id);
+            setMessages([{ ...WELCOME_AGENT_MESSAGE, createdAt: new Date().toISOString() }]);
+          } catch {
+            // The message POST may already have persisted the user's turn.
+            // Keep that history and explicitly tell the action owner why it
+            // was not cleaned up as an empty provisional thread.
+            actionError = `${reason} 질문은 대화에 저장되어 보존했습니다.`;
+          }
+          window.dispatchEvent(new CustomEvent("folio:agent-thread-ack", { detail: { requestId: detail.requestId, ok: false, error: actionError } }));
+          releaseScopedAction();
+        };
+        void submitAgentMessage(detail.initialMessage, {}, created.id, {
+          onAccepted: () => {
+            window.dispatchEvent(new CustomEvent("folio:agent-thread-ack", { detail: { requestId: detail.requestId, ok: true } }));
+            releaseScopedAction();
+          },
+          onRejected: () => { void fail("Agent 첫 메시지 전송에 실패했습니다. 다시 시도하세요."); },
+        });
+        // The acknowledgement is emitted from onAccepted immediately after
+        // durable message/job POST, while Dock polling keeps ownership of the
+        // terminal response state.
+      } catch (reason) {
+        window.dispatchEvent(new CustomEvent("folio:agent-thread-ack", { detail: { requestId: detail.requestId, ok: false, error: reason instanceof Error ? reason.message : "Agent 요청에 실패했습니다." } }));
+        scopedAutoSubmitInFlight.current.delete(autoSubmitKey);
+      }
     }
     window.addEventListener("folio:open-agent-thread", handleScopedThread);
     return () => window.removeEventListener("folio:open-agent-thread", handleScopedThread);
-  }, [threads]);
+  }, [busy, submitAgentMessage, threads]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

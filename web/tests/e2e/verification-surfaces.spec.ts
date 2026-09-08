@@ -61,6 +61,8 @@ const VERIFICATION_FIXTURE = {
       templates: ["관련 가격 반응이 이어지는지 확인"],
       timeline: [
         { at: "2026-08-29T00:00:00+00:00", kind: "checkpoint", from: "open", to: "confirmed", reason: "규칙 판정 confirmed", evidenceCount: 2 },
+        { at: "2026-08-27T00:00:00+00:00", kind: "status", from: "active", to: "overridden", reason: "새 내러티브로 교체", evidenceCount: 0 },
+        { at: "2026-08-25T00:00:00+00:00", kind: "evidence_count", from: '{"d7":0,"d30":2,"d90":6}', to: '{"d7":1,"d30":4,"d90":9}', reason: "새 근거 반영", evidenceCount: 1 },
         { at: "2026-08-20T00:00:00+00:00", kind: "momentum", from: "stable", to: "strengthening", reason: "30일 근거 비중", evidenceCount: 6 },
       ],
     },
@@ -171,6 +173,7 @@ const WORKSPACE_FIXTURE = {
 const WATCHLIST_OVERVIEW = {
   items: [
     { item: "NVDA", ticker: "NVDA", label: "NVIDIA", newsCount: 3, kind: "company" },
+    { item: "AMD", ticker: "AMD", label: "AMD", newsCount: 1, kind: "company" },
   ],
 };
 
@@ -181,7 +184,19 @@ const WATCHLIST_DETAIL = {
   count: 0,
 };
 
-async function prepare(page: Page, theme: "light" | "dark") {
+const AMD_WORKSPACE_FIXTURE = {
+  ...WORKSPACE_FIXTURE,
+  ticker: "AMD",
+  thesis: { ...WORKSPACE_FIXTURE.thesis, ticker: "AMD", company: "AMD", coreThesis: "AMD 새 화면 Thesis" },
+};
+
+type FixtureOptions = {
+  workspace?: (ticker: string) => unknown | Promise<unknown>;
+  onThesisPost?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  agent?: { threads: Array<Record<string, unknown>>; messages: Array<Record<string, unknown>>; beforeCreate?: () => Promise<void> | void };
+};
+
+async function prepare(page: Page, theme: "light" | "dark", options: FixtureOptions = {}) {
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.hostname !== "127.0.0.1") {
@@ -194,9 +209,36 @@ async function prepare(page: Page, theme: "light" | "dark") {
     }
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     if (url.pathname === "/api/memory/verification") return json(VERIFICATION_FIXTURE);
-    if (/^\/api\/theses\/[^/]+\/workspace$/.test(url.pathname)) return json(WORKSPACE_FIXTURE);
+    if (url.pathname === "/api/agent/threads" && route.request().method() === "POST") {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      options.agent?.threads.push(body);
+      await options.agent?.beforeCreate?.();
+      return json({ id: `challenge-${options.agent?.threads.length || 1}`, title: body.title || "반박 대화", scope: body.scope, status: "active", revision: 1, messages: [] });
+    }
+    if (/^\/api\/agent\/threads\/challenge-\d+\/messages$/.test(url.pathname) && route.request().method() === "POST") {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      options.agent?.messages.push(body);
+      return json({ job: { id: `agent-job-${options.agent?.messages.length || 1}`, status: "done", result: {} } });
+    }
+    if (/^\/api\/agent\/threads\/challenge-\d+$/.test(url.pathname) && route.request().method() === "GET") {
+      const id = url.pathname.split("/").at(-1) || "challenge-1";
+      const created = options.agent?.threads.find((_row, index) => id === `challenge-${index + 1}`) || {};
+      return json({ id, title: created.title || "반박 대화", scope: created.scope || { kind: "general" }, status: "active", revision: 2,
+        messages: [{ id: "agent-reply", role: "assistant", content: "반박 검토를 시작했습니다.", createdAt: "2026-08-31T00:00:00Z" }] });
+    }
+    if (/^\/api\/theses\/[^/]+\/workspace$/.test(url.pathname)) {
+      const ticker = decodeURIComponent(url.pathname.split("/")[3] || "");
+      return json(await (options.workspace?.(ticker) ?? WORKSPACE_FIXTURE));
+    }
+    if (url.pathname === "/api/theses" && route.request().method() === "POST") {
+      return json(await (options.onThesisPost?.(route.request().postDataJSON() as Record<string, unknown>) ?? { ok: true, thesis: null }));
+    }
     if (url.pathname === "/api/watchlist/overview") return json(WATCHLIST_OVERVIEW);
-    if (url.pathname === "/api/watchlist/detail") return json(WATCHLIST_DETAIL);
+    if (url.pathname === "/api/watchlist/detail") {
+      return json(url.searchParams.get("item") === "AMD"
+        ? { ...WATCHLIST_DETAIL, item: "AMD", company: { name: "AMD", ticker: "AMD" } }
+        : WATCHLIST_DETAIL);
+    }
     await route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"fixture"}' });
   });
   await page.addInitScript((selectedTheme) => {
@@ -223,16 +265,17 @@ test.describe("0.6 verification surfaces", () => {
       await prepare(page, theme);
       await open(page, "market-memory");
 
-      const panel = page.getByRole("region", { name: "내러티브 검증 상태" });
+      const panel = page.getByRole("region", { name: /확인이 필요한 내러티브/ });
       await expect(panel).toBeVisible();
       // 판정은 색만으로 전달하지 않는다 — 라벨이 읽힌다.
-      await expect(panel.getByText("확인됨").first()).toBeVisible();
       await expect(panel.getByText("반증 신호").first()).toBeVisible();
+      await expect(panel.getByText("정리 후보").first()).toBeVisible();
       // 무소식 배지: 죽어가는 이야기가 살아있는 이야기와 다르게 보인다.
       await expect(panel.getByText("37일 무소식 · 정리 후보")).toBeVisible();
+      // 정리 후보라는 말이 정리하겠다는 뜻으로 읽히면 안 된다.
       await expect(panel.getByText(/자동으로 바뀌지 않습니다/)).toBeVisible();
-      // 검증 실패 원소는 숨기지 않는다.
-      await expect(panel.getByText("검증 불가")).toBeVisible();
+      // 신호가 없는 내러티브는 줄을 만들지 않는다(알림은 조용할 때 조용하다).
+      await expect(panel.locator(".verification-alert")).toHaveCount(2);
 
       const results = await new AxeBuilder({ page })
         .include(".verification-panel")
@@ -289,14 +332,203 @@ test.describe("0.6 verification surfaces", () => {
     }
   });
 
+  test("mobile Stage C/D actions meet the 44px target and retain keyboard focus", async ({ page }, testInfo) => {
+    test.skip(!testInfo.project.name.includes("mobile"), "Mobile target runs on the mobile project.");
+    await prepare(page, "light");
+    await open(page, "watchlist/NVDA");
+    const thesisAction = page.getByRole("button", { name: "이 Thesis를 반박해줘" });
+    await expect(thesisAction).toBeVisible();
+    expect(await thesisAction.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await thesisAction.focus();
+    await expect(thesisAction).toBeFocused();
+    await open(page, "market-memory");
+    // 알림 줄의 버튼 라벨은 짧지만, 접근성 이름은 어느 내러티브인지 말한다.
+    const narrativeAction = page.getByRole("button", { name: /전제를 반박해줘/ }).first();
+    await expect(narrativeAction).toBeVisible();
+    expect(await narrativeAction.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await narrativeAction.focus();
+    await expect(narrativeAction).toBeFocused();
+  });
+
   test("keyboard reaches the disclosure controls of the verification panel", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Keyboard contract is desktop-specific.");
     await prepare(page, "light");
     await open(page, "market-memory");
-    const timeline = page.locator(".verification-timeline summary").first();
+    const timeline = page.locator(".verification-alert__detail > summary").first();
     await timeline.focus();
     await expect(timeline).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.locator(".verification-timeline__list").first()).toBeVisible();
+  });
+
+  test("narrative timeline uses Korean labels instead of stored status or JSON", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the rendered timeline contract.");
+    await prepare(page, "light");
+    await open(page, "market-memory");
+    await page.locator(".verification-alert__detail > summary").first().click();
+    const timeline = page.locator(".verification-timeline__list").first();
+    await expect(timeline).toContainText("상태 활성 → 대체됨");
+    await expect(timeline).toContainText("근거 수 7일 0 · 30일 2 · 90일 6 → 7일 1 · 30일 4 · 90일 9");
+    await expect(timeline).not.toContainText('{"d7"');
+    await expect(timeline).not.toContainText("overridden");
+  });
+
+  test("Watchlist Thesis edit writes only on explicit save without leaving the detail", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the request lifecycle contract.");
+    let workspace = WORKSPACE_FIXTURE;
+    const posts: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      workspace: () => workspace,
+      onThesisPost: (body) => {
+        posts.push(body);
+        workspace = {
+          ...WORKSPACE_FIXTURE,
+          thesis: { ...WORKSPACE_FIXTURE.thesis, coreThesis: String(body.coreThesis || "") },
+        };
+        return { ok: true, thesis: workspace.thesis };
+      },
+    });
+    await open(page, "watchlist/NVDA");
+    const before = await page.evaluate(() => window.location.hash);
+    await page.getByRole("button", { name: "Thesis 만들기/수정" }).click();
+    expect(await page.evaluate(() => window.location.hash)).toBe(before);
+    expect(posts).toHaveLength(0);
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByLabel("핵심 Thesis").fill("편집한 핵심 Thesis");
+    await editor.getByRole("button", { name: "Thesis 저장" }).click();
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0]).toMatchObject({ ticker: "NVDA", coreThesis: "편집한 핵심 Thesis" });
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("편집한 핵심 Thesis")).toBeVisible();
+  });
+
+  test("Watchlist Thesis create retains the detail ticker and company context", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the request lifecycle contract.");
+    let workspace = { ...WORKSPACE_FIXTURE, hasThesis: false, thesis: null };
+    const posts: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      workspace: () => workspace,
+      onThesisPost: (body) => {
+        posts.push(body);
+        workspace = {
+          ...WORKSPACE_FIXTURE,
+          thesis: { ...WORKSPACE_FIXTURE.thesis, coreThesis: String(body.coreThesis || ""), company: String(body.company || "") },
+        };
+        return { ok: true, thesis: workspace.thesis };
+      },
+    });
+    await open(page, "watchlist/NVDA");
+    const before = await page.evaluate(() => window.location.hash);
+    await page.getByRole("button", { name: "Thesis 만들기" }).click();
+    expect(await page.evaluate(() => window.location.hash)).toBe(before);
+    expect(posts).toHaveLength(0);
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByLabel("핵심 Thesis").fill("새 핵심 Thesis");
+    await editor.getByRole("button", { name: "Thesis 저장" }).click();
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0]).toMatchObject({ ticker: "NVDA", company: "NVIDIA", coreThesis: "새 핵심 Thesis" });
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByText("새 핵심 Thesis")).toBeVisible();
+  });
+
+  test("ticker change makes an in-flight old Thesis save unable to overwrite the new detail", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the stale-save ownership contract.");
+    let nvdaReads = 0;
+    let releaseOldReload: (() => void) | undefined;
+    let oldReloadStarted = false;
+    const oldReload = new Promise<void>((resolve) => { releaseOldReload = resolve; });
+    await prepare(page, "light", {
+      workspace: async (ticker) => {
+        if (ticker === "AMD") return AMD_WORKSPACE_FIXTURE;
+        nvdaReads += 1;
+        if (nvdaReads > 1) {
+          oldReloadStarted = true;
+          await oldReload;
+          return { ...WORKSPACE_FIXTURE, thesis: { ...WORKSPACE_FIXTURE.thesis, coreThesis: "이전 종목의 늦은 저장" } };
+        }
+        return WORKSPACE_FIXTURE;
+      },
+      onThesisPost: () => ({ ok: true, thesis: WORKSPACE_FIXTURE.thesis }),
+    });
+    await open(page, "watchlist/NVDA");
+    await page.getByRole("button", { name: "Thesis 만들기/수정" }).click();
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByLabel("핵심 Thesis").fill("이전 종목의 임시 초안");
+    await editor.getByRole("button", { name: "Thesis 저장" }).click();
+    await expect.poll(() => oldReloadStarted).toBe(true);
+
+    await page.evaluate(() => { window.location.hash = "#/watchlist/AMD"; });
+    const workspace = page.getByRole("region", { name: "내 Thesis 검증" });
+    await expect(workspace.getByText("AMD 새 화면 Thesis")).toBeVisible();
+    await expect(workspace.locator(".thesis-workspace__editor")).toHaveCount(0);
+    await expect(workspace).not.toContainText("이전 종목의 임시 초안");
+    await expect(workspace).not.toContainText("이전 종목의 늦은 저장");
+    await expect(workspace.locator(".react-dashboard-error")).toHaveCount(0);
+
+    releaseOldReload?.();
+    await page.waitForTimeout(50);
+    await expect(workspace.getByText("AMD 새 화면 Thesis")).toBeVisible();
+    await expect(workspace).not.toContainText("이전 종목의 늦은 저장");
+  });
+
+  test("narrative challenge creates one scoped thread and auto-submits exactly once", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
+    const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
+    await prepare(page, "light", { agent });
+    await open(page, "market-memory");
+    const action = page.getByRole("button", { name: /전제를 반박해줘/ }).first();
+    await action.click();
+    await expect.poll(() => agent.threads.length).toBe(1);
+    await expect.poll(() => agent.messages.length).toBe(1);
+    expect(agent.threads[0]).toMatchObject({ scope: { kind: "market_memory", id: "state-1", intent: "challenge" } });
+    expect(agent.messages[0]).toMatchObject({ message: "이 전제를 반박해줘" });
+    await expect(page.getByRole("complementary", { name: "AI Agent" })).toBeVisible();
+    await expect(page.locator(".react-agent-scope")).toHaveText(/시장 내러티브/);
+    await expect(page.locator(".react-agent-scope")).not.toContainText("state-1");
+    await expect(page.getByText("이 전제를 반박해줘").last()).toBeVisible();
+    await page.waitForTimeout(25);
+    expect(agent.threads).toHaveLength(1);
+    expect(agent.messages).toHaveLength(1);
+  });
+
+  test("Thesis challenge keeps the selected ticker scope and opens the dock", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
+    const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
+    await prepare(page, "dark", { agent });
+    await open(page, "watchlist/NVDA");
+    await page.getByRole("button", { name: "이 Thesis를 반박해줘" }).click();
+    await expect.poll(() => agent.threads.length).toBe(1);
+    await expect.poll(() => agent.messages.length).toBe(1);
+    expect(agent.threads[0]).toMatchObject({ scope: { kind: "watchlist", id: "NVDA", tickers: ["NVDA"], intent: "challenge" } });
+    expect(agent.messages[0]).toMatchObject({ message: "이 Thesis를 반박해줘" });
+    await expect(page.getByRole("complementary", { name: "AI Agent" })).toBeVisible();
+    await expect(page.locator(".react-agent-scope")).toContainText("NVDA");
+    await expect(page.getByText("이 Thesis를 반박해줘").last()).toBeVisible();
+  });
+
+  test("a second challenge click during creation cannot leave an empty thread", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
+    let releaseCreate: (() => void) | undefined;
+    let firstCreateStarted = false;
+    const gate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const agent = {
+      threads: [] as Array<Record<string, unknown>>,
+      messages: [] as Array<Record<string, unknown>>,
+      beforeCreate: async () => {
+        firstCreateStarted = true;
+        await gate;
+      },
+    };
+    await prepare(page, "light", { agent });
+    await open(page, "market-memory");
+    const actions = page.getByRole("button", { name: /전제를 반박해줘/ });
+    await actions.nth(0).click();
+    await expect.poll(() => firstCreateStarted).toBe(true);
+    await actions.nth(1).click();
+    expect(agent.threads).toHaveLength(1);
+    expect(agent.messages).toHaveLength(0);
+    releaseCreate?.();
+    await expect.poll(() => agent.messages.length).toBe(1);
+    expect(agent.threads).toHaveLength(1);
   });
 });

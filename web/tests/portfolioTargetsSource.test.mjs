@@ -6,7 +6,7 @@ const targets = () => readFile(new URL("../src/app/portfolio/PortfolioTargets.ts
 
 test("지운 목표는 비교 대상에서도 빠진다", async () => {
   const source = await targets();
-  const removeBody = source.slice(source.indexOf("const remove = async"), source.indexOf("\n  return ("));
+  const removeBody = source.slice(source.indexOf("const removePreset = async"), source.indexOf("\n  return <"));
 
   // 지운 목표를 compareId로 들고 있으면 옛 수치 표가 그대로 남고, 이후 재조회되면
   // 서버가 없는 presetId에 200 + targetWeight 0을 줘 전 종목이 "전량 매도"로 그려진다.

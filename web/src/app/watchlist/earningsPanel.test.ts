@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { basisValues, changeRatio, compactAmount, epsBaseText, formatEps, percentText } from "./EarningsPanel";
+import { basisValues, changeRatio, compactAmount, epsBaseText, formatEps, panelProviderCopy, percentText } from "./EarningsPanel";
 
 describe("실적 숫자 표시", () => {
   it("매출은 통화에 맞는 단위로 접는다", () => {
@@ -82,5 +82,14 @@ describe("EPS 비교 기준 줄", () => {
     // 조정 EPS 2.00을 보여주면서 1.50/1.35로 나누면 읽는 사람이 직접 나눠 봤을 때 안 맞는다.
     const filled = { ...row, epsActual: 2.0, epsPriorYearBasis: "statement", epsActualStatement: 1.5 };
     expect(epsBaseText(filled, "priorYear", "USD")).toBe("작년 동기간 1.35 · 손익계산서 기본 EPS 1.50 대비");
+  });
+});
+
+describe("earnings provider copy", () => {
+  it("uses the same bounded provider formatter for absent and unknown successful payloads", () => {
+    expect(panelProviderCopy("yfinance")).toBe("yfinance");
+    expect(panelProviderCopy("toss_open_api")).toBe("Toss Open API");
+    expect(panelProviderCopy()).toBe("시장 데이터 제공자");
+    expect(panelProviderCopy("internal-debug-code")).toBe("시장 데이터 제공자");
   });
 });

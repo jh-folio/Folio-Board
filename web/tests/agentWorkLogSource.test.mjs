@@ -22,7 +22,10 @@ test("the metadata-only Work Log lives on Home alone", async () => {
 });
 
 test("Work Log source exposes safe controls and never renders broad job body fields", async () => {
-  const source = await readFile(appFile("AgentWorkLog.tsx"), "utf8");
+  const [source, detail] = await Promise.all([
+    readFile(appFile("AgentWorkLog.tsx"), "utf8"),
+    readFile(appFile("DiagnosticDetail.tsx"), "utf8"),
+  ]);
 
   for (const selector of [
     "work-log-loading", "work-log-empty", "work-log-error", "work-log-retention",
@@ -33,6 +36,8 @@ test("Work Log source exposes safe controls and never renders broad job body fie
   assert.match(source, /getJson<AgentProposalRecord>/);
   assert.doesNotMatch(source, /entry\.(?:title|reportId|artifactId|message|error|reply|markdown|revisedMarkdown|diff|path|traceback)\b/);
   assert.doesNotMatch(source, /dangerouslySetInnerHTML/);
+  // 상세는 Work Log 전역 새로고침으로 갱신한다. 항목마다 중복 새로고침을 두지 않는다.
+  assert.doesNotMatch(detail, /diag-detail-refresh/);
 });
 
 test("API types pin exact WorkLogEntry and runtime validation", async () => {

@@ -10,8 +10,8 @@ export type PositionRow = {
   readonly symbol?: string;
   readonly name?: string;
   readonly market?: string;
-  readonly quantity?: number;
-  readonly averagePrice?: number;
+  readonly quantity?: string;
+  readonly averagePrice?: string;
   readonly currency?: string;
   readonly sector?: string;
   readonly assetClass?: string;
@@ -23,16 +23,18 @@ export type PositionRow = {
   readonly weight?: number | null;
   readonly quoteOk?: boolean;
   readonly quoteError?: string;
+  readonly calculationUnavailable?: ReadonlyArray<string>;
 };
 
 export type CurrencyBucket = {
   readonly currency: string;
-  readonly marketValue: number;
-  readonly cost: number;
-  readonly pnl: number;
+  readonly marketValue: number | null;
+  readonly cost: number | null;
+  readonly pnl: number | null;
   readonly pnlPct: number | null;
   readonly positions: number;
   readonly baseCurrency?: string;
+  readonly calculationUnavailable?: ReadonlyArray<string>;
 };
 
 export type CashRow = { readonly currency: string; readonly amount: number };
@@ -48,22 +50,23 @@ export type PortfolioSummary = {
 
 export type WeightSlice = {
   readonly label: string;
-  readonly marketValue: number;
-  readonly pnl: number;
+  readonly marketValue: number | null;
+  readonly pnl: number | null;
   readonly positions: number;
-  readonly weight: number;
+  readonly weight: number | null;
   readonly pnlPct: number | null;
+  readonly calculationUnavailable?: ReadonlyArray<string>;
 };
 
 export type TargetRow = {
   readonly id?: string;
   readonly ticker: string;
   readonly name?: string;
-  readonly currentWeight: number;
+  readonly currentWeight: number | null;
   readonly targetWeight: number;
-  readonly diffWeight: number;
-  readonly diffAmountUsd: number;
-  readonly marketValueUsd: number;
+  readonly diffWeight: number | null;
+  readonly diffAmountUsd: number | null;
+  readonly marketValueUsd: number | null;
 };
 
 export type PortfolioComment = {
@@ -75,11 +78,11 @@ export type PortfolioComment = {
 export type PortfolioAnalytics = PortfolioSummary & {
   readonly analytics: {
     readonly baseCurrency: string;
-    readonly totalMarketValue: number;
-    readonly totalCost: number;
-    readonly totalPnl: number;
+    readonly totalMarketValue: number | null;
+    readonly totalCost: number | null;
+    readonly totalPnl: number | null;
     readonly totalPnlPct: number | null;
-    readonly positionWeights: ReadonlyArray<PositionRow & { weight?: number }>;
+    readonly positionWeights: ReadonlyArray<PositionRow & { weight?: number | null }>;
     readonly sectorWeights: ReadonlyArray<WeightSlice>;
     readonly marketWeights: ReadonlyArray<WeightSlice>;
     readonly currencyWeights: ReadonlyArray<WeightSlice>;
@@ -103,14 +106,69 @@ export type PortfolioAnalytics = PortfolioSummary & {
 
 export type Preset = {
   readonly id: string;
+  /** 프리셋별 CAS 버전. legacy 저장본은 API projection에서 0으로 읽힌다. */
+  readonly revision: number;
   readonly name: string;
-  readonly baseCurrency?: string;
+  readonly baseCurrency?: "USD" | "KRW";
   readonly positions: ReadonlyArray<{ ticker: string; name?: string; weight: number }>;
   readonly weightTotal?: number;
   readonly updatedAt?: string;
 };
 
-export type BacktestMetrics = Readonly<Record<string, number>>;
+/** `from-current`은 파일을 쓰지 않는 편집 초안이다. */
+export type PresetFromCurrentDraft = {
+  readonly draft: true;
+  readonly name: string;
+  readonly baseCurrency: "USD" | "KRW";
+  readonly positions: ReadonlyArray<{ ticker: string; name?: string; weight: number }>;
+  readonly weightTotal?: number;
+  readonly warnings?: ReadonlyArray<{ code: string; ticker?: string; message: string }>;
+};
+
+/** 새 계산 결과는 숫자 지표와 그 계산 전제를 함께 돌려준다. 이전 저장본은 숫자만 가진다. */
+export type BacktestMetricAssumptions = {
+  readonly tradingDaysPerYear?: number;
+  readonly riskFreeRateAnnual?: number;
+  readonly riskFreeRateSource?: string;
+  readonly volatilityMethod?: string;
+  readonly sharpeMethod?: string;
+  readonly alphaMethod?: string;
+};
+
+export type BacktestMetrics = Readonly<Record<string, unknown>> & {
+  readonly metricAssumptions?: BacktestMetricAssumptions;
+  readonly metricUnavailableReasons?: Readonly<Record<string, string>>;
+};
+
+export type BacktestPoint = { readonly date: string; readonly value: number };
+
+export type BacktestCoverage = {
+  readonly ticker?: string;
+  readonly symbol: string;
+  readonly currency?: string;
+  readonly included: boolean;
+  readonly actualStart: string | null;
+  readonly actualEnd: string | null;
+  readonly simulationStart: string | null;
+  readonly simulationEnd: string | null;
+  readonly price: { readonly observedDays: number; readonly forwardFilledDays: number; readonly trailingForwardFilledDays: number; readonly coverage: number | null; readonly nativePrice?: boolean };
+  readonly fx: { readonly required: boolean; readonly fromCurrency?: string; readonly toCurrency?: string; readonly observedDays: number; readonly forwardFilledDays: number; readonly trailingForwardFilledDays: number; readonly coverage: number | null; readonly unavailableReason?: string | null; readonly nativePrice?: boolean };
+  readonly unavailableReasons: ReadonlyArray<string>;
+};
+
+export type BacktestCalculationBasis = {
+  readonly riskFreeRate?: { readonly annual?: number; readonly source?: string; readonly method?: string };
+  readonly annualization?: { readonly tradingDays?: number };
+  readonly returnMethod?: string;
+  readonly priceAlignment?: { readonly method?: string; readonly simulationStart?: string; readonly simulationEnd?: string; readonly observations?: number; readonly strictCommonObservedStart?: string | null; readonly strictCommonObservedEnd?: string | null; readonly strictCommonObservedDays?: number };
+  readonly periodReturnMethod?: string;
+};
+
+export type BacktestInterpretation = {
+  readonly method?: string;
+  readonly isAdvice?: boolean;
+  readonly statements?: ReadonlyArray<{ readonly topic: string; readonly status: "available" | "unavailable"; readonly facts?: Readonly<Record<string, unknown>>; readonly text: string }>;
+};
 
 export type BacktestResult = {
   readonly id: string;
@@ -119,15 +177,31 @@ export type BacktestResult = {
   readonly presetName?: string;
   readonly start: string;
   readonly end: string;
+  readonly requestedStart?: string;
+  readonly requestedEnd?: string;
   readonly baseCurrency: string;
   readonly initialValue: number;
   readonly rebalance: string;
   readonly benchmark?: { ticker?: string; name?: string };
   readonly metrics: BacktestMetrics;
-  readonly series: ReadonlyArray<{ date: string; value: number }>;
-  readonly benchmarkSeries?: ReadonlyArray<{ date: string; value: number }>;
-  readonly yearlyReturns?: ReadonlyArray<{ period: string; return: number }>;
+  readonly series: ReadonlyArray<BacktestPoint>;
+  readonly benchmarkSeries?: ReadonlyArray<BacktestPoint>;
+  readonly yearlyReturns?: ReadonlyArray<{ period: string; return: number | null; partial?: boolean }>;
+  readonly monthlyReturns?: ReadonlyArray<{ period: string; return: number | null; partial?: boolean }>;
   readonly assetContributions?: ReadonlyArray<{ ticker: string; name?: string; weight: number; contribution?: number }>;
+  readonly riskContributions?: ReadonlyArray<{ ticker: string; name?: string; weight?: number; volatilityContribution?: number | null; volatilityShare?: number | null; assetBeta?: number | null; betaContribution?: number | null }>;
+  readonly rollingMetrics?: ReadonlyArray<{ date: string; rollingReturn?: number | null; rollingVolatility?: number | null; rollingBeta?: number | null; window?: number }>;
+  readonly analysisVersion?: string;
+  readonly calculationBasis?: BacktestCalculationBasis;
+  readonly dataCoverage?: { readonly status?: string; readonly positions?: ReadonlyArray<BacktestCoverage>; readonly benchmark?: BacktestCoverage | null; readonly unavailableMetrics?: ReadonlyArray<{ readonly metric?: string; readonly reason?: string }> };
+  readonly drawdownSeries?: ReadonlyArray<{ readonly date: string; readonly drawdown: number; readonly peakDate?: string }>;
+  readonly drawdownEpisodes?: ReadonlyArray<{ readonly peakDate: string; readonly troughDate: string; readonly recoveryDate: string | null; readonly maxDrawdown: number; readonly status: "recovered" | "unrecovered"; readonly underwaterTradingDays: number; readonly calendarDaysToTrough: number | null; readonly calendarDaysToRecovery: number | null }>;
+  readonly benchmarkComparison?: { readonly status?: "comparable" | "unavailable"; readonly comparisonStart?: string | null; readonly comparisonEnd?: string | null; readonly observations?: number; readonly reason?: string };
+  readonly contributionMethod?: string;
+  readonly riskContributionMethod?: string;
+  readonly interpretation?: BacktestInterpretation;
+  readonly sources?: ReadonlyArray<{ readonly ticker?: string; readonly symbol?: string; readonly source?: string; readonly url?: string }>;
+  readonly assumptions?: ReadonlyArray<string>;
   readonly savedAt?: string;
 };
 
@@ -146,6 +220,7 @@ export type BacktestComparison = {
   readonly baseCurrency: string;
   readonly initialValue: number;
   readonly rebalance: string;
+  readonly benchmark?: { readonly ticker?: string; readonly name?: string };
   readonly results: ReadonlyArray<BacktestResult>;
   readonly errors?: ReadonlyArray<{ presetId?: string; presetName?: string; error?: string }>;
   readonly assumptions?: ReadonlyArray<string>;
@@ -153,8 +228,18 @@ export type BacktestComparison = {
   readonly savedAt?: string;
 };
 
+/** 목록 API는 비교 안의 모든 시계열을 보내지 않는다. 열기 API만 full payload를 돌려준다. */
+export type BacktestComparisonSummary = Omit<BacktestComparison, "results"> & {
+  readonly results?: ReadonlyArray<BacktestResult>;
+  readonly resultCount?: number;
+};
+
 export function isComparison(value: BacktestResult | BacktestComparison | null): value is BacktestComparison {
-  return Boolean(value && (value as BacktestComparison).type === "comparison");
+  return Boolean(value && (value as BacktestComparison).type === "comparison" && Array.isArray((value as BacktestComparison).results));
+}
+
+export function isComparisonSummary(value: BacktestResult | BacktestComparison | BacktestComparisonSummary): value is BacktestComparisonSummary {
+  return (value as BacktestComparisonSummary).type === "comparison";
 }
 
 /** 통화 기호 없이 자릿수만 맞춘다. 통화는 라벨이 따로 말한다. */
@@ -172,4 +257,15 @@ export function percent(value: number | null | undefined, digits = 1): string {
 export function signOf(value: number | null | undefined): "up" | "down" | "flat" {
   if (value === null || value === undefined || !Number.isFinite(value) || value === 0) return "flat";
   return value > 0 ? "up" : "down";
+}
+
+/** API가 없는 값을 0으로 둔갑시키지 않도록 숫자 필드를 읽는 단일 경계. */
+export function backtestMetric(result: Pick<BacktestResult, "metrics">, key: string): number | null {
+  const value = result.metrics[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function backtestMetricReason(result: Pick<BacktestResult, "metrics">, key: string): string | null {
+  const reason = result.metrics.metricUnavailableReasons?.[key];
+  return typeof reason === "string" && reason.trim() ? reason : null;
 }

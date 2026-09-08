@@ -80,6 +80,12 @@ export function ratioText(value: number | null | undefined, digits = 1): string 
   return value.toLocaleString("ko-KR", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+export function panelProviderCopy(provider?: string): string {
+  if (provider === "toss_open_api") return "Toss Open API";
+  if (provider === "yfinance") return "yfinance";
+  return "시장 데이터 제공자";
+}
+
 /** 소수 비율(0.31)을 %로. provider가 fraction으로 주는 칸(ROE·마진·성장률) 전용. */
 export function fractionPercentText(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
@@ -471,6 +477,7 @@ export function FundamentalsPanel({ ticker, payload, error }: { ticker: string; 
             </div>
           ))}
         </dl>
+        <p className="section-subtitle">출처 {panelProviderCopy(payload.provider)}</p>
       </div>
       <QuarterlyStatementChart quarters={payload.quarters || []} currency={currency} />
     </div>

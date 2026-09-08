@@ -1,6 +1,140 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+test("weekly index snapshots use the daily chart with a one-week default", () => {
+  const { availablePeriods, initialPriceState, periodPoints, weeklyReturnSummary } = require("./briefing-visuals.js");
+  const daily = { interval: "1d", points: [
+    { time: "2026-08-28", close: 100 }, { time: "2026-08-31", close: 101 },
+    { time: "2026-09-02", close: 102 }, { time: "2026-09-04", close: 103 },
+  ] };
+  const weekly = { series: [{ ticker: "^KS11", label: "KOSPI", daily, weeklyReturn: -1.95, weeklyBaselineDate: "2026-08-28" }] };
+  // 주간 저장본에는 분봉이 없다 — 누르면 빈 차트가 될 1D는 아예 만들지 않는다.
+  assert.deepEqual(availablePeriods(weekly), ["1W", "1M", "3M", "YTD", "1Y"]);
+  assert.equal(initialPriceState(weekly, "1W").period, "1W");
+  // 답할 수 없는 기간을 권해도 저장본이 가진 것으로 내려온다.
+  assert.equal(initialPriceState(weekly, "1D").period, "1W");
+  // 1W는 그 주만 담는다. 직전 주 세션(08-28)은 들어오지 않는다.
+  assert.deepEqual(
+    periodPoints(weekly.series[0], "1W", "2026-09-04").points.map((row) => row.time),
+    ["2026-08-31", "2026-09-02", "2026-09-04"],
+  );
+  // 일간 저장본은 그대로 1D부터 시작한다.
+  const dailySnapshot = { series: [{ ticker: "^GSPC", intraday: { interval: "5m", points: [{ time: "2026-09-04T10:00:00-04:00", close: 5 }] }, daily }] };
+  assert.deepEqual(availablePeriods(dailySnapshot), ["1D", "1W", "1M", "3M", "YTD", "1Y"]);
+  assert.equal(initialPriceState(dailySnapshot).period, "1D");
+  // 전체 주간 값은 곡선(주초=0%)이 아니라 직전 주 종가 기준이라 기준일을 함께 적는다.
+  assert.equal(weeklyReturnSummary(weekly), "KOSPI 전체 주간 -1.95%(08-28 종가 대비)");
+  assert.equal(
+    weeklyReturnSummary({ series: [{ label: "KOSDAQ", weeklyReturn: null, weeklyReturnReason: "prior_week_close_missing" }] }),
+    "KOSDAQ 전체 주간 비교 자료 없음",
+  );
+});
+
+test("1W draws hourly bars but still reports the move in closes", () => {
+  const {
+    periodPoints, priceSummaryForPeriod, hoverTooltipContent, lightweightRows,
+    isIntradayInterval, weekBarUnit,
+  } = require("./briefing-visuals.js");
+  // 실측값이다(^KS11, 2026-08-31 주). 월요일 09시 봉 종가와 월요일 일봉 종가가 2.8%p 다르다.
+  const subject = {
+    ticker: "^KS11", label: "KOSPI",
+    hourly: { interval: "1h", points: [
+      { time: "2026-08-31T09:00:00+09:00", close: 6631.82 },
+      { time: "2026-08-31T10:00:00+09:00", close: 6700.5 },
+      { time: "2026-09-04T14:00:00+09:00", close: 6687.21 },
+    ] },
+    daily: { interval: "1d", points: [
+      { time: "2026-08-28", close: 6789.2 }, { time: "2026-08-31", close: 6820.02 },
+      { time: "2026-09-04", close: 6687.21 },
+    ] },
+  };
+  assert.equal(isIntradayInterval("5m"), true);
+  assert.equal(isIntradayInterval("1h"), true);
+  assert.equal(isIntradayInterval("1d"), false);
+
+  const week = periodPoints(subject, "1W", "2026-09-04");
+  assert.equal(week.interval, "1h");
+  assert.equal(week.points.length, 3);
+  // 더 긴 구간은 시간봉 저장 창(한 주) 밖이라 일봉 그대로다.
+  assert.equal(periodPoints(subject, "1M", "2026-09-04").interval, "1d");
+  // 시간봉이 없는 저장본은 `1W`도 일봉으로 그린다.
+  assert.equal(periodPoints({ daily: subject.daily }, "1W", "2026-09-04").interval, "1d");
+
+  // 값은 그린 날들의 **일봉 종가**로 말한다. 시간봉 첫 점을 기준 삼으면 +0.84%가 되어
+  // 같은 카드의 캡션·본문이 말하는 주간 등락과 어긋난다.
+  const summary = priceSummaryForPeriod(subject, "1W", week.points);
+  assert.equal(summary.close, 6687.21);
+  assert.equal(summary.changePct.toFixed(2), "-1.95");
+  // hover 기준선도 같아야 툴팁과 머리 숫자가 같은 말을 한다.
+  const tooltip = hoverTooltipContent(subject, "1W", week.points[2], { currency: "KRW" }, week.points);
+  assert.match(tooltip, /-1\.95%/);
+  assert.match(tooltip, /2026-09-04 14:00/);
+
+  // 시간봉은 **봉 시작** 시각 그대로다. 한 시간을 더하면 미국장 15:30 봉이 마감(16:00) 뒤가 된다.
+  const rows = lightweightRows(subject.hourly.points, "line", "1h");
+  assert.equal(rows[0].time, Date.UTC(2026, 7, 31, 9, 0, 0) / 1000);
+  assert.equal(rows.length, 3);
+  // 일봉은 지금처럼 날짜 문자열이다.
+  assert.equal(lightweightRows(subject.daily.points, "line", "1d")[0].time, "2026-08-28");
+
+  assert.equal(weekBarUnit({ series: [subject] }), "1시간봉");
+  assert.equal(weekBarUnit({ series: [{ daily: subject.daily }] }), "일봉");
+});
+
+test("legacy weekly snapshots keep the old overlay chart", () => {
+  const { hasStoredDailyHistory, shouldRenderTrend, normalizePriceSubject } = require("./briefing-visuals.js");
+  // 저장된 옛 주간 보고서의 실제 모양: 주초=0%로 재기준한 5점뿐이고 `daily`가 없다.
+  // 그 점에도 원 종가가 들어 있어 기존 판정은 통과한다 — 그래서 판정을 하나 더 둔다.
+  const legacy = { series: [{ ticker: "^KS11", label: "KOSPI", points: [
+    { time: "2026-08-31", close: 6820.02, changePct: 0 }, { time: "2026-09-01", close: 6760.1, changePct: -0.88 },
+    { time: "2026-09-02", close: 6712.4, changePct: -1.58 }, { time: "2026-09-03", close: 6701.9, changePct: -1.73 },
+    { time: "2026-09-04", close: 6687.1, changePct: -1.95 },
+  ] }] };
+  assert.equal(shouldRenderTrend(legacy), true);
+  // `normalizePriceSubject`가 그 %-계열을 일봉 자리에 되돌려주므로 기간 버튼도 생겼을 것이다.
+  assert.equal(normalizePriceSubject(legacy.series[0]).daily.points.length, 5);
+  assert.equal(hasStoredDailyHistory(legacy), false);
+
+  const stored = (count) => ({
+    dataSufficiency: { minimumTrendPoints: 8 },
+    series: [{ ticker: "^KS11", daily: { interval: "1d", points: Array.from({ length: count }, (_, i) => ({ time: `2026-08-${10 + i}`, close: 100 + i })) } }],
+  });
+  assert.equal(hasStoredDailyHistory(stored(255)), true);
+  // 한 주의 거래일만큼만 담긴 저장본은 기간 버튼이 답할 것이 없어 옛 그림으로 남는다.
+  assert.equal(hasStoredDailyHistory(stored(5)), false);
+  // 저장본이 문턱을 밝히지 않으면 8을 쓴다.
+  assert.equal(hasStoredDailyHistory({ series: stored(8).series }), true);
+});
+
+test("story share draws in CSS pixels so type and stroke match the other charts", () => {
+  const { storyShareGeometry } = require("./briefing-visuals.js");
+  // 1 user unit = 1 CSS px. 폭이 달라져도 높이·여백은 픽셀로 고정된다.
+  for (const width of [1180, 574, 308]) {
+    const box = storyShareGeometry(width);
+    assert.equal(box.width, width);
+    assert.equal(box.height, 275);
+    assert.equal(box.left, 52);
+    // 가운데 정렬한 마지막 날짜 라벨의 절반이 잘리지 않을 만큼 오른쪽을 비운다.
+    assert.equal(box.right, width - 24);
+    assert.ok(box.right > box.left + 100);
+  }
+  // 아직 폭을 재지 못한 첫 렌더는 기본 좌표계로 그리고 relayout이 고친다.
+  for (const unmeasured of [0, null, undefined, "", 120]) {
+    assert.equal(storyShareGeometry(unmeasured).width, 640);
+  }
+});
+
+test("saved share values preserve missing versus zero and heatmap hover omits missing close", () => {
+  const { storyShareValue, heatmapHoverText, priceSummary } = require("./briefing-visuals.js");
+  const day = { shares: { A: .123456, B: 0, C: null }, otherShare: null };
+  assert.equal(storyShareValue(day, "A", "other"), .123456);
+  assert.equal(storyShareValue(day, "B", "other"), 0);
+  for (const label of ["C", "D", "other"]) assert.equal(storyShareValue(day, label, "other"), null);
+  assert.equal(heatmapHoverText(["Technology", -3.288084787, null, ""]), "Technology<br>등락 -3.29%");
+  assert.match(heatmapHoverText(["A", 1.2345, 1234.5, "2026-09-01"]), /등락 \+1.23%<br>종가/);
+  assert.equal(priceSummary([{ close: null }]).close, null);
+});
+
 const {
   indexSeries,
   heatmapColor,

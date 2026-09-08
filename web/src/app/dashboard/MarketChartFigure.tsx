@@ -8,14 +8,15 @@ import { KIND_KO, STATUS_KO, timeLabelKST } from "./MarketCalendar";
  * 워치리스트 상세는 종목이 이미 정해져 있어 필요가 없다. 예전에는 그리기와 고르기가
  * 한 컴포넌트에 묶여 있어, 상세 모달이 쓰려면 대시보드용 피커까지 딸려왔다.
  *
- * 시세는 yfinance 지연값이다. TradingView 위젯이 주던 준실시간·지표를 잃는 대신
- * 앱 토큰을 따르고 iframe이 없어진다 — freshness 라벨로 지연을 밝히는 기존 방식을
- * 그대로 쓴다(계획 §11 5-A-3의 트레이드오프).
+ * REST 차트는 provider가 밝히는 기준값을 쓰고, eligible 1D 장중 현재가만 로컬
+ * Toss stream을 덧댄다. 두 출처가 다르면 headline에서 명시적으로 나눈다.
  */
-type Point = { time: string; open?: number | null; high?: number | null; low?: number | null; close: number; ma20?: number | null; ma60?: number | null; ma120?: number | null; ma200?: number | null };
-type ChartPayload = { symbol: string; range: string; interval: string; series: Point[]; freshness?: string; asOf?: string; notice?: string; fallbackReason?: string };
+export type Point = { time: string; open?: number | null; high?: number | null; low?: number | null; close: number; ma20?: number | null; ma60?: number | null; ma120?: number | null; ma200?: number | null };
+type ChartPayload = { symbol: string; range: string; interval: string; series: Point[]; freshness?: string; asOf?: string; notice?: string; fallbackReason?: string; provider?: string; liveStatus?: string; liveEligible?: boolean; realtimeEligible?: boolean };
+type LiveFrame = { schemaVersion?: number; type?: string; status?: string; provider?: string; symbol?: string; market?: string; asOf?: string; price?: number | null; currency?: string; code?: string };
+type LiveQuote = { key: string; price: number; asOf: string; provider: string };
 type CalendarEvent = { id: string; kind: string; title: string; startsAt: string; status: string; allDay?: boolean; tickers?: string[] };
-type SeriesApi = { setData: (rows: unknown[]) => void };
+type SeriesApi = { setData: (rows: unknown[]) => void; update?: (row: unknown) => void };
 type ChartApi = {
   addSeries: (definition: unknown, options?: object) => SeriesApi;
   timeScale: () => { fitContent: () => void };
@@ -53,7 +54,7 @@ export const MA_SERIES = [
 ] as const;
 
 const FRESHNESS_KO: Record<string, string> = {
-  snapshot: "스냅샷", current: "최신", fresh: "최신", cached: "최근 조회", delayed: "지연", stale: "오래됨", unavailable: "불러올 수 없음",
+  snapshot: "스냅샷", current: "최신", fresh: "최신", cached: "최근 조회", delayed: "지연", stale: "오래됨", unavailable: "불러올 수 없음", live_bootstrap: "장중 기준",
 };
 // 1D는 장중(5분봉), 나머지는 일봉이다.
 export const RANGES = ["1d", "1m", "3m", "1y", "5y"];
@@ -62,6 +63,73 @@ const intervalFor = (value: string) => (value === "1d" ? "5m" : "1d");
 
 export function isIndexLike(symbol: string): boolean {
   return symbol.startsWith("^") || symbol.includes("=");
+}
+
+export function realtimeStatusForBootstrap(payload: Pick<ChartPayload, "liveStatus" | "series" | "realtimeEligible"> | null | undefined, range: string): string {
+  if (range !== "1d") return "delayed";
+  switch (payload?.liveStatus) {
+    case "available": return payload.series.length > 0 ? (payload.realtimeEligible === false ? "rest" : "pending") : "delayed";
+    case "not_requested": return "delayed";
+    case "unsupported": return "unsupported";
+    case "unavailable": return "unavailable";
+    default: return "delayed";
+  }
+}
+
+export function shouldOpenRealtime(payload: Pick<ChartPayload, "liveEligible" | "realtimeEligible" | "liveStatus" | "series"> | null | undefined, range: string, visible: boolean): boolean {
+  return visible && range === "1d" && payload?.liveEligible === true && payload.realtimeEligible !== false && payload.liveStatus === "available" && payload.series.length > 0;
+}
+
+export function liveWallClockBucket(asOf: string, market = "US"): string {
+  const instant = new Date(asOf);
+  if (Number.isNaN(instant.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: market === "KR" ? "Asia/Seoul" : "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(instant).reduce<Record<string, string>>((result, part) => ({ ...result, [part.type]: part.value }), {});
+  const minute = Math.floor(Number(parts.minute || 0) / 5) * 5;
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${String(minute).padStart(2, "0")}:00`;
+}
+
+export function liveCandleUpdate(rows: Point[], frame: LiveFrame): Point[] {
+  if (frame.type !== "tick" || frame.status !== "live" || typeof frame.price !== "number" || !Number.isFinite(frame.price) || !frame.asOf) return rows;
+  const bucket = liveWallClockBucket(frame.asOf, frame.market);
+  if (!bucket) return rows;
+  const previous = rows[rows.length - 1];
+  if (!previous) return rows;
+  if (Number(chartTime(bucket, true)) < Number(chartTime(previous.time, true))) return rows;
+  if (chartTime(previous.time, true) === chartTime(bucket, true)) {
+    return [...rows.slice(0, -1), { ...previous, high: Math.max(previous.high ?? previous.close, frame.price), low: Math.min(previous.low ?? previous.close, frame.price), close: frame.price }];
+  }
+  return [...rows, { time: bucket, open: frame.price, high: frame.price, low: frame.price, close: frame.price }];
+}
+
+export function providerInstantMs(asOf: string): number | null {
+  const value = Date.parse(asOf);
+  return Number.isFinite(value) ? value : null;
+}
+
+export function shouldAcceptProviderInstant(previous: number | null, asOf: string): boolean {
+  const next = providerInstantMs(asOf);
+  return next !== null && (previous === null || next > previous);
+}
+
+export function applyLiveTick(rows: Point[], previousInstant: number | null, frame: LiveFrame): { rows: Point[]; instant: number | null } {
+  const instant = providerInstantMs(frame.asOf || "");
+  if (instant === null || !shouldAcceptProviderInstant(previousInstant, frame.asOf || "")) return { rows, instant: previousInstant };
+  const updated = liveCandleUpdate(rows, frame);
+  return updated === rows ? { rows, instant: previousInstant } : { rows: updated, instant };
+}
+
+export function providerCopy(restProvider?: string, liveProvider?: string): string | null {
+  const rest = restProvider === "toss_open_api" ? "Toss Open API" : restProvider === "yfinance" ? "yfinance" : "";
+  const live = liveProvider === "toss_open_api" ? "Toss Open API" : liveProvider === "yfinance" ? "yfinance" : "";
+  if (live && rest && live !== rest) return `현재가 ${live} · 차트 ${rest}`;
+  return live || rest || null;
+}
+
+export function rowsForChartRedraw(restRows: Point[], liveRows: Point[], hasNewRestPayload: boolean): Point[] {
+  return hasNewRestPayload || liveRows.length === 0 ? restRows : liveRows;
 }
 
 /** 5분봉 시각을 Lightweight Charts가 받는 형태로 바꾼다.
@@ -102,9 +170,7 @@ function nextEventLabel(event: CalendarEvent): string {
   return `${day} ${kind} 예정${tag && tag !== "종일" ? ` · ${tag}` : ""}`;
 }
 
-export function MarketChartFigure({
-  symbol, label, range, style, onRange, onStyle, showEvent = true,
-}: {
+type MarketChartFigureProps = {
   symbol: string;
   label?: string;
   range: string;
@@ -112,27 +178,109 @@ export function MarketChartFigure({
   onRange: (value: string) => void;
   onStyle: (value: "candle" | "line") => void;
   showEvent?: boolean;
-}) {
-  const [payload, setPayload] = useState<ChartPayload | null>(null);
-  // 이동평균 토글. 저장하지 않는다 — 잠깐 겹쳐 보는 보조선이지 설정이 아니다.
+};
+
+export function chartSessionKey(symbol: string, range: string): string {
+  return `${symbol}|${range}`;
+}
+
+/** A key change unmounts the old canvas and its payload in the same commit.
+ * This is stricter than clearing state from an effect, which runs after paint. */
+export function MarketChartFigure(props: MarketChartFigureProps) {
+  // 범위 전환은 REST/canvas session을 바꾸지만, 사용자가 고른 이평선 보조선은
+  // 차트 기간보다 한 단계 위의 화면 선택이라 wrapper가 보존한다.
   const [showMa, setShowMa] = useState(false);
+  return <MarketChartFigureSession key={chartSessionKey(props.symbol, props.range)} {...props} showMa={showMa} onShowMa={() => setShowMa((value) => !value)} />;
+}
+
+function MarketChartFigureSession({
+  symbol, label, range, style, onRange, onStyle, showEvent = true, showMa, onShowMa,
+}: MarketChartFigureProps & { showMa: boolean; onShowMa: () => void }) {
+  const [payload, setPayload] = useState<ChartPayload | null>(null);
   const [nextEvent, setNextEvent] = useState<CalendarEvent | null>(null);
   const [error, setError] = useState("");
+  const [visible, setVisible] = useState(() => typeof document === "undefined" || !document.hidden);
+  const [bootstrapKey, setBootstrapKey] = useState("");
+  const [liveStatus, setLiveStatus] = useState("loading");
+  const [liveQuote, setLiveQuote] = useState<LiveQuote | null>(null);
   const targetRef = useRef<HTMLDivElement | null>(null);
+  const primarySeriesRef = useRef<SeriesApi | null>(null);
+  const currentRowsRef = useRef<Point[]>([]);
+  const renderedPayloadRef = useRef<ChartPayload | null>(null);
+  const lastProviderInstantRef = useRef<{ key: string; value: number } | null>(null);
+  const bootstrapRequestRef = useRef(0);
+  const styleRef = useRef(style);
+  const socketRef = useRef<WebSocket | null>(null);
+  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { styleRef.current = style; }, [style]);
+
+  useEffect(() => {
+    const update = () => {
+      const nextVisible = !document.hidden;
+      if (!nextVisible) {
+        // Effect cleanup runs after render. Invalidate/close here so a hidden
+        // tab cannot retain an accepted bootstrap or reconnect before its
+        // return-to-visible REST reconciliation finishes.
+        bootstrapRequestRef.current += 1;
+        if (reconnectRef.current !== null) clearTimeout(reconnectRef.current);
+        reconnectRef.current = null;
+        const socket = socketRef.current;
+        socketRef.current = null;
+        if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+        setBootstrapKey("");
+        setLiveQuote(null);
+        currentRowsRef.current = [];
+        renderedPayloadRef.current = null;
+        lastProviderInstantRef.current = null;
+        setPayload(null);
+        setLiveStatus(range === "1d" ? "loading" : "delayed");
+      }
+      setVisible(nextVisible);
+    };
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, [range]);
 
   useEffect(() => {
     let alive = true;
+    const requestKey = `${symbol}|${range}`;
+    // 숨김 전환은 REST를 다시 읽거나 화면 상태를 덮어쓰지 않고 소켓 정리만
+    // 맡긴다. 다시 보일 때의 effect가 reconciliation bootstrap을 수행한다.
+    if (!visible) return () => { alive = false; };
+    const requestGeneration = ++bootstrapRequestRef.current;
+    setBootstrapKey("");
     setError("");
+    // 새 bootstrap의 제목·기간 아래에 직전 소켓 가격을 남기지 않는다. REST는
+    // 숨김 상태에서는 갱신하지 않아야 하므로, 돌아왔을 때에만 다시 맞춘다.
+    setLiveQuote(null);
+    lastProviderInstantRef.current = null;
+    setLiveStatus(range === "1d" ? "loading" : "delayed");
     // **종목이 바뀔 때만 비운다.** 그리기 효과는 range를 보지 않으므로 기간만 바꾼
     // 동안에는 옛 계열이 그대로 남아 있다가 새 자료로 교체된다 — 비우면 캐시가 없는
     // 첫 전환에서 200ms쯤 빈 판이 번쩍인다. 반대로 다른 종목의 계열이 새 제목 아래
     // 남아 있는 것은 잘못된 정보다. 무대는 고정 높이라 어느 쪽도 레이아웃이 튀지 않는다.
     setPayload((prev) => (prev && prev.symbol === symbol ? prev : null));
     getJson<ChartPayload>(`/api/market/chart?symbol=${encodeURIComponent(symbol)}&range=${range}&interval=${intervalFor(range)}`)
-      .then((row) => { if (alive) setPayload(row); })
-      .catch((err) => { if (alive) setError(err instanceof Error ? err.message : "차트를 불러오지 못했습니다."); });
+      .then((row) => {
+        if (!alive || bootstrapRequestRef.current !== requestGeneration) return;
+        // Every accepted bootstrap, including an empty response, is the new
+        // snapshot authority. Never let a previous symbol's rows/tick clock
+        // seed a socket that has no initial REST candle.
+        currentRowsRef.current = row.series;
+        renderedPayloadRef.current = row;
+        lastProviderInstantRef.current = null;
+        setPayload(row);
+        setBootstrapKey(requestKey);
+        setLiveStatus(realtimeStatusForBootstrap(row, range));
+      })
+      .catch((err) => {
+        if (!alive || bootstrapRequestRef.current !== requestGeneration) return;
+        setError(err instanceof Error ? err.message : "차트를 불러오지 못했습니다.");
+        setLiveStatus("unavailable");
+      });
     return () => { alive = false; };
-  }, [symbol, range]);
+  }, [symbol, range, visible]);
 
   useEffect(() => {
     let alive = true;
@@ -165,14 +313,25 @@ export function MarketChartFigure({
   useEffect(() => {
     const target = targetRef.current;
     const library = window.LightweightCharts;
-    if (!target || !library || !payload?.series?.length) return undefined;
+    if (!target || !library || !payload) return undefined;
+    if (!payload.series.length) {
+      primarySeriesRef.current = null;
+      target.innerHTML = "";
+      return undefined;
+    }
     target.innerHTML = "";
     // 브리핑 본문 차트(public/briefing-visuals.js)와 같은 형식으로 맞춘다.
     const tokens = getComputedStyle(document.documentElement);
     const token = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
     const upColor = token("--folio-green", "#3b6d11");
     const downColor = token("--folio-burgundy", "#8a1024");
-    const rows = payload.series;
+    // 스타일·테마·이평선은 같은 REST payload를 다시 그릴 뿐이다. 그때 REST
+    // 원본을 재사용하면 직전에 `series.update()`한 live 봉이 사라진다. payload
+    // 객체가 실제로 바뀐 bootstrap일 때만 authoritative REST rows로 되돌린다.
+    const hasNewRestPayload = renderedPayloadRef.current !== payload;
+    const rows = rowsForChartRedraw(payload.series, currentRowsRef.current, hasNewRestPayload);
+    if (hasNewRestPayload) renderedPayloadRef.current = payload;
+    currentRowsRef.current = rows;
     const intraday = payload.interval === "5m";
     const positive = rows.length > 1 ? rows[rows.length - 1].close >= rows[0].close : true;
     const lineColor = positive ? upColor : downColor;
@@ -198,6 +357,7 @@ export function MarketChartFigure({
     series.setData(useCandle
       ? ohlcRows.map((row) => ({ time: chartTime(row.time, intraday), open: row.open, high: row.high, low: row.low, close: row.close }))
       : rows.map((row) => ({ time: chartTime(row.time, intraday), value: row.close })));
+    primarySeriesRef.current = series;
 
     // 이동평균 — 서버가 워밍업 구간까지 받아 계산해 두므로 구간 안에서 선이 끊기지
     // 않는다. 분봉에는 없다(서버가 일봉에만 붙인다). 창을 못 채운 계열(짧은 상장
@@ -265,11 +425,91 @@ export function MarketChartFigure({
       tooltip.hidden = false;
     });
     chart.timeScale().fitContent();
-    return () => chart.remove();
+    return () => {
+      primarySeriesRef.current = null;
+      chart.remove();
+    };
   }, [payload, themeKey, style, showMa]);
 
+  useEffect(() => {
+    const key = `${symbol}|${range}`;
+    const close = () => {
+      if (reconnectRef.current !== null) clearTimeout(reconnectRef.current);
+      reconnectRef.current = null;
+      const socket = socketRef.current;
+      socketRef.current = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+    };
+    close();
+    if (!shouldOpenRealtime(payload, range, visible) || bootstrapKey !== key) {
+      if (!visible || bootstrapKey !== key || !payload) return close;
+      setLiveStatus(realtimeStatusForBootstrap(payload, range));
+      return close;
+    }
+    let active = true;
+    let attempts = 0;
+    const connect = () => {
+      if (!active || document.hidden || socketRef.current) return;
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${window.location.host}/api/market/realtime/chart?symbol=${encodeURIComponent(symbol)}`);
+      socketRef.current = socket;
+      socket.onopen = () => { if (active && socketRef.current === socket) setLiveStatus("pending"); };
+      socket.onmessage = (event) => {
+        if (!active || socketRef.current !== socket || bootstrapKey !== key) return;
+        let frame: LiveFrame;
+        try { frame = JSON.parse(String(event.data)) as LiveFrame; } catch { return; }
+        if (frame.symbol && String(frame.symbol).trim().toUpperCase() !== symbol.replace(/\.(KS|KQ)$/i, "").trim().toUpperCase()) return;
+        if (frame.type === "status") {
+          const status = frame.status || "unavailable";
+          if (status === "subscribed") {
+            attempts = 0;
+            setLiveStatus("pending");
+            return;
+          }
+          if (status === "rejected") {
+            setLiveStatus("unsupported");
+            close();
+            return;
+          }
+          setLiveStatus(status);
+          if (["unsupported", "unavailable"].includes(status)) close();
+          return;
+        }
+        if (frame.type !== "tick" || frame.status !== "live") return;
+        const previousInstant = lastProviderInstantRef.current?.key === key ? lastProviderInstantRef.current.value : null;
+        const applied = applyLiveTick(currentRowsRef.current, previousInstant, frame);
+        if (applied.rows === currentRowsRef.current || applied.instant === null) return;
+        currentRowsRef.current = applied.rows;
+        lastProviderInstantRef.current = { key, value: applied.instant };
+        const point = applied.rows[applied.rows.length - 1];
+        const primary = primarySeriesRef.current;
+        if (primary?.update) {
+          const time = chartTime(point.time, true);
+          primary.update(styleRef.current === "candle" && point.open != null && point.high != null && point.low != null
+            ? { time, open: point.open, high: point.high, low: point.low, close: point.close }
+            : { time, value: point.close });
+        }
+        setLiveQuote({ key, price: frame.price as number, asOf: frame.asOf || "", provider: frame.provider || "toss_open_api" });
+        attempts = 0;
+        setLiveStatus("live");
+      };
+      socket.onclose = () => {
+        if (!active || socketRef.current !== socket) return;
+        socketRef.current = null;
+        if (attempts >= 3 || document.hidden) { setLiveStatus("unavailable"); return; }
+        attempts += 1; setLiveStatus("reconnecting");
+        reconnectRef.current = setTimeout(connect, Math.min(4000, 500 * (2 ** attempts)));
+      };
+      socket.onerror = () => socket.close();
+    };
+    connect();
+    return () => { active = false; close(); };
+  }, [symbol, range, visible, bootstrapKey, payload]);
+
+  const renderKey = `${symbol}|${range}`;
+  const activeLiveQuote = liveQuote?.key === renderKey ? liveQuote : null;
   const series = payload?.series || [];
-  const lastClose = series.length ? series[series.length - 1].close : null;
+  const lastClose = activeLiveQuote?.price ?? (series.length ? series[series.length - 1].close : null);
   // 일봉이면 직전 봉이 전일이지만, 5분봉에서 직전 봉은 5분 전이라 등락률이 늘
   // 0%에 가깝게 나온다. 1D의 등락률은 그 세션 시초가 대비여야 하고, 차트 색을
   // 정하는 기준(`rows[0].close`)과도 그래야 어긋나지 않는다.
@@ -278,7 +518,10 @@ export function MarketChartFigure({
     ? (intradayHeadline ? series[0].close : series[series.length - 2].close)
     : null;
   const changePct = lastClose != null && baseClose ? ((lastClose - baseClose) / baseClose) * 100 : null;
-  const freshnessLabel = FRESHNESS_KO[payload?.freshness || ""] || (payload ? payload.freshness : "불러오는 중");
+  const freshnessLabel = FRESHNESS_KO[payload?.freshness || ""] || (payload ? "차트 기준" : "불러오는 중");
+  const liveLabel: Record<string, string> = { live: "실시간", rest: "Toss 1분봉", reconnecting: "재연결 중", delayed: "지연", unsupported: "Toss 분봉 미지원", unavailable: "사용할 수 없음", pending: "연결 대기", loading: "불러오는 중" };
+  const sourceCopy = providerCopy(payload?.provider, activeLiveQuote?.provider);
+  const asOf = activeLiveQuote?.asOf || payload?.asOf || "";
 
   return (
     <>
@@ -293,7 +536,9 @@ export function MarketChartFigure({
               </span>
             ) : null}
           </div>
-          <small>{freshnessLabel}{payload?.asOf ? ` · ${payload.asOf} 기준` : ""}</small>
+          <small>{freshnessLabel}{asOf ? ` · ${asOf} 기준` : ""}</small>
+          <span className="chip chart-live-status" aria-live="polite">{liveLabel[liveStatus] || "지연"}</span>
+          {sourceCopy ? <small className="chart-provider">출처 {sourceCopy}</small> : null}
         </div>
         <div className="cockpit-chart-controls">
           {range !== "1d" && (
@@ -303,7 +548,7 @@ export function MarketChartFigure({
               type="button"
               className="btn btn--sm btn--text chart-ma-toggle"
               aria-pressed={showMa}
-              onClick={() => setShowMa((value) => !value)}
+              onClick={onShowMa}
             >
               이평선
             </button>

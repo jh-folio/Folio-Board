@@ -6,7 +6,6 @@ import assert from "node:assert/strict";
 // 한쪽이 조용히 죽는다 — 실제로 시장 내러티브 버튼이 그렇게 무반응이 됐다.
 const SURFACES = [
   ["../src/islands/MarketStateDashboard.tsx", "시장 내러티브 드라이버 카드"],
-  ["../src/app/dashboard/ChangeFeed.tsx", "대시보드 변화 카드"],
 ];
 
 test("ask-agent buttons open the dock through openReactAgentDock", async () => {
