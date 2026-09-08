@@ -20,6 +20,30 @@ TITLE_REQUIREMENTS = {
 }
 SINGLE_MARKETS = tuple(TITLE_REQUIREMENTS)
 AGGREGATE_MARKETS = {"both": ("us", "kr"), "all": SINGLE_MARKETS}
+FLEXIBLE_LEADER_MARKETS = {"us", "kr"}
+FLEXIBLE_LEADER_MODES = {"qualified_zero_to_two", "optional_zero_to_two"}
+
+
+def contract_reason_codes(violations: list[str]) -> list[str]:
+    """Closed diagnostic codes, never headings, names or response excerpts."""
+    prefixes = {
+        "필수 제목 누락": "contract_missing_heading",
+        "시장별 제목": "contract_title_mismatch",
+        "제목 다음 프리앰블": "contract_preamble",
+        "최소 분량": "contract_too_short",
+        "한 줄 결론": "contract_missing_conclusions",
+        "가운뎃점 요약": "contract_missing_bullets",
+        "주도 기업": "contract_leader_section",
+        "기업 신호": "contract_leader_section",
+    }
+    return sorted({next((code for prefix, code in prefixes.items() if text.startswith(prefix)),
+                        "contract_other") for text in violations})
+
+
+class BriefingOutputContractError(ValueError):
+    def __init__(self, violations: list[str]):
+        super().__init__(f"CLI 브리핑 출력 계약 위반: {'; '.join(violations)}")
+        self.reason_codes = contract_reason_codes(violations)
 
 
 def required_sections(market: str) -> tuple[str, ...]:
@@ -122,11 +146,46 @@ def briefing_output_contract(
     # 파일에는 Notes가 아예 없었다. 필수 섹션 위반 검사는 이미 개수를 세므로
     # 시장 수만큼 넣으면 그대로 강제된다.
     sections = []
+    # A flexible daily market with no authoritative concentration result may
+    # legitimately omit both company slots.  Its stable body then has five
+    # numbered sections (0, 1, 2, 5, 6) plus the conclusion, rather than the
+    # seven conclusion/bullet-bearing sections used by the fixed two-company
+    # shape.  Keep the quantitative gate aligned with that allowed shape;
+    # headings, title/date, minimum characters, and bounded slot validation
+    # remain unchanged.
+    minimum_conclusions = 0
+    minimum_bullets = 0
     for market in markets:
-        mode = str((leader_section_modes or {}).get(market) or "fixed_two")
-        if normalized_kind == "daily" and mode == "qualified_zero_to_two":
+        requested_mode = str((leader_section_modes or {}).get(market) or "fixed_two")
+        mode = (
+            requested_mode
+            if normalized_kind == "daily" and market in FLEXIBLE_LEADER_MARKETS
+            and requested_mode in {"fixed_two", *FLEXIBLE_LEADER_MODES}
+            else "fixed_two"
+        )
+        expected_by_market = expected_leading_companies or {}
+        # A present list is an authoritative concentration result, including an
+        # intentionally empty finalPair.  An absent key means ordinary optional
+        # slots: do not infer zero companies merely because no whitelist was
+        # supplied.
+        has_authoritative_names = (
+            market in expected_by_market
+            and isinstance(expected_by_market.get(market), list)
+        )
+        flexible_mode = (
+            normalized_kind == "daily"
+            and market in FLEXIBLE_LEADER_MARKETS
+            and mode in FLEXIBLE_LEADER_MODES
+        )
+        if flexible_mode and not has_authoritative_names:
+            minimum_conclusions += 6
+            minimum_bullets += 15
+        else:
+            minimum_conclusions += 7
+            minimum_bullets += 18
+        if flexible_mode and has_authoritative_names:
             label = MARKET_LABELS[market]
-            count = min(2, len((expected_leading_companies or {}).get(market) or []))
+            count = min(2, len(expected_by_market.get(market) or []))
             sections.extend((
                 TITLE_REQUIREMENTS[market],
                 f"0. 오늘의 {label} 성격",
@@ -140,6 +199,22 @@ def briefing_output_contract(
             if count >= 2:
                 sections.append(f"4. {label}을 주도한 기업 ②")
             sections.extend(("5. 일반 투자자 관점", f"6. 다음 {label} 체크포인트", "오늘의 결론"))
+        elif flexible_mode:
+            # The author may include zero, one, or two concrete company
+            # sections based on the supplied facts.  Since the count is not
+            # known at contract construction time, only the stable surrounding
+            # sections are required; the validator checks the bounded optional
+            # alternatives below.
+            label = MARKET_LABELS[market]
+            sections.extend((
+                TITLE_REQUIREMENTS[market],
+                f"0. 오늘의 {label} 성격",
+                f"1. {label} 시장 흐름",
+                f"2. {label}을 움직인 핵심 변수",
+                "5. 일반 투자자 관점",
+                f"6. 다음 {label} 체크포인트",
+                "오늘의 결론",
+            ))
         else:
             sections.extend(build_sections(market))
         sections.append("Source & Data Notes")
@@ -186,9 +261,16 @@ def briefing_output_contract(
             if key in markets and isinstance(names, list)
         },
         "leaderSectionModes": {
-            key: str(value)
+            key: (
+                str(value)
+                if normalized_kind == "daily" and key in FLEXIBLE_LEADER_MARKETS
+                and str(value) in {"fixed_two", *FLEXIBLE_LEADER_MODES}
+                else "fixed_two"
+            )
             for key, value in (leader_section_modes or {}).items()
-            if key in markets and str(value) in {"fixed_two", "qualified_zero_to_two"}
+            if key in markets and (
+                str(value) in {"fixed_two", *FLEXIBLE_LEADER_MODES}
+            )
         },
         "titleDatePattern": "YYYY.MM.DD 마감|장중",
         "requireImmediateSectionZeroAfterTitle": True,
@@ -196,8 +278,8 @@ def briefing_output_contract(
         "requiredSections": sections,
         "briefingType": normalized_type,
         "minimumCharacters": (2500 if normalized_type == "concise" else 5000) * market_count,
-        "minimumOneLineConclusions": 7 * market_count,
-        "minimumMiddleDotBullets": 18 * market_count,
+        "minimumOneLineConclusions": minimum_conclusions,
+        "minimumMiddleDotBullets": minimum_bullets,
         "retryOnViolation": 0,
     }
 
@@ -267,6 +349,58 @@ def _leading_company_name(value: str, fragment: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _optional_leading_company_violations(
+    value: str, prefix: str, market_title: str = ""
+) -> list[str]:
+    """Validate the un-whitelisted US/KR daily 0–2 company alternatives.
+
+    This deliberately does not select or rank companies.  It only makes an
+    optional author choice bounded and structurally safe: a concrete first
+    section may be followed by a concrete second section, or the generic
+    signal section may stand alone when no company has enough direct evidence.
+    """
+    violations: list[str] = []
+    scoped_value = value
+    if market_title:
+        # A combined US+KR report can legitimately contain one generic
+        # ``오늘의 기업 신호`` heading in each market block.  Scope the
+        # alternative check to its own H1 so one market cannot count the
+        # other market's zero-company fallback.
+        block = re.search(
+            rf"^#\s+{re.escape(market_title)}\b.*?(?=^#\s+|\Z)",
+            value,
+            re.MULTILINE | re.DOTALL,
+        )
+        if block:
+            scoped_value = block.group(0)
+    matches: dict[str, list[re.Match[str]]] = {}
+    for ordinal, number in (("①", 3), ("②", 4)):
+        pattern = re.compile(
+            rf"^#{{2,6}}\s+{number}\.\s+{re.escape(prefix)}을 주도한 기업 {ordinal}(?:\s*[—-].*)?$",
+            re.MULTILINE,
+        )
+        matches[ordinal] = list(pattern.finditer(scoped_value))
+        if len(matches[ordinal]) > 1:
+            violations.append(f"주도 기업 슬롯 중복: {prefix} {ordinal}이 여러 번 나옴")
+        if matches[ordinal] and not _has_named_leading_company_heading(
+            scoped_value, f"{number}. {prefix}을 주도한 기업 {ordinal}"
+        ):
+            violations.append(f"주도 기업명 누락: '## {number}. {prefix}을 주도한 기업 {ordinal} — [실제 기업명]' 형식 필요")
+
+    first = bool(matches["①"])
+    second = bool(matches["②"])
+    if second and not first:
+        violations.append(f"주도 기업 슬롯 순서 불일치: {prefix} 기업 ② 전에 기업 ①이 필요")
+
+    generic_pattern = re.compile(r"^#{2,6}\s+3\.\s+오늘의 기업 신호\s*$", re.MULTILINE)
+    generic_count = len(generic_pattern.findall(scoped_value))
+    if generic_count > 1:
+        violations.append(f"기업 신호 섹션 중복: {prefix} {generic_count}개")
+    if generic_count and (first or second):
+        violations.append(f"기업 신호 섹션 혼용: {prefix} 구체 기업 절과 일반 신호를 함께 쓸 수 없음")
+    return violations
+
+
 def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
     value = str(markdown or "").strip()
     headings = [
@@ -318,7 +452,21 @@ def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
             # 시장의 헤딩이 대신 걸리면 통과해 버렸다 — 조용히 검사를 건너뛴 셈이다.
             prefix = MARKET_LABELS[key]
             mode = str((contract.get("leaderSectionModes") or {}).get(key) or "fixed_two")
-            expected_companies = (contract.get("expectedLeadingCompanies") or {}).get(key) or []
+            if kind == "daily" and key not in FLEXIBLE_LEADER_MARKETS:
+                mode = "fixed_two"
+            expected_map = contract.get("expectedLeadingCompanies") or {}
+            has_authoritative_names = key in expected_map and isinstance(expected_map.get(key), list)
+            expected_companies = expected_map.get(key) if has_authoritative_names else []
+            if (
+                kind == "daily"
+                and key in FLEXIBLE_LEADER_MARKETS
+                and mode in FLEXIBLE_LEADER_MODES
+                and not has_authoritative_names
+            ):
+                violations.extend(_optional_leading_company_violations(
+                    value, MARKET_LABELS[key], TITLE_REQUIREMENTS[key],
+                ))
+                continue
             required_ordinals = (
                 ("①", "②") if mode == "fixed_two"
                 else tuple(("①", "②")[: min(2, len(expected_companies))])
@@ -338,7 +486,7 @@ def briefing_contract_violations(markdown: str, contract: dict) -> list[str]:
                 got = actual.replace(" ", "").casefold()
                 if not wanted or (wanted not in got and got not in wanted):
                     violations.append(f"주도 기업 불일치: '{fragment} — {expected}' 필요 (현재: {actual or '없음'})")
-            if mode == "qualified_zero_to_two":
+            if mode in FLEXIBLE_LEADER_MODES:
                 actual_count = sum(
                     bool(_has_named_leading_company_heading(
                         value, f"{3 if ordinal == '①' else 4}. {prefix}을 주도한 기업 {ordinal}",

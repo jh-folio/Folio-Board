@@ -47,7 +47,7 @@ from features.common.canonical_reports import (
     ReportKind,
     resolve_exact_report_path,
 )
-from features.common.jobs import submit_job
+from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure, submit_job
 from features.common.markets import market_keys_for_scope, normalize_saved_market_scope
 from features.common.utils import read_json
 from features.market_memory.attempt_store import AttemptStore
@@ -161,10 +161,11 @@ def build_chat_prompt(message: str, context: dict, options: dict, markdown: str 
                       images: str = "", conversation: str = "") -> str:
     effort = EFFORT_HINTS.get(options.get("effort", "medium"), EFFORT_HINTS["medium"])
     attachments = _attachment_block(options)
+    exact_review_challenge = context.get("exactReviewChallenge") is True
     raw_scope = str(context.get("marketScope") or "").strip()
     saved_scope = normalize_saved_market_scope(raw_scope)
     regions = tuple(code.value for code in market_keys_for_scope(saved_scope, saved=True)) if saved_scope else ()
-    market_memory = render_market_state_projection(project_market_state(
+    market_memory = "" if exact_review_challenge else render_market_state_projection(project_market_state(
         MarketStateSelection("include_current", "AUTO", regions),
         _market_state_query(),
     ))
@@ -174,8 +175,9 @@ def build_chat_prompt(message: str, context: dict, options: dict, markdown: str 
         "규칙: 제공된 자료(보고서 본문·첨부)에 없는 수치·출처를 만들어내지 않는다. 모르는 것은 data gap으로 명시한다. "
         "사용자 메모·첨부는 hypothesis(가설)이며 객관적 근거처럼 단정하지 않는다. 저장된 파일을 수정하라는 요청이라도 이 응답에서는 수정하지 말고 답변만 한다.",
         market_memory,
-        render_collection_projection(context),
-        f"현재 화면 컨텍스트:\n{_context_block(context, markdown)}",
+        "" if exact_review_challenge else render_collection_projection(context),
+        "정확한 저장 투자 리뷰 반박 범위입니다. 제공된 review date/revision/roster 이외의 현재 Portfolio·시장·보고서 정보를 추론하거나 주입하지 마세요." if exact_review_challenge else "",
+        f"현재 화면 컨텍스트:\n{_context_block(context, '' if exact_review_challenge else markdown)}",
         # 저장된 대화 맥락. rolling summary + 최근 turn + 서버가 다시 읽은 리서치 자료다.
         # 전체 transcript가 아니라 상한 있는 pack이라 대화가 길어져도 크기가 일정하고,
         # 리서치 자료는 저장된 옛 값이 아니라 매번 새로 읽은 것이라 낡지 않는다.
@@ -305,13 +307,17 @@ def _run_with_images(build_prompt, options: dict, *, model: str, job_id: str) ->
 def run_agent_chat(message: str, context: dict | None = None, options: dict | None = None,
                    *, progress=None, job_id: str = "",
                    collection_service: SmartCollectionService | None = None,
-                   prepared_context: bool = False, conversation: str = "") -> dict:
+                   prepared_context: bool = False, conversation: str = "", exact_review_challenge: bool = False) -> dict:
     progress = progress or (lambda *args, **kwargs: None)
     normalized = (
         dict(context or {})
         if prepared_context
         else prepare_agent_context(context, collection_service)
     )
+    # This is server-owned job scope, never a raw client context flag.  It is
+    # set after normalisation so collection/report fields cannot revive it.
+    if exact_review_challenge:
+        normalized["exactReviewChallenge"] = True
     collection_projection = normalized.get("collection")
     normalized_options = normalize_agent_options(options)
     intent = classify_agent_intent(message)
@@ -329,6 +335,9 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
             # 이미지를 읽는 것은 CLI뿐이다. 조용히 무시하면 사용자는 첨부가 반영된 줄 안다.
             image_block(StagedImages(normalized_options.get("attachments")), cli_available=False),
         ]))
+        from features.common.jobs import diagnostic_execution
+
+        diagnostic_execution(final_engine="rules", fallback_reason="engine_unavailable")
         return fallback
 
     kind = normalized.get("reportKind", "")
@@ -393,6 +402,11 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
         }
 
     progress("Agent가 답변을 작성하고 있습니다.", 30)
+    # Calling the bridge is the concrete execution attempt.  The selected
+    # adapter is observed only after the bridge has verified it.
+    from features.common.jobs import diagnostic_execution
+
+    diagnostic_execution(attempted_engine="cli")
     try:
         result = _run_with_images(
             lambda images: build_chat_prompt(message, normalized, normalized_options, markdown, images, conversation),
@@ -402,6 +416,17 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
         )
     except Exception as exc:
         # 질문형은 규칙 기반으로 답을 이어가고, CLI 실패 사유는 정리해서 알려준다.
+        # The fallback is an existing user-visible contract.  Record the
+        # concrete executor failure before swallowing it, without retaining
+        # the prompt, transcript, or provider message.
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(),
+            exc,
+            stage_id=None,
+            stage_code="generate",
+            boundary="adapter",
+        )
+        diagnostic_execution(final_engine="rules", fallback_reason="engine_failed")
         fallback = agent_companion_reply(
             message, normalized, normalized_options, collection_projection=collection_projection
         )

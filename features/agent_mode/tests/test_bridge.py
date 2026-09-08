@@ -101,6 +101,58 @@ def test_antigravity_command_uses_current_long_model_flag_and_print_prompt():
     assert "-m" not in command
 
 
+@pytest.mark.parametrize("web_search", [False, True])
+def test_claude_authors_without_plan_or_inherited_write_tools(web_search):
+    command = bridge._adapter_command(
+        {"id": "claude", "executable": "claude"}, model_override="sonnet", web_search=web_search,
+    )
+    assert command[command.index("--permission-mode") + 1] == "dontAsk"
+    expected = {"Read", "Glob", "Grep"} | ({"WebSearch"} if web_search else set())
+    assert set(command[command.index("--tools") + 1].split(",")) == expected
+    assert set(command[command.index("--allowedTools") + 1].split(",")) == expected
+    assert command[command.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+    assert "--strict-mcp-config" in command
+    assert "bypassPermissions" not in command and "plan" not in command
+
+
+def test_inline_briefing_preserves_prepared_writer_input_without_draft_charts():
+    pack = {
+        "taskType": "briefing", "agentInstructions": "evidence only",
+        "prompt": "Korean authoring template", "context": "Exact writer evidence source:test-1\nmarket facts",
+        "outputContract": {"format": "markdown", "minimumCharacters": 2500},
+        "writeBackContract": {"method": "markdown"},
+        "internal": {"privateChartData": "DO_NOT_SEND_INTERNAL_CHARTS"},
+        "draftArtifact": {"markdown": "DO_NOT_SEND_DRAFT"},
+    }
+    prompt = bridge._agent_prompt(Path("private-pack.json"), pack, inline_briefing=True)
+    for key in ("agentInstructions", "prompt", "context"):
+        assert pack[key] in prompt
+    assert '"minimumCharacters": 2500' in prompt
+    assert "private-pack.json" not in prompt and "DO_NOT_SEND" not in prompt
+    assert "Do not enter plan mode" in prompt
+
+
+def test_claude_briefing_dispatch_delivers_inline_evidence_to_writer(tmp_path):
+    pack = {"taskType": "briefing", "artifactId": "2099-12-31",
+            "context": "prepared pinned evidence", "prompt": "report template",
+            "outputContract": briefing_output_contract("both")}
+    adapter = {"id": "claude", "label": "Claude", "executable": "claude", "available": True}
+    with (
+        patch.object(bridge, "_select_adapter", return_value=adapter),
+        patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, tmp_path / "pack.json")),
+        patch.object(bridge, "_invoke_agent_cli", return_value=_valid_briefing_output()) as invoke,
+        patch.object(bridge.schema, "update_pack_status"),
+        patch.object(bridge.job_runtime, "is_durable_job", return_value=True),
+        patch.object(bridge.job_runtime, "commit_json_output", return_value={"artifactId": "2099-12-31"}) as commit,
+    ):
+        bridge.run_agent_task("briefing", {}, job_id="test-claude-inline")
+    assert invoke.call_count == 1
+    assert pack["context"] in invoke.call_args.args[1]
+    assert pack["prompt"] in invoke.call_args.args[1]
+    assert "pack.json" not in invoke.call_args.args[1]
+    assert commit.call_args.kwargs["contract_failed"] is False
+
+
 def test_codex_command_uses_current_exec_flags_without_removed_approval_option():
     adapter = {"id": "codex", "executable": "codex", "available": True}
     with patch("features.agent_mode.setup.configured_model", return_value="gpt-5.4"):
@@ -110,6 +162,50 @@ def test_codex_command_uses_current_exec_flags_without_removed_approval_option()
         "--model", "gpt-5.4", "-",
     ]
     assert "--ask-for-approval" not in command
+
+
+def test_cli_command_carries_supported_task_reasoning_effort_without_mutating_global_config():
+    adapters = (
+        ({"id": "codex", "executable": "codex", "available": True}, "high", ["-c", "model_reasoning_effort=high"]),
+        ({"id": "claude", "executable": "claude", "available": True}, "max", ["--effort", "max"]),
+        ({"id": "antigravity", "executable": "agy", "available": True}, "medium", ["--effort", "medium"]),
+    )
+    with patch("features.agent_mode.setup.configured_model", return_value="task-model"):
+        for adapter, effort, expected in adapters:
+            command = bridge._adapter_command(adapter, "PROMPT", reasoning_effort=effort)
+            for item in expected:
+                assert item in command
+
+
+def test_cli_command_rejects_effort_unknown_to_selected_adapter():
+    adapter = {"id": "antigravity", "executable": "agy", "available": True}
+    with pytest.raises(ValueError, match="Unsupported reasoning effort"):
+        bridge._adapter_command(adapter, "PROMPT", reasoning_effort="xhigh")
+
+
+def test_codex_cli_command_keeps_model_specific_effort_levels():
+    adapter = {"id": "codex", "executable": "codex", "available": True}
+
+    for model, effort in [
+        ("gpt-6-astra", "ultra"),
+        ("gpt-5.6-sol", "ultra"),
+        ("gpt-5.6-luna", "max"),
+    ]:
+        command = bridge._adapter_command(
+            adapter,
+            "PROMPT",
+            model_override=model,
+            reasoning_effort=effort,
+        )
+        assert ["-c", f"model_reasoning_effort={effort}"] == command[command.index("-c") : command.index("-c") + 2]
+
+    with pytest.raises(ValueError, match="Unsupported reasoning effort"):
+        bridge._adapter_command(
+            adapter,
+            "PROMPT",
+            model_override="gpt-5.6-luna",
+            reasoning_effort="ultra",
+        )
 
 
 def test_bridge_parses_fenced_json_object():
@@ -195,6 +291,7 @@ def test_run_agent_task_captures_output_and_delegates_writeback():
         adapter = {"id": "codex", "label": "Codex CLI", "executable": sys.executable, "available": True}
         command = [sys.executable, "-c", "print('## Test Briefing\\n\\nAgent output')"]
         with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge, "_adapter_command", return_value=command),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
@@ -566,6 +663,7 @@ def test_run_agent_task_does_not_retry_invalid_briefing_or_writeback():
         adapter = {"id": "codex", "label": "Codex CLI", "executable": "codex", "available": True}
         invalid = "# Daily Market Briefing\n\n## US Market Briefing\n짧은 요약"
         with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
             patch.object(bridge, "_invoke_agent_cli", return_value=invalid) as invoke,
@@ -593,6 +691,7 @@ def test_run_agent_task_never_writes_briefing_after_invalid_output():
         adapter = {"id": "codex", "label": "Codex CLI", "executable": "codex", "available": True}
         invalid = "# Daily Market Briefing\n\n## US Market Briefing\n짧은 요약"
         with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
             patch.object(bridge, "_invoke_agent_cli", side_effect=[invalid, invalid]) as invoke,
@@ -659,3 +758,45 @@ if __name__ == "__main__":
     test_bridge_parses_fenced_json_object()
     test_configured_provider_does_not_fall_back_to_another_cli()
     test_run_agent_task_captures_output_and_delegates_writeback()
+
+
+def test_durable_briefing_contract_violation_falls_back_to_rules_instead_of_failing():
+    """토큰을 쓴 실행을 계약 위반 하나로 버리지 않는다 — 규칙 대체로 커밋한다.
+
+    비-durable 경로는 규칙 대체를 태울 커밋 경로가 없어 그대로 거절한다(위 두 테스트).
+    """
+    with TemporaryDirectory() as tmp:
+        pack = {
+            "taskType": "briefing",
+            "artifactType": "briefing",
+            "artifactId": "2099-12-31",
+            "title": "Test Briefing",
+            "outputContract": briefing_output_contract("both"),
+            "draftArtifact": {"date": "2099-12-31"},
+        }
+        pack_path = Path(tmp) / "pack.json"
+        pack_path.write_text("{}", encoding="utf-8")
+        adapter = {"id": "codex", "label": "Codex CLI", "executable": "codex", "available": True}
+        invalid = "# Daily Market Briefing\n\n## US Market Briefing\n짧은 요약"
+        seen = {}
+
+        def _commit(job_id, task_type, pack, *, markdown, payload, contract_failed=False):
+            seen["contractFailed"] = contract_failed
+            seen["markdown"] = markdown
+            return {"artifactId": "2099-12-31"}
+
+        with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
+            patch.object(bridge, "_select_adapter", return_value=adapter),
+            patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
+            patch.object(bridge, "_invoke_agent_cli", return_value=invalid) as invoke,
+            patch.object(bridge.agent_service, "writeback_pack") as writeback,
+            patch.object(bridge.schema, "update_pack_status"),
+            patch.object(bridge.job_runtime, "is_durable_job", return_value=True),
+            patch.object(bridge.job_runtime, "commit_json_output", side_effect=_commit),
+        ):
+            summary = bridge.run_agent_task("briefing", {}, job_id="durable-contract-job")
+        assert seen["contractFailed"] is True
+        assert invoke.call_count == 1
+        writeback.assert_not_called()
+        assert summary["artifactId"] == "2099-12-31"

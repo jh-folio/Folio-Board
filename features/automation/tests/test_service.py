@@ -45,6 +45,7 @@ def test_briefing_prerequisites_skip_recent_market_memory(monkeypatch):
     calls = []
     monkeypatch.setattr(service, "import_rssarchive", lambda run_collection=True: calls.append("rss") or "rss-ok")
     monkeypatch.setattr(service, "run_rss_market_memory_update", lambda: calls.append("memory") or {"ok": True})
+    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda **_kwargs: {"ok": True})
     monkeypatch.setattr(service, "_append_run", lambda row: calls.append(f"record:{row['kind']}"))
     monkeypatch.setattr(service, "market_state_snapshot_recently_run", lambda **_kwargs: True)
     monkeypatch.setattr(service, "list_runs", lambda limit=100: [{
@@ -92,8 +93,10 @@ def test_briefing_prerequisites_refresh_stale_snapshot_even_when_memory_is_fresh
 
 def test_briefing_prerequisites_run_stale_market_memory(monkeypatch):
     calls = []
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "rules")
     monkeypatch.setattr(service, "import_rssarchive", lambda run_collection=True: calls.append("rss") or "rss-ok")
     monkeypatch.setattr(service, "run_rss_market_memory_update", lambda: calls.append("memory") or {"ok": True})
+    monkeypatch.setattr(service, "_refresh_market_state_snapshot", lambda **_kwargs: {"ok": True})
     monkeypatch.setattr(service, "_append_run", lambda row: calls.append(f"record:{row['kind']}"))
     monkeypatch.setattr(service, "list_runs", lambda limit=100: [{
         "kind": "marketMemory",

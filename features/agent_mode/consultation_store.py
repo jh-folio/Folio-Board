@@ -356,6 +356,10 @@ def update_session(data_dir: Path, session_id: str, payload: dict) -> dict:
         return public_session(session)
 
 
+class ConsultationNotEmptyError(RuntimeError):
+    """A persisted user turn is history, not disposable setup state."""
+
+
 def delete_session(data_dir: Path, session_id: str, *, confirmed: bool) -> bool:
     if not confirmed:
         raise PermissionError("consultation_delete_confirmation_required")
@@ -363,5 +367,13 @@ def delete_session(data_dir: Path, session_id: str, *, confirmed: bool) -> bool:
     with _lock(path):
         if not path.exists():
             return False
+        # A failed job can follow an already durable user-message append.  Do
+        # not let the UI's best-effort cleanup erase that question; only a
+        # genuinely empty freshly-created thread is eligible for this route.
+        session = _read(path)
+        if not session:
+            raise ConsultationNotEmptyError("consultation_delete_state_unavailable")
+        if session.get("messages"):
+            raise ConsultationNotEmptyError("consultation_not_empty")
         path.unlink()
         return True

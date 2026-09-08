@@ -101,7 +101,7 @@ def test_a_failed_snapshot_does_not_take_the_briefing_down(monkeypatch):
     monkeypatch.setattr(service, "default_generation_mode", lambda: "llm_cli")
     import features.agent_mode.bridge as bridge
 
-    monkeypatch.setattr(bridge, "run_market_memory_update_task", lambda *a, **k: boom())
+    monkeypatch.setattr(bridge, "run_agent_task", lambda *a, **k: boom())
 
     out = service.run_briefing_prerequisites()
 
@@ -118,8 +118,8 @@ def test_rules_mode_says_why_instead_of_pretending(monkeypatch):
     assert result == {"ok": False, "skipped": True, "reason": "rules_mode"}
 
 
-def test_the_cli_path_uses_the_same_two_step_task_as_the_button(monkeypatch):
-    """버튼과 다른 경로를 만들면 둘이 서로 다른 스냅샷을 만들게 된다."""
+def test_the_cli_snapshot_step_is_separate_from_medium_memory(monkeypatch):
+    """사전작업은 memory 실패 뒤에도 snapshot을 따로 시도할 수 있어야 한다."""
     monkeypatch.setattr(service, "default_generation_mode", lambda: "llm_cli")
     seen = {}
     import features.agent_mode.bridge as bridge
@@ -128,7 +128,7 @@ def test_the_cli_path_uses_the_same_two_step_task_as_the_button(monkeypatch):
         seen["params"] = params
         return {"snapshotId": "snap-1"}
 
-    monkeypatch.setattr(bridge, "run_market_memory_update_task", fake)
+    monkeypatch.setattr(bridge, "run_agent_task", lambda task, params=None, **kw: fake(params, task=task, **kw))
 
     result = service._refresh_market_state_snapshot()
 
@@ -194,7 +194,7 @@ def test_an_explicit_run_ignores_the_freshness_guard(monkeypatch):
     assert calls == ["snapshot"]
 
 
-def test_a_fresh_memory_only_needs_the_snapshot_step(monkeypatch):
+def test_snapshot_step_is_always_snapshot_only(monkeypatch):
     """메모리가 신선하면 CLI 2단계 작업을 다시 돌리지 않는다.
 
     전체 작업은 중기 메모리 갱신까지 포함한다 — 가드가 방금 "최근이라 건너뛴다"고
@@ -215,8 +215,8 @@ def test_a_fresh_memory_only_needs_the_snapshot_step(monkeypatch):
 
     calls.clear()
     stale = service._refresh_market_state_snapshot()
-    assert stale["snapshotId"] == "s2"
-    assert calls == ["full"]
+    assert stale["snapshotId"] == "s1"
+    assert calls == ["only:market_state_snapshot"]
 
 
 def test_a_failed_snapshot_is_not_retried_every_schedule(monkeypatch):
@@ -257,3 +257,65 @@ def test_an_explicit_run_ignores_the_failure_backoff(monkeypatch):
     service.run_briefing_prerequisites(force=True)
 
     assert calls == ["snapshot"]
+
+
+def test_stale_api_prerequisite_runs_memory_then_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
+    import features.market_memory.service as memory_service
+
+    monkeypatch.setattr(memory_service, "run_llm_market_memory", lambda *a, **k: calls.append("memory") or {"ok": True})
+    monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
+
+    out = service.run_briefing_prerequisites()
+
+    assert calls == ["memory", "snapshot"]
+    assert out["marketMemory"]["stateSnapshot"] == {"ok": True}
+
+
+def test_stale_cli_prerequisite_runs_memory_then_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm_cli")
+    import features.agent_mode.bridge as bridge
+
+    monkeypatch.setattr(
+        bridge,
+        "run_agent_task",
+        lambda task, *a, **k: calls.append(task) or {"ok": True, "snapshotId": "s1"},
+    )
+    monkeypatch.setattr(service, "_run_market_state_snapshot_step", service._run_market_state_snapshot_step)
+
+    service.run_briefing_prerequisites()
+
+    assert calls == ["market_memory_llm", "market_state_snapshot"]
+
+
+def test_memory_failure_still_attempts_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
+    import features.market_memory.service as memory_service
+
+    monkeypatch.setattr(memory_service, "run_llm_market_memory", lambda *a, **k: calls.append("memory") or {"ok": False})
+    monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
+
+    out = service.run_briefing_prerequisites()
+
+    assert calls == ["memory", "snapshot"]
+    assert out["marketMemory"]["ok"] is False
+    assert out["marketMemory"]["stateSnapshot"] == {"ok": True}
+
+
+def test_stale_memory_still_runs_but_recent_snapshot_failure_skips_only_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
+    import features.market_memory.service as memory_service
+
+    monkeypatch.setattr(memory_service, "run_llm_market_memory", lambda *a, **k: calls.append("memory") or {"ok": True})
+    monkeypatch.setattr(service, "market_state_snapshot_recently_failed", lambda **kw: True)
+    monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
+
+    out = service.run_briefing_prerequisites()
+
+    assert calls == ["memory"]
+    assert out["marketMemory"]["stateSnapshot"]["reason"] == "recent_failure"
+    assert out["marketMemory"]["stateSnapshot"]["skipped"] is True

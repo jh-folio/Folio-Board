@@ -170,17 +170,57 @@ def agent_instructions(task_type: str) -> str:
     return "\n".join(f"- {line}" for line in base)
 
 
+INTERNAL_KEY = "internal"
+
+
+def _internal_sidecar(path: Path) -> Path:
+    """앱 전용 payload가 사는 옆 파일."""
+    name = path.name
+    stem = name[:-len(".json")] if name.endswith(".json") else name
+    return path.with_name(f"{stem}.internal.json")
+
+
+def _split_internal(scrubbed: dict) -> tuple[dict, dict | None]:
+    """Separate the document the agent reads from app-only payloads.
+
+    프롬프트는 팩 파일을 "읽어라"라고 지시하는데, `internal`(visualScopeResults,
+    groups)은 에이전트가 쓰지 않으면서 팩의 대부분을 차지한다.  실측으로 KR 일간
+    팩이 7.32MB가 됐고 Claude Code의 Read 한도를 넘겨, 모델이 잘린 조각을 읽고
+    계약을 어긴 짧은 답을 냈다 — 같은 팩의 `outputContract.minimumCharacters`가
+    2500인데 40이라고 답했다.  분리하면 0.93MB가 된다.  앱은 `read_pack`이
+    사이드카를 다시 붙여 주므로 예전과 같은 팩을 본다.
+    """
+    document = dict(scrubbed)
+    internal = document.pop(INTERNAL_KEY, None)
+    return document, internal or None
+
+
+def _write_internal_sidecar(path: Path, internal: dict | None) -> None:
+    sidecar = _internal_sidecar(path)
+    if internal:
+        sidecar.write_text(json.dumps(internal, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+    try:
+        sidecar.unlink()
+    except FileNotFoundError:
+        return
+
+
 def write_pack(pack: dict, owner_job_id: str | None = None) -> Path:
     task_type = normalize_task_type(pack.get("taskType"))
     artifact_id = safe_slug(pack.get("artifactId"), fallback=task_type)
     scrubbed = scrub_secrets(pack)
+    document, internal = _split_internal(scrubbed)
     if owner_job_id is not None:
         from features.common.jobs import write_job_pack
 
         pack_id = f"{artifact_id}_{pack.get('packId')}"
-        return write_job_pack(owner_job_id, pack_id, scrubbed)
+        path = write_job_pack(owner_job_id, pack_id, document)
+        _write_internal_sidecar(path, internal)
+        return path
     path = task_dir(task_type) / f"{artifact_id}_{pack.get('packId')}.json"
-    path.write_text(json.dumps(scrubbed, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_internal_sidecar(path, internal)
     return path
 
 
@@ -234,7 +274,12 @@ def _resolved_pack_path(path: str | Path, *, strict: bool = True) -> Path:
 
 def read_pack(path: str | Path) -> dict:
     resolved = _resolved_pack_path(path)
-    return json.loads(resolved.read_text(encoding="utf-8"))
+    pack = json.loads(resolved.read_text(encoding="utf-8"))
+    if INTERNAL_KEY not in pack:
+        sidecar = _internal_sidecar(resolved)
+        if sidecar.exists():
+            pack[INTERNAL_KEY] = json.loads(sidecar.read_text(encoding="utf-8"))
+    return pack
 
 
 def update_pack_status(path: str | Path, *, status: str, result: dict | None = None) -> dict:
@@ -245,12 +290,15 @@ def update_pack_status(path: str | Path, *, status: str, result: dict | None = N
     if result is not None:
         pack["result"] = scrub_secrets(result)
     scrubbed = scrub_secrets(pack)
+    document, internal = _split_internal(scrubbed)
     # scrub_secrets removes credential-shaped keys and values before persistence.
     # codeql[py/clear-text-storage-sensitive-data]
     resolved.write_text(  # lgtm[py/clear-text-storage-sensitive-data]
-        json.dumps(scrubbed, ensure_ascii=False, indent=2),
+        json.dumps(document, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # 상태만 바꾸는 호출이 사이드카를 다시 본문으로 끌어들이면 분리가 무의미해진다.
+    _write_internal_sidecar(resolved, internal)
     return scrubbed
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from features.automation.schema import normalize_settings
@@ -17,7 +18,14 @@ from features.automation.schema import (
 )
 from features.agent_mode.bridge import submit_agent_task
 from features.agent_mode.generation_mode import llm_override_for_mode
-from features.common.jobs import get_job
+from features.common.jobs import (
+    diagnostic_stage_failure,
+    finish_direct_diagnostic,
+    finish_direct_diagnostic_run,
+    get_job,
+    start_direct_diagnostic,
+)
+from features.common.diagnostics.support import bind_context, bind_failure_cache, current_context
 from features.common.research_library.rss.service import import_rssarchive
 from features.common.research_library.signals.runtime import promote_kr_rss_leads
 from features.common.utils import kst_date, now_iso, read_json, write_json
@@ -25,6 +33,12 @@ from features.common.market_scope import load_market_scope
 from features.daily_briefing.builder import build_briefing
 from features.daily_briefing.schema import market_selection_scope, normalize_briefing_kind, normalize_market_selection
 from features.llm_settings.client import default_generation_mode
+from features.agent_mode.generation_mode import normalize_generation_mode
+from features.llm_settings.task_runtime import (
+    bind_task_policy,
+    generation_mode as task_generation_mode,
+    task_snapshot,
+)
 from features.market_memory.digest import run_rss_market_memory_update
 from features.market_calendar.service import refresh_calendar
 from features.common.workspace import data_dir
@@ -34,6 +48,34 @@ DATA_DIR = data_dir()
 SETTINGS_PATH = DATA_DIR / "automation-settings.json"
 RUNS_PATH = DATA_DIR / "automation-runs.json"
 _LOOP_STARTED = False
+
+
+def _automation_task_snapshot(task_key: str) -> dict:
+    """Resolve a task once, retaining the legacy mode seam for callers/tests."""
+    snapshot = task_snapshot(task_key)
+    # Existing automation callers can inject the process-wide mode through
+    # ``default_generation_mode``.  Preserve that seam only for global-source
+    # rows; an explicit task override must always win.
+    if snapshot.get("source") == "global":
+        legacy_mode = normalize_generation_mode(default_generation_mode())
+        if legacy_mode != task_generation_mode(snapshot):
+            snapshot = {
+                **snapshot,
+                "enabled": legacy_mode != "rules",
+                "mode": "api" if legacy_mode == "llm_api" else "cli" if legacy_mode == "llm_cli" else "",
+            }
+            if legacy_mode == "llm_api":
+                # Keep compatibility with callers that replace the legacy
+                # mode getter while using the current global API provider.
+                from features.llm_settings.client import selected_llm_config
+
+                cfg = selected_llm_config()
+                snapshot.update({
+                    "provider": str(cfg.get("provider") or "openai"),
+                    "model": str(cfg.get("model") or ""),
+                    "reasoningEffort": str(cfg.get("reasoningEffort") or "provider_default"),
+                })
+    return snapshot
 
 
 def read_settings() -> dict:
@@ -70,6 +112,42 @@ FAILURE_REASONS = {
 UNKNOWN_FAILURE_REASON = "알 수 없는 오류입니다"
 
 
+def _run_briefing_rss_prerequisite() -> dict:
+    """Give a manual briefing's RSS collection its own concrete child run."""
+    parent = current_context()
+    if parent is None:
+        return import_rssarchive(run_collection=True)
+    recorder = start_direct_diagnostic(
+        feature_code="rss",
+        route_code="rss_collect",
+        authority_kind="direct",
+        parent_run_id=parent.run_id,
+    )
+    if recorder is None:
+        return import_rssarchive(run_collection=True)
+    try:
+        with bind_context(recorder.context):
+            # A child run must never reuse the parent's Failure object/stage.
+            with bind_failure_cache():
+                result = import_rssarchive(run_collection=True)
+        finish_direct_diagnostic(
+            recorder,
+            "succeeded" if isinstance(result, dict) and result.get("ok") is True else "unknown",
+        )
+        return result
+    except Exception as error:
+        diagnostic_stage_failure(
+            recorder,
+            error,
+            stage_id=None,
+            stage_code="collect",
+            boundary="generic",
+            terminal=True,
+        )
+        finish_direct_diagnostic(recorder, "failed")
+        raise
+
+
 def failure_reason(exc: BaseException) -> str:
     """Map an exception class to a cause a person can act on.
 
@@ -101,6 +179,28 @@ def _append_run(row: dict) -> None:
 def list_runs(limit: int = 20) -> list[dict]:
     runs = read_json(RUNS_PATH, [])
     return runs[: int(limit or 20)] if isinstance(runs, list) else []
+
+
+def diagnostic_authority_for_run(run_id: str) -> dict[str, str] | None:
+    """Read-only authority lookup for an automation diagnostic parent.
+
+    Automation has no SharedJob for rules paths, so its persisted row—not an
+    inferred child result—is the only authority available to detail projection.
+    """
+    if not isinstance(run_id, str):
+        return None
+    for row in list_runs(50):
+        if not isinstance(row, dict) or row.get("diagnosticRunId") != run_id:
+            continue
+        status = str(row.get("status") or "").strip()
+        if status == "submitted":
+            return {"status": "running"}
+        if status == "done":
+            return {"status": "done"}
+        if status == "failed":
+            return {"status": "failed"}
+        return None
+    return None
 
 
 def _parse_iso(value: str) -> dt.datetime | None:
@@ -303,23 +403,22 @@ def _refresh_market_state_snapshot(*, memory_is_fresh: bool = False) -> dict:
     엔진이 없으면(규칙 모드) 만들 수 없다. LLM이 시장 해석 문장을 쓰는 산출물이라
     규칙으로 대신할 수 있는 것이 아니다.
     """
-    mode = default_generation_mode()
+    task_policy = _automation_task_snapshot("market_memory")
+    mode = task_generation_mode(task_policy)
     if mode == "rules":
         return {"ok": False, "skipped": True, "reason": "rules_mode"}
     try:
         if mode == "llm_cli":
-            # 버튼이 쓰는 것과 같은 2단계 작업(중기 메모리 → 화면 스냅샷)이다.
-            # job_id 없이 부르면 동기로 돈다 — 사전작업은 브리핑보다 먼저 끝나야 한다.
-            #
-            # **메모리가 이미 신선하면 2단계를 다시 돌리지 않는다.** 그 경우 필요한 것은
-            # 화면 스냅샷 하나인데, 전체 작업을 부르면 가드가 방금 "최근이라 건너뛴다"고
-            # 판정한 중기 메모리 갱신을 CLI로 다시 돌린다 — 아끼려던 비용을 그대로 치른다.
-            from features.agent_mode.bridge import run_agent_task, run_market_memory_update_task
+            # Prerequisites own the medium-memory step.  This function is
+            # snapshot-only so a failed memory call cannot suppress the second
+            # step (and stale/fresh API and CLI take the same sequence).
+            from features.agent_mode.bridge import run_agent_task
 
-            if memory_is_fresh:
-                result = run_agent_task("market_state_snapshot", {"date": kst_date()})
-            else:
-                result = run_market_memory_update_task({"date": kst_date()})
+            result = run_agent_task(
+                "market_state_snapshot",
+                {"date": kst_date(), "_task_policy_snapshot": task_policy},
+                adapter=str(task_policy.get("provider") or ""),
+            )
             snapshot_id = str((result or {}).get("snapshotId") or "")
             return {"ok": True, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "snapshotId": snapshot_id}
         # API(LLM) 모드도 버튼과 **같은** attempt/watermark 라이프사이클을 탄다. 바로
@@ -329,9 +428,10 @@ def _refresh_market_state_snapshot(*, memory_is_fresh: bool = False) -> dict:
         from features.market_memory.http_service import ManualSnapshotCommand
 
         service = create_market_state_service(DATA_DIR)
-        result = service.run_manual(
-            ManualSnapshotCommand(AttemptScope(PREREQUISITE_SNAPSHOT_SCOPE), kst_date())
-        )
+        with bind_task_policy(task_policy):
+            result = service.run_manual(
+                ManualSnapshotCommand(AttemptScope(PREREQUISITE_SNAPSHOT_SCOPE), kst_date())
+            )
         snapshot = result.get("snapshot") if isinstance(result, dict) else None
         snapshot_id = str((snapshot or {}).get("id") or "") if isinstance(snapshot, dict) else ""
         attempt = result.get("attempt") if isinstance(result, dict) else None
@@ -344,6 +444,29 @@ def _refresh_market_state_snapshot(*, memory_is_fresh: bool = False) -> dict:
         }
     except Exception as exc:  # noqa: BLE001 - 브리핑을 막지 않는다
         return {"ok": False, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "errorType": type(exc).__name__}
+
+
+def _refresh_medium_memory() -> dict:
+    """Run the configured medium-memory writer without blocking a snapshot."""
+    task_policy = _automation_task_snapshot("market_memory")
+    mode = task_generation_mode(task_policy)
+    try:
+        if mode == "llm_cli":
+            from features.agent_mode.bridge import run_agent_task
+
+            return run_agent_task(
+                "market_memory_llm",
+                {"date": kst_date(), "_task_policy_snapshot": task_policy},
+                adapter=str(task_policy.get("provider") or ""),
+            )
+        if mode == "llm_api":
+            from features.market_memory.service import run_llm_market_memory
+
+            with bind_task_policy(task_policy):
+                return run_llm_market_memory(kst_date())
+        return run_rss_market_memory_update()
+    except Exception as exc:  # noqa: BLE001 - snapshot and briefing still run
+        return {"ok": False, "errorType": type(exc).__name__}
 
 
 def _run_market_state_snapshot_step(*, memory_is_fresh: bool = False) -> dict:
@@ -372,7 +495,7 @@ def run_briefing_prerequisites(
     memory_max_age_hours: int = 12,
     force: bool = False,
 ) -> dict:
-    prerequisites = {"rss": import_rssarchive(run_collection=True)}
+    prerequisites = {"rss": _run_briefing_rss_prerequisite()}
     # `force`는 사용자가 직접 "지금 실행"을 누른 경우다. 신선도 때문에 건너뛰면
     # 눌러도 아무 일이 없는 버튼이 된다. 예약 경로는 계속 신선도를 본다.
     if not force and market_memory_recently_run(now=now, max_age_hours=memory_max_age_hours):
@@ -406,7 +529,7 @@ def run_briefing_prerequisites(
     else:
         started = now_iso()
         try:
-            memory = run_rss_market_memory_update()
+            memory = _refresh_medium_memory()
             status = "failed" if isinstance(memory, dict) and memory.get("ok") is False else "done"
             # 규칙 기반 갱신만으로는 **화면이 보여주는 내러티브가 바뀌지 않는다.**
             # 시장 내러티브 탭은 `market_state_snapshots`를 읽는데 위 함수는 그것을
@@ -414,7 +537,20 @@ def run_briefing_prerequisites(
             # 사전작업이 도는 날에도 화면은 며칠 전 해석 그대로였다(실측: 스냅샷 이력이
             # 08-12, 08-07, 08-06으로 띄엄띄엄하고 그 시각에 자동화 기록이 없다 —
             # 전부 사용자가 버튼을 누른 것이었다).
-            snapshot = _run_market_state_snapshot_step()
+            # Always attempt the snapshot even when the medium-memory writer
+            # failed. Existing durable state is still useful snapshot input.
+            # The attempt backoff is independent from memory freshness: a
+            # stale memory pass may run, while a snapshot adapter that just
+            # failed must not be invoked again on every scheduled briefing.
+            if not force and market_state_snapshot_recently_failed(now=now):
+                snapshot = {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "recent_failure",
+                    "retryAfterHours": SNAPSHOT_RETRY_BACKOFF_HOURS,
+                }
+            else:
+                snapshot = _run_market_state_snapshot_step()
             memory = {**memory, "stateSnapshot": snapshot} if isinstance(memory, dict) else memory
             _append_run({
                 "kind": "marketMemory",
@@ -476,13 +612,17 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             "requestedMarkets": list(normalize_market_selection(requested)),
             "droppedMarkets": dropped,
         }
+    date = kst_date()
+    kind = normalize_briefing_kind(str(cfg.get("kind") or "daily").strip().lower())
+    from features.daily_briefing.news_selection_runtime import pin_selection_context
+    selection_context = pin_selection_context(date, markets, kind)
     prerequisites = {}
     # 값이 없으면 켠 것으로 읽는다(§10 계약, schema 기본값과 동일). 결측을 끔으로
     # 읽으면 이 키가 생기기 전의 예약이 조용히 사전작업을 잃는다.
     if cfg.get("runPrerequisites", True):
         prerequisites = run_briefing_prerequisites()
-    date = kst_date()
-    generation_mode = default_generation_mode()
+    task_policy = _automation_task_snapshot("daily_briefing")
+    generation_mode = task_generation_mode(task_policy)
     scope_label = market_selection_scope(markets)
     kind = str(cfg.get("kind") or "daily").strip().lower()
     kind = normalize_briefing_kind(kind)
@@ -495,17 +635,21 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
             "markets": markets,
             "briefing_type": cfg.get("briefingType", "default"),
             "kind": kind,
-        })
+            "selection_context": selection_context,
+            "_task_policy_snapshot": task_policy,
+            })
     else:
-        briefing = build_briefing(
-            date=date,
-            strict_date=False,
-            llm_override=llm_override_for_mode(generation_mode),
-            quality_mode=cfg.get("qualityMode", "diagnose_only"),
-            markets=markets,
-            briefing_type=cfg.get("briefingType", "default"),
-            kind=kind,
-        )
+        with bind_task_policy(task_policy):
+            briefing = build_briefing(
+                date=date,
+                strict_date=False,
+                llm_override=llm_override_for_mode(generation_mode),
+                quality_mode=cfg.get("qualityMode", "diagnose_only"),
+                markets=markets,
+                briefing_type=cfg.get("briefingType", "default"),
+                kind=kind,
+                selection_context=selection_context,
+            )
     return {
         "date": date,
         "generationMode": generation_mode,
@@ -521,52 +665,66 @@ def _run_briefing(settings: dict | None = None, schedule: dict | None = None) ->
 
 def run_automation_once(kind: str, schedule: dict | None = None) -> dict:
     kind = str(kind or "").strip()
+    if kind not in {"rss", "marketCalendar", "marketMemory", "briefingPrerequisites", "briefing"}:
+        return {"ok": False, "error": f"Unsupported automation: {kind}"}
     started = now_iso()
     schedule_id = str((schedule or {}).get("id") or "").strip()
+    recorder = start_direct_diagnostic(
+        feature_code="automation", route_code="automation_run", authority_kind="automation",
+    )
+    diagnostic_run_id = recorder.context.run_id if recorder is not None else ""
     try:
-        if kind == "rss":
-            result = import_rssarchive(run_collection=True)
-            # 한국 lead 표시는 이미 수집한 행을 다시 읽을 뿐이라 네트워크도 자격증명도 쓰지 않는다.
-            # 별도 자동화 없이 RSS 수집에 함께 실린다.
-            try:
-                result = {**result, "krFastOriginLeads": promote_kr_rss_leads(DATA_DIR)}
-            except Exception:
-                pass
-        elif kind == "marketCalendar":
-            result = refresh_calendar(DATA_DIR)
-        elif kind == "marketMemory":
-            result = run_rss_market_memory_update()
-        elif kind == "briefingPrerequisites":
-            # 사전작업의 정의는 한 곳이다. 여기서 따로 조립하면 예약 경로만 화면
-            # 스냅샷을 만들고 이 경로는 안 만드는 식으로 갈라진다. 다만 이쪽은 사용자가
-            # 직접 부르는 경로라 신선도로 건너뛰지 않는다.
-            result = run_briefing_prerequisites(force=True)
-        elif kind == "briefing":
-            result = _run_briefing(schedule=schedule)
-        else:
-            return {"ok": False, "error": f"Unsupported automation: {kind}"}
-        status = "done"
-        job_id = ""
-        if kind == "rss" and isinstance(result, dict) and result.get("collection", {}).get("ok") is False:
-            # 수집이 실패했는데 done으로 적으면 자동 수집이 도는 줄 알고 며칠을 보낸다 —
-            # 실제로 매시 실행이 300초에서 잘리는 동안 실행 기록은 열흘 내내 done이었다.
-            status = "failed"
-        if kind == "briefing" and isinstance(result, dict) and result.get("generationMode") == "llm_cli":
-            # submit_agent_task는 job을 전용 스레드로 띄우고 바로 돌아온다. 이 시점은
-            # 완료가 아니라 제출이다 — done으로 적으면 job이 실패해도 그날 '성공'이
-            # 남아 30분 재시도가 한 번도 돌지 않고 화면도 성공으로 말한다.
-            briefing_job = result.get("briefing") if isinstance(result.get("briefing"), dict) else {}
-            job_id = str(briefing_job.get("id") or "").strip()
-            if job_id:
-                status = "submitted"
-        row = {"kind": kind, "status": status, "startedAt": started, "finishedAt": now_iso(), "result": result}
+        with bind_context(recorder.context) if recorder is not None else nullcontext():
+            if kind == "rss":
+                result = import_rssarchive(run_collection=True)
+                # 한국 lead 표시는 이미 수집한 행을 다시 읽을 뿐이라 네트워크도 자격증명도 쓰지 않는다.
+                # 별도 자동화 없이 RSS 수집에 함께 실린다.
+                try:
+                    result = {**result, "krFastOriginLeads": promote_kr_rss_leads(DATA_DIR)}
+                except Exception:
+                    pass
+            elif kind == "marketCalendar":
+                result = refresh_calendar(DATA_DIR)
+            elif kind == "marketMemory":
+                result = run_rss_market_memory_update()
+            elif kind == "briefingPrerequisites":
+                # 사전작업의 정의는 한 곳이다. 여기서 따로 조립하면 예약 경로만 화면
+                # 스냅샷을 만들고 이 경로는 안 만드는 식으로 갈라진다. 다만 이쪽은 사용자가
+                # 직접 부르는 경로라 신선도로 건너뛰지 않는다.
+                result = run_briefing_prerequisites(force=True)
+            elif kind == "briefing":
+                result = _run_briefing(schedule=schedule)
+            else:
+                raise AssertionError("validated automation kind")
+            status = "done"
+            job_id = ""
+            if kind == "rss" and isinstance(result, dict) and result.get("collection", {}).get("ok") is False:
+                # 수집이 실패했는데 done으로 적으면 자동 수집이 도는 줄 알고 며칠을 보낸다 —
+                # 실제로 매시 실행이 300초에서 잘리는 동안 실행 기록은 열흘 내내 done이었다.
+                status = "failed"
+            if kind == "briefing" and isinstance(result, dict) and result.get("generationMode") == "llm_cli":
+                # submit_agent_task는 job을 전용 스레드로 띄우고 바로 돌아온다. 이 시점은
+                # 완료가 아니라 제출이다 — done으로 적으면 job이 실패해도 그날 '성공'이
+                # 남아 30분 재시도가 한 번도 돌지 않고 화면도 성공으로 말한다.
+                briefing_job = result.get("briefing") if isinstance(result.get("briefing"), dict) else {}
+                job_id = str(briefing_job.get("id") or "").strip()
+                if job_id:
+                    status = "submitted"
+            row = {"kind": kind, "status": status, "startedAt": started, "finishedAt": now_iso(), "result": result}
         if job_id:
             row["jobId"] = job_id
         if schedule_id:
             row["scheduleId"] = schedule_id
+        if diagnostic_run_id:
+            row["diagnosticRunId"] = diagnostic_run_id
         _append_run(row)
+        if status != "submitted":
+            finish_direct_diagnostic(recorder, "succeeded" if status == "done" else "failed")
         return {"ok": True, **row}
     except Exception as exc:  # noqa: BLE001 - 어떤 실패든 기록으로 남기고 다음 주기로 넘긴다
+        diagnostic_stage_failure(
+            recorder, exc, stage_id=None, stage_code="generate", boundary="generic",
+        )
         row = {
             "kind": kind,
             "status": "failed",
@@ -580,7 +738,10 @@ def run_automation_once(kind: str, schedule: dict | None = None) -> dict:
             "errorType": type(exc).__name__,
             "errorReason": failure_reason(exc),
         }
+        if diagnostic_run_id:
+            row["diagnosticRunId"] = diagnostic_run_id
         _append_run(row)
+        finish_direct_diagnostic(recorder, "failed")
         return {"ok": False, **row}
 
 
@@ -600,6 +761,7 @@ def _reconcile_submitted_briefings_locked() -> None:
     if not isinstance(runs, list):
         return
     changed = False
+    terminal_diagnostics: list[tuple[str, str]] = []
     for row in runs:
         if not isinstance(row, dict) or row.get("kind") != "briefing" or row.get("status") != "submitted":
             continue
@@ -608,6 +770,9 @@ def _reconcile_submitted_briefings_locked() -> None:
             row["status"] = "failed"
             row["error"] = "briefing_job_id_missing"
             changed = True
+            diagnostic_run_id = row.get("diagnosticRunId")
+            if isinstance(diagnostic_run_id, str):
+                terminal_diagnostics.append((diagnostic_run_id, "failed"))
             continue
         try:
             job = get_job(job_id)
@@ -618,6 +783,9 @@ def _reconcile_submitted_briefings_locked() -> None:
             row["status"] = "failed"
             row["error"] = "briefing_job_not_found"
             changed = True
+            diagnostic_run_id = row.get("diagnosticRunId")
+            if isinstance(diagnostic_run_id, str):
+                terminal_diagnostics.append((diagnostic_run_id, "failed"))
             continue
         job_status = str(job.get("status") or "").strip()
         # committing도 아직 도는 상태다(JobStatus에 있다). 커밋 구간에 reconcile 주기가
@@ -634,8 +802,16 @@ def _reconcile_submitted_briefings_locked() -> None:
             # 재시도 30분 간격은 제출 시각이 아니라 실제 실패 시각부터 센다.
             row["finishedAt"] = finished
         changed = True
+        diagnostic_run_id = row.get("diagnosticRunId")
+        if isinstance(diagnostic_run_id, str):
+            terminal_diagnostics.append((diagnostic_run_id, "succeeded" if row["status"] == "done" else "failed"))
     if changed:
         write_json(RUNS_PATH, runs)
+        # The automation row is the authority parent.  Its persisted terminal
+        # status precedes this observational close; a missing child remains a
+        # parent failure with no invented provider cause.
+        for run_id, observed_status in terminal_diagnostics:
+            finish_direct_diagnostic_run(run_id, observed_status)
 
 
 def run_due_automations(now: dt.datetime | None = None) -> dict:

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -6,6 +7,7 @@ from features.agent_mode import service
 from features.market_memory import service as memory_service
 from features.agent_mode import chat
 from features.market_memory.snapshot import save_market_state_snapshot
+from features.investment_review import review_v2
 
 
 def test_topic_pack_dispatch_preserves_custom_tickers_and_deep_research():
@@ -157,11 +159,40 @@ def test_quality_repair_and_investment_review_write_to_temporary_stores():
             assert repaired["qualityGeneration"]["repairType"] == "agent"
             assert (service.BRIEFINGS_DIR / "2099-12-31.json").exists()
 
-            review_pack = {"artifactId": "2099-12-31", "draftArtifact": {"date": "2099-12-31"}}
-            review = service.write_investment_review_from_markdown(review_pack, "## Review")
+            review_inputs = {
+                "portfolio": {
+                    "revision": 7,
+                    "updatedAt": "2099-12-31T00:00:00+00:00",
+                    "positions": [{"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology", "currency": "USD"}],
+                },
+                "positions": [{"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology", "currency": "USD"}],
+                "theses": [{"ticker": "NVDA", "latestDelta": {"verdict": "maintained", "counterEvidence": [{"text": "경쟁 심화"}]}}],
+                "states": [],
+                "checkpoints": [],
+                "analytics": {"baseCurrency": "USD", "positions": [{"ticker": "NVDA", "weight": 1.0}]},
+                "reportRefs": [],
+                "backtest": None,
+                "backtestUncertainties": [],
+                "manualLinks": {},
+                "capturedAt": "2099-12-31T00:00:00+00:00",
+            }
+            service.REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+            with patch.object(review_v2, "gather_inputs", return_value=review_inputs):
+                candidate = review_v2.build_candidate(Path(tmp) / "data", service.REVIEW_DIR, "2099-12-31")
+                review_pack = {"artifactId": "2099-12-31", "draftArtifact": candidate}
+                review = service.write_investment_review_from_markdown(review_pack, "## Review")
+
             assert review["mode"] == "agent"
-            assert review["generation"]["mode"] == "agent"
-            assert (service.REVIEW_DIR / "2099-12-31.json").exists()
+            assert review["markdown"] == "## Review"
+            assert review["reviewRevision"] == 1
+            assert review["sourceSchemaVersion"] == 2
+            assert review["reviewState"] == "draft"
+            assert review["inputBasis"] == candidate["inputBasis"]
+            assert review["positionReviews"] == candidate["positionReviews"]
+            assert review["positionReviews"][0]["ticker"] == "NVDA"
+            assert "generation" not in review
+            saved = json.loads((service.REVIEW_DIR / "2099-12-31.json").read_text(encoding="utf-8"))
+            assert saved == review
         finally:
             service.BRIEFINGS_DIR = original_briefings
             service.REVIEW_DIR = original_reviews

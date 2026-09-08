@@ -20,6 +20,7 @@ from features.smart_collections.routes import failure_response
 from features.smart_collections.service import CollectionServiceError, SmartCollectionService
 from features.smart_collections.store import CollectionStoreUnavailableError
 from features.agent_mode.consultation_store import (
+    ConsultationNotEmptyError,
     append_user_message,
     create_session,
     delete_session,
@@ -159,6 +160,8 @@ class AgentCompanionBoundary:
             deleted = delete_session(self._consultation_data_dir(), consultation_id, confirmed=(body or {}).get("confirm") is True)
         except PermissionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ConsultationNotEmptyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not deleted:
             raise HTTPException(status_code=404, detail="consultation_not_found")
         return {"deleted": True, "id": consultation_id}

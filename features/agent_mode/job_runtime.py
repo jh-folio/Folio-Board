@@ -136,9 +136,17 @@ def _json_summary(task_type: TaskType, pack: dict, candidate: dict) -> dict[str,
     artifact_id = str(candidate.get("id") or pack.get("artifactId") or "")
     generated_at = str(candidate.get("generatedAt") or "")
     report_date = str(candidate.get("date") or generated_at[:10] or pack.get("artifactId") or "")
+    company = candidate.get("company")
+    company_name = company.get("name") if isinstance(company, dict) else ""
     summary: dict[str, str | int | bool | None] = {
         "artifactId": artifact_id,
-        "title": str(candidate.get("title") or candidate.get("headline") or pack.get("title") or ""),
+        "title": str(
+            candidate.get("title")
+            or candidate.get("headline")
+            or pack.get("title")
+            or company_name
+            or ""
+        ),
     }
     if task_type is TaskType.BRIEFING:
         summary["reportId"] = artifact_id
@@ -153,6 +161,64 @@ def _json_summary(task_type: TaskType, pack: dict, candidate: dict) -> dict[str,
     return summary
 
 
+def _briefing_fallback_allowed(error: BaseException) -> bool:
+    """Keep cancellation/deadline failures from being hidden by a fallback."""
+    validation = getattr(error, "validation", None)
+    reason_codes = (
+        set(validation.get("reasonCodes") or [])
+        if isinstance(validation, dict)
+        else set()
+    )
+    error_text = str(error).lower()
+    if reason_codes.intersection({"cancelled", "deadline_expired"}):
+        return False
+    return "cancelled" not in error_text and "deadline_expired" not in error_text
+
+
+def _prepare_rules_briefing_fallback(pack: dict, *, reason: str, rejection_codes: list[str] | None = None) -> dict:
+    """Prepare a rules report without bypassing the shared JSON commit path."""
+    markdown = agent_service.build_rules_briefing_markdown_from_pack(pack)
+    # The fallback must remain deterministic.  Do not spend a quality rewrite
+    # or concentration-repair call after the CLI has already failed; the
+    # pinned pack still carries the original control metadata for the report.
+    fallback_internal = dict(pack.get("internal") or {})
+    fallback_internal["qualityMode"] = "diagnose_only"
+    fallback_internal["concentrationByMarket"] = {}
+    fallback_pack = {**pack, "internal": fallback_internal}
+    prepared = agent_service.write_briefing_from_markdown(
+        fallback_pack, markdown, persist=False, validate_contract=False
+    )
+    fallback_status = "rules_fallback_after_cli_validation"
+    fallback_message = "CLI 결과가 최종 검증을 통과하지 못해 규칙 기반 브리핑으로 저장했습니다."
+    for report in (prepared.get("reports") or {}).values():
+        generation = dict(report.get("generation") or {})
+        generation.update({
+            "mode": "rules",
+            "status": fallback_status,
+            "fallbackReason": reason,
+            "rejectedReasonCodes": rejection_codes or [],
+            "message": fallback_message,
+        })
+        report["generation"] = generation
+        warnings = list(report.get("warnings") or [])
+        if "rules_fallback_after_cli_validation" not in warnings:
+            warnings.append("rules_fallback_after_cli_validation")
+        report["warnings"] = warnings
+    result = prepared.get("result")
+    if isinstance(result, dict):
+        generation = dict(result.get("generation") or {})
+        generation.update({
+            "mode": "rules",
+            "status": fallback_status,
+            "fallbackReason": reason,
+            "message": fallback_message,
+        })
+        result["generation"] = generation
+        result["fallbackReason"] = reason
+    prepared["fallbackReason"] = reason
+    return prepared
+
+
 def commit_json_output(
     job_id: str,
     task_type: TaskType,
@@ -160,6 +226,7 @@ def commit_json_output(
     *,
     markdown: str | None,
     payload: dict | None,
+    contract_failed: bool = False,
 ) -> dict[str, str | int | bool | None]:
     job = _running(job_id, task_type)
     root = jobs.data_root()
@@ -167,21 +234,71 @@ def commit_json_output(
     producer = JobJsonProducers(root, clock=_clock)
     match task_type:
         case TaskType.BRIEFING:
-            prepared = agent_service.write_briefing_from_markdown(pack, markdown or "", persist=False)
+            from features.daily_briefing.finalize import BriefingFinalizationError
+            from features.agent_mode.briefing_contract import (
+                BriefingOutputContractError, briefing_contract_violations, contract_reason_codes,
+            )
+
+            fallback_reason = "cli_output_contract_failed"
+            if contract_failed:
+                # 계약을 어긴 본문은 파싱해 볼 것도 없다.  같은 사유로 바로 규칙
+                # 대체를 만든다 — 예전에는 이 경우 잡이 예외로 죽어 산출물이
+                # 하나도 남지 않았다.
+                prepared = _prepare_rules_briefing_fallback(
+                    pack, reason=fallback_reason,
+                    rejection_codes=contract_reason_codes(briefing_contract_violations(markdown or "", pack.get("outputContract") or {})),
+                )
+            else:
+                try:
+                    prepared = agent_service.write_briefing_from_markdown(pack, markdown or "", persist=False)
+                except BriefingOutputContractError as error:
+                    prepared = _prepare_rules_briefing_fallback(pack, reason=fallback_reason, rejection_codes=error.reason_codes)
             reports = prepared["reports"]
             result = prepared["result"]
             summary = _json_summary(task_type, pack, result)
-            bundle = producer.stage_briefing(
-                job,
-                BriefingJobRequest(
-                    date=str(result.get("date") or pack.get("artifactId") or ""),
-                    scopes=tuple(reports),
-                    reports=reports,
-                    visuals=prepared["visuals"],
-                    terminal_result=summary,
-                    kind=str(result.get("kind") or "daily"),
-                ),
-            )
+            if prepared.get("fallbackReason"):
+                summary.update({
+                    "generationMode": "rules",
+                    "fallbackReason": prepared["fallbackReason"],
+                })
+
+            def stage_prepared(current: dict) -> object:
+                current_reports = current["reports"]
+                current_result = current["result"]
+                current_summary = _json_summary(task_type, pack, current_result)
+                if current.get("fallbackReason"):
+                    current_summary.update({
+                        "generationMode": "rules",
+                        "fallbackReason": current["fallbackReason"],
+                    })
+                return producer.stage_briefing(
+                    job,
+                    BriefingJobRequest(
+                        date=str(current_result.get("date") or pack.get("artifactId") or ""),
+                        scopes=tuple(current_reports),
+                        reports=current_reports,
+                        visuals=current["visuals"],
+                        terminal_result=current_summary,
+                        kind=str(current_result.get("kind") or "daily"),
+                    ),
+                )
+
+            try:
+                bundle = stage_prepared(prepared)
+            except BriefingFinalizationError as error:
+                if not _briefing_fallback_allowed(error):
+                    raise
+                prepared = _prepare_rules_briefing_fallback(
+                    pack,
+                    reason="cli_final_validation_failed",
+                    rejection_codes=sorted(set(error.validation.get("reasonCodes") or []).intersection({
+                        "value_mismatch", "unit_mismatch", "date_mismatch",
+                        "direction_mismatch", "relative_strength_mismatch",
+                        "required_omission", "source_outside_whitelist",
+                    })),
+                )
+                bundle = stage_prepared(prepared)
+                summary = dict(bundle.terminal_result)
         case TaskType.COMPANY_ANALYSIS:
             candidate = agent_service.write_company_analysis_from_markdown(pack, markdown or "", persist=False)
             from features.company_analysis.service import analysis_report_id
@@ -230,6 +347,9 @@ def commit_json_output(
             )
         case TaskType.INVESTMENT_REVIEW:
             candidate = agent_service.write_investment_review_from_markdown(pack, markdown or "", persist=False)
+            # CLI Markdown is allowed to change only the derived field.  The
+            # JobArtifactWorkspace runs the shared CAS/fingerprint finalizer
+            # under its artifact lock and owns the sole durable promotion.
             summary = _json_summary(task_type, pack, candidate)
             producer = JobJsonProducers(root, clock=_clock, review_builder=lambda _body: candidate)
             bundle = producer.stage_investment_review(job, InvestmentReviewJobRequest({}, summary))
@@ -246,6 +366,18 @@ def commit_json_output(
             raise ValueError("task is not a JSON producer")
         case unreachable:
             assert_never(unreachable)
+    if task_type == TaskType.BRIEFING:
+        from features.common.quality_generation.call_budget import current_briefing_budget
+        budget = current_briefing_budget()
+        if budget:
+            budget.check_active()
+        summary = dict(bundle.terminal_result)
+        if summary.get("fallbackReason"):
+            jobs.shared_store().update_runtime(job_id, {
+                "generationMode": "rules", "finalEngine": "rules",
+                "fallbackReason": "engine_failed",
+            })
+            jobs.diagnostic_execution(final_engine="rules", fallback_reason="engine_failed")
     producer.workspace.commit(bundle, jobs.shared_store(), lifecycle)
     return summary
 
@@ -281,17 +413,35 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
     from features.agent_mode.consultation_store import append_assistant_message, get_session
     from features.smart_collections.routes import create_smart_collection_service
 
-    session = get_session(data_dir, session_id)
-    user_message = next((row for row in session.get("messages") or [] if row.get("id") == user_message_id and row.get("role") == "user"), None)
-    if not user_message:
-        raise ValueError("consultation_user_message_not_found")
-    question = str(user_message.get("content") or "")
-    progress("대화 맥락을 조립하고 있습니다.", 20)
-    context = assemble_consultation_context(data_dir, session_id)
+    context_recorder, context_stage = jobs.diagnostic_stage_start("context")
+    try:
+        session = get_session(data_dir, session_id)
+        user_message = next((row for row in session.get("messages") or [] if row.get("id") == user_message_id and row.get("role") == "user"), None)
+        if not user_message:
+            raise ValueError("consultation_user_message_not_found")
+        question = str(user_message.get("content") or "")
+        progress("대화 맥락을 조립하고 있습니다.", 20)
+        context = assemble_consultation_context(data_dir, session_id)
+    except Exception as error:
+        jobs.diagnostic_stage_failure(
+            context_recorder,
+            error,
+            stage_id=context_stage,
+            stage_code="context" if context_stage is not None else None,
+            boundary="generic",
+        )
+        jobs.diagnostic_stage_end(context_recorder, context_stage, "context")
+        raise
+    jobs.diagnostic_stage_end(context_recorder, context_stage, "context")
 
     # 화면 맥락은 요청이 준 것을 쓰고, 없으면 대화 주제에서 만든다.
     scope = session.get("scope") or {}
-    screen = dict(screen_context or {})
+    exact_review_challenge = scope.get("kind") == "investment_review" and scope.get("intent") == "challenge"
+    # An exact review challenge is immutable-at-open.  Client screen context
+    # may contain report/collection selectors from a different surface, so it
+    # cannot be merged into this turn or it would reintroduce generic data.
+    screen = ({"surface": "agent_dock", "viewId": "investment_review", "exactReviewChallenge": True}
+              if exact_review_challenge else dict(screen_context or {}))
     screen.setdefault("surface", "agent_dock")
     if scope.get("kind") and scope["kind"] != "general":
         screen.setdefault("viewId", str(scope["kind"]))
@@ -301,6 +451,7 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
     proposal_id = ""
     try:
         progress("Agent가 답변을 작성하고 있습니다.", 50)
+        jobs.diagnostic_execution(attempted_engine="cli")
         # 컬렉션 서비스를 넘기지 않으면 `prepare_agent_context()`가 화면이 실어 보낸
         # `collectionId`를 풀지 못해 예외를 던지고, 아래 광범위 except가 그것을 삼켜
         # 대화 전체가 규칙 fallback으로 떨어진다 — CLI는 한 번도 불리지 않는다.
@@ -308,7 +459,8 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
         result = run_agent_chat(
             question, screen, options or {},
             progress=progress, job_id=job_id, conversation=context["serialized"],
-            collection_service=create_smart_collection_service(data_dir),
+            collection_service=None if exact_review_challenge else create_smart_collection_service(data_dir),
+            exact_review_challenge=exact_review_challenge,
         )
         answer = str(result.get("reply") or "").strip()
         if answer:
@@ -321,10 +473,36 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
         proposal_id = str(((result.get("proposal") or {}) or {}).get("id") or "")
         if proposal_id:
             reply = "\n\n".join([reply, f"(수정 제안 {proposal_id} 을 만들었습니다. 승인해야 보고서가 바뀝니다.)"])
-    except Exception:
+    except Exception as error:
         # Transcript and private provider errors never enter job result or telemetry.
+        jobs.diagnostic_stage_failure(
+            jobs.current_diagnostic_recorder(),
+            error,
+            stage_id=None,
+            stage_code="generate",
+            boundary="adapter",
+        )
         engine = "rules"
-    append_assistant_message(data_dir, session_id, user_message_id, reply, engine=engine)
+    # The bridge already records a concrete CLI failure before its legacy
+    # fallback returns.  Here we only publish the closed final engine fact.
+    jobs.diagnostic_execution(
+        final_engine="rules" if engine == "rules" else "cli",
+        fallback_reason="engine_failed" if engine == "rules" else None,
+    )
+    commit_recorder, commit_stage = jobs.diagnostic_stage_start("commit")
+    try:
+        append_assistant_message(data_dir, session_id, user_message_id, reply, engine=engine)
+    except Exception as error:
+        jobs.diagnostic_stage_failure(
+            commit_recorder,
+            error,
+            stage_id=commit_stage,
+            stage_code="commit" if commit_stage is not None else None,
+            boundary="save",
+        )
+        jobs.diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+        raise
+    jobs.diagnostic_stage_end(commit_recorder, commit_stage, "commit")
     return {"sessionId": session_id, "messageId": user_message_id, "status": "answered", "proposalId": proposal_id}
 
 
@@ -381,7 +559,20 @@ def commit_market_memory_output(job_id: str, pack: dict, payload: dict) -> dict[
         )
     finally:
         connection.close()
-    return {"artifactId": job_id, "savedCount": result.saved_count, "date": str(pack.get("artifactId") or "")}
+    # Graph persistence above is intentionally independent from role
+    # persistence.  A stale/failed role batch must never invalidate the
+    # durable market-memory job receipt.
+    from features.market_memory.service import finalize_role_classification
+
+    role_classification = finalize_role_classification(
+        prepared.get("roleSelection") or {}, payload, db_path=jobs.data_root() / "market-memory.sqlite3"
+    )
+    return {
+        "artifactId": job_id,
+        "savedCount": result.saved_count,
+        "date": str(pack.get("artifactId") or ""),
+        "roleClassification": role_classification,
+    }
 
 
 def commit_market_state_output(job_id: str, pack: dict, payload: dict) -> dict[str, str | int | bool | None]:

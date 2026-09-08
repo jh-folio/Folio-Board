@@ -1,5 +1,25 @@
 # AI Agent Mode
 
+기업분석의 선택적 구조 보완 재시도는 실패하거나 개선되지 않아도 먼저 받은 본문을 유지합니다.
+구조 검증을 수행하지 못한 결과는 검수 미완료 경고와 함께 저장 경로에 전달하며 통과로 표시하지 않습니다.
+취소된 기업분석 작업은 이 복구 경로를 통해 성공 저장으로 바꾸지 않습니다. 브리핑의 별도 생성·저장 계약은 변경하지 않습니다.
+
+Claude 작성은 `plan`이 아닌 `dontAsk`로 실행한다. 도구는 Read/Glob/Grep만 허용하며, 명시적 웹 조회 호출에만 WebSearch를 더한다. 셸·편집·쓰기·상속 MCP 도구를 열지 않고 전역 설정도 수정하지 않는다. 브리핑은 공유 조립기가 만든 agentInstructions/prompt/context와 출력·저장 계약을 stdin으로 그대로 전달해, 큰 내부 차트 pack을 셸로 해체할 필요가 없게 한다. Codex는 기존 read-only 실행과 파일 pack 전달을 유지한다.
+
+형식 거절은 `BriefingOutputContractError`로 구분하며 `contract_*` 코드만 대체 보고서의 `generation.rejectedReasonCodes`에 남긴다. 다른 `ValueError`를 형식 실패로 분류하거나 규칙 대체로 숨기지 않는다.
+
+브리핑 규칙 대체 저장은 작업의 `finalEngine=rules`, `generationMode=rules`, `fallbackReason=engine_failed`로 기록한다. 보고서에는 상세 대체 사유와 허용된 최초 검증 거절 코드가 남으며, 취소·기한 초과는 대체 생성으로 숨기지 않는다.
+
+규칙 기반 브리핑 대체 조립은 자료 그룹이 없거나 요청 시장에 해당하는 그룹이 없어도 처리합니다. 실행 중인 서버에는 Python 변경이 자동 반영되지 않으므로, 수정 적용 시 활성 작업이 없는지 확인하고 정상 재시작한 뒤 응답을 확인합니다.
+
+브리핑 저장은 최종 본문 사실 검사 후 진행합니다. 확인된 수치·단위·방향·날짜·상대강도 오류는 같은 고정 입력으로 해당 문장만 한 번 교정하고 재검사해 원래 CLI 보고서를 저장합니다. 이 로컬 처리는 추가 모델 호출 없이 동작하며 공유 보수 슬롯 소진과 별개지만 최초 시간 제한·취소를 지킵니다. 구조 보수·집중 제어·품질 보완·필수 수치 보강은 기존 실행 단위 한 번의 보수 예산을 공유합니다. 안전하게 고칠 수 없는 시장은 기존 파일을 보존하고 정상 시장만 저장할 수 있으며, 부분 생성 결과는 별도로 표시합니다. CLI 응답 형식이나 사용자가 선택한 모델 설정은 이 검사로 변경하지 않습니다.
+
+작성용 한국장 자료에는 내부 provider 경고를 넣지 않으며, 최종 저장에서도 연결 설정·provider 경고 문구만 제거합니다. 수치의 실제 출처·기준일과 원래 진단 메타데이터는 유지합니다. 저장 브리핑 차트는 API와 같은 정규장 가격 계열을 사용하며 Toss 실시간 화면 설정을 바꾸지 않습니다.
+
+선택적으로 켠 일간 뉴스 의미 평가는 실행 중인 bridge의 실제 adapter/model/job과 남은 시간을 전달받습니다. 단독 context pack 준비는 CLI를 호출하지 않습니다. 시장당 한 번의 별도 평가이며 본문 보수 횟수를 늘리지 않고, 중첩 호출은 기존 세마포어를 다시 잡지 않습니다. API fallback은 없으며 평가를 못 하면 기존 작성 입력을 유지합니다. 상한과 입력·출처 계약은 일일 브리핑 README를 따릅니다.
+
+브리핑은 자료 보완 검색과 본문 작성을 분리합니다. Codex 작성 명령은 `web_search="disabled"`, 보완 조회는 `web_search="live"`를 명시하고 Claude 작성에서는 WebSearch/WebFetch를 제한합니다. 다른 작업의 검색 정책은 그대로입니다. 실행 도구 사용이 관측되지 않으면 미확인으로 기록하며, 명령에 설정했다고 실제 검색 증거로 계산하지 않습니다. API와 CLI는 같은 시장별 이전 확인 사항 및 제한 뉴스 선별 컨텍스트를 사용합니다.
+
 AI Agent Mode는 OpenAI/Gemini/Claude API Key 없이도 Codex, Claude Code 같은 구독형 AI 에이전트를 Folio OS의 최종 작성자로 쓰기 위한 보조 기능입니다.
 
 0.2에서는 Home과 Deep Research에서 Agent를 사용하고, 두 화면이 같은 metadata-only Work Log를 공유합니다. Work Log에는 prompt, reply transcript, Markdown, diff, attachment, 로컬 path, credential, raw stdout/stderr가 저장되지 않습니다. Canonical 보고서는 generate/regenerate 또는 명시적으로 승인된 proposal만 수정할 수 있습니다.
@@ -123,6 +143,8 @@ in settings.json (e.g. read_file(<target>)).
 
 **Folio OS의 Agent task는 전부 컨텍스트 팩 파일을 읽는 것으로 시작한다.** 팩이 5.2MB라 프롬프트에 넣을 수 없고(게다가 agy는 프롬프트를 명령 인자로 받아 Windows 32,767자 한계가 걸린다), `--add-dir`로도 열리지 않는다(실측). 그래서 antigravity로는 브리핑·기업분석을 만들 수 없다. 파일을 읽지 않는 호출(도크 대화, 테마 계획)은 정상 동작한다 — 실측으로 짧은 프롬프트는 20초에 응답했다.
 
+브리핑 Agent pack의 출처 카탈로그는 컨텍스트에 실제로 렌더링된 writer 자료 집합에서 만들어집니다. API와 CLI 모두 같은 `sourceId` 집합을 사용하고, 시장별 ledger도 해당 시장 writer 자료만 보존합니다. Summary와 Full Text는 분리된 제한 발췌로 전달되며 페이지 메뉴·추천·자동 요약 문구는 제외됩니다.
+
 - 실패는 `AGY_PERMISSION_DENIED_MARK`로 알아보고 `AGY_PERMISSION_HELP`를 올린다. 예전에는 일반 "빈 결과"와 구분되지 않아 예약 브리핑이 `internal_error`로만 남았고, 한 번에 **8분 30초**를 버린 뒤 실패했다(실측 2026-08-11 18:00 KR/JP 예약).
 - 한 번 거부당하면 `_AGY_FILE_READS_BLOCKED`가 서고, 다음 팩 task는 팩을 만들기 전에 즉시 막는다. 상태 행도 `bridgeSupported: false`로 사유를 함께 낸다.
 - `상태 새로고침`(`bridge_status(refresh=True)`)이 이 표시를 지운다. 설정을 고치고도 되돌릴 방법이 화면에 없으면 안 된다.
@@ -172,12 +194,36 @@ Codex는 `codex login status`, Claude Code는 `claude auth status`로 인증 상
 FOLIO_AGENT_CODEX_COMMAND=C:\path\to\codex.exe
 FOLIO_AGENT_CLAUDE_COMMAND=C:\path\to\claude.exe
 AGENT_CLI_PROVIDER=auto|codex|claude
-FOLIO_AGENT_CODEX_MODEL=gpt-5.5
+FOLIO_AGENT_CODEX_MODEL=gpt-5.6-sol
 FOLIO_AGENT_CLAUDE_MODEL=claude-sonnet-5
 AGENT_CLI_TIMEOUT_SECONDS=1800
 ```
 
 Bridge는 shell 문자열을 실행하지 않고 adapter별 고정 argument list만 사용합니다. Provider API Key 환경 변수는 child process에서 제거하며 저장된 CLI 인증을 사용합니다.
+
+### Codex 브리핑의 브라우저 도구 제외
+
+Codex로 실행하는 `briefing` task는 Context Pack을 로컬 UTF-8 파일로 읽는 보고서 작업이다.
+팩 준비부터 본문 생성·계약 보정·동기 보조 조회·writeback까지 해당 실행의 자식 Codex에만
+브라우저/컴퓨터 조작 feature와 플러그인 로딩을 끄고, 구형 `node_repl` MCP 연결도 비활성화한다.
+기본 셸 파일 읽기, `--sandbox read-only`, 선택 모델과 별도 찾기 패스의 native 웹 검색은 유지한다.
+
+시작 때 한 번 `codex mcp list --json`을 플러그인 비활성 상태로 조회해 기존 연결 이름만
+확인한다. `node_repl`이 있을 때만 `enabled=false`를 적용하므로 연결 방식이나 새 설치의
+설정을 임의로 만들지 않는다. 이 조회는 모델이나 MCP 서버를 실행하지 않고, 응답 원문을
+기록하지 않는다. 설정을 확인하지 못하면 제한 없이 생성하지 않고 안전한 오류로 멈춘다.
+
+전역 `config.toml`이나 설치된 플러그인은 수정하지 않는다. 일반 도크 대화·기업분석·테마분석,
+Claude/Antigravity 실행 정책은 그대로이며 예외가 나도 실행별 제한을 되돌린다.
+플러그인별 비활성화 대신 이 자식 실행에서 플러그인 전체를 제외하는 이유는 로컬 Codex
+0.144.4의 읽기 전용 조회에서 개별 override가 적용되지 않았기 때문이다. 브리핑은 준비된
+자료와 기본 검색을 사용하므로 플러그인 도구가 필요하지 않다.
+
+이 제한은 알려진 Codex 브라우저 도구 경로를 제외하는 조치이며 임의의 사용자 정의 MCP나
+셸 명령까지 막는 OS 수준 격리는 아니다. 실행별 설정 방식은
+[Codex 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)를 따른다.
+변경은 Folio OS 서버를 재시작한 뒤 시작하는 작업부터 적용되며, 이미 실행 중인 브리핑을
+취소하거나 열린 브라우저 탭을 닫지 않는다.
 
 ## 사용 예시
 
@@ -187,7 +233,7 @@ Bridge는 shell 문자열을 실행하지 않고 adapter별 고정 argument list
 
 브리핑 context pack을 준비할 때 생성 당시 가격 series와 히트맵 사이드카 payload도 고정합니다. Agent가 Markdown 작성을 마친 뒤 writeback하면 같은 snapshot을 보고서와 `{date}.visuals.json`에 저장하므로 작성 시간 동안 시장 데이터가 바뀌어도 과거 보기가 흔들리지 않습니다.
 
-CLI 브리핑은 API 브리핑과 동일한 시장별 프롬프트(`features/daily_briefing/prompt_{us,kr,europe,jp}.md`, 주간은 `prompt_weekly_{us,kr,europe,jp}.md`), 선별 context, evidence, quality preflight를 사용합니다. `outputContract`는 선택 시장별 `0~6 + 오늘의 결론 + Source & Data Notes`, 한 줄 결론, 가운뎃점 요약, 최소 분량과 코드가 계산한 정확한 `세션일 + 마감/장중` 제목을 요구합니다. 첫 CLI 결과가 이 계약을 충족하지 못하면 같은 context pack으로 한 번 자동 재작성하며, 두 번째 결과도 미달하면 writeback을 호출하지 않아 기존 저장 브리핑과 시각 snapshot을 덮어쓰지 않습니다.
+CLI 브리핑은 API 브리핑과 동일한 시장별 프롬프트(`features/daily_briefing/prompt_{us,kr,europe,jp}.md`, 주간은 `prompt_weekly_{us,kr,europe,jp}.md`), 선별 context, evidence, quality preflight를 사용합니다. `outputContract`는 선택 시장별 `0~6 + 오늘의 결론 + Source & Data Notes`, 한 줄 결론, 가운뎃점 요약, 최소 분량과 코드가 계산한 정확한 `세션일 + 마감/장중` 제목을 요구합니다. 전체 자동 재작성은 하지 않습니다(`retryOnViolation: 0`). 형식 계약을 통과한 후보의 사실 오류는 먼저 동일 고정 입력으로 해당 문장만 교정하고 재검사해 원래 CLI 보고서를 저장합니다. 계약 위반 또는 로컬 교정으로 해소되지 않은 최종 검증 실패에만 같은 pack의 고정 자료로 규칙 기반 Markdown을 만들어 동일한 최종 검증·원자적 커밋을 한 번 시도합니다. 규칙 후보도 실패하거나 작업이 취소·기한 초과면 기존 저장 브리핑과 시각 snapshot을 덮어쓰지 않습니다. 규칙 대체는 durable 잡에만 적용하며 비-durable 경로는 거절합니다. 계약 미달 본문은 `BRIEFING_REJECTION_DUMP_DIR`을 설정한 경우에만 위반 목록과 함께 `contract-*.json`으로 남습니다.
 
 주간은 계약이 갈립니다. 섹션 골격과 제목 규칙(`{라벨} 주간 — {MM.DD}~{MM.DD}`, 마감/장중 없음)이 다르고, 자료 창이 발행일 기준 달력 7일입니다. **그 창이 비면 CLI를 부르지 않고 `WeeklyWindowEmptyError`로 먼저 멈춥니다** — 최소 분량 계약에 걸려 재작성 1회를 더 돌린 뒤 실패하므로 수십 초짜리 실행을 두 번 낭비하고 아무것도 남기지 못합니다. 주간은 세션 시각자료를 만들지 않고 시장 내러티브에도 적재하지 않습니다.
 
@@ -272,7 +318,7 @@ Collection change-summary 응답은 conversational/non-mutating이다. workspace
 
 Home·Market Memory·Smart Collection·Deep Research의 개인 맥락 카드에서 사용자가 `Agent로 위험 설명`을 직접 눌렀을 때만 `POST /api/agent/investment-context/explain`이 실행된다. 요청은 선택 ticker 최대 5개만 받으며, 서버가 저장된 context를 다시 조회해 포트폴리오/워치리스트 연결 metadata, Market Memory driver, thesis verdict, checkpoint, 연결 보고서와 외부 evidence 참조를 bounded pack으로 만든다. 수량·비중·note body는 pack에 포함하지 않는다.
 
-Agent 출력은 해석·도전 근거·불확실성·모니터링 질문·한계의 strict JSON 계약을 통과해야 한다. 매수/매도/보유, 목표주가, position size, 진입·청산·주문 지침이 감지되거나 출력 계약이 깨지면 결과를 렌더링하지 않고 추천 없는 규칙 설명으로 안전하게 전환한다. 이 작업은 기존 `agent_bridge` SharedJob을 사용하며, Work Log에는 selected ticker, prompt, evidence, reply가 아니라 실행 상태·engine·fallback reason 같은 metadata만 남는다.
+Agent 출력은 해석·도전 근거·불확실성·모니터링 질문·한계의 strict JSON 계약을 통과해야 한다. 매수/매도/보유, 목표주가, 권장 비중 또는 포지션 크기 지침, 진입·청산·주문 지침이 감지되거나 출력 계약이 깨지면 결과를 렌더링하지 않고 추천 없는 규칙 설명으로 안전하게 전환한다. 이 작업은 기존 `agent_bridge` SharedJob을 사용하며, Work Log에는 selected ticker, prompt, evidence, reply가 아니라 실행 상태·engine·fallback reason 같은 metadata만 남는다.
 
 ## Agent Chat (실연결) + Task Mode Writeback
 
@@ -300,6 +346,12 @@ Work Log는 SharedJob과 현재 proposal 파일에서 요청 시점에 파생되
 SharedJob/Work Log의 경로별 lock registry는 프로세스 수명 동안 항목을 퇴거하지 않는다. 실제 제품의 durable store 경로는 설정된 data root 아래의 유한한 집합이며, 오래 살아 있는 service와 새 service가 같은 경로에 서로 다른 lock을 받지 않도록 lock identity를 보존하는 것이 메모리 회수보다 우선한다.
 
 실행 중인 CLI 작업을 취소할 때는 SharedJob을 먼저 `cancel_requested`로 기록한 뒤 등록된 child process를 종료한다. 이미 terminal이거나 `committing`인 작업은 취소와 process 종료를 모두 거부하며, 종료 경계에서 child가 먼저 끝나도 승인된 취소는 유지한다.
+
+## 0.6 실행 진단 경계 (L1b–D3)
+
+앱 API에서 제출된 Agent SharedJob은 기존 job/private lifecycle의 권위를 바꾸지 않은 채 안전한 실행 관측만 남길 수 있다. 관측은 private cleanup과 job terminal 저장이 성공한 뒤에만 terminal로 닫히며, Work Log의 26개 필드·prompt/reply/diff 보존 규칙은 바뀌지 않는다. Agent CLI의 stdout·stderr·context pack·본문은 diagnostics에 복사하지 않는다.
+
+`GET /api/diagnostics/jobs/{jobId}`(및 job이 없는 자동화 경로용 `GET /api/diagnostics/runs/{runId}`)는 여전히 headless 상세 API이며 Work Log의 26개 필드 응답 자체를 바꾸지 않는다. 대신 각 Work Log 항목(`web/src/app/AgentWorkLog.tsx`)과 설정의 자동화 실행 내역(`web/src/app/SettingsRoute.tsx::LastRun`)이 공유 컴포넌트 `web/src/app/DiagnosticDetail.tsx`로 이 API를 펼쳐서 조회한다 — jobId가 있으면 그쪽을, 없으면 자동화 row의 `diagnosticRunId`를 쓴다. 실패 단계·확인된 원인·마지막으로 완료된 단계·경과 시간·다음 행동과, 접어 둔 개발자 정보(실행 ID·오류 ID·지문·소스 위치)만 보여주며 `기록 없음/보존 만료/기록 일부 누락/조회 실패/실행 중/규칙 기반으로 완료` 여섯 상태를 구분한다(`web/src/app/diagnosticCopy.ts`). L1c는 실제 CLI/process·chat·durable JSON/SQL producer의 safe stage/terminal 관측을 더했지만 provider protocol/parser 소비자 변경은 하지 않았다. record 품질은 누락·legacy·외부 변경을 숨기지 않기 위해 계속 partial일 수 있다(RSS·색인만 감사된 경로에서 complete). **공통 목록**은 기존 Work Log 안의 `실패·대체 실행 찾기`를 펼쳐서 `실패만`·`대체 실행만`·기간·`모든 실행 보기`로 전환한다. 목록/진단/숨기기 미리보기·확인·제안 조회 오류는 각각 해당 메시지 옆의 제한된 진단 상세로 연결하며, 응답이 없는 숨기기 확인은 결과 미확정으로만 안내하고 자동 재시도하지 않는다. `GET /api/diagnostics/runs` headless API는 구현되어 있으며 서버가 숨긴/현재 권위에서 사라진 job을 제외하고 기존 Work Log ID를 연결한다. 기존 26필드·clear/migration 계약과 진단 자체 내보내기(D4) 경계는 불변이다.
 
 ## 구현 위치
 
@@ -349,6 +401,21 @@ Agent는 선택 ticker를 서버 저장소에서 다시 조회하고 추천 없�
 - **답변 본문은 잡 결과가 아니라 스레드에서 읽는다.** 잡 결과는 `data/jobs.json`과 Work Log에 저장되므로 transcript를 담지 않는다.
 - 대화는 계속 hypothesis다. `layer=hypothesis`, `sourceLayer=user_consultation`, `reuseAsEvidence=false`가 코드 상수로 강제되고 화면에도 그 경계를 표시한다.
 - scope를 주지 않으면 `general`이다. 예전에는 알 수 없는 kind가 조용히 `portfolio`로 떨어져, 주제 없는 도크 대화가 포트폴리오 대화로 둔갑하며 무관한 맥락을 끌어왔다.
+
+투자 리뷰 반박은 예외적으로 정확한 저장 날짜/revision만 읽는다. 32,000자 상한에서도
+해당 identity, 최소 종목 목록(최대 100), 실제 포함/제외 범위와 핵심 반증을 우선 보존하고
+지난 대화·선택적 상세부터 줄인다. 화면 보고서나 일반 시장/컬렉션 맥락을 추가하지 않으며,
+누락은 data gap으로 알린다. 이 대화가 리뷰·Thesis를 자동 수정하거나 evidence가 되지는 않는다.
+
+### 원클릭 반박 대화 — 0.6 Stage D
+
+시장 내러티브의 `이 전제를 반박해줘`와 Watchlist Thesis의 같은 이름 action은 기존 도크에 **새 scoped thread를 만들고 첫 질문을 정확히 한 번 자동 제출**합니다. 화면을 열거나 새로 고치는 동작은 Agent를 부르지 않습니다.
+
+- 브라우저는 본문 사본이 아니라 제한된 scope만 보냅니다: 내러티브 `{kind: market_memory, id: stateId, intent: challenge}`, Thesis `{kind: watchlist, id: ticker, tickers: [ticker], intent: challenge}`. 서버가 매 turn 권위 저장소에서 선택 대상을 다시 읽습니다.
+- `intent=challenge`는 스레드와 continuation에 보존되어 후속 질문도 같은 내러티브/Thesis를 사용합니다. ID가 없거나 stale이면 전체 시장/워치리스트로 넓히지 않고 좁은 data gap을 반환합니다.
+- 근거 창은 실제 최근 90일로 제한합니다. hypothesis인 Thesis 본문과 source-grounded 검증·근거는 분리하고, 반대 근거·모순·불확실성·신뢰도·중요도를 요구합니다.
+- 답변은 추천이 아니며 `reuseAsEvidence=false`입니다. verdict, checkpoint, Thesis, 포트폴리오를 자동 수정하지 않고 저장 변경은 기존 preview/명시적 확인 경계를 따릅니다.
+- 내러티브 scope 칩은 내부 state ID를 노출하지 않고 `시장 내러티브`로만 표시합니다. Thesis는 사용자가 알아볼 수 있는 정규화 ticker를 표시합니다.
 
 ### 대화 관리
 
