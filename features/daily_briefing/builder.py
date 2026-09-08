@@ -10,13 +10,14 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from copy import deepcopy
 import datetime as dt
 import time
+from functools import wraps
 from pathlib import Path
 
 from features.common.canonical_identity import ReportKind
 from features.common.canonical_report_state import load_report
 from features.common.canonical_report_types import WriteKind
 from features.common.canonical_reports import commit_sync, prepare
-from features.common.change_intelligence.service import decorate_candidate, project_committed_report
+from features.common.change_intelligence.service import strip_change_metadata
 from features.common.dataframe_ops import top_records
 from features.common.market_data.korea_session import korea_market_data as fetch_korea_session_data, session_state
 from features.daily_briefing.limits import (
@@ -34,9 +35,10 @@ from features.daily_briefing.weekly import (
     weekly_documents,
     weekly_window as build_weekly_window,
 )
-from features.common.market_data.snapshot import fetch_market_snapshot
+from features.common.market_data.snapshot import fetch_market_snapshot, snapshot_cache_suffix, snapshot_cutoff_date
 from features.common.market_data.tape import build_market_tape
 from features.common.quality_generation.loop import apply_quality_loop
+from features.common.quality_generation.call_budget import SharedRepairBudget, bind_briefing_budget, current_briefing_budget
 from features.common.quality_generation.preflight import preflight_from_context
 from features.common.quality_generation.schema import normalize_quality_mode
 from features.common.research_library.indexing.service import IMPACT_TERMS, build_index, load_index
@@ -110,6 +112,15 @@ from features.llm_settings.client import selected_llm_config
 from features.market_memory.memory import build_memory_from_briefing, list_briefing_memories, upsert_memory
 from features.market_memory.snapshot import render_market_memory_context
 from features.common.workspace import data_dir
+from features.common.diagnostics.support import bind_context, bind_failure_cache, current_context
+from features.common.jobs import (
+    current_diagnostic_recorder,
+    diagnostic_execution,
+    diagnostic_stage,
+    diagnostic_stage_end,
+    diagnostic_stage_failure,
+    diagnostic_stage_start,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,14 +134,32 @@ class _NoWeeklyVisuals(Exception):
     """주간 창을 만들지 못해 주간 그림을 건너뛴다는 표시. 경고가 아니다."""
 
 
+def _observed_briefing_context(function):
+    """Keep the shared briefing assembler's context span failure-safe.
+
+    The assembler owns document selection, snapshots, prompt context and the
+    per-market inputs.  A decorator keeps every early return/raise inside the
+    same bounded span without changing the legacy function signature.
+    """
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        budget = current_briefing_budget() or SharedRepairBudget(deadline=time.monotonic() + MARKET_GENERATION_TIMEOUT_SECONDS)
+        with bind_briefing_budget(budget), diagnostic_stage("context"):
+            result = function(*args, **kwargs)
+            if kwargs.get("persist") is False:
+                budget.check_active()
+            return result
+    return wrapped
+
+
 def _ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BRIEFINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def cached_market_snapshot(ttl_minutes=20):
+def cached_market_snapshot(ttl_minutes=20, as_of_date=None):
     _ensure_dirs()
-    cache_path = DATA_DIR / "market-snapshot.json"
+    cache_path = DATA_DIR / f"market-snapshot{snapshot_cache_suffix(as_of_date)}.json"
     cached = read_json(cache_path, None)
     if cached:
         try:
@@ -139,9 +168,13 @@ def cached_market_snapshot(ttl_minutes=20):
                 return cached.get("snapshot", cached)
         except Exception:
             pass
-    snapshot = fetch_market_snapshot()
+    snapshot = fetch_market_snapshot() if as_of_date is None else fetch_market_snapshot(as_of_date=as_of_date)
     write_json(cache_path, {"cachedAt": now_iso(), "snapshot": snapshot})
     return snapshot
+
+
+def _snapshot_cutoff(date, market_windows, kind, weekly_window=None):
+    return snapshot_cutoff_date(date, market_windows, kind, weekly_window)
 
 
 def cached_korea_market_data(date, market_windows=None):
@@ -205,12 +238,42 @@ def generate_scope_results(scopes, build_one, *, timeout=None):
     waiting; blocking on it would give back exactly the time the timeout saved.
     """
     scopes = list(scopes)
+    # ContextVars do not cross ThreadPoolExecutor boundaries.  Capture the
+    # immutable safe context before submitting, then bind it afresh per market
+    # worker so a partial-market failure is recorded at its actual boundary.
+    frozen_context = current_context()
+    frozen_budget = current_briefing_budget()
+
+    def observed_build(scope):
+        if frozen_context is None:
+            return build_one(scope)
+        with bind_context(frozen_context):
+            with bind_failure_cache():
+                recorder, stage_id = diagnostic_stage_start("generate")
+                try:
+                    result = build_one(scope)
+                except Exception as error:
+                    diagnostic_stage_failure(
+                        recorder,
+                        error,
+                        stage_id=stage_id,
+                        stage_code="generate" if stage_id is not None else None,
+                        boundary="generic",
+                    )
+                    diagnostic_stage_end(recorder, stage_id, "generate")
+                    raise
+                diagnostic_stage_end(recorder, stage_id, "generate")
+                return result
+
     if len(scopes) <= 1:
-        return ({scope: build_one(scope) for scope in scopes}, [])
+        return ({scope: observed_build(scope) for scope in scopes}, [])
 
     deadline = time.monotonic() + (timeout or MARKET_GENERATION_TIMEOUT_SECONDS)
     pool = ThreadPoolExecutor(max_workers=len(scopes), thread_name_prefix="briefing")
-    futures = {scope: pool.submit(build_one, scope) for scope in scopes}
+    def bounded_build(scope):
+        with bind_briefing_budget(frozen_budget):
+            return observed_build(scope)
+    futures = {scope: pool.submit(bounded_build, scope) for scope in scopes}
     results, warnings = {}, []
     try:
         for scope, future in futures.items():
@@ -384,7 +447,7 @@ def _scope_result(
                 leading_companies=qualified_leaders,
             )
         generation = {
-            "mode": "rules", "status": llm_status, "provider": selected_llm_config().get("provider", ""),
+            "mode": "rules", "status": llm_status, "provider": "" if llm_override is False else selected_llm_config().get("provider", ""),
             "model": "", "sourceCount": len(sources),
         }
         generation_evidence = {
@@ -526,6 +589,7 @@ def _single_market_briefing(briefing, scope, checkpoints=None):
     return scoped
 
 
+@_observed_briefing_context
 def build_briefing(
     date=None,
     strict_date=False,
@@ -537,6 +601,7 @@ def build_briefing(
     briefing_type="default",
     markets=None,
     kind=DEFAULT_BRIEFING_KIND,
+    selection_context=None,
 ):
     generated_at = now_iso()
     today = kst_date()
@@ -550,8 +615,11 @@ def build_briefing(
     market_scope = market_selection_scope(requested_markets)
     briefing_type = normalize_briefing_type(briefing_type)
     quality_mode = normalize_quality_mode(quality_mode)
+    from features.daily_briefing.news_selection_runtime import pin_selection_context, prepare_selection_candidates, safe_selection_metadata
+    selection_context = selection_context or pin_selection_context(date, requested_markets, kind, analysis_as_of=generated_at)
     try:
-        build_index(incremental=True)
+        with diagnostic_stage("collect"):
+            build_index(incremental=True)
     except Exception:
         pass
     index = load_index()
@@ -563,7 +631,10 @@ def build_briefing(
     for doc in docs:
         doc["marketSessionDate"] = infer_market_session_date(doc, market_windows)
 
-    market_snapshot = cached_market_snapshot()
+    week = build_weekly_window(date) if kind == "weekly" else None
+    market_snapshot = cached_market_snapshot(
+        as_of_date=_snapshot_cutoff(date, market_windows, kind, week)
+    )
     # 발행일이 아니라 **한국장 세션일**로 부른다. 차트는 세션일로 가는데 수치만 발행일로
     # 가면 한 브리핑 안에서 날짜가 갈린다 — 월요일 08:03에 만든 금요일 브리핑에 지수는
     # 금요일 종가가 들어갔는데 환율만 일요일 값이 들어갔다(환율은 24시간 거래라 주말 봉이
@@ -577,11 +648,13 @@ def build_briefing(
         "artifactId": date, "sourceCount": len(docs), "marketTape": market_tape,
     })
     memories = list_briefing_memories(MARKET_MEMORY_DB_PATH, limit=12)
-    prev_briefing = load_prev_briefing(date)
-    prev_checklist = extract_prev_checklist((prev_briefing or {}).get("markdown", ""))
+    from features.daily_briefing.service import previous_checklists_by_market
+    prev_checklist = previous_checklists_by_market(date, requested_markets,
+        kind=kind, market_windows=market_windows,
+        weekly_window=week.to_dict() if week is not None else None, cutoff=generated_at,
+        selection_context=selection_context)
 
     requested_scopes = list(requested_markets)
-    week = build_weekly_window(date) if kind == "weekly" else None
     # 자료 창을 시장별로 나눈다. 예전에는 한 풀을 모두가 공유했는데, 그 창이 발행일
     # 하나에서 나와 미국·한국 세션이 union으로 섞여 있었다. 세션과 세션 사이로 창을
     # 잡으면 주말·휴장 사이 뉴스도 다음 세션 브리핑에 자연히 들어온다.
@@ -605,6 +678,24 @@ def build_briefing(
     for scope_rows in scope_docs.values():
         for doc in scope_rows:
             doc.setdefault("marketSessionDate", infer_market_session_date(doc, market_windows))
+    selection_results = {}
+    from features.daily_briefing.news_semantic_engine import make_news_semantic_engine
+    selection_mode = str(selection_context.get("mode") or "off")
+    selection_budget = current_briefing_budget()
+    semantic_cfg = selected_llm_config() if selection_mode in {"shadow", "active"} and kind == "daily" and llm_override is not False else {}
+    semantic_api_on = bool(semantic_cfg.get("apiKey")) and (bool(semantic_cfg.get("enabled")) if llm_override is None else bool(llm_override))
+    for scope in requested_scopes:
+        semantic_callback = make_news_semantic_engine(
+            market=scope, kind=kind, mode=selection_mode, selected_markets=requested_scopes,
+            engine="api" if semantic_api_on else "rules", api_config=semantic_cfg,
+            budget=current_briefing_budget(),
+        )
+        selection_results[scope] = prepare_selection_candidates(
+            scope_docs[scope], index, scope, kind, selection_context,
+            semantic_callback=semantic_callback, selected_markets=requested_scopes,
+            deadline=getattr(selection_budget, "deadline", None), cancelled=getattr(selection_budget, "cancelled", None),
+        )
+        scope_docs[scope] = selection_results[scope]["operationalCandidates"]
     if week is not None:
         source_date = f"{week.week_start}~{week.week_end}"
     results, scope_warnings = generate_scope_results(
@@ -612,7 +703,7 @@ def build_briefing(
         lambda scope: _scope_result(
             scope, briefing_type, date, source_date, scope_docs[scope], market_windows,
             market_snapshot, korea_market_data,
-            memories, prev_checklist, quality_preflight, web_search_override, llm_override,
+            memories, prev_checklist.get(scope, ""), quality_preflight, web_search_override, llm_override,
             kind=kind, weekly={"window": week} if week is not None else None,
         ),
     )
@@ -647,23 +738,24 @@ def build_briefing(
             })
 
     try:
-        if kind == "weekly":
-            # **세션 스냅샷은 여전히 싣지 않는다.** 하루 세션의 가격 계열과 그날 등락
-            # 히트맵을 한 주 보고서에 붙이면 특정 하루가 그 주를 대표하는 것처럼 읽힌다.
-            # 대신 주 단위 계열을 따로 만든다 — 세 그림이 **같은 창 객체**를 받아
-            # 주초·주말 경계가 하나다(§12.3).
-            if week is None:
-                raise _NoWeeklyVisuals
-            visual_result = collect_weekly_visuals(
-                week, market_scope, documents=weekly_pool if weekly_pool is not None else [],
-                markets=requested_markets,
-            )
-        else:
-            leader_subjects = leading_company_subjects_from_markdown(markdown)
-            visual_result = collect_briefing_visuals(
-                date, market_scope, results, leader_subjects=leader_subjects,
-                markets=list(results),
-            )
+        with diagnostic_stage("collect"):
+            if kind == "weekly":
+                # **세션 스냅샷은 여전히 싣지 않는다.** 하루 세션의 가격 계열과 그날 등락
+                # 히트맵을 한 주 보고서에 붙이면 특정 하루가 그 주를 대표하는 것처럼 읽힌다.
+                # 대신 주 단위 계열을 따로 만든다 — 세 그림이 **같은 창 객체**를 받아
+                # 주초·주말 경계가 하나다(§12.3).
+                if week is None:
+                    raise _NoWeeklyVisuals
+                visual_result = collect_weekly_visuals(
+                    week, market_scope, documents=weekly_pool if weekly_pool is not None else [],
+                    markets=requested_markets,
+                )
+            else:
+                leader_subjects = leading_company_subjects_from_markdown(markdown)
+                visual_result = collect_briefing_visuals(
+                    date, market_scope, results, leader_subjects=leader_subjects,
+                    markets=list(results),
+                )
     except _NoWeeklyVisuals:
         visual_result = {
             "visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": [],
@@ -847,12 +939,28 @@ def build_briefing(
             **session_counts,
         },
     }
+    if selection_context.get("mode") == "active":
+        briefing["newsSelection"] = {scope: safe_selection_metadata(selection_results.get(scope), selection_context, scope) for scope in requested_scopes}
     try:
-        postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
-        briefing = apply_quality_loop("briefing", briefing, mode=quality_mode, preflight=postflight)
-        briefing.setdefault("qualityGeneration", {})["generationPreflight"] = quality_preflight
+        with diagnostic_stage("validate", boundary="validation"):
+            postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
+            briefing = apply_quality_loop("briefing", briefing, mode=quality_mode, preflight=postflight)
+            briefing.setdefault("qualityGeneration", {})["generationPreflight"] = quality_preflight
     except Exception:
         briefing["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}
+
+    failed = any(str(item.get("status") or "") == "generation_failed" for item in generations)
+    if generation["mode"] == "llm":
+        diagnostic_execution(
+            attempted_engine="api", final_engine="api",
+            fallback_reason="engine_failed" if failed else None,
+        )
+    else:
+        diagnostic_execution(
+            attempted_engine="api" if failed else None,
+            final_engine="rules",
+            fallback_reason="engine_failed" if failed else None,
+        )
 
     if persist:
         saved_reports = {}
@@ -860,8 +968,8 @@ def build_briefing(
             scoped_briefing = _single_market_briefing(briefing, scope, scope_checkpoints.get(scope))
             # 저장 키는 그 시장이 다루는 **세션일**이다. 발행일이 아니다 — 발행일로
             # 저장하면 같은 세션이 생성 시각에 따라 다른 이름으로 흩어진다(07:45 예약이
-            # 만든 08-10 세션이 08-11로 저장되던 것). `date`도 함께 옮겨야 change
-            # event의 artifactId(`report.date`에서 파생)와 파일명이 같은 값을 가리킨다.
+            # 만든 08-10 세션이 08-11로 저장되던 것). `date`도 파일명과 같은 세션일을
+            # 가리키도록 함께 옮긴다.
             # 주간의 저장 키는 **발행일**이다. 세션일로 옮기면 일요일 실행이 금요일
             # 파일로 떨어져 그 주 금요일 일간 브리핑을 덮어쓴다. 종류 접미사와 발행일이
             # 함께 있어야 두 보고서가 나란히 남는다.
@@ -878,51 +986,53 @@ def build_briefing(
                 existing = read_json(BRIEFINGS_DIR / briefing_file_name(date), None)
                 existing = briefing_scope_view(existing, scope) if isinstance(existing, dict) else None
             scoped_briefing = _merge_with_existing(scoped_briefing, existing, scope)
-            scoped_briefing = decorate_candidate(
-                "briefing", scoped_briefing, data_dir=DATA_DIR,
-                native_context={"generationDocs": docs}, generation_provenance=True,
-            )
+            # Existing reports may contain the retired Change Intelligence
+            # fields.  A regenerated briefing must not carry them forward into
+            # the canonical JSON or the dashboard projection.
+            scoped_briefing = strip_change_metadata(scoped_briefing)
+            from features.daily_briefing.finalize import BriefingFinalizationError, finalize_briefing_candidate
             try:
-                sidecar = _sidecar_for_market(visual_result.get("sidecar") or {}, scope)
-                if sidecar.get("snapshots"):
-                    write_visual_sidecar(
-                        BRIEFINGS_DIR / visual_sidecar_gzip_file_name(session_key, scope, kind),
-                        sidecar,
-                        scope,
-                    )
-            except Exception:
-                scoped_briefing.setdefault("warnings", []).append("visual_sidecar_write_failed")
+                scoped_briefing = finalize_briefing_candidate(scoped_briefing, repair_budget=current_briefing_budget(), visual_context=_sidecar_for_market(visual_result.get("sidecar") or {}, scope))
+            except BriefingFinalizationError:
+                scope_warnings.append(f"{scope.upper()}: briefing_final_validation_failed")
+                continue
             prepared = prepare(
                 report_kind=ReportKind.BRIEFING,
                 exact_path=report_path,
                 write_kind=WriteKind.CANONICAL,
                 candidate=scoped_briefing,
             )
+            current_briefing_budget().check_active()
             commit_sync(prepared)
-            projection = project_committed_report(MARKET_MEMORY_DB_PATH, report_path)
+            try:
+                sidecar = _sidecar_for_market(visual_result.get("sidecar") or {}, scope)
+                if sidecar.get("snapshots"):
+                    write_visual_sidecar(
+                        BRIEFINGS_DIR / visual_sidecar_gzip_file_name(session_key, scope, kind), sidecar, scope,
+                    )
+            except Exception:
+                scoped_briefing.setdefault("warnings", []).append("visual_sidecar_write_failed")
             committed = load_report(report_path)
             if committed is None:
                 raise RuntimeError("canonical briefing commit did not persist the report")
             saved_reports[scope] = committed
-            saved_reports[scope]["changeIntelligence"] = {
-                **(saved_reports[scope].get("changeIntelligence") or {}),
-                "projectionStatus": projection.get("status"),
-                "invalidationToken": projection.get("invalidationToken") or (saved_reports[scope].get("changeIntelligence") or {}).get("invalidationToken"),
-            }
         # 내러티브 누적은 통합 생성에서만 한다. 시장별 생성에서도 하면 같은 이슈가
         # 시장 수만큼 중복 적재된다.
         #
         # **주간은 아예 적재하지 않는다.** 같은 이슈를 일간이 이미 그 주에 넣었고,
         # 주간이 다시 넣으면 한 사건이 두 번 세어져 내러티브의 근거 카운트가 부풀어
         # 오른다 — 그 카운트가 regime 상태 판정에 그대로 쓰인다.
-        if kind != "weekly" and market_scope in AGGREGATE_SCOPES:
+        if kind != "weekly" and market_scope in AGGREGATE_SCOPES and len(saved_reports) == len(requested_scopes):
             for entry in build_memory_from_briefing(briefing, all_groups):
                 upsert_memory(MARKET_MEMORY_DB_PATH, entry)
+        if not saved_reports:
+            raise BriefingFinalizationError("briefing_final_validation_failed")
         if len(requested_scopes) == 1:
             briefing = saved_reports.get(requested_scopes[0], briefing)
         else:
             written = [scope for scope in requested_scopes if scope in saved_reports]
             briefing["briefings"] = {scope: saved_reports[scope] for scope in written}
+            briefing["markdown"] = "\n\n---\n\n".join(str(saved_reports[scope].get("markdown") or "") for scope in written)
             # 생성 응답도 읽기 경로와 같은 커버리지 계약을 들고 나간다. 생성 직후
             # 화면에 그리는 클라이언트가 어느 시장이 빠졌는지 알 수 없으면 안 된다.
             briefing["includedMarkets"] = [scope.upper() for scope in written]

@@ -29,10 +29,13 @@ def configured_lookup_call(
     default_api_timeout: int = 240,
     default_cli_timeout: int = 600,
     max_output_tokens: int = 2_500,
+    timeout_limit: Callable[[], float] | None = None,
 ) -> LookupCall:
     """웹 조회 한 번. API 키가 있으면 그것을, 없으면 Agent CLI를 쓴다."""
 
     def invoke(prompt: str, context: str) -> str:
+        def timeout_for(configured: int) -> float:
+            return min(configured, timeout_limit()) if timeout_limit else configured
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_lookup_disabled_in_tests")
         config = selected_llm_config()
@@ -44,8 +47,10 @@ def configured_lookup_call(
                 web_search=True,
                 max_output_tokens=max_output_tokens,
                 json_mode=True,
-                timeout_seconds=max(60, int(os.environ.get(api_timeout_env, str(default_api_timeout)))),
+                timeout_seconds=timeout_for(max(60, int(os.environ.get(api_timeout_env, str(default_api_timeout))))),
             )
+            if timeout_limit:
+                timeout_limit()
             return str(text or "")
         # 최상단에서 가져오면 순환이 생긴다(bridge → agent_mode.service → 기능 조립기 → 여기).
         from features.agent_mode import bridge as agent_bridge
@@ -54,12 +59,14 @@ def configured_lookup_call(
             prompt + "\n\n" + context,
             adapter=adapter,
             job_id=job_id,
-            timeout=max(60, int(os.environ.get(cli_timeout_env, str(default_cli_timeout)))),
+            timeout=timeout_for(max(60, int(os.environ.get(cli_timeout_env, str(default_cli_timeout))))),
             web_search=True,
             # 조회는 팩 준비 중에 불린다 — 그 시점은 run_agent_task가 _RUN_SEMAPHORE를
             # 쥐고 있다. 세마포어는 재진입이 안 되므로 serialize=True면 그 잡이 영원히
             # 멈춘다(semantic.py에서 실측한 함정과 동일).
             serialize=False,
+            # This is evidence lookup, not the report's primary execution.
+            diagnostic_primary=False,
         )
         return str(result.get("output") or "")
 

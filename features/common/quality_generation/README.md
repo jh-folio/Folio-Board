@@ -19,6 +19,8 @@ quality targets -> preflight -> evidence coverage block -> generation -> researc
 - 재작성은 기존 `sourceLedger`, `evidenceItems`, `dataGaps`, quality warnings, preflight risks 범위 안에서만 합니다.
 - 새 숫자, 새 출처, 새 주장을 만들지 않습니다.
 - 보강 후보가 quality score/status를 낮추거나 weak section을 늘리면 적용하지 않습니다.
+- 브리핑은 생성 실행 전체에서 `SharedRepairBudget`의 보수 슬롯 하나를 공유합니다. 품질·집중 제어·구조·최종 사실 보완이 각자 한 번씩 호출하지 않으며, 원래 deadline과 취소 상태를 유지합니다. 브리핑 품질 보수의 JSON 파싱 실패는 추가 모델 호출로 복구하지 않습니다.
+- 브리핑 모델 보수는 원문/전달된 기사 발췌에 없는 문장을 새 사실로 허용하지 않습니다. 의미가 같아 보이는 새 표현도 자동으로 검증됐다고 간주하지 않고 후보를 미적용하며 원문을 유지합니다. 최종 필수 수치 보완은 별도의 검증된 입력에서만 만듭니다.
 - 사용자 노트는 항상 `hypothesis`이며 evidence가 아닙니다.
 - `qualityGeneration`에는 token usage/estimate, evidence coverage, weak sections before/after, quality before/after를 남깁니다.
 

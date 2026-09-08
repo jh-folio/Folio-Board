@@ -119,6 +119,49 @@ def test_build_briefing_persists_per_market_reports_and_sidecars():
         assert not (root / "2026-06-20.link.json").exists()
 
 
+def test_rules_api_briefing_save_strips_legacy_change_metadata_without_change_calls():
+    """The direct API/rules writer neither compares nor projects briefing changes."""
+    from features.common.change_intelligence import comparator, semantic
+    from features.common.change_intelligence import service as change_service
+
+    visuals = {"visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": []}
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        patches = [patch.object(builder, "BRIEFINGS_DIR", root), *_build_patches(visuals)]
+        for item in patches:
+            item.start()
+        original_single_market_briefing = builder._single_market_briefing
+
+        def with_legacy_change_metadata(briefing, scope, checkpoints=None):
+            candidate = original_single_market_briefing(briefing, scope, checkpoints)
+            candidate.update({
+                "changeBasis": {"artifactId": "legacy"},
+                "changeSummary": {"status": "major_change"},
+                "changeIntelligence": {"status": "major_change", "projectionStatus": "pending"},
+            })
+            return candidate
+
+        try:
+            with (
+                patch.object(builder, "_single_market_briefing", side_effect=with_legacy_change_metadata),
+                patch.object(change_service, "decorate_candidate", side_effect=AssertionError("briefing decorated")),
+                patch.object(change_service, "compare_basis", side_effect=AssertionError("briefing compared")),
+                patch.object(comparator, "compare_basis", side_effect=AssertionError("briefing compared")),
+                patch.object(semantic, "evaluate_semantic_changes", side_effect=AssertionError("briefing evaluated")),
+                patch.object(change_service, "project_committed_report", side_effect=AssertionError("briefing projected")),
+            ):
+                builder.build_briefing("2026-06-20", persist=True, market_scope="us", llm_override=False)
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
+        saved_paths = list(root.glob("*.us.json"))
+        assert len(saved_paths) == 1
+        saved = json.loads(saved_paths[0].read_text(encoding="utf-8"))
+        assert all(key not in saved for key in ("changeBasis", "changeSummary", "changeIntelligence"))
+        assert not (root / "market-memory.sqlite3").exists()
+
+
 def test_single_market_regeneration_preserves_sibling_and_marks_overlay_stale():
     date = "2026-06-21"
     visuals = {

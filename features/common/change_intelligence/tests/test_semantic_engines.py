@@ -5,11 +5,13 @@
 CLI 모드에서는 키가 없는 것이 정상이다. 그래서 CLI로 브리핑을 만드는 구성에서는 모든 변화가
 `not_evaluated`로 남았고, 화면은 그것을 "판정하지 못했다"로 읽어 **이미 연결된** Agent를
 연결하라고 안내했다.
+
+의미 엔진 자체는 브리핑 저장에서 제거되었지만, 회사·토픽·시장 메모리의 공통 Change
+Intelligence 경로와 CLI/API 분기 계약은 계속 유지한다.
 """
 from __future__ import annotations
 
 import features.common.change_intelligence.semantic as semantic
-from features.common.change_intelligence.service import SEMANTIC_GENERATION_MODES
 
 
 def _summary():
@@ -22,14 +24,37 @@ def _summary():
     }
 
 
-def test_the_agent_mode_is_a_semantic_generation_mode():
-    """Agent 산출물의 mode는 `agent`다(`agent_mode/schema.py::agent_generation`)."""
-    from features.agent_mode.schema import agent_generation
+def test_bound_cli_does_not_read_unused_api_configuration(monkeypatch):
+    from features.llm_settings.task_runtime import bind_task_policy
 
-    assert agent_generation()["mode"] in SEMANTIC_GENERATION_MODES
-    assert "llm" in SEMANTIC_GENERATION_MODES
-    # 규칙 생성은 LLM을 부르지 않으므로 계속 제외다.
-    assert "rules" not in SEMANTIC_GENERATION_MODES
+    def invalid_api():
+        raise AssertionError("unused API configuration accessed")
+
+    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", invalid_api)
+    calls = []
+    monkeypatch.setattr("features.agent_mode.bridge.run_agent_prompt", lambda *args, **kwargs: calls.append(kwargs) or {"output": '{"units": [{"id": "u1", "verdict": "no_new_information"}]}'})
+    with bind_task_policy({"taskKey": "daily_briefing", "enabled": True, "mode": "cli", "provider": "codex", "model": "test-model", "reasoningEffort": "high"}):
+        result = semantic.evaluate_semantic_changes(_summary())
+    assert result["status"] == "evaluated"
+    assert calls[0]["adapter"] == "codex"
+    assert calls[0]["model"] == "test-model"
+    assert calls[0]["reasoning_effort"] == "high"
+    assert calls[0]["diagnostic_primary"] is False
+
+
+def test_invalid_optional_api_configuration_does_not_block_report(monkeypatch):
+    def invalid_api():
+        raise ValueError("private configuration")
+
+    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", invalid_api)
+    result = semantic.evaluate_semantic_changes(_summary())
+    assert result == {"status": "not_evaluated", "verdicts": {}, "reason": "llm_configuration_invalid"}
+
+
+def test_non_object_semantic_response_is_not_evaluated():
+    result = semantic.evaluate_semantic_changes(_summary(), llm_call=lambda *_: ["invalid"])
+    assert result["status"] == "not_evaluated"
+    assert result["reason"] == "no_valid_verdicts"
 
 
 def test_a_cli_only_install_still_gets_a_verdict(monkeypatch):
@@ -42,7 +67,7 @@ def test_a_cli_only_install_still_gets_a_verdict(monkeypatch):
 
     def fake_prompt(prompt, **kwargs):
         seen["serialize"] = kwargs.get("serialize")
-        return {"output": '{"units": [{"id": "u1", "verdict": "new_information", "note": "인하 기대로 전환"}]}'}
+        return {"output": '{"units": [{"id": "u1", "verdict": "new_information", "note": "인하 기대로 전환"}]}' }
 
     monkeypatch.setattr("features.agent_mode.bridge.run_agent_prompt", fake_prompt)
 
@@ -123,5 +148,5 @@ def test_the_bridge_can_run_without_retaking_the_semaphore():
     assert isinstance(bridge._RUN_SEMAPHORE, type(threading.Semaphore(1)))
     source = inspect.getsource(bridge.run_agent_prompt)
     assert "if not serialize:" in source
-    # 직렬화를 건너뛰는 분기가 `with _RUN_SEMAPHORE`보다 앞에 있어야 한다.
-    assert source.index("if not serialize:") < source.index("with _RUN_SEMAPHORE:")
+    # 직렬화를 건너뛰는 분기가 세마포어 acquire보다 앞에 있어야 한다.
+    assert source.index("if not serialize:") < source.index("_RUN_SEMAPHORE.acquire")

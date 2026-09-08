@@ -27,8 +27,12 @@ def test_manifest_is_removed_and_declared_sources_become_ledger():
     cleaned, ledger, evidence, claims = reconcile_source_ledger(markdown, _sources(), limit=10)
 
     assert "FOLIO_BRIEFING_MANIFEST" not in cleaned
-    assert [row["title"] for row in ledger] == ["Local A"]
+    # A valid manifest narrows declared use, but the existing reference list
+    # keeps every writer-input source accessible to readers.
+    assert [row["title"] for row in ledger] == ["Local A", "Local B"]
     assert evidence["status"] == "declared"
+    assert evidence["declaredUsedSourceCount"] == 1
+    assert evidence["accessibleSourceCount"] == 2
     assert claims["validation"]["status"] == "pass"
 
 
@@ -98,3 +102,17 @@ def test_weekly_removes_every_reference_section_but_keeps_notes():
 
     assert "참고자료" not in cleaned and "Sources Used" not in cleaned
     assert "## Source & Data Notes" in cleaned and "- 노트" in cleaned
+
+
+def test_manifest_sources_accept_only_http_https_urls():
+    markdown = (
+        "body\n"
+        f"{MANIFEST_START}\n"
+        '{"usedSourceIds":[],"externalSources":[{"title":"bad","url":"javascript:alert(1)"}],"claims":[]}\n'
+        f"{MANIFEST_END}"
+    )
+
+    _, ledger, evidence, _ = reconcile_source_ledger(markdown, [], limit=10)
+
+    assert ledger == []
+    assert "manifest_external_source_invalid" in evidence["errors"]

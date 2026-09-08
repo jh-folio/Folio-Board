@@ -334,10 +334,10 @@ def test_the_weekly_briefing_does_not_write_back_to_market_memory():
     from features.agent_mode import service as agent_service
     from features.daily_briefing import builder
 
-    assert 'if kind != "weekly" and market_scope in AGGREGATE_SCOPES:' in inspect.getsource(
+    assert 'if kind != "weekly" and market_scope in AGGREGATE_SCOPES and len(saved_reports) == len(requested_scopes):' in inspect.getsource(
         builder.build_briefing
     )
-    assert 'if persist and kind != "weekly" and market_scope == "both":' in inspect.getsource(
+    assert 'if persist and kind != "weekly" and market_scope == "both" and len(saved_reports) == len(requested_scopes):' in inspect.getsource(
         agent_service.write_briefing_from_markdown
     )
 

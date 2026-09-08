@@ -100,6 +100,9 @@ def repair_concentration(
         if not isinstance(patches, list) or not 1 <= len(patches) <= 3:
             raise ValueError("invalid_patch_count")
         candidate = apply_section_patches(markdown, patches, allowed_headings=allowed)
+        from features.common.quality_generation.repair_grounding import preserves_briefing_input
+        if not preserves_briefing_input(markdown, candidate):
+            return markdown, {**audit, "repair": {"attempted": True, "applied": False, "reason": "outside_input", "changedSections": []}}
         if len(candidate) < int(len(markdown) * 0.75):
             raise ValueError("repair_removed_too_much")
         after = audit_concentration(candidate, leader_subjects=leader_subjects, other_major_subjects=other_major_subjects)
@@ -122,6 +125,12 @@ def configured_repair(
     other_major_subjects: list[str],
     serialize: bool = True,
 ) -> tuple[str, dict]:
+    from features.common.quality_generation.call_budget import current_briefing_budget
+    shared = current_briefing_budget()
+    def remaining():
+        if shared:
+            return min(180, shared.remaining_seconds() or 180)
+        return 180
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return markdown, {**audit, "repair": {"attempted": True, "applied": False, "reason": "unavailable", "changedSections": []}}
     from features.llm_settings.client import ai_agent_enabled, ai_agent_mode, request_llm_text, selected_llm_config
@@ -131,7 +140,7 @@ def configured_repair(
         from features.agent_mode.bridge import run_agent_prompt
 
         def invoke(prompt: str) -> str:
-            result = run_agent_prompt(prompt, timeout=max(30, int(os.environ.get("KR_CONCENTRATION_REPAIR_TIMEOUT_SECONDS", "180"))), serialize=serialize)
+            result = run_agent_prompt(prompt, timeout=min(max(30, int(os.environ.get("KR_CONCENTRATION_REPAIR_TIMEOUT_SECONDS", "180"))), remaining()), serialize=serialize)
             return str(result.get("output") or "")
     else:
         config = selected_llm_config()
@@ -146,7 +155,7 @@ def configured_repair(
                 web_search=False,
                 max_output_tokens=2_500,
                 json_mode=True,
-                timeout_seconds=180,
+                timeout_seconds=remaining(),
             )
             return str(text or "")
     return repair_concentration(

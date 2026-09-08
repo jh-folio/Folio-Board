@@ -123,6 +123,7 @@ def evaluate_report(
     evidence_items: list | None = None,
     data_gaps: list | None = None,
     market_tape: dict | None = None,
+    verified_claims: list | None = None,
     artifact_type: str = "topic_report",
 ) -> dict:
     md = markdown or ""
@@ -201,9 +202,25 @@ def evaluate_report(
     else:
         scores["source_diversity"] = 1.0
 
-    numbers = len(re.findall(r"\d+(?:\.\d+)?%?", md))
-    scores["numeric_support"] = min(1.0, numbers / 25)
-    if numbers < 5 and artifact_type not in {"regime_state"}:
+    # Briefings have a final deterministic fact validator.  Count only its
+    # distinct factKey/kind pairs so URLs, dates, reference titles, and
+    # repeated raw numbers cannot manufacture numeric support.  Other
+    # artifacts retain the historical evaluator rule for compatibility.
+    raw_numbers = len(re.findall(r"\d+(?:\.\d+)?%?", md))
+    if artifact_type == "briefing":
+        distinct_facts = {
+            (str(row.get("factKey") or ""), str(row.get("kind") or ""))
+            for row in (verified_claims or [])
+            if isinstance(row, dict)
+            and str(row.get("factKey") or "").strip()
+            and str(row.get("kind") or "").strip()
+        }
+        numeric_count = len(distinct_facts)
+        scores["numeric_support"] = min(1.0, numeric_count / 5)
+    else:
+        numeric_count = raw_numbers
+        scores["numeric_support"] = min(1.0, raw_numbers / 25)
+    if numeric_count < 5 and artifact_type not in {"regime_state"}:
         warnings.append("숫자 근거가 부족합니다.")
 
     counter = 0.0
@@ -250,7 +267,7 @@ def evaluate_report(
         if isinstance(gap, dict) and gap.get("suggestedAction"):
             suggested.append(str(gap["suggestedAction"]))
 
-    if total_docs == 0 and numbers > 12:
+    if total_docs == 0 and raw_numbers > 12:
         scores["hallucination_risk"] = 0.3
         warnings.append("근거 자료 없이 수치가 많습니다. 추정 여부를 확인하세요.")
     elif data_gaps and any(g.get("severity") in {"high", "blocking"} for g in data_gaps if isinstance(g, dict)):
@@ -331,6 +348,7 @@ def evaluate_report(
 def evaluate_artifact(artifact_type: str, artifact: dict) -> dict:
     artifact = artifact or {}
     markdown = _artifact_markdown(artifact_type, artifact)
+    final_validation = artifact.get("finalValidation") or {}
     return evaluate_report(
         markdown,
         evidence_summary=_artifact_evidence_summary(artifact_type, artifact),
@@ -341,5 +359,6 @@ def evaluate_artifact(artifact_type: str, artifact: dict) -> dict:
         evidence_items=artifact.get("evidenceItems") or [],
         data_gaps=data_gap_rows(artifact.get("dataGaps")),
         market_tape=artifact.get("marketTape") or {},
+        verified_claims=final_validation.get("verifiedClaims") or [],
         artifact_type=artifact_type,
     )

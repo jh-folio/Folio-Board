@@ -393,7 +393,7 @@ def _coverage(requested, returned, missing):
 def _latest_series_time(series):
     values = []
     for row in series or []:
-        for bucket in (row.get("intraday") or {}, row.get("daily") or {}):
+        for bucket in (row.get("intraday") or {}, row.get("hourly") or {}, row.get("daily") or {}):
             points = bucket.get("points") or []
             if points:
                 values.append(str(points[-1].get("time") or ""))
@@ -408,7 +408,7 @@ def _series_provider(series):
             source_by_interval = row.get("sourceByInterval") or {}
             provider = "+".join(
                 str(source_by_interval.get(key) or "").strip()
-                for key in ("intraday", "daily")
+                for key in ("intraday", "hourly", "daily")
                 if str(source_by_interval.get(key) or "").strip()
             )
         for part in provider.split("+"):
@@ -463,6 +463,7 @@ def _price_snapshot(snapshot_id, market_key, role, session_date, requested, seri
     point_counts = {
         row.get("ticker", ""): {
             "intraday": len(((row.get("intraday") or {}).get("points") or [])),
+            "hourly": len(((row.get("hourly") or {}).get("points") or [])),
             "daily": len(((row.get("daily") or {}).get("points") or [])),
         }
         for row in series
@@ -492,7 +493,7 @@ def _price_snapshot(snapshot_id, market_key, role, session_date, requested, seri
         # 실제 통화는 `currencies`와 각 시리즈에서 읽는다.
         "currency": currencies[0] if len(currencies) == 1 else "MIXED" if currencies else "",
         "currencies": currencies,
-        "granularities": ["5m", "1d"],
+        "granularities": ["5m", "1h", "1d"],
         "dataSufficiency": {"minimumTrendPoints": 8, "pointCounts": point_counts, "status": "sparse" if sparse else "sufficient" if series else "unavailable"},
         "subject": subject or {},
         "series": series,
@@ -538,6 +539,7 @@ def collect_briefing_visuals(
             ]
             return {
                 "intraday": {"interval": "5m", "points": []},
+                "hourly": {"interval": "1h", "points": []},
                 "daily": {"interval": "1d", "points": rows},
             }
     else:
@@ -579,13 +581,16 @@ def collect_briefing_visuals(
                     "provider": value.get("provider") or "market-data-v2",
                     "sourceByInterval": value.get("sourceByInterval") or {},
                     "intraday": value.get("intraday") or {"interval": "5m", "points": []},
+                    "hourly": value.get("hourly") or {"interval": "1h", "points": []},
                     "daily": value.get("daily") or {"interval": "1d", "points": []},
                 }
+                warnings.extend(f"{symbol}: {warning}" for warning in value.get("warnings") or [] if str(warning))
             except Exception:
                 price_cache[key] = {
                     "provider": "unavailable",
                     "sourceByInterval": {},
                     "intraday": {"interval": "5m", "points": []},
+                    "hourly": {"interval": "1h", "points": []},
                     "daily": {"interval": "1d", "points": []},
                 }
                 warnings.append(f"{symbol}: price_history_unavailable")
@@ -1035,7 +1040,9 @@ def _current_price_snapshot(saved, fetch_price, clock, warnings, retrieved_at):
             history = {}
             warnings.append(f"{symbol}: price_history_unavailable")
         intraday = history.get("intraday") or {"interval": "5m", "points": []}
+        hourly = history.get("hourly") or {"interval": "1h", "points": []}
         daily = history.get("daily") or {"interval": "1d", "points": []}
+        warnings.extend(f"{symbol}: {warning}" for warning in history.get("warnings") or [] if str(warning))
         if not (intraday.get("points") or daily.get("points")):
             missing.append(symbol)
             continue
@@ -1043,7 +1050,10 @@ def _current_price_snapshot(saved, fetch_price, clock, warnings, retrieved_at):
             "ticker": ticker,
             "providerSymbol": symbol,
             "label": saved_series.get("label") or ticker,
+            "provider": history.get("provider") or "market-data-v2",
+            "sourceByInterval": history.get("sourceByInterval") or {},
             "intraday": intraday,
+            "hourly": hourly,
             "daily": daily,
         })
     current = _price_snapshot(saved.get("id"), market_key, saved.get("role"), target, requested, series, missing, subject=deepcopy(saved.get("subject") or {}))

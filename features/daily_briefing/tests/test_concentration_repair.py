@@ -42,7 +42,7 @@ def test_repair_cannot_change_leader_heading_or_add_nested_heading() -> None:
         )
 
 
-def test_semantic_repair_is_applied_only_when_audit_improves() -> None:
+def test_semantic_repair_rejects_text_outside_original_input() -> None:
     markdown = """# 한국 시장
 ## 1. 시장 흐름
 HBM 공급 확대가 판매 단가와 영업이익을 끌어올려 주가 상승으로 이어집니다.
@@ -65,6 +65,6 @@ HBM 공급 확대가 판매 단가와 영업이익을 끌어올려 주가 상승
         invoke=lambda _prompt: response,
     )
 
-    assert repaired != markdown
-    assert after["repair"]["applied"] is True
-    assert after["status"] != "repair_candidate"
+    assert repaired == markdown
+    assert after["repair"]["applied"] is False
+    assert after["repair"]["reason"] == "outside_input"

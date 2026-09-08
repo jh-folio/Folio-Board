@@ -30,9 +30,13 @@ def normalize_source_url(value: str) -> str:
     try:
         parts = urlsplit(raw)
     except ValueError:
-        return raw.rstrip("/")
+        return ""
     if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
-        return raw.rstrip("/")
+        # URL-shaped values from a model manifest must never become clickable
+        # sources. Local documents are represented by ``path`` and do not pass
+        # through this branch. Keep the normalizer intentionally small: Q3 owns
+        # claim semantics, while Q2 only needs basic http(s) safety.
+        return ""
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
 
 
@@ -55,7 +59,12 @@ def attach_source_ids(sources, *, limit: int | None = None) -> list[dict]:
             continue
         row = deepcopy(source)
         row["sourceId"] = stable_source_id(row, index)
-        key = normalize_source_url(row.get("url")) or str(row.get("path") or row.get("title") or row["sourceId"])
+        normalized_url = normalize_source_url(row.get("url"))
+        if row.get("url") and not normalized_url:
+            # Do not let a malformed/model-supplied scheme reach markdown
+            # rendering. Local sources remain addressable through ``path``.
+            row["url"] = ""
+        key = normalized_url or str(row.get("path") or row.get("title") or row["sourceId"])
         if not key or key in seen:
             continue
         seen.add(key)
@@ -159,7 +168,7 @@ def reconcile_source_ledger(markdown: str, candidates, *, limit: int) -> tuple[s
     invalid_ids = [value for value in declared_ids if value not in by_id]
     if invalid_ids:
         errors.append("manifest_source_outside_whitelist")
-    selected = [deepcopy(by_id[value]) for value in declared_ids if value in by_id]
+    declared_rows = [deepcopy(by_id[value]) for value in declared_ids if value in by_id]
 
     external_rows: list[dict] = []
     for index, value in enumerate(manifest.get("externalSources", []) if manifest else [], 1):
@@ -184,13 +193,10 @@ def reconcile_source_ledger(markdown: str, candidates, *, limit: int) -> tuple[s
             external_rows.append(normalized)
 
     manifest_valid = bool(manifest) and not errors
-    if not manifest_valid:
-        # Conservative compatibility: all prompt-visible candidates remain in the
-        # ledger, while every model-added visible URL is merged into it.
-        selected = [deepcopy(row) for row in candidate_rows]
-    elif not selected:
-        selected = observed_used
-
+    # The existing reference list remains an accessible view of every writer
+    # input, even when a valid manifest declares only a subset. Declaration and
+    # later claim verification are tracked separately in evidence metadata.
+    selected = [deepcopy(row) for row in candidate_rows]
     final_rows = attach_source_ids([*selected, *external_rows], limit=limit)
     final_urls = {normalize_source_url(row.get("url")) for row in final_rows if normalize_source_url(row.get("url"))}
     missing_visible = [
@@ -207,6 +213,16 @@ def reconcile_source_ledger(markdown: str, candidates, *, limit: int) -> tuple[s
         "version": 1,
         "status": "declared" if manifest_valid else "inferred_candidate_fallback",
         "candidateSourceCount": len(candidate_rows),
+        # The fallback ledger keeps writer-input rows accessible for legacy
+        # readers, but it must not be mistaken for model use or verified claim
+        # evidence when the manifest is missing/invalid.
+        "writerInputSourceCount": len(candidate_rows),
+        "declaredUsedSourceCount": len(declared_rows) if manifest_valid else 0,
+        "actualUsedSourceCount": len(declared_rows) if manifest_valid else 0,
+        "verifiedSourceCount": 0,
+        "accessibleSourceCount": len(final_rows),
+        "actualUsedStatus": "declared" if manifest_valid else "unknown",
+        "usedSourceCountSemantics": "accessible_writer_ledger",
         "usedSourceCount": len(final_rows),
         "externalSourceCount": sum(bool(row.get("external")) for row in final_rows),
         "errors": sorted(set(errors)),

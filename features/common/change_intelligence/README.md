@@ -1,12 +1,16 @@
 # Change Intelligence
 
-Change Intelligence는 새 보고서·시장 상태가 생성되어 commit되기 직전에 같은 작업이 이미 검토한 구조화 자료를 이전 committed artifact와 비교합니다. Markdown diff를 사용하지 않고, 변화 판정을 위해 별도 Agent job을 만들지 않습니다.
+Change Intelligence는 기업분석·테마분석·시장 상태가 생성되어 commit되기 직전에 같은 작업이 이미 검토한 구조화 자료를 이전 committed artifact와 비교합니다. Markdown diff를 사용하지 않고, 변화 판정을 위해 별도 Agent job을 만들지 않습니다. 브리핑에서는 새 비교·의미 판정·이벤트 projection을 만들지 않으며, 과거 브리핑 JSON과 projection은 기존 데이터 호환 및 복구를 위해 읽을 수 있습니다.
+
+## 과거 브리핑 호환 의미 비교
+
+과거 브리핑 JSON과 projection을 읽고 복구하는 경로에서 의미 비교 결과를 해석할 때는 실행 중인 작업의 CLI/API 선택을 우선합니다. CLI 작업은 사용하지 않는 API 모델·추론 강도 설정을 검사하지 않고, 같은 CLI·모델·추론 강도를 전달합니다. 부가 의미 비교의 설정 오류·잘못된 응답은 `not_evaluated`로 남기며 보고서 저장을 중단시키지 않습니다. 실제 본문 사실 검사와 저장 검증은 그대로 적용됩니다. 새 브리핑 저장 경로는 이 의미 비교를 호출하지 않습니다.
 
 판정은 두 층으로 나뉩니다.
 
 1. **규칙 비교기 (`comparator.py`)** — 어떤 단위가 생기고/사라지고/움직였는지, materiality와 증거 corroboration을 결정적으로 계산합니다. 브리핑 동인은 상한 없는 점수 합이 아니라 그날 전체 대비 순위·비중으로 비교합니다.
 
-2. **의미 비교 (`semantic.py`)** — 순위·비중 이동은 보도량 구성의 함수라 내용 변화를 말하지 못합니다. 브리핑 LLM 생성 잡 안에서 시장당 1회, 변화 단위별 직전/현재 대표 기사 제목(`contextDocs`, hash 비교 밖)을 비교해 `semanticVerdict` enum(`new_information | trend_development | reversal | coverage_shift_only | no_new_information`)으로 분류합니다. 코드가 enum·인용 제목·길이를 검증합니다.
+2. **의미 비교 (`semantic.py`)** — 순위·비중 이동은 보도량 구성의 함수라 내용 변화를 말하지 못합니다. 이 모듈은 과거 브리핑 데이터의 호환·복구와 일일 뉴스 의미 계약에서 사용하는 enum·검증 유틸을 보존하지만, 새 브리핑 저장 경로에서는 호출하지 않습니다.
 
 ### 변화의 크기는 무엇으로 재는가
 
@@ -28,7 +32,8 @@ Change Intelligence는 새 보고서·시장 상태가 생성되어 commit되기
 
 ## Authority
 
-- Briefing, Company Analysis, Topic Report: 각 report JSON의 `changeBasis`, `changeSummary`
+- Company Analysis, Topic Report: 각 report JSON의 `changeBasis`, `changeSummary`
+- Briefing: 새 저장본에는 Change Intelligence 필드를 만들지 않으며, 과거 저장본의 필드는 호환용으로만 읽습니다.
 - Market Memory: `market_state_snapshots.payload_json`의 `changeBasis`, `changeSummary`
 - `market-memory.sqlite3::change_event_index`: 두 authority를 조회하는 재구축 가능한 projection
 

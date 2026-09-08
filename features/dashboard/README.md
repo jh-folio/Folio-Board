@@ -1,18 +1,25 @@
 # Research Cockpit
 
-Dashboard는 `cockpit` 하나입니다(0.5에서 Legacy 모드 삭제). initial payload는 로컬 change projection, 시장 일정 ref, provider health, native symbol과 기존 로컬 투자 맥락만 집계하며 upstream network나 chart series를 포함하지 않습니다.
+Dashboard는 `cockpit` 하나입니다(0.5에서 Legacy 모드 삭제). Cockpit payload는 시장 일정 ref, provider health, native symbol과 기존 로컬 투자 맥락을 집계하며 upstream network나 chart series를 포함하지 않습니다. 기존 `/api/dashboard` 호환 응답에는 저장된 Change Intelligence 이벤트와 집계 필드가 남아 있을 수 있지만, 현재 Cockpit 화면은 이를 표시하지 않습니다.
 
 **Legacy 모드는 0.5에서 삭제했습니다.** 0.4에서 한 릴리즈 동안만 두기로 한 rollback 경로였고, Cockpit이 자리를 잡아 같은 화면을 두 벌 유지할 이유가 없습니다. 저장된 `dashboardMode: legacy`는 `cockpit`으로 승격됩니다. 사용자 설정 파일 `data/market-widget-settings.json`은 계약대로 **삭제하지 않고**, 집중 종목 fallback(`source: legacy_setting`)으로 계속 read-only로 읽습니다. 설정/Watchlist가 없으면 미국 `SPY`, 한국 `^KS11`을 사용합니다.
 
-cockpit payload의 변화 이벤트는 `major_change | developing_signal | conflicting_uncertain`만 `changes`로 노출하고, 나머지(기준선·근거부족·변화없음)는 `quietChanges`(최대 8건)와 `changeCounts.quiet`로 분리합니다. `changeCounts`는 요약 스트립용 상태별 카운트입니다. **`quietChanges`는 0.5.0에서 화면에 없습니다** — `무엇이 달라졌나`는 의미 판정이 끝난 건(`new_information|reversal|trend_development`)만 본문에 두고 나머지는 감춥니다. 다만 판정 자체를 못 한 경우(LLM 없이 생성하면 전부 `not_evaluated`)에는 빈 상태 문구가 `변화가 없다`가 아니라 `판정하지 못한 기록이 N건`이라고 말합니다. 판정 실패를 변화 없음으로 바꿔 말하지 않기 위해서입니다. implications는 포트폴리오와 워치리스트 티커(`sec_ticker_for_name` 이름 해석 포함)를 모두 매칭하고 `source: portfolio|watchlist`를 표기합니다.
+대시보드에는 브리핑 내용 변화 피드와 오늘의 변화 요약을 표시하지 않습니다. 저장된 과거 보고서의 Change Intelligence 필드는 기존 데이터 호환을 위해 읽을 수 있지만, 새 브리핑 생성에서는 해당 비교·판정·이벤트를 만들지 않습니다.
+
+`오늘의 이야기 비중`은 브리핑과 독립적으로 수집된 뉴스의 동인별 보도량을 보여줍니다. 비중 이동은 내용 변화가 아니라는 안내를 함께 표시하며, 시장별 탭에서 US/KR/EUROPE/JP를 선택합니다.
 
 `POST /api/dashboard/settings`는 기존 저장값과 merge 후 정규화합니다(부분 갱신이 다른 키를 초기화하지 않음). 저장 키: `dashboardMode`, `calendarView`, `calendarKinds`, `calendarMarkets`, `calendarWatchlistOnly`, `calendarMinImportance`(1=전부·2=중간 이상·3=최상위만), `chartRange`, `chartStyle`, `chartSymbol`.
 
 차트 기간은 0.5에서 `1d/1m/3m/1y/5y`로 바뀌었다(`1d`는 5분봉). `6m`을 쓰던 저장값은 정규화 때 조용히 `3m`으로 떨어진다 — `legacy → cockpit`처럼 옮겨 주는 승격 경로는 두지 않았다.
 
+Toss Open API가 켜져 있으면 KR/US 주식의 1D 차트는 REST 1분봉 bootstrap 뒤 equity WebSocket
+체결 overlay를 사용한다. KOSPI/KOSDAQ은 공식 시장지표 candle endpoint의 1분봉을 5분봉으로
+집계하지만 equity WebSocket은 열지 않아 상태를 `Toss 1분봉`으로 표시한다. 그 밖의 지수·환율은
+yfinance 차트를 유지하고 `Toss 분봉 미지원`이라고 범위를 명시한다.
+
 API: `GET /api/dashboard/cockpit`, `GET|POST /api/dashboard/settings`, `GET /api/dashboard/story-share?market=us|kr|europe|jp`. 기존 `GET /api/dashboard`는 그대로 유지합니다.
 
-## 이야기 비중의 비교 기준 (0.5.4)
+## 이야기 비중의 비교 기준
 
 **하루가 아니라 직전 5거래일 합산이다**(`PREVIOUS_SESSION_WINDOW`). 하루끼리 비교하면 그날 수집량이 흔들리는 것만으로 비중이 수십 %p 움직인다 — 유럽·일본은 하루 수집이 열몇 건이라 기사 두 건이 그 폭을 만든다.
 
@@ -33,29 +40,12 @@ API: `GET /api/dashboard/cockpit`, `GET|POST /api/dashboard/settings`, `GET /api
 - **`금` 한 글자를 뺐다.** 한글 토큰은 단어 경계 없이 부분일치라(영문·숫자만 경계를 갖는다) `금`이 금리·금융·자금·세금·연금·임금을 전부 물었다. 실측으로 문서의 24.5%가 걸렸고 그중 `금` 하나로만 원자재/유가에 들어온 2,808건(14.8%)의 실제 매칭은 금리 2,712 · 금융 1,052 · 기준금리 320이었다 — 금값 기사는 사실상 없었다. 금값을 가리키는 표기(`금값`·`금 가격`·`금시세`·`귀금속`)만 남겼고, 원자재/유가 비중이 35.0% → 20.4%로 내려갔다. **한 글자 한글 어휘를 새로 넣지 않는다.**
 - **`크립토`를 넣었다.** 2026 시장 보도에서 독립된 이야기인데 표에 없었다. 실측 334건(1.8%)이 걸리고 그중 어느 동인에도 속하지 못하던 80건이 7건으로 줄었다.
 
-## 내용 변화 판정 (0.5.4)
-
-`무엇이 달라졌나`의 카드는 의미 판정(`semanticVerdict`)이 끝난 변화만 보여준다. 예전에는 그 판정이 두 겹으로 막혀 있었다:
-
-1. **Agent CLI 브리핑은 판정이 아예 돌지 않았다.** `decorate_candidate`가 `generation.mode == "llm"`일 때만 평가를 불렀는데 Agent 산출물의 mode는 `agent`다(`agent_mode/schema.py::agent_generation`). `SEMANTIC_GENERATION_MODES`로 둘 다 통과시킨다.
-2. **`semantic.py`가 API 키만 봤다.** CLI 모드에서는 키가 없는 것이 정상이라 이중으로 막혔다. 키가 없으면 Agent bridge로 같은 판정 프롬프트를 보낸다.
-   - **그 호출은 `serialize=False`다.** `bridge._RUN_SEMAPHORE`는 `threading.Semaphore(1)`이라 재진입이 안 되고 acquire에 타임아웃도 없다 — 브리핑 생성 잡은 커밋까지 통째로 그 세마포어 안에서 도는데, 판정이 그것을 다시 잡으면 그 잡이 영원히 멈춘다.
-   - 판정 실패는 `not_evaluated`일 뿐 커밋을 무너뜨리지 않는다(기존 계약).
-
-**화면은 "판정됨"과 "미판정"을 가른다**(`summarizeChangeEvents`). 예전에는 confirmed가 아닌 것을 전부 미판정으로 세서, `coverage_shift_only`·`no_new_information`처럼 **정상적으로 판정이 끝난** 날에도 "판정하지 못했다"고 말하고 이미 연결된 AI Agent를 연결하라고 안내했다. 의미 비교는 브리핑 변화 단위에만 걸리므로 다른 아티팩트는 verdict가 없는 것이 정상이고 미판정으로 세지 않는다. Agent가 연결돼 있으면 연결 안내 대신 다음 생성에서 판정된다고 말한다.
-
 ## 오늘의 이야기 비중 (story_share.py)
 
-"무엇이 달라졌나" 패널 상단의 얇은 누적 막대와 범례입니다. 그날 수집된 articles/rss 시장 관련 문서 전체를 `infer_drivers()`로 묶어 상위 4개 + "그 외 이야기"의 언급 비중을 계산하고, 직전 거래일과의 %p 델타(`▲ +13%p`)를 붙입니다. 규칙 계산 전용이며 LLM을 호출하지 않습니다.
+얇은 누적 막대와 범례로 그날 수집된 articles/rss 시장 관련 문서 전체를 `infer_drivers()`로 묶어 상위 4개 + "그 외 이야기"의 언급 비중을 계산하고, 직전 거래일과의 %p 델타(`▲ +13%p`)를 붙입니다. 규칙 계산 전용이며 LLM을 호출하지 않습니다.
 
 - 브리핑과 독립: 브리핑을 생성하지 않아도 계산되고, 브리핑용 상한 잘린 선별본이 아니라 그날 문서 전체(`select_briefing_docs(strict=True)`)를 씁니다. strict를 쓰는 이유는 두 날짜를 같은 잣대로 비교하기 위해서입니다(비-strict는 pool을 오늘까지 확장해 직전 거래일 계산을 오염시킴).
-- 비중 이동은 보도량 변화일 뿐 내용 변화가 아니라는 경고 문장을 UI에 고정합니다. 내용 판정은 Change Intelligence의 의미 비교가 담당합니다.
+- 비중 이동은 보도량 변화일 뿐 내용 변화가 아니라는 경고 문장을 UI에 고정합니다.
 - 네 시장(US/KR/EUROPE/JP)을 지원하며 시장 목록은 `PRODUCT_MARKETS`에서 파생합니다.
 - 표본이 작으면 비중과 %p 델타가 기사 몇 건에 좌우되므로, 문서가 `MIN_CONFIDENT_SAMPLE`(12건) 미만이면 `smallSample` 경고를 붙여 화면에 표본 수를 함께 표시합니다. 유럽·일본은 수집량이 미국·한국보다 적어 이 경로에 자주 들어갑니다.
 - 응답은 (date, market) 키로 10분 캐시하고 RSS 수집 완료 시 `invalidate_story_share_cache()`로 비웁니다.
-
-## 내용의 변화 카드
-
-변화 피드는 최근 14일(`CHANGE_FEED_WINDOW_DAYS`) 안의 이벤트만 보여준다. 더 오래된 행과 권위 저장소는 그대로 두고 피드 projection만 좁힌다. 같은 날짜에 구형 통합 id(`2026-08-05`)와 시장별 id(`2026-08-05.us`)가 함께 있으면 통합 행을 피드에서 숨긴다 — 0.4→0.5 id 전환으로 남은 행이라 시장별 행이 그 날짜의 현재 세대다.
-
-변화 피드는 `semanticVerdict` 칩(새 정보/방향 전환/흐름 진전/보도량 이동/변화 없음/내용 미평가)이 붙은 카드로 렌더링합니다. 카드 본문의 `펼치기`는 항목별 직전/현재 대조(순위·비중, 대표 기사 제목 양쪽)를 인라인으로 보여주고, `Agent에게 묻기`는 카드가 아는 사실(전/후 값·분류·근거 제목·기준 id)을 질문으로 만들어 우측 Agent dock을 엽니다(`openReactAgentDock`, 자동 제출 없음). 상세 데이터는 change 이벤트 payload(`changedItems[].contextDocs/previousContextDocs/semanticNote`)에 이미 실려 있어 별도 상세 API가 없습니다.

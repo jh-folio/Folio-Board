@@ -21,6 +21,7 @@ A의 "주초 대비", B의 "주초 종가 대비 주말 종가", C의 "그 주 �
 from __future__ import annotations
 
 import datetime as dt
+from copy import deepcopy
 
 from features.common.market_data.market_universe import (
     build_europe_heatmap_snapshot,
@@ -29,6 +30,7 @@ from features.common.market_data.market_universe import (
     build_us_heatmap_snapshot,
 )
 from features.common.market_data.price_history import INDEX_UNIVERSE, build_price_history
+from features.common.market_calendar import market_open_status
 from features.common.markets import (
     SavedMarketScope,
     market_keys_for_scope,
@@ -89,19 +91,155 @@ def _percent_series(points) -> tuple[list[dict], float | None, float | None]:
     return rows, baseline, rows[-1]["changePct"]
 
 
+def _prior_week_return(
+    points,
+    window: WeeklyWindow,
+    *,
+    expected_sessions: list[str] | None = None,
+    prior_session: str | None = None,
+) -> tuple[float | None, float | None, str | None, str | None]:
+    """Return the week-over-week close separately from the in-week curve.
+
+    The plotted curve intentionally starts at the first close *inside* the
+    window.  The headline weekly return instead uses the last close before the
+    window, when that baseline is available, and never substitutes the first
+    in-window point for it.
+    """
+    start = str(window.week_start)[:10]
+    dated = []
+    for row in points or []:
+        day = str(row.get("time") or "")[:10]
+        close = _safe_float(row.get("close"))
+        if day and close is not None:
+            dated.append((day, close))
+    dated.sort()
+    expected_sessions = expected_sessions or []
+    if not expected_sessions or not prior_session:
+        return None, None, None, "calendar_unavailable"
+    expected_end = expected_sessions[-1]
+    values = dict(dated)
+    if prior_session not in values:
+        return None, None, None, "prior_week_close_missing"
+    if expected_end not in values:
+        return None, None, prior_session, "week_end_session_missing"
+    baseline_day, baseline = prior_session, values[prior_session]
+    end_day, end_close = expected_end, values[expected_end]
+    if baseline == 0:
+        return None, baseline, baseline_day, "zero_prior_week_close"
+    try:
+        value = (end_close / baseline - 1) * 100
+        if value != value or value in (float("inf"), float("-inf")):
+            return None, baseline, baseline_day, "nonfinite_week_return"
+    except (OverflowError, ZeroDivisionError):
+        return None, baseline, baseline_day, "nonfinite_week_return"
+    return round(value, 4), baseline, baseline_day, None
+
+
+def _calendar_status_known(status: dict | None) -> bool:
+    if not isinstance(status, dict):
+        return False
+    source = status.get("source")
+    if source in {"static", "exchange_api"}:
+        return True
+    # Some exchange adapters report ``source=exchange`` and a separate
+    # coverage field. Accept only explicitly valid coverage; never infer it.
+    return source == "exchange" and (
+        status.get("coverageValid") is True
+        or status.get("coverage") in {"valid", "covered", "complete", "ok"}
+    )
+
+
+def _prior_session_date(market_key: str, first_session: str) -> str | None:
+    code = {"us": "US", "kr": "KR", "europe": "EUROPE", "jp": "JP"}.get(market_key)
+    if not code:
+        return None
+    try:
+        cursor = dt.date.fromisoformat(first_session) - dt.timedelta(days=1)
+    except ValueError:
+        return None
+    for _ in range(14):
+        status = market_open_status(cursor, code, lambda _day, _market: None)
+        if not _calendar_status_known(status):
+            return None
+        if status.get("isOpen"):
+            return cursor.isoformat()
+        cursor -= dt.timedelta(days=1)
+    return None
+
+
+def _expected_sessions(market_key: str, window: WeeklyWindow) -> tuple[list[str] | None, str, str | None]:
+    """Resolve expected dates from the existing static calendar only.
+
+    A calendar gap is not filled with weekday guesses.  If the existing
+    exchange table is unavailable/expired, callers expose coverage as unknown
+    rather than claiming JP/EU (or another market) is complete.
+    """
+    code = {"us": "US", "kr": "KR", "europe": "EUROPE", "jp": "JP"}.get(market_key)
+    if not code:
+        return None, "unsupported_market", None
+    dates = []
+    for text in window.source_dates:
+        try:
+            day = dt.date.fromisoformat(text)
+        except ValueError:
+            return None, "invalid_window", None
+        status = market_open_status(day, code, lambda _day, _market: None)
+        if not _calendar_status_known(status):
+            return None, "calendar_unavailable", None
+        if status.get("isOpen"):
+            dates.append(day.isoformat())
+    if not dates:
+        return None, "no_expected_sessions", None
+    return dates, "market_calendar", _prior_session_date(market_key, dates[0])
+
+
 def _weekly_flow_snapshot(market_key: str, window: WeeklyWindow, series, missing, requested) -> dict:
     meta = MARKET_META[market_key]
     sessions = sorted({point["time"] for row in series for point in row.get("points", [])})
     latest = sessions[-1] if sessions else ""
     # 창의 마지막 날이 휴장이면(일요일 발행이면 늘 그렇다) 마지막 세션은 그 전 거래일이다.
     # 그것은 결측이 아니라 정상이므로 `stale`로 부르지 않는다.
-    freshness = "close_snapshot" if len(sessions) >= MIN_WEEK_SESSIONS else "stale" if sessions else "unavailable"
+    freshness = "close_snapshot" if sessions else "unavailable"
     warnings = []
     if missing:
         warnings.append(f"missing symbols: {', '.join(missing)}")
-    if sessions and len(sessions) < MIN_WEEK_SESSIONS:
-        warnings.append(f"only {len(sessions)} sessions inside {window.week_start}~{window.week_end}")
+    expected_sessions, expected_basis, prior_session = _expected_sessions(market_key, window)
+    missing_by_symbol = {
+        row["ticker"]: sorted(set(expected_sessions) - {str(point.get("time") or "")[:10] for point in row.get("points", [])})
+        for row in series
+        if expected_sessions is not None and set(expected_sessions) - {str(point.get("time") or "")[:10] for point in row.get("points", [])}
+    }
+    for row in series:
+        observed = {str(point.get("time") or "")[:10] for point in row.get("points", [])}
+        row["expectedSessions"] = expected_sessions
+        row["missingSessions"] = sorted(set(expected_sessions) - observed) if expected_sessions is not None else None
+    if expected_sessions is None and series:
+        warnings.append(f"{market_key}: session coverage unavailable")
+    elif missing_by_symbol:
+        warnings.append(f"missing sessions: {', '.join(missing_by_symbol)}")
     currencies = _snapshot_currencies(meta, series, requested)
+    coverage = _coverage(requested, series, missing)
+    session_status = "unavailable" if not series else "unknown" if expected_sessions is None else "partial" if missing_by_symbol else "complete"
+    # Symbol count alone is not temporal completeness.  Preserve the existing
+    # coverage shape but downgrade when expected sessions are missing/unknown.
+    if series and session_status in {"partial", "unknown"}:
+        coverage["status"] = "partial"
+    coverage.update({
+        "expectedSessions": expected_sessions,
+        "expectedSessionBasis": expected_basis,
+        "priorSession": prior_session,
+        "missingSessionsBySymbol": missing_by_symbol,
+        "sessionStatus": session_status,
+    })
+    point_counts = {
+        row["ticker"]: {
+            "intraday": 0,
+            "hourly": len((row.get("hourly") or {}).get("points") or []),
+            "daily": len((row.get("daily") or {}).get("points") or []),
+        }
+        for row in series
+    }
+    sparse = any(counts["daily"] < 8 for counts in point_counts.values())
     return {
         "id": f"weekly-flow:{market_key}:{window.publication_date}",
         "schemaVersion": 2,
@@ -117,10 +255,17 @@ def _weekly_flow_snapshot(market_key: str, window: WeeklyWindow, series, missing
         "asOf": latest or window.week_end,
         "provider": _series_provider(series),
         "freshness": freshness,
-        "coverage": _coverage(requested, series, missing),
+        "coverage": coverage,
+        "expectedSessions": expected_sessions,
+        "expectedSessionBasis": expected_basis,
+        "missingSessionsBySymbol": missing_by_symbol,
         "timezone": meta["timezone"],
         "currency": currencies[0] if len(currencies) == 1 else "MIXED" if currencies else "",
         "currencies": currencies,
+        "marketSessionDate": latest or window.week_end,
+        "granularities": ["1h", "1d"],
+        "dataSufficiency": {"minimumTrendPoints": 8, "pointCounts": point_counts, "status": "sparse" if sparse else "sufficient" if series else "unavailable"},
+        "subject": {},
         # 값은 %다. 원 종가도 함께 두어 hover가 실제 지수 레벨을 말할 수 있게 한다.
         "unit": "percent_change_from_week_start",
         "series": series,
@@ -138,10 +283,20 @@ def _collect_weekly_flow(market_key: str, window: WeeklyWindow, fetch_price, war
             warnings.append(f"{item['ticker']}: weekly_price_history_unavailable")
             missing.append(item["ticker"])
             continue
-        points, baseline, change = _percent_series(
-            _clip_daily_points((history.get("daily") or {}).get("points"), window)
+        warnings.extend(
+            f"{item['ticker']}: {warning}"
+            for warning in history.get("warnings") or []
+            if str(warning)
         )
-        if len(points) < 2:
+        raw_points = list((history.get("daily") or {}).get("points") or [])
+        clipped_points = _clip_daily_points(raw_points, window)
+        points, baseline, change = _percent_series(clipped_points)
+        expected_sessions, _basis, prior_session = _expected_sessions(market_key, window)
+        weekly_return, weekly_baseline, weekly_baseline_date, weekly_reason = _prior_week_return(
+            raw_points, window, expected_sessions=expected_sessions, prior_session=prior_session,
+        )
+        if not points or sum(_safe_float(row.get("close")) is not None for row in raw_points) < 2:
+            warnings.append(f"{item['ticker']}: weekly_price_history_insufficient")
             missing.append(item["ticker"])
             continue
         series.append({
@@ -153,8 +308,16 @@ def _collect_weekly_flow(market_key: str, window: WeeklyWindow, fetch_price, war
             "country": item["country"],
             **({"proxyFor": item["proxyFor"]} if item.get("proxyFor") else {}),
             "provider": history.get("provider") or "market-data-v2",
+            "sourceByInterval": deepcopy(history.get("sourceByInterval") or {}),
+            "hourly": deepcopy(history.get("hourly") or {"interval": "1h", "points": []}),
+            "daily": deepcopy(history.get("daily") or {"interval": "1d", "points": []}),
             "baselineClose": baseline,
             "changePct": change,
+            "weeklyReturn": weekly_return,
+            "weeklyBaselineClose": weekly_baseline,
+            "weeklyBaselineDate": weekly_baseline_date,
+            "weeklyEndDate": str(points[-1].get("time") or "")[:10] if points else None,
+            "weeklyReturnReason": weekly_reason,
             "points": points,
         })
     return _weekly_flow_snapshot(market_key, window, series, missing, requested)
@@ -372,6 +535,7 @@ def collect_weekly_visuals(
             f"{market} 주요 지수 · {window.label}",
             {"market": market, "sectionRole": WEEKLY_FLOW_ROLE, "order": 1},
         ))
+        recommendations[-1]["defaultPeriod"] = "1W"
 
         if documents is not None:
             story = _story_share_snapshot(market_key, window, documents, warnings)

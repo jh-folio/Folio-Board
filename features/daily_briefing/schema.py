@@ -696,6 +696,8 @@ def briefing_scope_view(report, market_scope=None):
         scoped = out
     view = deepcopy(out)
     view["marketScope"] = scope
+    if isinstance(view.get("newsSelection"), dict) and scope in view["newsSelection"]:
+        view["newsSelection"] = deepcopy(view["newsSelection"][scope])
     from features.common.research_schema.data_gaps import data_gap_applies_to
     view["dataGaps"] = [
         deepcopy(item) for item in (out.get("dataGaps") or [])

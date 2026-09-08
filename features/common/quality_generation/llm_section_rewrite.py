@@ -112,7 +112,7 @@ def _rewrite_context(artifact_type: str, artifact: dict, quality: dict, prefligh
     ])
 
 
-def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int) -> tuple[dict, dict, str]:
+def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int, allow_repair: bool = True) -> tuple[dict, dict, str]:
     """Parse section rewrite output, repairing common non-JSON responses once."""
     try:
         return _coerce_rewrite_payload(extract_json_object(text)), {}, ""
@@ -125,6 +125,8 @@ def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int) -> tuple[d
     except Exception:
         pass
 
+    if not allow_repair:
+        raise ValueError("rewrite_json_invalid")
     repair_context = "\n\n".join([
         "Original model output:",
         raw_text[:16000],
@@ -163,6 +165,7 @@ def improve_sections_with_llm(
     weak_sections: list[dict],
     *,
     mode: str,
+    repair_budget=None,
 ) -> dict:
     artifact = dict(artifact or {})
     generation = artifact.get("generation") or {}
@@ -181,6 +184,18 @@ def improve_sections_with_llm(
 
     max_tokens = int(os.environ.get("QUALITY_SECTION_REWRITE_MAX_OUTPUT_TOKENS", "4500"))
     context = _rewrite_context(artifact_type, artifact, quality, preflight, weak_sections)
+    request_options = {}
+    if artifact_type == "briefing":
+        if repair_budget is None:
+            from features.common.quality_generation.call_budget import SharedRepairBudget, current_briefing_budget
+            import time
+            repair_budget = current_briefing_budget() or SharedRepairBudget(deadline=time.monotonic() + 60)
+        repair_budget.check_active()
+        try:
+            repair_budget.claim("quality")
+        except RuntimeError:
+            return {"artifact": artifact, "repairApplied": False, "repairReason": "shared_repair_budget_exhausted", "warnings": []}
+        request_options["timeout_seconds"] = repair_budget.remaining_seconds()
     try:
         text, response_id, usage = request_llm_text(
             cfg,
@@ -190,8 +205,11 @@ def improve_sections_with_llm(
             max_output_tokens=max_tokens,
             json_mode=True,
             include_usage=True,
+            **request_options,
         )
-        raw, repair_usage, repaired_text = _parse_rewrite_response(cfg, text, max_tokens=max_tokens)
+        if artifact_type == "briefing":
+            repair_budget.check_active()
+        raw, repair_usage, repaired_text = _parse_rewrite_response(cfg, text, max_tokens=max_tokens, allow_repair=artifact_type != "briefing")
         markdown = str(raw.get("markdown") or "").strip()
         if len(markdown) < 400:
             return {"artifact": artifact, "repairApplied": False, "repairReason": "llm_section_rewrite_empty", "warnings": ["LLM 섹션 개선 결과가 너무 짧아 적용하지 않았습니다."]}
@@ -211,6 +229,10 @@ def improve_sections_with_llm(
                 "warnings": guard.warnings + [f"형식 검사: {issue}" for issue in guard.issues[:3]],
             }
         markdown = guard.markdown
+        if artifact_type == "briefing":
+            from features.common.quality_generation.repair_grounding import preserves_briefing_input
+            if not preserves_briefing_input(artifact.get("markdown", ""), markdown, artifact.get("sources") or []):
+                return {"artifact": artifact, "repairApplied": False, "repairReason": "rewrite_outside_input", "warnings": []}
         updated = {**artifact, "markdown": markdown}
         updated["checkpoints"] = checkpoints_from_markdown(
             markdown,
@@ -235,6 +257,8 @@ def improve_sections_with_llm(
             "warnings": guard.warnings,
         }
     except Exception:
+        if artifact_type == "briefing":
+            repair_budget.check_active()
         return {
             "artifact": artifact,
             "repairApplied": False,

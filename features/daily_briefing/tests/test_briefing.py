@@ -387,6 +387,124 @@ def test_build_llm_context_includes_market_memory_context():
     assert "시장 흐름" in ctx
 
 
+def _weekly_memory_snapshot(as_of, headline):
+    return {
+        "asOf": as_of,
+        "headline": headline,
+        "oneLineSummary": "주간 회고용 시장 배경",
+        "marketRegime": "mixed",
+        "actionPosture": "반대 근거를 함께 점검",
+        "keyDrivers": [{"title": "주간 동인", "summary": "자료에 근거한 동인"}],
+        "watchItems": ["다음 확인"],
+        "counterEvidence": ["반대 근거"],
+        "sourceRefs": [{"id": "rss:weekly", "title": "weekly source", "source": "Reuters"}],
+    }
+
+
+def test_weekly_context_does_not_promote_a_future_market_memory_snapshot():
+    """과거 주간에는 현재(사후) Market Memory를 당시 배경으로 쓰지 않는다."""
+    window = {
+        "weekStart": "2026-08-24",
+        "weekEnd": "2026-08-30",
+        "publicationDate": "2026-09-04",
+        "previewStart": "2026-08-31",
+        "previewEnd": "2026-09-06",
+    }
+    with TemporaryDirectory() as tmp:
+        original_db = svc.MARKET_MEMORY_DB_PATH
+        svc.MARKET_MEMORY_DB_PATH = Path(tmp) / "market-memory.sqlite3"
+        try:
+            save_market_state_snapshot(
+                svc.MARKET_MEMORY_DB_PATH,
+                _weekly_memory_snapshot("2026-09-04T00:00:00Z", "사후 최신 메모리"),
+            )
+            ctx, _ = svc.build_llm_context(
+                "2026-09-04",
+                "2026-08-24~2026-08-30",
+                [_us_rate_doc()],
+                [],
+                market_windows=WINDOWS,
+                market_scope="us",
+                markets=["us"],
+                kind="weekly",
+                weekly_window=window,
+            )
+        finally:
+            svc.MARKET_MEMORY_DB_PATH = original_db
+
+    assert "status: unavailable" in ctx
+    assert "사후 최신 메모리" not in ctx
+
+
+def test_weekly_context_accepts_a_snapshot_at_the_kst_week_end():
+    """UTC 스냅샷은 KST로 변환한 뒤 주간 cutoff와 비교한다."""
+    window = {
+        "weekStart": "2026-08-24",
+        "weekEnd": "2026-08-30",
+        "publicationDate": "2026-09-04",
+        "previewStart": "2026-08-31",
+        "previewEnd": "2026-09-06",
+    }
+    with TemporaryDirectory() as tmp:
+        original_db = svc.MARKET_MEMORY_DB_PATH
+        svc.MARKET_MEMORY_DB_PATH = Path(tmp) / "market-memory.sqlite3"
+        try:
+            save_market_state_snapshot(
+                svc.MARKET_MEMORY_DB_PATH,
+                _weekly_memory_snapshot("2026-08-30T14:59:59Z", "당시 메모리"),
+            )
+            ctx, _ = svc.build_llm_context(
+                "2026-09-04",
+                "2026-08-24~2026-08-30",
+                [_us_rate_doc()],
+                [],
+                market_windows=WINDOWS,
+                market_scope="us",
+                markets=["us"],
+                kind="weekly",
+                weekly_window=window,
+            )
+        finally:
+            svc.MARKET_MEMORY_DB_PATH = original_db
+
+    assert "당시 메모리" in ctx
+    assert "status: unavailable" not in ctx
+
+
+def test_weekly_context_does_not_treat_an_unknown_snapshot_date_as_historical(monkeypatch):
+    monkeypatch.setattr(
+        svc,
+        "current_market_state_snapshot",
+        lambda _db: {"asOf": "", "headline": "날짜불명 메모리"},
+    )
+    monkeypatch.setattr(svc, "render_market_memory_context", lambda _db: "SHOULD NOT USE")
+
+    context = svc._weekly_market_memory_context({"weekEnd": "2026-08-30"})
+
+    assert "status: unavailable" in context
+    assert "날짜불명 메모리" not in context
+    assert "SHOULD NOT USE" not in context
+
+
+def test_weekly_context_does_not_query_db_again_after_cutoff_check(monkeypatch):
+    checked = _weekly_memory_snapshot("2026-08-30T14:59:59Z", "검사한 메모리")
+    calls = []
+
+    def read_current(_db):
+        calls.append(True)
+        return checked
+
+    monkeypatch.setattr(svc, "current_market_state_snapshot", read_current)
+    monkeypatch.setattr(svc, "render_market_memory_context", lambda _db: "SHOULD NOT QUERY")
+
+    context = svc._weekly_market_memory_context({"weekEnd": "2026-08-30"})
+
+    assert calls == [True]
+    assert "검사한 메모리" in context
+    assert "layer: source-grounded market context" in context
+    assert "SHOULD NOT QUERY" not in context
+
+
 def test_build_llm_context_includes_requested_briefing_type_guidance():
     docs = [_us_rate_doc()]
     ctx, _ = svc.build_llm_context(
@@ -477,6 +595,35 @@ def test_build_llm_context_old_positional_signature():
     groups = [{"company": "Nvidia", "sector": "Semiconductors", "docs": [docs[0]], "score": 80}]
     ctx, refs = svc.build_llm_context(BRIEFING_DATE, "src", docs, groups)
     assert isinstance(ctx, str) and isinstance(refs, list)
+
+
+def test_menu_only_company_is_not_promoted_into_writer_context():
+    valid = _doc(
+        title="현대차 주가 급락과 외국인 매도",
+        summary="현대차 주가는 5.62% 하락했고 외국인은 순매도했다.",
+        content="현대차 주가는 5.62% 하락했고 외국인은 순매도했다.",
+        companies=[{"name": "현대차", "ticker": "005380", "market": "KR"}],
+        path="research-inbox/rss/valid.md",
+        url="http://r/valid",
+    )
+    menu = _doc(
+        title="관련기사 삼성전자 추천 종목",
+        summary="추천기사 삼성전자 많이 본 기사",
+        content="추천기사 삼성전자 많이 본 기사",
+        companies=[{"name": "삼성전자", "ticker": "005930", "market": "KR"}],
+        path="research-inbox/rss/menu.md",
+        url="http://r/menu",
+    )
+    groups = [
+        {"company": "현대차", "docs": [valid], "score": 80},
+        {"company": "삼성전자", "docs": [menu], "score": 79},
+    ]
+
+    ctx, refs = svc.build_llm_context(BRIEFING_DATE, "src", [valid, menu], groups, market_windows=WINDOWS)
+
+    assert "삼성전자 추천 종목" not in ctx
+    assert "http://r/menu" not in {row.get("url") for row in refs}
+    assert all(row.get("writerExcerpt") for row in refs)
 
 
 # ---------------------------------------------------------------------------

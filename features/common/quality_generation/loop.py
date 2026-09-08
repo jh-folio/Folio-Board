@@ -60,6 +60,7 @@ def apply_quality_loop(
     mode: str = "diagnose_only",
     preflight: dict | None = None,
     context: dict | None = None,
+    repair_budget=None,
 ) -> dict:
     mode = normalize_quality_mode(mode)
     artifact = dict(artifact or {})
@@ -82,6 +83,7 @@ def apply_quality_loop(
             preflight,
             weak_before,
             mode=mode,
+            **({"repair_budget": repair_budget} if artifact_type == "briefing" and repair_budget is not None else {}),
         )
         loop["warnings"].extend(repaired.get("warnings") or [])
         loop["repairReason"] = repaired.get("repairReason", "")

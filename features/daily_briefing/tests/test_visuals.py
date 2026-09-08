@@ -234,13 +234,20 @@ def test_company_only_collection_and_replacement_remove_mismatched_candidates():
     assert all(row.get("snapshotId") != "old-msft" for row in replaced["visualRecommendations"])
 
 
-def test_collect_visuals_v2_uses_exact_indices_dual_intervals_and_inline_placement():
+def test_collect_visuals_v2_uses_exact_indices_all_intervals_and_inline_placement():
     def price_fetcher(symbol, session_date):
         return {
             "intraday": {
                 "interval": "5m",
                 "points": [{
                     "time": f"{session_date}T15:55:00-04:00",
+                    "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10,
+                }],
+            },
+            "hourly": {
+                "interval": "1h",
+                "points": [{
+                    "time": f"{session_date}T15:00:00-04:00",
                     "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10,
                 }],
             },
@@ -275,7 +282,12 @@ def test_collect_visuals_v2_uses_exact_indices_dual_intervals_and_inline_placeme
     us = next(row for row in result["visualSnapshots"] if row["id"].startswith("price-series:us:indices"))
     assert [row["ticker"] for row in us["series"]] == ["^GSPC", "^IXIC", "^DJI"]
     assert us["series"][0]["intraday"]["interval"] == "5m"
+    assert us["series"][0]["hourly"]["interval"] == "1h"
     assert us["series"][0]["daily"]["interval"] == "1d"
+    assert us["granularities"] == ["5m", "1h", "1d"]
+    assert us["dataSufficiency"]["pointCounts"]["^GSPC"] == {
+        "intraday": 1, "hourly": 1, "daily": 1,
+    }
     market_rec = next(row for row in result["visualRecommendations"] if row["snapshotId"] == us["id"])
     assert market_rec["placement"] == {"market": "US", "sectionRole": "market_flow", "order": 1}
 
