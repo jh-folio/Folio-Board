@@ -22,6 +22,7 @@ from features.topic_report.report_contract import (
 )
 from features.topic_report.research_trace import build_research_trace_summary
 from features.topic_report.section_repair import merge_section_patches, parse_patch_response
+from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure
 
 
 class DeepResearchGenerationError(RuntimeError):
@@ -33,6 +34,12 @@ class DeepResearchGenerationError(RuntimeError):
 
 
 RepairCall = Callable[[int, str], str]
+
+
+def _task_reasoning_effort(command: ApprovedGenerationInput) -> str:
+    effort = str((command.taskPolicy or {}).get("reasoningEffort") or "") if isinstance(command.taskPolicy, dict) else ""
+    normalized = effort.strip().lower().replace("-", "_")
+    return "" if normalized in {"", "default", "providerdefault", "provider_default"} else normalized
 
 
 def _repair_payload(report: dict, validation: dict, sections: list[str], pass_no: int) -> str:
@@ -88,6 +95,8 @@ def configured_repair_call(command: ApprovedGenerationInput, *, job_id: str) -> 
         result = agent_bridge.run_agent_prompt(
             "Return JSON only for this bounded Deep Research section repair.\n\n" + context,
             adapter=command.adapter,
+            model=str((command.taskPolicy or {}).get("model") or "") if isinstance(command.taskPolicy, dict) else "",
+            reasoning_effort=_task_reasoning_effort(command),
             job_id=job_id,
             timeout=max(60, int(os.environ.get("TOPIC_REPORT_REPAIR_CLI_TIMEOUT_SECONDS", "900"))),
         )
@@ -143,7 +152,12 @@ def run_deep_pipeline(
     if not command.approved.deepResearch:
         return outcome
     if outcome.finalEngine == "rules":
-        raise DeepResearchGenerationError("deep_initial_engine_failed_without_candidate")
+        # 왜 규칙으로 떨어졌는지를 함께 싣는다. `engine_rate_limited`면 사용자가 할 일은
+        # 한도가 풀린 뒤 다시 누르는 것이고, 그때 재개 체크포인트가 남은 단계부터 잇는다.
+        raise DeepResearchGenerationError(
+            "deep_initial_engine_failed_without_candidate",
+            [outcome.fallbackReason or ""],
+        )
     report = dict(outcome.report)
     report["id"] = report_id
     validation = _validate(report)
@@ -188,7 +202,11 @@ def run_deep_pipeline(
             candidate_report["quality"] = _quality(candidate_report, str(candidate_report["markdown"]))
             candidate_validation = _validate(candidate_report)
             accepted = candidate_validation["valid"] and candidate_improves(best_validation, candidate_validation)
-        except (DeepResearchGenerationError, OSError, RuntimeError, TimeoutError, ValueError):
+        except (DeepResearchGenerationError, OSError, RuntimeError, TimeoutError, ValueError) as error:
+            diagnostic_stage_failure(
+                current_diagnostic_recorder(), error, stage_id=None,
+                stage_code="validate", boundary="validation",
+            )
             candidate_validation = {"valid": False, "defects": [], "metrics": {"blockingCount": 1}}
         candidate_store.write(
             job_id, pass_no, report_id=report_id, accepted=accepted, validation=candidate_validation,

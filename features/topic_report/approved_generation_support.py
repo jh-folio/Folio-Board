@@ -144,6 +144,8 @@ def attempt_cli(
     approved: ApprovedRequest,
     evidence_items: list[dict],
     timeout_seconds: int | None = None,
+    model: str = "",
+    reasoning_effort: str = "",
 ) -> EngineOutput:
     pack = agent_schema.build_pack(
         task_type="topic_report",
@@ -180,10 +182,16 @@ def attempt_cli(
         result = agent_bridge.run_agent_prompt(
             agent_prompt,
             adapter=adapter,
+            model=model,
+            reasoning_effort=reasoning_effort,
             job_id=job_id,
             timeout=int(timeout_seconds or 0),
             web_search=web_search_enabled,
         )
+    except agent_bridge.AgentRateLimitError as error:
+        # 사용량 한도는 코드 결함이 아니다. 이유를 보존해야 화면이 "한도, 리셋 뒤 다시"라고
+        # 말할 수 있고, 재개 체크포인트가 남아 다음 실행이 이어받는다.
+        raise EngineFailedError("cli_rate_limited") from error
     except RuntimeError as error:
         message = str(error).casefold()
         unavailable = (
@@ -201,7 +209,7 @@ def attempt_cli(
         markdown=output,
         adapter=str(result.get("adapter") or adapter),
         provider="external_agent",
-        model="",
+        model=str(model or ""),
         responseId="",
     )
 
@@ -218,7 +226,15 @@ __all__ = [
 ]
 
 
-def configured_editor_call(approved: ApprovedRequest, *, requested_mode: str, adapter: str, job_id: str) -> AxisCall:
+def configured_editor_call(
+    approved: ApprovedRequest,
+    *,
+    requested_mode: str,
+    adapter: str,
+    job_id: str,
+    model: str = "",
+    reasoning_effort: str = "",
+) -> AxisCall:
     """리서치 에디터 호출. 축 분석과 같은 엔진이되 세 가지가 다르다.
 
     - 출력이 보고서 전문이라 토큰 한도가 훨씬 크다(축 브리프는 2,500이면 족하다).
@@ -246,6 +262,8 @@ def configured_editor_call(approved: ApprovedRequest, *, requested_mode: str, ad
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
+            model=model,
+            reasoning_effort=reasoning_effort,
             job_id=job_id,
             timeout=max(120, int(os.environ.get("TOPIC_EDITOR_CLI_TIMEOUT_SECONDS", "1200"))),
             web_search=False,
@@ -262,6 +280,8 @@ def configured_axis_call(
     adapter: str,
     job_id: str,
     web_search: bool | None = None,
+    model: str = "",
+    reasoning_effort: str = "",
 ) -> AxisCall:
     """축별 분석 호출. 보고서 본문 생성과 같은 엔진을 쓰되 팩 없이 프롬프트만 보낸다.
 
@@ -294,6 +314,8 @@ def configured_axis_call(
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
+            model=model,
+            reasoning_effort=reasoning_effort,
             job_id=job_id,
             timeout=max(60, int(os.environ.get("TOPIC_AXIS_CLI_TIMEOUT_SECONDS", "600"))),
             web_search=resolved_web_search,

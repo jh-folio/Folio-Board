@@ -17,6 +17,7 @@ from features.common.canonical_identity import (
 from features.common.canonical_report_state import load_report
 from features.common.canonical_report_types import WriteKind
 from features.common.canonical_reports import commit_sync, prepare
+from features.common.jobs import current_diagnostic_recorder, diagnostic_stage, diagnostic_stage_end, diagnostic_stage_failure, diagnostic_stage_start
 from features.common.change_intelligence.service import decorate_candidate, project_committed_report
 from features.common.market_data.tape import build_market_tape
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
@@ -861,39 +862,49 @@ def attach_overlay_to_topic_report(report_id: str, *, llm_override=None, web_sea
     )
     from features.obsidian.importer.service import list_hypotheses, scan_vault
 
-    path = _find_report_path(report_id)
-    if not path:
-        raise FileNotFoundError(f"Topic report not found: {report_id}")
-    canonical = load_report(path)
-    if canonical is None:
-        raise FileNotFoundError(f"Topic report not found: {report_id}")
+    with diagnostic_stage("context"):
+        path = _find_report_path(report_id)
+        if not path:
+            raise FileNotFoundError(f"Topic report not found: {report_id}")
+        canonical = load_report(path)
+        if canonical is None:
+            raise FileNotFoundError(f"Topic report not found: {report_id}")
 
-    # 테마 보고서는 단일 티커가 아니므로, plan의 candidateTickers로 노트를 모으고
-    # 없으면 전체 hypothesis를 연결한다.
-    tickers = list((canonical.get("topicPlan") or {}).get("candidateTickers") or {})
-    hyps: list = []
-    try:
-        scan_vault()
-    except Exception:
-        pass
-    seen: set[str] = set()
-    try:
-        if tickers:
-            for ticker in tickers:
-                for note in list_hypotheses(ticker=ticker):
-                    nid = note.get("note_id") or note.get("rel_path")
-                    if nid and nid not in seen:
-                        seen.add(nid)
-                        hyps.append(note)
-        if not hyps:
+        # 테마 보고서는 단일 티커가 아니므로, plan의 candidateTickers로 노트를 모으고
+        # 없으면 전체 hypothesis를 연결한다.
+        tickers = list((canonical.get("topicPlan") or {}).get("candidateTickers") or {})
+        hyps: list = []
+        try:
+            scan_vault()
+        except Exception as error:
+            diagnostic_stage_failure(current_diagnostic_recorder(), error, stage_id=None, stage_code="context", boundary="generic")
+        seen: set[str] = set()
+        try:
+            if tickers:
+                for ticker in tickers:
+                    for note in list_hypotheses(ticker=ticker):
+                        nid = note.get("note_id") or note.get("rel_path")
+                        if nid and nid not in seen:
+                            seen.add(nid)
+                            hyps.append(note)
+            if not hyps:
+                hyps = _gather_hypotheses("topic", canonical)
+        except Exception as error:
+            diagnostic_stage_failure(current_diagnostic_recorder(), error, stage_id=None, stage_code="context", boundary="generic")
             hyps = _gather_hypotheses("topic", canonical)
-    except Exception:
-        hyps = _gather_hypotheses("topic", canonical)
 
-    overlay, status = generate_overlay(
-        canonical, hyps, kind="topic",
-        llm_override=llm_override, web_search_override=web_search_override,
-    )
+    recorder, stage_id = diagnostic_stage_start("generate")
+    try:
+        overlay, status = generate_overlay(
+            canonical, hyps, kind="topic",
+            llm_override=llm_override, web_search_override=web_search_override,
+        )
+    except Exception as error:
+        diagnostic_stage_failure(recorder, error, stage_id=stage_id,
+                                 stage_code="generate" if stage_id is not None else None, boundary="generic")
+        diagnostic_stage_end(recorder, stage_id, "generate")
+        raise
+    diagnostic_stage_end(recorder, stage_id, "generate")
     updated = with_overlay(canonical, overlay, status=status)
     commit_sync(prepare(
         report_kind=ReportKind.TOPIC_REPORT,

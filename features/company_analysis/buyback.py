@@ -70,7 +70,7 @@ def render_buyback_quality(quality: dict) -> str:
     """생성 컨텍스트 블록. 금액만 주면 본문도 금액만 쓴다."""
     if not quality:
         return ""
-    unit = quality.get("currency") or "USD"
+    unit = quality.get("currency") or "통화 확인 필요"
     lines = [
         "## 자사주 매입의 질",
         "",

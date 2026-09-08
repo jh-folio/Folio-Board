@@ -4,9 +4,12 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from features.agent_mode.market_state_context import MarketStateProjection, render_market_state_projection
 from features.common.jcs import JsonValue
+from features.common.workspace import data_dir
+from features.common.jobs import current_diagnostic_recorder, diagnostic_resume, diagnostic_stage_failure
 from features.common.market_data.tape import build_market_tape
 from features.common.quality_generation.preflight import preflight_from_context
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
@@ -48,7 +51,7 @@ from features.common.web_search_scope import (
     render_scope_instruction,
     render_web_search_directive,
 )
-from features.llm_settings.client import use_web_search_for_analysis
+from features.llm_settings.client import LlmRequestError, use_web_search_for_analysis
 from features.topic_report.data_fetcher import market_data_to_markdown
 from features.topic_report.depth_policy import build_depth_policy
 from features.topic_report.material_requirements import (
@@ -57,11 +60,13 @@ from features.topic_report.material_requirements import (
     resolve_material_requirements,
 )
 from features.topic_report.research_trace import build_research_trace_summary
+from features.topic_report.resume_store import ResumeStore, fingerprint as resume_fingerprint, resume_key
 from features.topic_report.section_sources import apply_section_usage
 from features.topic_report.report_rules import build_rule_report
 from features.topic_report.resolution_schema import ResearchPreview
 from features.topic_report.service import _build_llm_context, _read_prompt
 from features.topic_report.templates import compose_prompt
+from features.llm_settings.task_runtime import task_policy_metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +78,7 @@ class ApprovedGenerationInput:
     preview: ResearchPreview
     research: PreparedResearch
     marketState: MarketStateProjection
+    taskPolicy: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +92,45 @@ class ApprovedGenerationOutcome:
     mode: str
 
 
+def _task_model(command: ApprovedGenerationInput) -> str:
+    return str((command.taskPolicy or {}).get("model") or "") if isinstance(command.taskPolicy, dict) else ""
+
+
+def _task_reasoning_effort(command: ApprovedGenerationInput) -> str:
+    effort = str((command.taskPolicy or {}).get("reasoningEffort") or "") if isinstance(command.taskPolicy, dict) else ""
+    normalized = effort.strip().lower().replace("-", "_")
+    return "" if normalized in {"", "default", "providerdefault", "provider_default"} else normalized
+
+
+
+
+def resume_root() -> Path:
+    """재개 파일 위치. `job-context` 밖이라 잡이 끝나도 지워지지 않는다."""
+    return data_dir() / "topic-resume"
+
+
+def _resume_store(
+    command: ApprovedGenerationInput,
+    *,
+    enabled: bool,
+    selected_evidence_ids: list[str],
+) -> ResumeStore:
+    approved = command.approved
+    key = resume_key(approved.asOfDate, approved.planHash) if enabled else ""
+    return ResumeStore(
+        resume_root(),
+        key=key,
+        fingerprint=resume_fingerprint(
+            plan_hash=approved.planHash,
+            as_of_date=approved.asOfDate,
+            selected_evidence_ids=selected_evidence_ids,
+            adapter=command.adapter,
+            requested_mode=command.requestedMode,
+            task_policy=command.taskPolicy,
+        )
+        if key
+        else "",
+    )
 
 
 def build_approved_report(
@@ -130,6 +175,14 @@ def build_approved_report(
     # 웹 검색 범위는 축별 분석보다 **먼저** 정한다. 축 패스도 같은 허가·목록을 받아야
     # 하고, 예외를 삼키는 블록 안에서 이름을 처음 쓰면 NameError가 보이지 않는다
     # (실측: 그 때문에 축별 분석이 통째로 건너뛰어졌다).
+    # 재개 체크포인트 — 초안 이전 단계(웹 조회·축 브리프·논지)를 남긴다. 사용량 한도로
+    # 끊긴 실행을 다시 눌렀을 때 남은 단계부터 이어 가기 위해서다. 저장 실패는 생성을
+    # 죽이지 않는다 — 못 남기면 다음 실행이 그 단계를 다시 할 뿐이고 그게 예전 동작이다.
+    resume = _resume_store(
+        command,
+        enabled=approved.deepResearch and not command.preview.zeroEvidence.required,
+        selected_evidence_ids=selected,
+    )
     source_scope = load_source_scope() if use_web_search_for_analysis() else None
     web_directive = (
         render_scope_instruction(source_scope) + "\n\n" + render_web_search_directive(source_scope)
@@ -143,6 +196,7 @@ def build_approved_report(
     web_lookups: list[dict] = []
     if approved.deepResearch and source_scope is not None and not command.preview.zeroEvidence.required:
         subquestions = list(approved.topicPlan.deepResearch.subQuestions)
+        saved_lookups = {str(row.get("axisKey") or ""): row for row in resume.web_lookups()}
         # 이 콜러블은 `lookup_axis()`가 쓴다 — 웹에서 찾아오는 것이 그 패스의 일이므로
         # 검색을 명시로 켠다. 설정에 맡기면 API 분기가 조용히 꺼진 채로 "찾아오라"는
         # 지시만 받아 지어낸 URL을 원장에 등재한다.
@@ -152,11 +206,19 @@ def build_approved_report(
             adapter=command.adapter,
             job_id=job_id,
             web_search=True,
+            model=_task_model(command),
+            reasoning_effort=_task_reasoning_effort(command),
         )
         for axis in approved.topicPlan.analysisAxes:
             if len(web_lookups) >= MAX_LOOKUPS:
                 break
             axis_key = axis.key
+            # 앞선 실행이 이미 찾아 온 축은 다시 묻지 않는다.
+            cached = saved_lookups.get(axis_key)
+            if cached is not None:
+                diagnostic_resume("context")
+                web_lookups.append(dict(cached))
+                continue
             questions = [q.question for q in subquestions if q.axisKey == axis_key] or list(axis.questions)
             local = axis_evidence(axis_key, {q.id for q in subquestions if q.axisKey == axis_key}, rows)
             if not needs_web_lookup(
@@ -164,17 +226,22 @@ def build_approved_report(
             ):
                 continue
             try:
-                web_lookups.append(
-                    lookup_axis(
-                        {"key": axis_key, "label": axis.label},
-                        questions,
-                        approved.topicPlan.topic,
-                        render_scope_instruction(source_scope),
-                        axis_call,
-                    )
+                lookup = lookup_axis(
+                    {"key": axis_key, "label": axis.label},
+                    questions,
+                    approved.topicPlan.topic,
+                    render_scope_instruction(source_scope),
+                    axis_call,
                 )
-            except Exception:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
+            except Exception as error:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
+                diagnostic_stage_failure(
+                    current_diagnostic_recorder(), error, stage_id=None,
+                    stage_code="context", boundary="generic",
+                )
                 continue
+            web_lookups.append(lookup)
+            if str(lookup.get("status") or "") == "ok":
+                resume.put_web_lookup(lookup)
     web_lookups = assign_source_ids(web_lookups)
     web_facts = render_lookup(web_lookups)
 
@@ -183,6 +250,9 @@ def build_approved_report(
     axis_briefs: list[dict] = []
     if approved.deepResearch and not command.preview.zeroEvidence.required:
         try:
+            existing_axis_briefs = resume.axis_briefs()
+            if existing_axis_briefs:
+                diagnostic_resume("context")
             axis_briefs = build_axis_briefs(
                 approved.topicPlan.model_dump(mode="json"),
                 rows,
@@ -191,18 +261,28 @@ def build_approved_report(
                     requested_mode=command.requestedMode,
                     adapter=command.adapter,
                     job_id=job_id,
+                    model=_task_model(command),
+                    reasoning_effort=_task_reasoning_effort(command),
                 ),
                 material_context=market_data_to_markdown(market_data)[:4000],
                 web_directive="\n\n".join(part for part in (web_directive, web_facts) if part),
+                existing=existing_axis_briefs,
+                on_brief=resume.put_axis_brief,
             )
-        except Exception:
+        except Exception as error:
+            diagnostic_stage_failure(
+                current_diagnostic_recorder(), error, stage_id=None,
+                stage_code="context", boundary="generic",
+            )
             axis_briefs = []
 
     # 핵심 논지 — 축별 발견을 **하나의 판단**으로 모은다. 이 단계가 없으면 본문이
     # 축을 병렬로 늘어놓고 끝나고(실측: 인플레 → 금리 → 엔캐리 → 정책 → 한국 시장),
     # 중심이 없으니 꼬리 섹션 넷이 같은 말을 되풀이한다.
-    thesis: dict = {}
-    if axis_briefs:
+    thesis: dict = resume.thesis()
+    if thesis:
+        diagnostic_resume("context")
+    if axis_briefs and not thesis:
         try:
             thesis = select_thesis(
                 approved.topicPlan.model_dump(mode="json"),
@@ -212,11 +292,18 @@ def build_approved_report(
                     requested_mode=command.requestedMode,
                     adapter=command.adapter,
                     job_id=job_id,
+                    model=_task_model(command),
+                    reasoning_effort=_task_reasoning_effort(command),
                 ),
                 material_context=market_data_to_markdown(market_data)[:2000],
             )
-        except Exception:  # noqa: BLE001 - 논지 선정 실패가 보고서를 죽이지 않는다
+        except Exception as error:  # noqa: BLE001 - 논지 선정 실패가 보고서를 죽이지 않는다
+            diagnostic_stage_failure(
+                current_diagnostic_recorder(), error, stage_id=None,
+                stage_code="context", boundary="generic",
+            )
             thesis = {}
+        resume.put_thesis(thesis)
     prompt = _read_prompt()
     if prompt:
         prompt = compose_prompt(prompt, approved.topicPlan.reportType)
@@ -278,9 +365,23 @@ def build_approved_report(
                     if approved.deepResearch and supports_deep_options
                     else attempt_direct(prompt, full)
                 )
-            except EngineUnavailableError:
+            except EngineUnavailableError as error:
+                diagnostic_stage_failure(
+                    current_diagnostic_recorder(), error, stage_id=None,
+                    stage_code="generate", boundary="adapter",
+                )
                 fallback_reason = "engine_unavailable"
-            except EngineFailedError:
+            except EngineFailedError as error:
+                # ``attempt_direct`` intentionally preserves the original
+                # typed provider error as ``__cause__`` while presenting its
+                # existing EngineFailedError fallback contract to callers.
+                # Observe that closed typed cause when present; never inspect
+                # exception text or create a second failure for the wrapper.
+                diagnostic_error = error.__cause__ if isinstance(error.__cause__, LlmRequestError) else error
+                diagnostic_stage_failure(
+                    current_diagnostic_recorder(), diagnostic_error, stage_id=None,
+                    stage_code="generate", boundary="adapter",
+                )
                 fallback_reason = "engine_failed"
             return None
         if attempted == "cli":
@@ -293,11 +394,24 @@ def build_approved_report(
                 }
                 if approved.deepResearch:
                     cli_args["timeout_seconds"] = 1800
+                cli_args["model"] = _task_model(command)
+                cli_args["reasoning_effort"] = _task_reasoning_effort(command)
                 return attempt_cli(prompt, full, **cli_args)
-            except EngineUnavailableError:
+            except EngineUnavailableError as error:
+                diagnostic_stage_failure(
+                    current_diagnostic_recorder(), error, stage_id=None,
+                    stage_code="generate", boundary="adapter",
+                )
                 fallback_reason = "engine_unavailable"
-            except EngineFailedError:
-                fallback_reason = "engine_failed"
+            except EngineFailedError as error:
+                diagnostic_stage_failure(
+                    current_diagnostic_recorder(), error, stage_id=None,
+                    stage_code="generate", boundary="adapter",
+                )
+                # 사용량 한도와 일반 실패는 사용자가 할 일이 다르다(기다린다 vs 고친다).
+                fallback_reason = (
+                    "engine_rate_limited" if str(error) == "cli_rate_limited" else "engine_failed"
+                )
         return None
 
     output = _generate()
@@ -367,6 +481,8 @@ def build_approved_report(
                 requested_mode=command.requestedMode,
                 adapter=command.adapter,
                 job_id=job_id,
+                model=_task_model(command),
+                reasoning_effort=_task_reasoning_effort(command),
             ),
             thesis=thesis,
             section_budgets=depth_policy.get("sectionBudgets"),
@@ -503,6 +619,7 @@ def build_approved_report(
             "fallbackReason": fallback_reason,
             "adapter": final_adapter,
             "executedAt": executed_at,
+            **({"taskPolicy": task_policy_metadata(command.taskPolicy)} if isinstance(command.taskPolicy, dict) else {}),
         },
         "deepResearch": approved.deepResearch,
         "marketData": market_data,

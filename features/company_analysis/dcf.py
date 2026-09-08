@@ -532,6 +532,13 @@ def build_dcf(
 def render_dcf_context(dcf: dict) -> str:
     """생성 컨텍스트 블록. 숫자와 **그 숫자가 선 가정**을 함께 준다."""
     if not dcf or not dcf.get("ok"):
+        if (dcf or {}).get("status") == "unavailable":
+            return "\n".join([
+                "## DCF",
+                "",
+                f"- 계산하지 않음 — {dcf.get('reason') or '필요한 단위 정보를 확인하지 못했습니다.'}",
+                "- 계산하지 않은 내재가치·현재가 비교 숫자를 추정하거나 다시 계산하지 마세요.",
+            ])
         return ""
     unit = dcf.get("currency") or "USD"
     base, discount = dcf["baseFcf"], dcf["discountRate"]

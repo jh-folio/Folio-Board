@@ -6,10 +6,55 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import CancelledError
+
 from features.company_analysis.report_contract import (
     apply_report_ceiling,
     validate_company_report,
 )
+
+
+_VALIDATION_WARNING = {
+    "code": "validation_unavailable",
+    "message": "보고서 구조 검증을 완료하지 못했습니다.",
+}
+
+
+def _mark_validation_unassessed(report: dict) -> dict:
+    """Keep the exact candidate while making a validator failure explicit.
+
+    A validator exception is an observation failure, not a passing report.  The
+    fixed warning deliberately contains no exception text, report body, or
+    traceback; diagnostics own technical failure details separately.
+    """
+    report["validationStatus"] = "unassessed"
+    report["validationWarning"] = dict(_VALIDATION_WARNING)
+    report["contractValidation"] = {
+        "status": "unassessed",
+        "defects": [],
+        "metrics": {},
+    }
+    quality = dict(report.get("quality") or {})
+    quality["status"] = "warn"
+    warnings = [str(item) for item in (quality.get("warnings") or []) if item]
+    if _VALIDATION_WARNING["code"] not in warnings:
+        warnings.append(_VALIDATION_WARNING["code"])
+    quality["warnings"] = warnings
+    report["quality"] = quality
+    generation = dict(report.get("generation") or {})
+    existing = str(generation.get("message") or "").strip()
+    notice = "검수 미완료: 보고서 구조를 확인하지 못했습니다."
+    if notice not in existing:
+        generation["message"] = f"{existing} {notice}".strip()
+    report["generation"] = generation
+    return report
+
+
+def preserve_unassessed_warning(report: dict) -> dict:
+    """Re-assert the warning after a later quality pass may rebuild fields."""
+    if isinstance(report, dict) and report.get("validationStatus") == "unassessed":
+        return _mark_validation_unassessed(report)
+    return report
 
 
 def finalize_report(
@@ -26,13 +71,26 @@ def finalize_report(
     미룬다(`apply_report_ceiling`이 그때 다시 읽는다).
     """
     report = dict(report or {})
-    report["contractValidation"] = validate_company_report(
-        str(report.get("markdown") or ""),
-        depth_policy=depth_policy if depth_policy is not None else report.get("depthPolicy"),
-        source_ledger=source_ledger if source_ledger is not None else report.get("sourceLedger"),
-        quote_sources=quote_sources,
-    )
-    return apply_report_ceiling(report)
+    preexisting_unassessed = report.get("validationStatus") == "unassessed"
+    try:
+        report["contractValidation"] = validate_company_report(
+            str(report.get("markdown") or ""),
+            depth_policy=depth_policy if depth_policy is not None else report.get("depthPolicy"),
+            source_ledger=source_ledger if source_ledger is not None else report.get("sourceLedger"),
+            quote_sources=quote_sources,
+        )
+    except (KeyboardInterrupt, SystemExit, CancelledError):
+        # Explicit process interruption must remain observable to the caller.
+        raise
+    except Exception:
+        return _mark_validation_unassessed(report)
+    try:
+        finalized = apply_report_ceiling(report)
+    except (KeyboardInterrupt, SystemExit, CancelledError):
+        raise
+    except Exception:
+        return _mark_validation_unassessed(report)
+    return _mark_validation_unassessed(finalized) if preexisting_unassessed else finalized
 
 
-__all__ = ["finalize_report"]
+__all__ = ["finalize_report", "preserve_unassessed_warning"]

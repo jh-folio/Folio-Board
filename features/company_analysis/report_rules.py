@@ -18,6 +18,11 @@ from features.company_analysis.dcf import (
 )
 from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
+from features.company_analysis.valuation_basis import (
+    build_valuation_basis,
+    market_cashflow_is_compatible,
+    normalize_currency,
+)
 
 try:
     from jinja2 import Template
@@ -201,6 +206,21 @@ def _money(value: float | None, currency: str = "USD") -> str:
     return _format_fact({"val": value}, "Revenue", currency)
 
 
+def _money_with_currency_status(value: float | None, currency: str | None) -> str:
+    """Format a valuation amount without labelling an unknown currency as USD."""
+    if value is None:
+        return "확인 필요"
+    code = normalize_currency(currency)
+    if code:
+        # GBp/GBX are pence units.  Passing them through `format_value` would
+        # uppercase GBp to GBP and print a pound symbol without converting the
+        # numeric value, which is a silent 100x labelling error.
+        if code in {"GBp", "GBX"}:
+            return f"{code} {_plain_number(value)}"
+        return _money(value, code)
+    return f"{_plain_number(value)} (통화 확인 필요)"
+
+
 def _plain_number(value: float | None) -> str:
     if value is None:
         return "확인 필요"
@@ -240,7 +260,7 @@ def _market_cache_dir() -> Path:
 
 
 # 캐시에 담는 항목이 늘면 올린다. 옛 파일은 신선해도 다시 받는다.
-MARKET_CACHE_SHAPE = 3  # 3: beta 추가(할인율 회사별 계산). 올리지 않으면 옛 캐시가 TTL까지 내려온다.
+MARKET_CACHE_SHAPE = 4  # 4: quote/financial currency provenance for valuation eligibility.
 
 
 def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
@@ -317,7 +337,12 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
                     year = str(column)[:4]
                     if not re.fullmatch(r"\d{4}", year):
                         continue
-                    row = {"year": year, "end": str(column)[:10], "source": "yfinance cashflow"}
+                    row = {
+                        "year": year,
+                        "end": str(column)[:10],
+                        "source": "yfinance cashflow",
+                        "currency": info.get("financialCurrency") or None,
+                    }
                     for metric, labels in wanted.items():
                         value = None
                         for label in labels:
@@ -356,7 +381,27 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
             # 할인율을 회사별로 만들려면 베타가 필요하다. 없으면 DCF가 고정
             # 할인율로 내려가고 그 사실을 보고서가 밝힌다.
             "beta": pick("beta"),
-            "currency": info.get("currency") or "USD",
+            # `currency` is retained as the legacy quote-currency field, but it
+            # is never defaulted to USD: an absent provider value must remain
+            # unknown to the valuation policy.  Financial-statement/cash-flow
+            # currency is a distinct provider field and is not inferred from
+            # the quote currency.
+            "currency": info.get("currency") or "",
+            "quoteCurrency": info.get("currency") or None,
+            "currencyKnown": bool(normalize_currency(info.get("currency"))),
+            "financialCurrency": info.get("financialCurrency") or None,
+            "financialCurrencyKnown": bool(normalize_currency(info.get("financialCurrency"))),
+            "marketValueCurrency": info.get("marketValueCurrency") or info.get("marketCapCurrency") or None,
+            "marketValueCurrencyKnown": bool(
+                normalize_currency(info.get("marketValueCurrency") or info.get("marketCapCurrency"))
+            ),
+            # Preserve explicit provider share metadata when available.  The
+            # policy only treats a declared ratio/unit/class mismatch as a
+            # mismatch; ticker/exchange heuristics are intentionally absent.
+            "shareRatio": info.get("shareRatio") or info.get("adrRatio") or info.get("sharesPerAdr"),
+            "shareUnit": info.get("shareUnit") or info.get("sharesUnit") or info.get("shareCountUnit"),
+            "shareClass": info.get("shareClass"),
+            "shareClassMismatch": info.get("shareClassMismatch"),
             # 회사 공식 도메인. 웹 검색 허용 목록이 이 회사 사이트만 열어 두는 데 쓴다.
             "website": info.get("website") or "",
             "sector": info.get("sector") or "",
@@ -371,6 +416,17 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
         fallback = cached.get("data") if cached else None
         if fallback:
             fallback = dict(fallback)
+            # Older cache shapes used `currency: USD` as a display fallback and
+            # therefore cannot prove that USD was the provider quote currency.
+            # Do not let a provider outage turn that legacy label into an
+            # eligible valuation input.
+            if int(fallback.get("shape") or 0) < MARKET_CACHE_SHAPE:
+                fallback["currencyKnown"] = False
+                fallback["quoteCurrency"] = None
+                fallback["financialCurrencyKnown"] = False
+                fallback["financialCurrency"] = None
+                fallback["marketValueCurrencyKnown"] = False
+                fallback["marketValueCurrency"] = None
             fallback["warning"] = "using cached market data after provider error"
             return fallback
         return {"ok": False, "reason": "market_data_provider_unavailable"}
@@ -409,8 +465,23 @@ def _keyword_text(row: dict, limit: int = 5) -> str:
     return ", ".join(dict.fromkeys(labels)) or "핵심 키워드"
 
 
-def _market_cashflow_by_year(market_data: dict | None, metric: str) -> dict[str, dict]:
+def _market_cashflow_by_year(
+    market_data: dict | None,
+    metric: str,
+    *,
+    reporting_currency: str | None = None,
+) -> dict[str, dict]:
     out = {}
+    market = market_data or {}
+    market_currency = normalize_currency(market.get("financialCurrency"))
+    if market.get("financialCurrencyKnown") is False:
+        market_currency = None
+    # yfinance cash-flow values are financial-statement values, not quote
+    # values.  When the SEC/DART reporting currency, provider currency, or
+    # their equality is unknown, keep the SEC/DART series but do not splice an
+    # unlabelled foreign series into it.
+    if not reporting_currency or not market_currency or normalize_currency(reporting_currency) != market_currency:
+        return out
     for row in (market_data or {}).get("cashflowRows", []) or []:
         year = str(row.get("year") or str(row.get("end", ""))[:4])
         if not re.fullmatch(r"\d{4}", year):
@@ -421,7 +492,12 @@ def _market_cashflow_by_year(market_data: dict | None, metric: str) -> dict[str,
         except Exception:
             value = None
         if value is not None:
-            out[year] = {"val": value, "end": row.get("end") or year, "source": row.get("source") or "yfinance cashflow"}
+            out[year] = {
+                "val": value,
+                "end": row.get("end") or year,
+                "source": row.get("source") or "yfinance cashflow",
+                "currency": market_currency,
+            }
     return out
 
 
@@ -446,7 +522,11 @@ def _derived_fcf_by_year(sec_summary: dict, market_data: dict | None = None) -> 
             continue
     source = "SEC CFO - SEC CapEx" if fcf else ""
     if not fcf:
-        y_fcf = _market_cashflow_by_year(market_data, "Free Cash Flow")
+        y_fcf = _market_cashflow_by_year(
+            market_data,
+            "Free Cash Flow",
+            reporting_currency=normalize_currency(sec_summary.get("currency")),
+        )
         if y_fcf:
             fcf = y_fcf
             source = "yfinance cashflow FCF"
@@ -460,7 +540,11 @@ def _latest_metric_value(sec_summary: dict, market_data: dict | None, metric: st
     else:
         ordered = [item.get("val") for _, item in sorted(_annual_value_map(sec_summary, metric).items(), reverse=True)]
         if not ordered and metric in {"Operating Cash Flow", "Capital Expenditure"}:
-            fallback = _market_cashflow_by_year(market_data, metric)
+            fallback = _market_cashflow_by_year(
+                market_data,
+                metric,
+                reporting_currency=normalize_currency(sec_summary.get("currency")),
+            )
             ordered = [fallback[year].get("val") for year in sorted(fallback, reverse=True)]
     try:
         return float(ordered[offset]) if len(ordered) > offset and ordered[offset] is not None else None
@@ -472,7 +556,14 @@ def _latest_metric_entry(sec_summary: dict, market_data: dict | None, metric: st
     """최신 값과 그 값의 연도. 연도가 다른 CFO와 CapEx를 빼면 어느 해의 것도 아닌 FCF가 된다."""
     entries = sorted(_annual_value_map(sec_summary, metric).items(), reverse=True)
     if not entries and metric in {"Operating Cash Flow", "Capital Expenditure"}:
-        entries = sorted(_market_cashflow_by_year(market_data, metric).items(), reverse=True)
+        entries = sorted(
+            _market_cashflow_by_year(
+                market_data,
+                metric,
+                reporting_currency=normalize_currency(sec_summary.get("currency")),
+            ).items(),
+            reverse=True,
+        )
     if not entries:
         return None, ""
     year, item = entries[0]
@@ -536,7 +627,11 @@ def build_financial_table(sec_summary: dict, market_data: dict | None = None) ->
                 year = _year(item)
                 values_by_year.setdefault(year, _format_fact(item, metric, currency))
             if metric in {"Operating Cash Flow", "Capital Expenditure"}:
-                fallback = _market_cashflow_by_year(market_data, metric)
+                fallback = _market_cashflow_by_year(
+                    market_data,
+                    metric,
+                    reporting_currency=normalize_currency(sec_summary.get("currency")),
+                )
                 for year, item in fallback.items():
                     if year not in values_by_year:
                         values_by_year[year] = _money(item.get("val"), currency)
@@ -697,6 +792,7 @@ def _dcf_value(base_fcf: float, net_debt: float, shares: float, near_growth: flo
 
 def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict | None = None) -> str:
     currency = _reporting_currency(sec_summary)
+    reporting_currency = normalize_currency((sec_summary or {}).get("currency"))
     market = market_data or fetch_market_valuation_data(company)
     revenue = _latest_number(sec_summary, "Revenue")
     eps = _latest_number(sec_summary, "EPS Diluted")
@@ -713,15 +809,44 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
         shares = _latest_number(sec_summary, "Shares Diluted")
     price = market.get("price") if market.get("ok") else None
     market_cap = market.get("marketCap") if market.get("ok") else None
-    if market_cap is None and price is not None and shares is not None:
+    valuation_basis = build_valuation_basis(sec_summary, market, share_count=shares)
+    eligibility = valuation_basis.get("eligibility") or {}
+    price_eligible = bool((eligibility.get("per") or {}).get("eligible"))
+    market_value_eligible = bool((eligibility.get("marketMultiples") or {}).get("eligible"))
+    # A provider marketCap with unknown/mismatched financial currency is not
+    # safe to divide by SEC revenue.  A cap derived from same-currency price ×
+    # shares is safe and is explicitly marked as derived in the basis.
+    raw_market_cap = market_cap
+    market_cap_derived = False
+    if valuation_basis.get("marketValueCurrencyStatus") != "same":
+        market_cap = (
+            price * shares
+            if valuation_basis.get("marketValueDerivedSafe") and price is not None and shares is not None
+            else None
+        )
+        market_cap_derived = market_cap is not None
+    elif (
+        market_cap is None
+        and price is not None
+        and shares is not None
+        # Keep the same proof required by the branch above.  A provider
+        # market-value currency can be known and reporting-compatible while
+        # the quote itself is foreign; in that case price * shares would be
+        # denominated in the quote currency and cannot be paired with SEC
+        # revenue/FCF.
+        and valuation_basis.get("marketValueDerivedSafe")
+    ):
         market_cap = price * shares
+        market_cap_derived = True
     # **순부채는 한 값이다.** 예전에는 여기서 `장기부채 - 현금`으로 계산해 `순부채` 행과
     # 민감도 표에 쓰고, 바로 아래 시나리오 표는 `dcf_model`(단기차입 포함)을 읽었다 —
     # 한 섹션 안에서 세 표가 서로 다른 레버리지를 말했다. 단기차입이 많은 회사에서는
     # 그 차이가 그대로 주당 가치로 간다. `dcf.net_debt_from()`이 단일 출처다.
     net_debt = float(net_debt_from(sec_summary).get("netDebt") or 0.0)
     enterprise_value = market.get("enterpriseValue") if market.get("ok") else None
-    if enterprise_value is None and market_cap is not None:
+    if valuation_basis.get("marketValueCurrencyStatus") != "same":
+        enterprise_value = None
+    if enterprise_value is None and market_cap is not None and market_value_eligible:
         enterprise_value = market_cap + net_debt
 
     fcf = _latest_metric_value(sec_summary, market, "Free Cash Flow")
@@ -731,25 +856,42 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
         capex_value, capex_year = _latest_metric_entry(sec_summary, market, "Capital Expenditure")
         if cfo_value is not None and capex_value is not None and cfo_year and cfo_year == capex_year:
             fcf = cfo_value - capex_value
-    psr = _ratio(market_cap, revenue)
-    per = _ratio(price, eps) if eps and eps > 0 else None
-    ev_ebitda = _ratio(enterprise_value, ebitda) if ebitda and ebitda > 0 else None
-    fcf_yield = _ratio(fcf, market_cap)
+    psr = _ratio(market_cap, revenue) if market_value_eligible else None
+    per = _ratio(price, eps) if price_eligible and eps and eps > 0 else None
+    # Provider EBITDA has its own unit provenance.  SEC EBITDA is already in
+    # reporting currency and can be paired with a safe derived market value.
+    provider_ebitda = market.get("ebitda") if market.get("ok") else None
+    if provider_ebitda is not None and normalize_currency(valuation_basis.get("financialCurrency")) != reporting_currency:
+        ebitda = _latest_number(sec_summary, "EBITDA")
+    ev_ebitda = _ratio(enterprise_value, ebitda) if market_value_eligible and ebitda and ebitda > 0 else None
+    fcf_yield = _ratio(fcf, market_cap) if market_value_eligible else None
     fcf_margin = _ratio(fcf, revenue)
 
     # **규칙 보고서도 같은 DCF를 쓴다.** 여기서 따로 계산하면 규칙 보고서와 LLM
     # 보고서가 같은 회사에 다른 내재가치를 말한다 — PER 시나리오에서 이미 겪었다.
-    dcf_model = build_dcf(
-        sec_summary,
-        price=price,
-        shares=shares,
-        market_cap=market_cap,
-        beta=market.get("beta") if market.get("ok") else None,
-        currency=currency,
-        # meta dict를 그대로 넘기면 build_dcf가 rate 주입과 riskFreeMeta 기록을
-        # 함께 한다 — 호출부가 각자 사후 주입하면 경로마다 빠뜨린다.
-        risk_free=current_risk_free(currency),
-    )
+    dcf_eligibility = eligibility.get("dcf") or {}
+    if dcf_eligibility.get("eligible"):
+        dcf_model = build_dcf(
+            sec_summary,
+            price=price if price_eligible else None,
+            shares=shares,
+            # Unknown provider market value is omitted; build_dcf then uses
+            # its documented fixed-rate fallback rather than mixing units.
+            market_cap=market_cap if market_value_eligible else None,
+            beta=market.get("beta") if market.get("ok") and market_value_eligible else None,
+            currency=currency,
+            risk_free=current_risk_free(currency),
+        )
+    else:
+        dcf_reason = dcf_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다."
+        dcf_model = {
+            "ok": False,
+            "status": "unavailable",
+            "reason": dcf_reason,
+            "unavailableReason": dcf_reason,
+            "reasonCodes": dcf_eligibility.get("reasonCodes", []),
+            "currency": reporting_currency,
+        }
     near_growth = dcf_model.get("growth", {}).get("rate", 0.04)
     discount_rate = dcf_model.get("discountRate", {}).get("rate", 0.09)
     terminal_growth = dcf_model.get("terminalGrowth", 0.025)
@@ -760,18 +902,25 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
     # 주가는 상장 통화, 재무는 신고 통화다. ASML은 나스닥 ADR이 달러인데 재무는
     # 유로라, 두 통화가 다르면 시가총액/매출 같은 배수는 서로 다른 단위를 나눈
     # 값이라 의미가 없다. 환산하지 않고 그 사실을 밝힌다.
-    market_currency = str(market.get("currency") or currency).upper()
-    mixed_currency = bool(market.get("ok")) and market_currency != currency
+    market_currency = normalize_currency(market.get("quoteCurrency") or market.get("currency"))
+    mixed_currency = valuation_basis.get("priceCurrencyStatus") == "mismatch"
+    market_value_currency = valuation_basis.get("marketValueCurrency")
+    market_cap_display = market_cap if market_cap_derived else raw_market_cap
+    market_cap_source = (
+        "앱 계산: 주가 × 주식수 (공급자 marketCap 미사용)"
+        if market_cap_derived
+        else "yfinance marketCap (시장가치 통화 확인 필요)"
+    )
     table = [
         "| 지표 | 계산값 | 사용 입력/계산식 |",
         "| --- | ---: | --- |",
-        f"| 현재 주가 | {_money(price, market_currency)} | yfinance {market.get('ticker', company.get('ticker', ''))} |",
-        f"| 시가총액 | {_money(market_cap, market_currency)} | 주가 × 주식수 또는 yfinance marketCap |",
-        f"| 순부채 | {_money(net_debt, currency)} | 장기부채 + 단기차입 - 현금 {_money(cash, currency)} |",
+        f"| 현재 주가 | {_money_with_currency_status(price, market_currency)} | yfinance {market.get('ticker', company.get('ticker', ''))} |",
+        f"| 시가총액 | {_money_with_currency_status(market_cap_display, reporting_currency if market_cap_derived else market_value_currency)} | {market_cap_source} |",
+        f"| 순부채 | {_money_with_currency_status(net_debt, reporting_currency)} | 장기부채 + 단기차입 - 현금 {_money_with_currency_status(cash, reporting_currency)} |",
         f"| PER | {_multiple(per)} | 주가 / 희석 EPS {_plain_number(eps)} |",
-        f"| PSR | {_multiple(psr)} | 시가총액 / 매출 {_money(revenue, currency)} |",
-        f"| EV/EBITDA | {_multiple(ev_ebitda)} | 기업가치 / EBITDA {_money(ebitda, currency)} |",
-        f"| FCF Yield | {_pct(fcf_yield)} | FCF {_money(fcf, currency)} / 시가총액 |",
+        f"| PSR | {_multiple(psr)} | 시가총액 / 매출 {_money_with_currency_status(revenue, reporting_currency)} |",
+        f"| EV/EBITDA | {_multiple(ev_ebitda)} | 기업가치 / EBITDA {_money_with_currency_status(ebitda, reporting_currency)} |",
+        f"| FCF Yield | {_pct(fcf_yield)} | FCF {_money_with_currency_status(fcf, reporting_currency)} / 시가총액 |",
         f"| FCF Margin | {_pct(fcf_margin)} | FCF / 매출 |",
     ]
 
@@ -871,29 +1020,46 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
             "**내재가치와 현재가의 차이를 고평가·저평가로 단정하지 마세요** — 위 가정이 바뀌면 결과도 바뀝니다.",
         ]
     else:
-        missing = []
-        if not base_fcf or base_fcf <= 0:
-            missing.append("양의 기준 FCF")
-        if not shares:
-            missing.append("희석주식수")
-        if price is None:
-            missing.append("현재 주가")
-        if not missing:
-            missing.append("할인율/성장률 조건")
-        lines += [
-            "### DCF 기반 내재가치",
-            "",
-            f"DCF 계산에는 {', '.join(missing)}가 필요합니다. 현재 확인 가능한 SEC/companyfacts와 시장가격 데이터만으로는 신뢰할 수 있는 내재가치를 산출하지 않았습니다.",
-        ]
+        if dcf_model.get("status") == "unavailable":
+            lines += [
+                "### DCF 기반 내재가치",
+                "",
+                f"**DCF 계산 불가:** {dcf_model.get('reason') or '필요한 단위 정보를 확인하지 못했습니다.'}",
+            ]
+        else:
+            missing = []
+            if not base_fcf or base_fcf <= 0:
+                missing.append("양의 기준 FCF")
+            if not shares:
+                missing.append("희석주식수")
+            if price is None:
+                missing.append("현재 주가")
+            if not missing:
+                missing.append("할인율/성장률 조건")
+            lines += [
+                "### DCF 기반 내재가치",
+                "",
+                f"DCF 계산에는 {', '.join(missing)}가 필요합니다. 현재 확인 가능한 SEC/companyfacts와 시장가격 데이터만으로는 신뢰할 수 있는 내재가치를 산출하지 않았습니다.",
+            ]
     if not market.get("ok"):
         lines.append(f"\n시장가격 데이터 참고: yfinance 데이터를 가져오지 못했습니다({market.get('reason', 'unknown')}). SEC 기반 재무 지표만 표시했습니다.")
     elif market.get("warning"):
         lines.append(f"\n시장가격 데이터 참고: {market['warning']}")
     if mixed_currency:
         lines.append(
-            f"\n**통화 주의:** 주가·시가총액은 {market_currency}, 재무는 {currency} 기준입니다. "
-            "두 통화를 환산하지 않았으므로 PSR·EV/EBITDA·FCF Yield처럼 시장가치를 재무로 나눈 "
-            "배수는 서로 다른 단위를 나눈 값입니다. 그대로 해석하지 마세요."
+            f"\n**통화 주의 — 밸류에이션 계산 불가:** 주가는 {market_currency or '확인 필요'}, 재무는 {currency or '확인 필요'} 기준입니다. "
+            "환산 근거가 없어 주가와 주당 재무 수치를 비교하는 PER·DCF·PER 시나리오와 시장가치 배수를 산출하지 않았습니다."
+        )
+    unavailable = [
+        (label, item)
+        for key, label in (("per", "PER"), ("marketMultiples", "PSR·EV/EBITDA"), ("fcfYield", "FCF Yield"))
+        for item in [eligibility.get(key) or {}]
+        if not item.get("eligible")
+    ]
+    if unavailable and not mixed_currency:
+        lines.append(
+            "\n**밸류에이션 계산 불가:** "
+            + "; ".join(f"{label} — {item.get('reason') or '필요한 단위 정보를 확인하지 못했습니다.'}" for label, item in unavailable)
         )
     return "\n".join(lines)
 

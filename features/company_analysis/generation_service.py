@@ -6,9 +6,12 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import CancelledError
+
 from features.common.change_intelligence.service import decorate_candidate
 from features.common.utils import now_iso
 from features.common.web_search_scope import audit_urls, load_source_scope
+from features.common.jobs import diagnostic_stage
 from features.company_analysis.finalize import finalize_report
 from features.company_analysis.data_gap_resolver import resolve_company_analysis_gaps
 from features.company_analysis.generation_context import build_generation_inputs, draft_artifact
@@ -54,21 +57,42 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
     # 다른 제목을 썼는데, 보수 패스는 섹션 3개를 손볼 뿐이라 골격이 어긋난 초안을
     # 되살리지 못한다. 앞의 자료 수집·웹 조회는 재사용된다.
     draft_guard: dict = {}
+    draft_validation_unassessed = False
     if llm_result and llm_result.get("markdown"):
-        missing = missing_sections(str(llm_result["markdown"]))
-        draft_guard = {"missing": missing, "retried": False, "outcome": ""}
+        try:
+            missing = missing_sections(str(llm_result["markdown"]))
+        except (KeyboardInterrupt, SystemExit, CancelledError):
+            raise
+        except Exception:
+            # The structural check is optional observation. Keep the first
+            # body and let shared finalization mark the result unassessed.
+            missing = []
+            draft_validation_unassessed = True
+            draft_guard = {"missing": [], "retried": False, "outcome": "validation_unavailable"}
+        else:
+            draft_guard = {"missing": missing, "retried": False, "outcome": ""}
         if missing:
-            retry, retry_status = _generate(render_section_retry(missing))
             draft_guard["retried"] = True
-            if retry and retry.get("markdown"):
-                if len(missing_sections(str(retry["markdown"]))) < len(missing):
-                    llm_result, llm_status = retry, retry_status
-                    draft_guard["outcome"] = "retry_better"
+            try:
+                retry, retry_status = _generate(render_section_retry(missing))
+                if retry and retry.get("markdown"):
+                    if len(missing_sections(str(retry["markdown"]))) < len(missing):
+                        llm_result, llm_status = retry, retry_status
+                        draft_guard["outcome"] = "retry_better"
+                    else:
+                        # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
+                        draft_guard["outcome"] = "retry_no_gain"
                 else:
-                    # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
-                    draft_guard["outcome"] = "retry_no_gain"
-            else:
-                draft_guard["outcome"] = "retry_unavailable"
+                    draft_guard["outcome"] = "retry_unavailable"
+            except (KeyboardInterrupt, SystemExit, CancelledError):
+                # A caller-requested cancellation is not an ordinary retry
+                # failure and must not be converted into a successful report.
+                raise
+            except Exception:
+                # Optional structural repair must never erase a usable first
+                # draft. Keep its exact body/status and expose only a bounded
+                # outcome code; the technical exception belongs to diagnostics.
+                draft_guard["outcome"] = "retry_failed"
 
     # 설정이 아니라 실제 결과로 기록한다. 설정만 보면 CLI 모드·LLM 실패·자료 없음처럼
     # 웹 검색이 한 번도 돌지 않은 경로에서도 official_web_search가 "시도함"으로 남는다.
@@ -80,6 +104,7 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
         "generatedAt": now_iso(),
         "qualityPreflight": inputs.preflight,
         "draftGuard": draft_guard or None,
+        **({"validationStatus": "unassessed"} if draft_validation_unassessed else {}),
     }
     if llm_result:
         generation = {
@@ -114,7 +139,10 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
             or "선별된 보조 뉴스/리포트 자료가 없습니다.",
         })
 
-    report = finalize_report(report, quote_sources=inputs.quoteSources)
+    # This shared contract validator runs before the direct API observer's
+    # later quality pass, so it owns its own real validation boundary.
+    with diagnostic_stage("validate", boundary="validation"):
+        report = finalize_report(report, quote_sources=inputs.quoteSources)
     return decorate_candidate(
         "company_analysis", report, data_dir=DATA_DIR,
         native_context={"materials": inputs.materials}, generation_provenance=True,

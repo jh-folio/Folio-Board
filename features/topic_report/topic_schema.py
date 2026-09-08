@@ -155,17 +155,70 @@ def _str_list(value, limit: int = 20) -> list[str]:
     return out
 
 
+# yfinance 형식 심볼. 승인 계약(`normalize_tickers`)이 20자·비어 있지 않음을 요구하므로
+# 그 안쪽으로 좁게 잡는다. 밑줄과 공백은 심볼에 오지 않는다 — 그게 온 것은 티커가 아니라
+# 모델이 만든 그룹 이름이다.
+# 선행 `^`는 지수 심볼이다(`^GSPC`·`^KS11`). 빼면 대표지수가 조용히 사라진다.
+_TICKER_SYMBOL = re.compile(r"[A-Z0-9^][A-Z0-9.^=-]{0,19}")
+_LABEL_MAX = 160
+
+
+def _harvest_symbols(value) -> list[str]:
+    """리스트 모양의 값에서 심볼만 건져 낸다.
+
+    실측으로 플래너가 `{"cloud_and_compute": "['AMZN', 'NVDA']"}`처럼 **그룹 이름 → 티커
+    목록**을 돌려줬다. 계약은 `{티커: 표시명}`이라 그대로 두면 승인 단계가 통째로 422가
+    되고, 60초짜리 계획 호출이 버려진다. 산문 라벨에서 대문자 낱말을 티커로 오인하지
+    않도록 **리스트 모양일 때만** 건진다.
+    """
+    if isinstance(value, (list, tuple, set)):
+        items = [str(item or "") for item in value]
+    else:
+        text = str(value or "").strip()
+        if not (text.startswith("[") or text.startswith("(")):
+            return []
+        items = [text]
+    found: list[str] = []
+    for item in items:
+        for match in _TICKER_SYMBOL.finditer(item.upper()):
+            symbol = match.group(0)
+            if symbol not in found:
+                found.append(symbol)
+    return found
+
+
 def _ticker_map(value, limit: int = 14) -> dict[str, str]:
+    """`{티커: 표시명}`으로 강제한다.
+
+    티커 위생은 검색어 위생과 같은 이유로 **코드가 정한다**(planner의 `_clean_queries`).
+    프롬프트로 형식을 부탁한 것과 모델이 지킨 것은 다르고, 여기서 새는 값은 곧 승인
+    단계의 실패다. 못 읽는 항목은 버리되 요청 전체를 죽이지 않는다.
+    """
     if not isinstance(value, dict):
         return {}
     out: dict[str, str] = {}
+
+    def _add(symbol: str, label: str) -> None:
+        if len(out) >= limit or symbol in out:
+            return
+        if not any(char.isalnum() for char in symbol):
+            return
+        out[symbol] = (label.strip() or symbol)[:_LABEL_MAX]
+
     for key, label in value.items():
-        ticker = str(key or "").strip()
-        if not ticker:
-            continue
-        out[ticker] = str(label or ticker).strip() or ticker
         if len(out) >= limit:
             break
+        # **값이 목록이면 키는 그룹 이름이다.** 키 모양으로 먼저 가르면 `payments`·`group`
+        # 처럼 밑줄 없는 그룹 이름이 티커 패턴을 통과해 목록 문자열을 표시명으로 달고
+        # 들어온다. 그룹 이름은 표시명으로 남겨 모델이 왜 묶었는지를 잃지 않는다.
+        symbols = _harvest_symbols(label)
+        if symbols:
+            for symbol in symbols:
+                _add(symbol, str(key or symbol))
+            continue
+        ticker = str(key or "").strip().upper()
+        if ticker and _TICKER_SYMBOL.fullmatch(ticker):
+            _add(ticker, str(label or ticker))
     return out
 
 

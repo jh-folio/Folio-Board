@@ -19,6 +19,11 @@ from features.company_analysis.filing_items import select_analysis_items, select
 from features.company_analysis.depth_policy import render_length_contract
 from features.company_analysis.report_contract import render_quality_requirements, render_source_contract
 from features.company_analysis.valuation import build_valuation_scenarios
+from features.company_analysis.valuation_basis import (
+    build_valuation_basis,
+    market_cashflow_is_compatible,
+    normalize_currency,
+)
 from features.company_analysis.dcf import build_dcf
 from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_prompt_path, read_analysis_prompt
@@ -50,6 +55,7 @@ from features.common.quality_generation.preflight_enrichment import build_prefli
 from features.common.quality_generation.quality_targets import render_quality_target_context
 from features.common.quality_generation.telemetry import normalize_token_usage
 from features.common.web_search_scope import load_source_scope, render_scope_instruction
+from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure
 from features.market_memory.snapshot import render_market_memory_context
 from features.common.generation_engine import engine_detail, engine_label
 from features.common.workspace import data_dir
@@ -618,6 +624,10 @@ def build_company_analysis_materials(query, docs, company=None):
     )
     selected = filing_used + support_used
     market_financial_data = fetch_market_valuation_data(company)
+    market_shares = market_financial_data.get("sharesOutstanding") if isinstance(market_financial_data, dict) else None
+    if market_shares is None:
+        market_shares = financial_engine.latest_value(sec_facts, "Shares Diluted")
+    valuation_basis = build_valuation_basis(sec_facts, market_financial_data, share_count=market_shares)
     computed_financial_table = build_financial_table(sec_facts, market_financial_data)
     computed_financial_quality = build_financial_quality_analysis(sec_facts, market_financial_data)
     computed_valuation = build_valuation_metrics(company, sec_facts, market_financial_data)
@@ -711,6 +721,7 @@ def build_company_analysis_materials(query, docs, company=None):
         "computedFinancialTable": computed_financial_table,
         "computedFinancialQuality": computed_financial_quality,
         "computedValuation": computed_valuation,
+        "valuationBasis": valuation_basis,
         "marketFinancialData": market_financial_data,
         "context": "\n".join(lines),
         "counts": counts,
@@ -878,7 +889,14 @@ def generate_llm_company_analysis(
             "webSearch": web_search,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=max_tokens),
         }, f"ok_{web_status}"
-    except Exception:
+    except Exception as error:
+        # This is the primary provider boundary.  The caller deliberately
+        # falls back to rules, so the exact typed cause must be observed here
+        # before its exception object is otherwise discarded.
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(), error,
+            stage_id=None, stage_code="generate", boundary="adapter",
+        )
         return None, "generation_failed"
 
 
@@ -1247,11 +1265,17 @@ def build_company_analysis_charts(materials):
         ]
     }
     market = materials.get("marketFinancialData") or fetch_market_valuation_data(company)
+    shares = market.get("sharesOutstanding") if market.get("ok") else None
+    if shares is None:
+        shares = financial_engine.latest_value(sec_summary, "Shares Diluted")
+    valuation_basis = build_valuation_basis(sec_summary, market, share_count=shares)
     # 재무 차트는 신고 통화, 주가 차트는 상장 통화다. 둘은 다를 수 있다
     # (ASML: 재무 EUR, 나스닥 ADR 주가 USD).
-    reporting_currency = str(sec_summary.get("currency") or "USD")
-    price_currency = str(market.get("currency") or reporting_currency) if market.get("ok") else reporting_currency
-    for row in market.get("cashflowRows", []) if market.get("ok") else []:
+    reporting_currency = str(valuation_basis.get("reportingCurrency") or sec_summary.get("currency") or "USD")
+    price_currency = str(valuation_basis.get("quoteCurrency") or market.get("currency") or reporting_currency) if market.get("ok") else reporting_currency
+    # yfinance cash-flow rows are only a valid continuation of SEC/DART rows
+    # when the provider's separate financial currency is known and matches.
+    for row in market.get("cashflowRows", []) if market.get("ok") and market_cashflow_is_compatible(valuation_basis) else []:
         year = str(row.get("year") or str(row.get("end", ""))[:4])
         if not re.fullmatch(r"\d{4}", year):
             continue
@@ -1357,21 +1381,34 @@ def build_company_analysis_charts(materials):
                 "netMargin": net_margin,
             })
 
-    shares = market.get("sharesOutstanding") if market.get("ok") else None
-    if shares is None:
-        shares = financial_engine.latest_value(sec_summary, "Shares Diluted")
     price = market.get("price") if market.get("ok") else None
     near_growth = financial_engine.growth_rate(_fcf_series(sec_summary, market))
     # **DCF도 한 곳에서 계산한다.** 차트·본문 컨텍스트·규칙 보고서가 이 객체를 읽는다.
-    dcf_model = build_dcf(
-        sec_summary,
-        price=price,
-        shares=shares,
-        market_cap=market.get("marketCap") if market.get("ok") else None,
-        beta=market.get("beta") if market.get("ok") else None,
-        currency=price_currency,
-        risk_free=current_risk_free(price_currency),
-    )
+    eligibility = valuation_basis.get("eligibility") or {}
+    dcf_eligibility = eligibility.get("dcf") or {}
+    market_value_eligibility = eligibility.get("marketMultiples") or {}
+    if dcf_eligibility.get("eligible"):
+        dcf_model = build_dcf(
+            sec_summary,
+            price=price if (eligibility.get("per") or {}).get("eligible") else None,
+            shares=shares,
+            # Do not feed an unverified provider marketCap into WACC.  The DCF
+            # core can safely derive cap from same-currency price × shares.
+            market_cap=(market.get("marketCap") if market.get("ok") and valuation_basis.get("marketValueCurrencyStatus") == "same" else None),
+            beta=market.get("beta") if market.get("ok") and market_value_eligibility.get("eligible") else None,
+            currency=reporting_currency,
+            risk_free=current_risk_free(reporting_currency),
+        )
+    else:
+        dcf_reason = dcf_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다."
+        dcf_model = {
+            "ok": False,
+            "status": "unavailable",
+            "reason": dcf_reason,
+            "unavailableReason": dcf_reason,
+            "reasonCodes": dcf_eligibility.get("reasonCodes", []),
+            "currency": normalize_currency(reporting_currency),
+        }
     scenario_rows = [
         {
             "name": item.get("name"),
@@ -1409,8 +1446,23 @@ def build_company_analysis_charts(materials):
                    financial_engine.latest_value(sec_summary, "EPS Basic")
     # **본문과 차트가 같은 객체를 읽는다.** 각자 계산하던 시절 한 보고서에 밸류에이션이
     # 두 벌 있었다(본문 EPS 5.54×30/45/60 vs 차트 EPS 4.081×54/73/94).
-    valuation = build_valuation_scenarios(
-        trailing_eps=trailing_eps, price=price, growth=near_growth, currency=price_currency,
+    per_eligibility = eligibility.get("per") or {}
+    valuation = (
+        build_valuation_scenarios(
+            trailing_eps=trailing_eps,
+            price=price,
+            growth=near_growth,
+            currency=price_currency,
+        )
+        if per_eligibility.get("eligible")
+        else {
+            "ok": False,
+            "status": "unavailable",
+            "reason": per_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다.",
+            "unavailableReason": per_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다.",
+            "reasonCodes": per_eligibility.get("reasonCodes", []),
+            "currency": price_currency,
+        }
     )
     if valuation.get("scenarios"):
         charts.append({
@@ -1447,6 +1499,7 @@ def build_company_analysis_charts(materials):
         # 계산이 한 번만 일어나야 한다.
         "valuation": valuation,
         "dcf": dcf_model,
+        "valuationBasis": valuation_basis,
         "company": {"name": company.get("name", ""), "ticker": company.get("ticker", "")},
         "source": "SEC companyfacts + yfinance market data",
         # 차트 숫자는 전부 외부 provider에서 온다. 하나라도 NaN이면 보고서 저장이

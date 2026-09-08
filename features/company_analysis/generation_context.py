@@ -36,6 +36,13 @@ from features.common.research_library.indexing.service import load_index
 from features.common.research_library.search.service import search_documents
 from features.common.research_schema.source_ledger import source_ledger_from_items
 from features.common.web_search_scope import load_source_scope, render_scope_instruction
+from features.common.jobs import (
+    current_diagnostic_recorder,
+    diagnostic_auxiliary_execution,
+    diagnostic_stage_end,
+    diagnostic_stage_failure,
+    diagnostic_stage_start,
+)
 from features.company_analysis import web_lookup as company_web
 from features.company_analysis.company_search import search_company_documents
 from features.company_analysis.data_gap_resolver import resolve_company_analysis_gaps
@@ -53,6 +60,7 @@ from features.company_analysis.service import (
 )
 from features.company_analysis.style import normalize_analysis_style
 from features.company_analysis.valuation import render_valuation_contract
+from features.company_analysis.valuation_basis import render_valuation_basis_context
 from features.company_analysis.buyback import build_buyback_quality, render_buyback_quality
 from features.company_analysis.dcf import render_dcf_context
 
@@ -112,6 +120,37 @@ def build_generation_inputs(
 
     `runtime`은 테스트가 의존을 갈아끼우는 통로다. 두 경로가 같은 키를 쓴다.
     """
+    context_recorder, context_stage = diagnostic_stage_start("context")
+    try:
+        return _build_generation_inputs(
+            query,
+            analysis_style=analysis_style,
+            web_search=web_search,
+            runtime=runtime,
+            context_recorder=context_recorder,
+            context_stage=context_stage,
+        )
+    except Exception as error:
+        diagnostic_stage_failure(
+            context_recorder, error, stage_id=context_stage,
+            stage_code="context" if context_stage is not None else None,
+            boundary="generic",
+        )
+        raise
+    finally:
+        diagnostic_stage_end(context_recorder, context_stage, "context")
+
+
+def _build_generation_inputs(
+    query: str,
+    *,
+    analysis_style: str,
+    web_search: bool,
+    runtime: dict | None,
+    context_recorder,
+    context_stage: str | None,
+) -> GenerationInputs:
+    """Implementation split so the public shared assembler owns one context span."""
     runtime = runtime or {}
     load_index_fn = runtime.get("load_index", load_index)
     search_documents_fn = runtime.get("search_documents", search_documents)
@@ -152,24 +191,42 @@ def build_generation_inputs(
     web_row: dict = {}
     if web_search and company_web.needs_web_lookup(document_count=len(docs), data_gaps=early_gaps):
         try:
-            web_row = company_web.assign_source_ids(
-                company_web.lookup_company(
-                    company,
-                    render_scope_instruction(load_source_scope(company)),
-                    lookup_call_fn(),
+            with diagnostic_auxiliary_execution():
+                web_row = company_web.assign_source_ids(
+                    company_web.lookup_company(
+                        company,
+                        render_scope_instruction(load_source_scope(company)),
+                        lookup_call_fn(),
+                    )
                 )
+        except Exception as error:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
+            diagnostic_stage_failure(
+                context_recorder or current_diagnostic_recorder(), error,
+                stage_id=context_stage,
+                stage_code="context" if context_stage is not None else None,
+                boundary="generic",
             )
-        except Exception:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
             web_row = {}
     web_items = company_web.web_source_items(web_row) if web_row else []
     if web_items:
         source_ledger = [*source_ledger, *web_items]
 
-    valuation = (charts or {}).get("valuation") or {}
+    chart_payload = charts if isinstance(charts, dict) else {}
+    valuation = chart_payload.get("valuation") or {}
+    valuation_basis = (
+        chart_payload.get("valuationBasis")
+        or materials.get("valuationBasis")
+        or {}
+    )
+    buyback_currency = (
+        valuation_basis.get("reportingCurrency")
+        or (materials.get("secFacts") or {}).get("currency")
+        or ""
+    )
     buyback = build_buyback_quality(
         materials.get("secFacts") or {},
-        price=valuation.get("currentPrice"),
-        currency=valuation.get("currency") or "USD",
+        price=valuation.get("currentPrice") if valuation.get("status") != "unavailable" else None,
+        currency=buyback_currency,
     )
 
     blocks = [
@@ -199,6 +256,7 @@ def build_generation_inputs(
         render_prompt_hints(preflight),
         # 계약은 프롬프트가 아니라 **이 요청의 숫자와 목록**으로 준다.
         render_length_contract(depth_policy),
+        render_valuation_basis_context(valuation_basis),
         # 본문이 밸류에이션을 다시 계산하지 않게 값을 통째로 준다. 각자 계산하던
         # 시절 한 보고서에 시나리오가 두 벌 있었다.
         render_valuation_contract(valuation),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Executor, ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from features.common.shared_jobs_schema import (
     SharedJob,
 )
 from features.common.shared_jobs_store import SharedJobStore
+from features.common.diagnostics.support import bind_context, bind_failure_cache, current_context, current_request_id
 from features.topic_report.approval_store import ApprovalProof, ApprovalStore
 from features.topic_report.approval_submission import (
     JobMetadata,
@@ -33,9 +35,12 @@ from features.topic_report.approval_submission import (
     SubmissionRequest,
 )
 from features.topic_report.approved_generation import ApprovedGenerationInput, build_approved_report
+from features.topic_report.approved_generation import resume_root
+from features.topic_report.resume_store import ResumeStore, prune as prune_resume, resume_key
 from features.topic_report.deep_pipeline import DeepResearchGenerationError, run_deep_pipeline
 from features.common.quality_generation.candidate_store import CandidateStore
 from features.topic_report.service import _stable_topic_id
+from features.llm_settings.task_runtime import bind_task_policy
 
 
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="folio-approved-topic")
@@ -92,6 +97,20 @@ class SharedSubmissionJobs(SubmissionJobs):
         return self._journal_metadata(job_id)
 
 
+def _clear_resume(command: ApprovedGenerationInput) -> None:
+    """성공한 실행의 재개 파일 제거. 실패해도 잡을 죽이지 않는다(유효기간이 받는다)."""
+    approved = getattr(command, "approved", None)
+    if approved is None or not getattr(approved, "deepResearch", False):
+        return
+    try:
+        key = resume_key(approved.asOfDate, approved.planHash)
+        if key:
+            ResumeStore(resume_root(), key=key, fingerprint="-").clear()
+        prune_resume(resume_root())
+    except Exception:  # noqa: BLE001 - 정리 실패가 저장을 되돌리지 않는다
+        return
+
+
 def _failure_detail(exc: BaseException) -> str:
     """무엇을 어겼는지 코드로만. 본문은 담지 않는다."""
     if not isinstance(exc, DeepResearchGenerationError):
@@ -133,7 +152,16 @@ class ApprovedTopicJobs:
             data_dir / "jobs.json",
             clock=clock,
         )
-        self.lifecycle = JobPrivateLifecycle(data_dir / "job-context", clock=clock)
+        # The lifecycle remains the sole cleanup/persistence authority.  These
+        # callbacks observe only after it has completed those actions.
+        self.lifecycle = JobPrivateLifecycle(
+            data_dir / "job-context",
+            clock=clock,
+            terminal_observer=common_jobs._diagnostic_authority_terminal,
+            cleanup_started=common_jobs._diagnostic_cleanup_started,
+            cleanup_finished=common_jobs._diagnostic_cleanup_finished,
+            cleanup_failed=common_jobs._diagnostic_cleanup_failed,
+        )
         self.coordinator = SubmissionCoordinator(data_dir, approvals)
         self.executor = executor or _EXECUTOR
         self.coordinator.recover(SharedSubmissionJobs(data_dir, self.store))
@@ -197,9 +225,16 @@ class ApprovedTopicJobs:
                 {
                     "approvedRequest": command.approved.model_dump(mode="json"),
                     "researchResolution": command.preview.model_dump(mode="json"),
+                    "taskPolicy": dict(command.taskPolicy) if isinstance(command.taskPolicy, dict) else None,
                 },
             )
-            future = self.executor.submit(self._run, job.id, command)
+            parent = current_context()
+            recorder = common_jobs._diagnostic_submission(
+                claimed_job,
+                current_request_id(),
+                parent.run_id if parent is not None else None,
+            )
+            future = self.executor.submit(self._run, job.id, command, recorder)
             common_jobs.FUTURES[job.id] = future
         return SubmittedApprovedJob(claimed_job, created)
 
@@ -210,101 +245,161 @@ class ApprovedTopicJobs:
         self.lifecycle.terminalize(self.store, job_id, JobStatus.CANCELLED)
         return True
 
-    def _run(self, job_id: str, command: ApprovedGenerationInput) -> None:
+    def _run(self, job_id: str, command: ApprovedGenerationInput, recorder=None) -> None:
         bundle = None
-        try:
-            self.store.transition(job_id, JobStatus.RUNNING)
-            outcome = build_approved_report(command, job_id=job_id, clock=self.clock)
-            initial_report = dict(outcome.report)
-            initial_provenance = initial_report.get("executionProvenance")
-            initial_plan_hash = str(initial_provenance.get("planHash") or "") if isinstance(initial_provenance, dict) else ""
-            report_id = _stable_topic_id(
-                str(initial_report["date"]),
-                str(initial_report["topicKey"]),
-                str(initial_report["topicLabel"]),
-                discriminator=initial_plan_hash,
-            )
-            is_deep = bool(getattr(getattr(command, "approved", None), "deepResearch", False))
-            if is_deep:
-                self.store.update_runtime(job_id, {"progress": 60})
-                outcome = run_deep_pipeline(
-                    outcome,
-                    command,
-                    job_id=job_id,
-                    report_id=report_id,
-                    candidate_store=CandidateStore(self.data_dir / "job-context"),
-                )
-            self.store.update_runtime(
-                job_id,
-                {
-                    "generationMode": outcome.generationMode,
-                    "engine": outcome.attemptedEngine,
-                    "adapter": outcome.adapter,
-                    "mode": outcome.mode,
-                    "attemptedEngine": outcome.attemptedEngine,
-                    "finalEngine": outcome.finalEngine,
-                    "fallbackReason": outcome.fallbackReason,
-                    "progress": 90,
-                },
-            )
-            if self._cancelled(job_id):
-                return
-            report = dict(outcome.report)
-            # topicKey는 승인 경로에서 늘 "custom"이고 topicLabel은 40자 주제어라,
-            # 같은 날 같은 주제로 시작하는 다른 질문이 같은 id가 되어 서로 덮어썼다.
-            # planHash는 계획 payload에서 나오므로 같은 계획 재실행만 같은 id가 된다.
-            report["id"] = report_id
-            terminal = {
-                "artifactId": report_id,
-                "reportId": report_id,
-                "date": str(report["date"]),
-                "title": str(report["title"]),
-            }
-            current = self.store.get(job_id)
-            if current is None:
-                raise ValueError("approved_job_missing")
-            producer = JobJsonProducers(self.data_dir, clock=self.clock)
-            bundle = producer.stage_topic(
-                current,
-                ReportJobRequest(report=report, terminal_result=terminal),
-            )
-            staged_job = self.store.get(job_id)
-            if staged_job is not None and staged_job.status is JobStatus.CANCEL_REQUESTED:
-                producer.workspace.discard(bundle)
-                self._cancelled(job_id)
-                return
-            producer.workspace.commit(bundle, self.store, self.lifecycle)
-        except Exception as exc:  # noqa: BROAD_EXCEPT_OK -- worker boundary terminalizes every failure.
-            current = self.store.get(job_id)
-            if current is not None and current.status is JobStatus.CANCEL_REQUESTED:
-                if bundle is not None:
-                    JobJsonProducers(self.data_dir, clock=self.clock).workspace.discard(bundle)
-                self.lifecycle.terminalize(self.store, job_id, JobStatus.CANCELLED)
-                return
-            if current is None or current.status in {
-                JobStatus.DONE,
-                JobStatus.CANCELLED,
-                JobStatus.COMMITTING,
-                JobStatus.FAILED,
-                JobStatus.FAILED_COMMIT,
-                JobStatus.FAILED_COMMIT_RECOVERY,
-            }:
-                return
-            if bundle is not None:
-                JobJsonProducers(self.data_dir, clock=self.clock).workspace.discard(bundle)
-            detail = _failure_detail(exc)
-            if detail:
-                # terminalize 전에 적는다 — 그 뒤에는 비공개 pack이 지워져 근거가 사라진다.
+        context = recorder.context if recorder is not None else None
+        # Keep the worker seam compatible with the small legacy test/fallback
+        # callers that pass an opaque command object.  A task policy is an
+        # optional handoff field, so its absence means the existing global
+        # generation path rather than an internal worker error.
+        task_policy = getattr(command, "taskPolicy", None)
+        with bind_context(context) if context is not None else nullcontext():
+            with bind_failure_cache():
                 try:
-                    self.store.update_runtime(job_id, {"failureDetail": detail})
-                except Exception:  # noqa: BLE001 - 진단 기록이 종료를 막지 않는다
-                    pass
-            self.lifecycle.terminalize(
-                self.store,
-                job_id,
-                JobStatus.FAILED,
-                error_code=_failure_code(exc),
-            )
+                    self.store.transition(job_id, JobStatus.RUNNING)
+                    common_jobs._diagnostic_worker_started(recorder)
+                    preflight_recorder, preflight_stage = common_jobs.diagnostic_stage_start("preflight")
+                    # Confirmation is already durable; this frozen command is
+                    # the actual worker-side handoff into generation.
+                    _ = getattr(command, "approved", None)
+                    common_jobs.diagnostic_stage_end(preflight_recorder, preflight_stage, "preflight")
+                    generate_recorder, generate_stage = common_jobs.diagnostic_stage_start("generate")
+                    context_recorder, context_stage = common_jobs.diagnostic_stage_start("context")
+                    try:
+                        with bind_task_policy(task_policy) if isinstance(task_policy, dict) else nullcontext():
+                            outcome = build_approved_report(command, job_id=job_id, clock=self.clock)
+                    except Exception as exc:
+                        common_jobs.diagnostic_stage_failure(
+                            context_recorder, exc,
+                            stage_id=context_stage,
+                            stage_code="context" if context_stage is not None else None,
+                            boundary="generic",
+                        )
+                        common_jobs.diagnostic_stage_end(context_recorder, context_stage, "context")
+                        common_jobs.diagnostic_stage_failure(
+                            generate_recorder,
+                            exc,
+                            stage_id=generate_stage,
+                            stage_code="generate" if generate_stage is not None else None,
+                            boundary="validation" if isinstance(exc, DeepResearchGenerationError) else "generic",
+                        )
+                        common_jobs.diagnostic_stage_end(generate_recorder, generate_stage, "generate")
+                        raise
+                    common_jobs.diagnostic_stage_end(context_recorder, context_stage, "context")
+                    common_jobs.diagnostic_stage_end(generate_recorder, generate_stage, "generate")
+                    initial_report = dict(outcome.report)
+                    # A cancellation can be requested by the generator before
+                    # it returns a report (including test/fallback seams that
+                    # intentionally return an empty placeholder).  Observe it
+                    # before deriving report identity so cancellation stays a
+                    # terminal cancel instead of becoming internal_error.
+                    if self._cancelled(job_id):
+                        return
+                    initial_provenance = initial_report.get("executionProvenance")
+                    initial_plan_hash = str(initial_provenance.get("planHash") or "") if isinstance(initial_provenance, dict) else ""
+                    report_id = _stable_topic_id(
+                        str(initial_report["date"]),
+                        str(initial_report["topicKey"]),
+                        str(initial_report["topicLabel"]),
+                        discriminator=initial_plan_hash,
+                    )
+                    if bool(getattr(getattr(command, "approved", None), "deepResearch", False)):
+                        self.store.update_runtime(job_id, {"progress": 60})
+                        validate_recorder, validate_stage = common_jobs.diagnostic_stage_start("validate")
+                        try:
+                            with bind_task_policy(task_policy) if isinstance(task_policy, dict) else nullcontext():
+                                outcome = run_deep_pipeline(
+                                    outcome,
+                                    command,
+                                    job_id=job_id,
+                                    report_id=report_id,
+                                    candidate_store=CandidateStore(self.data_dir / "job-context"),
+                                )
+                        except Exception as exc:
+                            common_jobs.diagnostic_stage_failure(
+                                validate_recorder, exc,
+                                stage_id=validate_stage,
+                                stage_code="validate" if validate_stage is not None else None,
+                                boundary="validation",
+                            )
+                            common_jobs.diagnostic_stage_end(validate_recorder, validate_stage, "validate")
+                            raise
+                        common_jobs.diagnostic_stage_end(validate_recorder, validate_stage, "validate")
+                    self.store.update_runtime(
+                        job_id,
+                        {
+                            "generationMode": outcome.generationMode,
+                            "engine": outcome.attemptedEngine,
+                            "adapter": outcome.adapter,
+                            "mode": outcome.mode,
+                            "attemptedEngine": outcome.attemptedEngine,
+                            "finalEngine": outcome.finalEngine,
+                            "fallbackReason": outcome.fallbackReason,
+                            "progress": 90,
+                        },
+                    )
+                    common_jobs.diagnostic_execution(
+                        attempted_engine=outcome.attemptedEngine,
+                        final_engine=outcome.finalEngine,
+                        adapter=outcome.adapter,
+                        fallback_reason=outcome.fallbackReason,
+                    )
+                    if self._cancelled(job_id):
+                        return
+                    report = dict(outcome.report)
+                    report["id"] = report_id
+                    terminal = {
+                        "artifactId": report_id,
+                        "reportId": report_id,
+                        "date": str(report["date"]),
+                        "title": str(report["title"]),
+                    }
+                    current = self.store.get(job_id)
+                    if current is None:
+                        raise ValueError("approved_job_missing")
+                    producer = JobJsonProducers(self.data_dir, clock=self.clock)
+                    bundle = producer.stage_topic(
+                        current,
+                        ReportJobRequest(report=report, terminal_result=terminal),
+                    )
+                    staged_job = self.store.get(job_id)
+                    if staged_job is not None and staged_job.status is JobStatus.CANCEL_REQUESTED:
+                        producer.workspace.discard(bundle)
+                        self._cancelled(job_id)
+                        return
+                    producer.workspace.commit(bundle, self.store, self.lifecycle)
+                    _clear_resume(command)
+                except Exception as exc:  # noqa: BROAD_EXCEPT_OK -- worker boundary terminalizes every failure.
+                    common_jobs._diagnostic_exception(recorder, exc)
+                    current = self.store.get(job_id)
+                    if current is not None and current.status is JobStatus.CANCEL_REQUESTED:
+                        if bundle is not None:
+                            JobJsonProducers(self.data_dir, clock=self.clock).workspace.discard(bundle)
+                        self.lifecycle.terminalize(self.store, job_id, JobStatus.CANCELLED)
+                        return
+                    if current is None or current.status in {
+                        JobStatus.DONE,
+                        JobStatus.CANCELLED,
+                        JobStatus.COMMITTING,
+                        JobStatus.FAILED,
+                        JobStatus.FAILED_COMMIT,
+                        JobStatus.FAILED_COMMIT_RECOVERY,
+                    }:
+                        return
+                    if bundle is not None:
+                        JobJsonProducers(self.data_dir, clock=self.clock).workspace.discard(bundle)
+                    detail = _failure_detail(exc)
+                    if detail:
+                        try:
+                            self.store.update_runtime(job_id, {"failureDetail": detail})
+                        except Exception:  # noqa: BLE001 - diagnostics must not block authority.
+                            pass
+                    self.lifecycle.terminalize(
+                        self.store,
+                        job_id,
+                        JobStatus.FAILED,
+                        error_code=_failure_code(exc),
+                    )
 
     def compatibility(self, job: SharedJob) -> dict[str, JsonValue]:
         return compatibility_job(job)
