@@ -508,11 +508,22 @@ def build_index(incremental=True, progress=None):
         if progress:
             progress("SQLite/FTS 검색 인덱스를 동기화하는 중입니다.", progress=82)
         sqlite_synced = False
+        from features.common.jobs import (
+            diagnostic_prove_complete_coverage,
+            diagnostic_stage_end,
+            diagnostic_stage_failure,
+            diagnostic_stage_start,
+        )
+        commit_recorder, commit_stage = diagnostic_stage_start("commit")
         try:
             index["sqlite"] = sync_index(RESEARCH_DB_PATH, index)
             sqlite_synced = True
-        except Exception:
+        except Exception as error:
             index["sqlite"] = {"error": "sqlite_index_failed"}
+            diagnostic_stage_failure(
+                commit_recorder, error, stage_id=commit_stage,
+                stage_code="commit", boundary="save",
+            )
         # 우리가 방금 문서를 바꿨다. 서명 확인(5초)을 기다리지 않고 바로 버린다.
         invalidate_index_cache()
         # sync가 실패하면 매니페스트를 갱신하지 않는다. sync_index는 단일 트랜잭션이라
@@ -523,18 +534,35 @@ def build_index(incremental=True, progress=None):
         if sqlite_synced:
             try:
                 write_manifest(RESEARCH_DB_PATH, file_manifest)
-            except Exception:
+            except Exception as error:
                 index.setdefault("sqlite", {})["manifestError"] = "manifest_update_failed"
+                diagnostic_stage_failure(
+                    commit_recorder, error, stage_id=commit_stage,
+                    stage_code="commit", boundary="save",
+                )
         else:
             index.setdefault("sqlite", {})["manifestError"] = "manifest_skipped_after_sync_failure"
         # Write slim status JSON — no documents or fileManifest
-        write_json(DATA_DIR / "index.json", {
-            "generatedAt": index["generatedAt"],
-            "inbox": str(INBOX_DIR),
-            "count": index["count"],
-            "incremental": index["incremental"],
-            "sqlite": index.get("sqlite", {}),
-        })
+        try:
+            write_json(DATA_DIR / "index.json", {
+                "generatedAt": index["generatedAt"],
+                "inbox": str(INBOX_DIR),
+                "count": index["count"],
+                "incremental": index["incremental"],
+                "sqlite": index.get("sqlite", {}),
+            })
+        except Exception as error:
+            diagnostic_stage_failure(
+                commit_recorder, error, stage_id=commit_stage,
+                stage_code="commit", boundary="save",
+            )
+            diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+            diagnostic_prove_complete_coverage()
+            raise
+        diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+        # Only this concrete index producer—not a generic taskType label—can
+        # attest that its observed persistence boundary has been traversed.
+        diagnostic_prove_complete_coverage()
         if progress:
             progress(f"인덱싱 완료: 문서 {len(docs)}건, 재사용 {reused}건, 재처리 {rebuilt}건", progress=98)
         return index

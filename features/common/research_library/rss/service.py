@@ -1,5 +1,6 @@
 """RSS archive reading, filtering, feed pagination, merge export, and import."""
 import datetime as dt
+import inspect
 import os
 import re
 import sqlite3
@@ -32,6 +33,14 @@ from features.common.research_library.indexing.service import (
     build_index,
 )
 from features.common.workspace import data_dir, moved_pending_restart, research_inbox_dir
+from features.common.jobs import (
+    diagnostic_prove_complete_coverage,
+    diagnostic_stage_end,
+    diagnostic_stage_failure,
+    diagnostic_stage_start,
+)
+from features.common.diagnostics.schema import safe_failure
+from features.common.diagnostics.support import verified_source_frame
 
 ROOT = Path(__file__).resolve().parents[4]
 RSS_INBOX_DIR = research_inbox_dir() / "rss"
@@ -808,6 +817,7 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
     before = len(list(RSS_INBOX_DIR.glob("*.md")))
     collector_created = None
     collection_error = ""
+    collect_recorder, collect_stage = diagnostic_stage_start("collect")
     if progress:
         progress(f"RSS 수집 준비 중입니다. 기존 RSS 파일 {before}개", progress=5)
     if run_collection:
@@ -826,13 +836,41 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
                 capture_output=True, timeout=RSS_COLLECT_TIMEOUT_SECONDS,
                 creationflags=_cf,
             )
+            if proc.returncode != 0:
+                # Existing callers historically treated this as an OK
+                # collection result.  Preserve that authority/result contract,
+                # but do not falsely claim a successful collect observation.
+                try:
+                    current = inspect.currentframe()
+                    frame = verified_source_frame(
+                        app_root=ROOT,
+                        module_code="features.common.research_library.rss.service",
+                        function_code="_import_rssarchive_locked",
+                        line=current.f_lineno if current is not None else 1,
+                    )
+                    collect_recorder.failure(
+                        safe_failure(
+                            stage_id=collect_stage,
+                            stage_code="collect",
+                            reason_code="adapter_failed",
+                            exception_code="runtime_error",
+                            confirmation="observed",
+                            frames=() if frame is None else (frame,),
+                        ),
+                    ) if collect_recorder is not None else None
+                except Exception:
+                    pass
             if proc.stdout.strip():
                 output.append(proc.stdout.strip())
                 collector_created = _collection_created_count(proc.stdout)
             if proc.stderr.strip():
                 output.append(proc.stderr.strip())
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as error:
             collection_error = "timeout"
+            diagnostic_stage_failure(
+                collect_recorder, error, stage_id=collect_stage,
+                stage_code="collect", boundary="generic",
+            )
             output.append(
                 f"RSS collection timed out after {RSS_COLLECT_TIMEOUT_SECONDS}s. "
                 "RSS_COLLECT_TIMEOUT_SECONDS로 상한을 늘릴 수 있습니다."
@@ -841,7 +879,12 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
             # 이유를 버리면 왜 안 되는지 알 길이 없다. 예외 종류는 코드 식별자라
             # 사용자 자료가 아니다 — 원문 메시지는 담지 않는다.
             collection_error = type(exc).__name__
+            diagnostic_stage_failure(
+                collect_recorder, exc, stage_id=collect_stage,
+                stage_code="collect", boundary="generic",
+            )
             output.append(f"RSS collection failed ({collection_error}).")
+    diagnostic_stage_end(collect_recorder, collect_stage, "collect")
     after = len(list(RSS_INBOX_DIR.glob("*.md")))
     added = collector_created if collector_created is not None else max(after - before, 0)
     output.append(f"RSS collection finished. Added {added}, total {after}.")
@@ -882,6 +925,9 @@ def _import_rssarchive_locked(run_collection=True, progress=None, extra_args=Non
         invalidate_story_share_cache()
     except Exception:
         pass
+    # This attestation is intentionally after collect plus the concrete
+    # cache/index path. Generic ``taskType='rss'`` workers cannot set it.
+    diagnostic_prove_complete_coverage()
     return {
         "output": "\n".join(output),
         "collection": {"ok": not collection_error, "error": collection_error},

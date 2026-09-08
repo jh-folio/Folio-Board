@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
+from features.common.canonical_identity import ReportKind
 from features.common.job_json_commit import JobArtifactCommitter
 from features.common.job_json_recovery import recover_json_job, recover_json_jobs_startup
 from features.common.job_json_schema import (
@@ -53,7 +54,10 @@ class JobArtifactWorkspace:
 
             db_path = self.stager.data_root / "market-memory.sqlite3"
             for artifact in bundle.artifacts:
-                if artifact.canonical is not None:
+                # Briefing Change Intelligence was retired.  Historical
+                # reports remain readable and repairable, but a new JSON job
+                # must never turn a briefing commit into a change event.
+                if artifact.canonical is not None and artifact.canonical.report_kind is not ReportKind.BRIEFING:
                     project_committed_report(db_path, artifact.exact_path)
         except Exception:
             pass

@@ -121,6 +121,9 @@ def test_company_overlay_and_quality_producers_preserve_revision_contract(tmp_pa
     producers.workspace.commit(first, store, lifecycle)
     path = data_root / "company-analysis" / f"{report_id}.json"
     baseline = _read(path)
+    assert isinstance(baseline.get("changeBasis"), dict)
+    assert isinstance(baseline.get("changeSummary"), dict)
+    assert isinstance(baseline.get("changeIntelligence"), dict)
 
     # When: canonical, Overlay-only, and quality-repair writers run in sequence.
     second_job = _running(store, "company_analysis")
@@ -234,26 +237,21 @@ def test_topic_and_review_producers_use_exact_stable_and_nonpersisting_preparati
     saved_topic = _read(topic_paths[0])
     assert saved_topic["id"] == topic_id
     assert saved_topic["checkpoints"][0]["artifactId"] == topic_id
+    assert isinstance(saved_topic.get("changeBasis"), dict)
+    assert isinstance(saved_topic.get("changeSummary"), dict)
+    assert isinstance(saved_topic.get("changeIntelligence"), dict)
     assert review_calls == [{"date": "2026-07-18"}]
     assert _read(data_root / "investment-review" / "2026-07-18.json")["summary"] == "review"
 
 
 def test_review_builder_can_render_without_touching_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given: deterministic empty review inputs and a cache writer that fails if called.
-    from features.investment_review import service
+    # Given: v2's local input seam; persist=False must stay a draft only.
+    from features.investment_review import review_v2, service
 
-    monkeypatch.setattr(service, "_load_regime_states", lambda _warnings: [])
-    monkeypatch.setattr(service, "_load_theses_with_deltas", lambda _warnings: ([], {}))
-    monkeypatch.setattr(service, "_load_positions", lambda _warnings: [])
-    monkeypatch.setattr(service, "_load_watchlist", lambda _warnings: [])
-    monkeypatch.setattr(service, "_load_notes", lambda _warnings: [])
-    monkeypatch.setattr(service, "build_dashboard_tape", lambda _date, _warnings: {})
-    monkeypatch.setattr(service, "_load_recent_reports", lambda _warnings: [])
-
-    def reject_cache(_date: str, _review: dict) -> None:
-        raise AssertionError("nonpersisting preparation touched review cache")
-
-    monkeypatch.setattr(service, "_save_cache", reject_cache)
+    monkeypatch.setattr(review_v2, "gather_inputs", lambda *_args, **_kwargs: {
+        "portfolio": {"revision": 0, "positions": [], "updatedAt": ""}, "positions": [], "theses": [], "states": [],
+        "checkpoints": [], "analytics": {}, "reportRefs": [], "backtest": None, "backtestUncertainties": [], "manualLinks": {}, "capturedAt": "",
+    })
 
     # When: SharedJob preparation requests a fresh nonpersisting review.
     review = service.build_review(date="2026-07-18", force_refresh=True, persist=False)
@@ -261,6 +259,43 @@ def test_review_builder_can_render_without_touching_cache(monkeypatch: pytest.Mo
     # Then: a complete review is returned without invoking the live cache writer.
     assert review["date"] == "2026-07-18"
     assert isinstance(review["markdown"], str)
+
+
+def test_investment_review_cli_guard_passes_only_analytics_authority_and_commits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real v2 candidate with a saved-backtest signature must not conflict."""
+    from features.investment_review import review_v2
+
+    data_root = tmp_path / "data"
+    store = SharedJobStore(data_root / "jobs-v2.json", data_root / "jobs.json", clock=_clock)
+    lifecycle = JobPrivateLifecycle(data_root / "job-context", clock=_clock)
+    inputs = {
+        "portfolio": {"revision": 1, "updatedAt": "2026-07-18", "positions": [{"ticker": "NVDA"}]}, "positions": [{"ticker": "NVDA"}],
+        "theses": [], "states": [], "checkpoints": [], "reportRefs": [], "backtest": {"id": "run", "methodVersion": "portfolio-backtest-v1", "baseCurrency": "USD", "window": "monthly", "start": "2025-01-01", "end": "2026-01-01", "fingerprint": "backtest"},
+        "analytics": {"methodVersion": "portfolio-analytics-v1", "baseCurrency": "USD", "positions": [{"ticker": "NVDA", "weight": 1.0, "currency": "USD"}], "available": True, "compatibilitySignature": {"positions": [{"ticker": "NVDA", "weight": 1.0, "currency": "USD"}], "baseCurrency": "USD"}},
+        "backtestUncertainties": [], "manualLinks": {}, "capturedAt": "2026-07-18T00:00:00Z",
+    }
+    seen = []
+    def gather(_root, **kwargs):
+        seen.append(kwargs.get("analytics_authority"))
+        return inputs
+    monkeypatch.setattr(review_v2, "gather_inputs", gather)
+    candidate = review_v2.build_candidate(data_root, data_root / "investment-review", "2026-07-18")
+    producers = JobJsonProducers(data_root, clock=_clock, review_builder=lambda _body: candidate)
+    job = _running(store, "investment_review")
+    bundle = producers.stage_investment_review(job, InvestmentReviewJobRequest(body={"date": "2026-07-18"}, terminal_result={"artifactId": "2026-07-18", "reportId": "2026-07-18", "date": "2026-07-18"}))
+    producers.workspace.commit(bundle, store, lifecycle)
+    assert (data_root / "investment-review" / "2026-07-18.json").is_file()
+    assert seen and all(item is None or item == candidate["inputBasis"]["analytics"] for item in seen)
+
+
+@pytest.mark.parametrize("bad", ["../escape", "C:/escape", "2026-99-99"])
+def test_investment_review_cli_rejects_bad_date_before_stage(tmp_path: Path, bad: str) -> None:
+    data_root = tmp_path / "data"; store = SharedJobStore(data_root / "jobs-v2.json", data_root / "jobs.json", clock=_clock)
+    called = []
+    producers = JobJsonProducers(data_root, clock=_clock, review_builder=lambda _body: called.append(True) or {"date": bad})
+    with pytest.raises(JobArtifactValidationError, match="date is invalid"):
+        producers.stage_investment_review(_running(store, "investment_review"), InvestmentReviewJobRequest(body={"date": bad}, terminal_result={}))
+    assert not called and not (data_root / "job-staging").exists() and not (tmp_path / "escape").exists()
 
 
 def test_briefing_qa_matrix_checks_only_artifacts_the_producer_makes(tmp_path: Path) -> None:

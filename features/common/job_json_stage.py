@@ -109,7 +109,10 @@ class JobArtifactStager:
         relative_target = self._relative_target(spec.exact_path)
         with artifact_lock(spec.exact_path):
             current = read_logical(spec.exact_path, spec.storage)
-            target = copy_json(spec.payload)
+            payload = copy_json(spec.payload)
+            if spec.payload_validator is not None:
+                payload = spec.payload_validator(payload, current)
+            target = copy_json(payload)
             target["jobCommit"] = {"jobId": job.id, "operationId": operation_id}
             expected = ExpectedArtifact(
                 storage=spec.storage,
@@ -134,7 +137,7 @@ class JobArtifactStager:
             canonicalContentHash=None,
             canonicalChanged=None,
         )
-        return StagedArtifact(manifest, spec.exact_path, stage_path, None)
+        return StagedArtifact(manifest, spec.exact_path, stage_path, None, spec.pre_promotion_validator)
 
     def stage(
         self,
