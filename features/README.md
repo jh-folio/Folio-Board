@@ -1,6 +1,6 @@
 # Features
 
-`features/`는 Folio OS의 기능 설명서, 프롬프트, Python 런타임 코드를 모아둔 곳입니다.
+`features/`는 Folio Board의 기능 설명서, 프롬프트, Python 런타임 코드를 모아둔 곳입니다.
 폴더 구조는 가능한 한 웹 화면의 탭 흐름을 따르고, 여러 탭이 함께 쓰는 기반 기능은 `features/common/` 아래에 둡니다.
 
 ## 폴더 구조

@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Folio OS is a solo project. Planning uses one local source of truth instead of mirroring the same work into GitHub Issues.
+Folio Board is a solo project. Planning uses one local source of truth instead of mirroring the same work into GitHub Issues.
 
 GitHub Issues are not a required planning layer. Do not create or maintain an Issue merely to mirror a local plan. Blank Issues may remain available for external bug reports or feedback, but they do not need a matching local-plan crosswalk.
 

@@ -37,13 +37,13 @@ def preview_image(data_dir: Path, image_bytes: bytes, *, content_type: str, mode
         if mode == "vision":
             rows = extract_vision(source, consent=consent, mime_type=content_type)
             engine = "external_vision"
-            notices = ["선택한 crop만 외부 Vision provider에 전송했고 Folio OS에는 이미지를 보관하지 않았습니다."]
+            notices = ["선택한 crop만 외부 Vision provider에 전송했고 Folio Board에는 이미지를 보관하지 않았습니다."]
         elif mode == "agent":
             # 설정한 CLI가 파일을 직접 연다. 바이트는 프롬프트에 실리지 않고,
             # 이 with 블록이 끝나면 임시 파일도 사라진다.
             rows = extract_agent(source)
             engine = "agent_cli"
-            notices = ["설정한 Agent CLI가 사진을 읽었습니다. 사진은 그 CLI 제공자에게 전달되며 Folio OS에는 보관하지 않았습니다."]
+            notices = ["설정한 Agent CLI가 사진을 읽었습니다. 사진은 그 CLI 제공자에게 전달되며 Folio Board에는 보관하지 않았습니다."]
         else:
             preprocess_image(source, processed)
             rows, preflight = extract_local(processed)

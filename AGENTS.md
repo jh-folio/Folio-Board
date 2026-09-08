@@ -1,14 +1,14 @@
-# Folio OS Agent Instructions
+# Folio Board Agent Instructions
 
-> **Folio OS** — A Local Investment Research Workspace for Individual Investors
+> **Folio Board** — A Local Investment Research Workspace for Individual Investors
 >
-> 이 문서는 Folio OS 작업의 공통 지침이다. 먼저 이 핵심 문서를 읽고, 작업 대상에 해당하는 기능 README와 §10의 상세 문서만 추가로 읽는다.
+> 이 문서는 Folio Board 작업의 공통 지침이다. 먼저 이 핵심 문서를 읽고, 작업 대상에 해당하는 기능 README와 §10의 상세 문서만 추가로 읽는다.
 > 사용자용 설명은 [README.md](README.md), 기능별 세부 규칙은 `features/*/README.md`를 본다.
 > `plan/`은 개인 개발용 로컬 계획 폴더이며 공개 저장소와 릴리즈 패키지에는 포함하지 않는다. 계획과 진행 상황의 단일 입구는 `plan/STATUS.md`이며, 사용자가 로컬 계획 폴더를 제공한 경우에만 참고한다.
 >
 > **동기화 지침**: `AGENTS.md`와 `CLAUDE.md`는 항상 동일한 본문을 유지한다. 한 파일을 수정하면 반드시 다른 파일도 같은 내용으로 업데이트한다.
 >
-> **명칭 메모**: 표시명/문서상 명칭과 기본 로컬 폴더명은 **Folio OS**다. 로컬 경로에 공백이 포함될 수 있으므로 경로를 다루는 스크립트와 명령에서는 반드시 따옴표로 감싼다.
+> **명칭 메모**: 표시명/문서상 명칭과 기본 로컬 폴더명은 **Folio Board**다. 화면 워드마크는 `folio ─ board`이고, 막대는 로고에서만 "dash"로도 읽혀 `folio dashboard`가 되는 덤이다 — 문서·코드·`sr-only`에는 항상 `Folio Board`를 쓰고 `Folio Dashboard`로 적지 않는다. 로컬 경로에 공백이 포함될 수 있으므로 경로를 다루는 스크립트와 명령에서는 반드시 따옴표로 감싼다.
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## 0. 30초 요약
 
-Folio OS는 개인 투자자가 **자기 PC에서** 돌리는 로컬 투자 리서치 워크스페이스다.
+Folio Board는 개인 투자자가 **자기 PC에서** 돌리는 로컬 투자 리서치 워크스페이스다.
 RSS·기사·리포트·공시·PDF를 모아 인덱싱하고, 매일 시장 브리핑·기업분석을 만들며, 일부 테마/딥리서치 런타임은 저장 보고서 호환을 위해 유지한다.
 여기에 더해, 사용자가 Obsidian에 적어둔 **자기 생각(투자 thesis·메모)을 다시 읽어 최신 자료로 검증**하는
 양방향 피드백 루프를 지향한다. 단, 사용자 생각이 보편 보고서를 오염시키지 않도록 **2계층으로 분리**한다.
@@ -26,7 +26,7 @@ RSS·기사·리포트·공시·PDF를 모아 인덱싱하고, 매일 시장 브
 
 ---
 
-## 1. Folio OS란 — 2계층 모델
+## 1. Folio Board란 — 2계층 모델
 
 모든 산출물은 두 계층으로 나뉜다. 이 분리가 프로젝트의 척추다.
 
@@ -39,14 +39,14 @@ Personal Overlay   = Canonical을 사용자의 Obsidian 노트·포트폴리오�
 
 ```text
 외부 기사/공시/실적/리포트   = evidence            (객관적 근거)
-Folio OS가 만든 보고서        = source-grounded      (근거 기반 분석)
+Folio Board가 만든 보고서        = source-grounded      (근거 기반 분석)
 사용자 Obsidian 노트          = hypothesis           (가설 — 근거가 아님)
 ```
 
 핵심 흐름:
 
 ```text
-Raw Data → Folio OS 1차 가공(Canonical) → Obsidian 2차 사고 → Folio OS가 다시 검증·연결(Personal Overlay)
+Raw Data → Folio Board 1차 가공(Canonical) → Obsidian 2차 사고 → Folio Board가 다시 검증·연결(Personal Overlay)
 ```
 
 ---
@@ -155,7 +155,7 @@ ui-ux-pro-max는 필수 절차가 아니다. 기존 문서와 화면만으로 �
 - **프리미티브 우선(0.5 Stage D)**: 버튼·칩·세그먼트·패널 면은 `public/styles.css` 말미의 프리미티브 4종(`.btn` / `.surface` / `.chip` / `.segment`)을 쓴다. 화면 전용 CSS에서 이들의 **모양을 다시 선언하지 않는다** — 배치만 갖는다. 의미색·화면별 배치가 필요하면 프리미티브 뒤에 훅 클래스를 덧붙인다(`className="chip status-chip"`). 모서리와 굵기는 토큰(`--r-control|group|panel|pill`, `--fw-normal|medium|bold`)만 쓰고 숫자를 직접 넣지 않는다. 선택 상태는 `aria-pressed`가 소유하며 `.active`로 칠하지 않는다. 컨테이너에서 자손 `button`을 통째로 칠하지 않는다(세그먼트 알약까지 덮어쓴 사례가 있다). 상세 규칙과 새 화면 체크리스트는 `features/frontend_ui/DESIGN_SYSTEM.md`를 따른다.
 - **폼 컨트롤도 프리미티브 언어**: `input`/`select`/`textarea`는 버튼과 같은 무테 회색 fill·36px 높이를 쓴다. 컨트롤에 `border`를 다시 주지 않고 상태는 hover 배경과 `:focus-visible` 링으로 표현한다. 라벨이 붙은 select는 래퍼만 면을 갖고 안쪽 select는 면을 그리지 않는다(상자 안 상자 방지).
 - 완료 전 실제 화면을 데스크톱과 모바일, 지원되는 Light/Dark 테마에서 캡처해 인접 화면과 비교한다. 키보드 focus, reduced motion, 가로 overflow, loading/empty/error 상태를 확인하고 관련 Playwright/axe 및 프론트엔드 검증을 실행한다.
-- UI 작업의 완료 기준은 코드 동작만이 아니라 기존 Folio OS와의 시각적·상호작용적 일관성까지 확인한 상태다.
+- UI 작업의 완료 기준은 코드 동작만이 아니라 기존 Folio Board와의 시각적·상호작용적 일관성까지 확인한 상태다.
 
 ### app.py 경량화 규칙
 

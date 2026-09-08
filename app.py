@@ -419,7 +419,7 @@ async def lifespan(_app: FastAPI):
         close_diagnostics_runtime()
 
 
-fastapi_app = FastAPI(title="Folio OS", version=APP_VERSION, lifespan=lifespan)
+fastapi_app = FastAPI(title="Folio Board", version=APP_VERSION, lifespan=lifespan)
 TOSS_REALTIME_HUB = TossRealtimeHub()
 SMART_COLLECTION_SERVICE = create_smart_collection_service(DATA_DIR)
 TOPIC_APPROVAL_BOUNDARY = ApprovedRequestBoundary(
@@ -2006,7 +2006,7 @@ fastapi_app.mount("/", StaticFiles(directory=PUBLIC_DIR, html=True), name="publi
 def _port_owner_message(host: str, port: int) -> str:
     """포트가 이미 쓰이고 있으면 사람이 읽을 문장을, 비어 있으면 빈 문자열을 돌려준다.
 
-    같은 Folio OS가 이미 떠 있는 경우가 대부분이라 그 사실을 먼저 확인한다. 두 번
+    같은 Folio Board가 이미 떠 있는 경우가 대부분이라 그 사실을 먼저 확인한다. 두 번
     켜는 것은 실수가 아니라 흔한 일이고(창을 닫지 않고 .cmd를 다시 누른다), 그때
     필요한 답은 "이미 켜져 있으니 그 주소를 여세요"다.
     """
@@ -2034,12 +2034,12 @@ def _port_owner_message(host: str, port: int) -> str:
 
     if mine:
         return (
-            f"Folio OS is already running. Open {address} in your browser.\n"
-            "Close the other Folio OS window first if you want to restart it."
+            f"Folio Board is already running. Open {address} in your browser.\n"
+            "Close the other Folio Board window first if you want to restart it."
         )
     return (
-        f"Port {port} is already in use by another program, so Folio OS cannot start.\n"
-        "Close that program, or start Folio OS on another port: set PORT=8788 before running."
+        f"Port {port} is already in use by another program, so Folio Board cannot start.\n"
+        "Close that program, or start Folio Board on another port: set PORT=8788 before running."
     )
 
 
@@ -2053,7 +2053,7 @@ def main():
     port = int(os.environ.get("PORT", "8787"))
     host = os.environ.get("FOLIO_HOST", "127.0.0.1").strip() or "127.0.0.1"
 
-    print("Folio OS starting...")
+    print("Folio Board starting...")
     # `localhost`가 아니라 127.0.0.1을 안내한다. Windows에서 localhost는 ::1을 먼저
     # 시도하는데 서버는 IPv4 루프백만 열어 두므로, 새 연결마다 폴백까지 약 2초를
     # 기다린다(실측: localhost 2.02초 / 127.0.0.1 0.01초). 화면 전환이 느리다고

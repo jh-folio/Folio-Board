@@ -8,9 +8,9 @@ PORT="${PORT:-8787}"
 URL="http://127.0.0.1:${PORT}"
 
 echo ""
-echo "Folio OS starting..."
+echo "Folio Board starting..."
 echo "Address: ${URL}"
-echo "Closing this window stops Folio OS."
+echo "Closing this window stops Folio Board."
 echo ""
 
 if [ -f ".venv/bin/python3" ]; then

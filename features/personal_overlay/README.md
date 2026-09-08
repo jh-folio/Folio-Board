@@ -1,7 +1,7 @@
 # Personal Overlay
 
 Canonical 보고서(브리핑·기업분석)를 사용자의 Obsidian **hypothesis 노트와 대조**한 개인 해석 레이어를 만든다.
-Folio OS 2계층 모델의 Personal Overlay 계층이다.
+Folio Board 2계층 모델의 Personal Overlay 계층이다.
 
 > 로컬 계획문서 `IMPLEMENTATION_PLAN.md` Step 2 — 백엔드·API·UI·테스트 구현 완료.
 

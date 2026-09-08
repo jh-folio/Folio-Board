@@ -100,12 +100,12 @@ STATUS_ADAPTERS = ADAPTERS
 # adapter id → 실제 실행 바이너리 이름.
 BINARY_NAMES = {"codex": "codex", "claude": "claude", "antigravity": "agy"}
 
-# agy headless가 파일 읽기를 거부했다는 표시. Folio OS의 Agent task는 **전부** 컨텍스트
+# agy headless가 파일 읽기를 거부했다는 표시. Folio Board의 Agent task는 **전부** 컨텍스트
 # 팩 파일을 읽는 것으로 시작하므로(팩이 5MB라 프롬프트에 넣을 수 없다), 이 권한이 없으면
 # 브리핑·기업분석 같은 task를 아예 만들 수 없다. 대화처럼 파일을 안 읽는 호출은 된다.
 AGY_PERMISSION_DENIED_MARK = 'the "read_file" permission'
 AGY_PERMISSION_HELP = (
-    "Antigravity(agy)의 headless 모드가 파일 읽기 권한을 자동 거부했습니다. Folio OS의 "
+    "Antigravity(agy)의 headless 모드가 파일 읽기 권한을 자동 거부했습니다. Folio Board의 "
     "브리핑·기업분석은 컨텍스트 팩 파일을 읽어야 하므로 이 상태에서는 만들 수 없습니다. "
     "설정에서 Codex나 Claude CLI로 바꾸거나, "
     "`~/.gemini/antigravity-cli/settings.json`의 permissions.allow에 read_file 규칙을 "
@@ -114,7 +114,7 @@ AGY_PERMISSION_HELP = (
 
 AGY_UNVERIFIED_HELP = (
     "Antigravity(agy)가 컨텍스트 팩 파일을 읽을 수 있는지 아직 확인하지 않았습니다. "
-    "Folio OS의 브리핑·기업분석은 팩 파일을 읽어야 하므로 확인 전에는 열지 않습니다. "
+    "Folio Board의 브리핑·기업분석은 팩 파일을 읽어야 하므로 확인 전에는 열지 않습니다. "
     "설정 > AI Agent에서 `상태 새로고침`을 누르면 실제로 확인합니다(약 20초). "
     "그동안은 Codex나 Claude CLI를 사용하세요."
 )
@@ -489,7 +489,7 @@ def agent_preflight(adapter: str = "") -> dict:
         "workspace",
         "Workspace",
         ROOT.exists() and (ROOT / "app.py").exists(),
-        "Folio OS workspace를 확인했습니다." if ROOT.exists() else "Folio OS workspace를 찾을 수 없습니다.",
+        "Folio Board workspace를 확인했습니다." if ROOT.exists() else "Folio Board workspace를 찾을 수 없습니다.",
         detail=str(ROOT),
     )
     add(
@@ -543,7 +543,7 @@ def agent_preflight(adapter: str = "") -> dict:
         "bridge_supported",
         "Bridge Support",
         bool(selected.get("bridgeSupported", True)),
-        "이 CLI는 Folio OS Direct Bridge에서 지원됩니다."
+        "이 CLI는 Folio Board Direct Bridge에서 지원됩니다."
         if selected.get("bridgeSupported", True)
         else selected.get("error") or "이 CLI는 현재 Direct Bridge에서 지원되지 않습니다.",
     )
@@ -580,11 +580,11 @@ def _agent_prompt(pack_path: Path, pack: dict, *, inline_briefing: bool = False)
     contract = pack.get("outputContract") or {}
     output_format = contract.get("format", "markdown")
     lines = [
-        "Act as the final Folio OS report author for this single task.",
+        "Act as the final Folio Board report author for this single task.",
         ("Use the prepared briefing input below; no file or shell lookup is needed."
          if inline_briefing else f"Read the UTF-8 Agent Context Pack at: {pack_path}"),
         "Follow agentInstructions, prompt, context, evidence boundaries, outputContract, and writeBackContract in the supplied input.",
-        "Do not modify files, run the Folio OS writeback command, or expose credentials.",
+        "Do not modify files, run the Folio Board writeback command, or expose credentials.",
         "Complete the requested payload now. Do not enter plan mode, write a plan, or ask for approval to start drafting.",
     ]
     if pack.get("taskType") == "briefing":
@@ -949,7 +949,7 @@ def _briefing_correction_prompt(base_prompt: str, violations: list[str], contrac
     return "\n".join([
         base_prompt,
         "",
-        "The previous briefing output violated the Folio OS API-parity contract.",
+        "The previous briefing output violated the Folio Board API-parity contract.",
         "Regenerate the complete report from the same context pack. Do not patch or 축약하지 마세요.",
         "Contract violations:",
         problems,

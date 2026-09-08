@@ -1,4 +1,4 @@
-# Folio OS Public Release Checklist
+# Folio Board Public Release Checklist
 
 Use this checklist before changing the repository visibility to Public.
 

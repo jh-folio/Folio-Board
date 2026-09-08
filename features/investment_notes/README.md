@@ -1,6 +1,6 @@
 # Investment Notes
 
-Folio OS 내부에서 운용하는 Agent-assisted 투자 생각 정리 레이어입니다. Obsidian이 없어도 보고서 옆 노트 패널에서 브리핑, Market Memory, 기업분석 보고서를 참고해 사용자의 판단을 정리하고 다시 불러올 수 있게 합니다.
+Folio Board 내부에서 운용하는 Agent-assisted 투자 생각 정리 레이어입니다. Obsidian이 없어도 보고서 옆 노트 패널에서 브리핑, Market Memory, 기업분석 보고서를 참고해 사용자의 판단을 정리하고 다시 불러올 수 있게 합니다.
 
 0.2 화면에서는 "Thesis", "Note Link", "Personal Overlay" 같은 내부 용어를 전면에 내세우지 않습니다. 노트 패널은 두 개의 탭으로 구성합니다.
 

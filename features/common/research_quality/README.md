@@ -1,6 +1,6 @@
 # Research Quality — 공통 리서치 품질 평가
 
-Topic Report v2의 Quality Gate를 Folio OS 전체가 재사용할 수 있도록 공통화한 레이어입니다.
+Topic Report v2의 Quality Gate를 Folio Board 전체가 재사용할 수 있도록 공통화한 레이어입니다.
 평가는 LLM 없이 규칙 기반으로 동작하며, Step 6의 `checkpoints`/`evidenceItems`/`sourceLedger`/`dataGaps`/`marketTape`를 읽는다.
 `features/common/quality_generation/`은 이 evaluator를 생성 후 평가와 제한적 repair 기준으로 재사용합니다.
 

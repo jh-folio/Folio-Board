@@ -1785,7 +1785,7 @@ def prepare_quality_repair_pack(artifact_type: str, artifact_id: str, *, owner_j
         "dataGaps": artifact.get("dataGaps") or [],
         "markdown": artifact.get("markdown") or "",
     }, ensure_ascii=False, indent=2)
-    prompt = """Improve only weak sections of the stored Folio OS report. Use no facts outside the supplied evidence and source ledger. Preserve the report type, headings, supported numbers, counter-evidence, uncertainties, checkpoints, and Source & Data Notes. Return the complete repaired Markdown only."""
+    prompt = """Improve only weak sections of the stored Folio Board report. Use no facts outside the supplied evidence and source ledger. Preserve the report type, headings, supported numbers, counter-evidence, uncertainties, checkpoints, and Source & Data Notes. Return the complete repaired Markdown only."""
     pack = A.build_pack(
         task_type="quality_repair",
         artifact_type="quality_repair",

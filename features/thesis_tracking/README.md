@@ -1,7 +1,7 @@
 # Thesis Tracking
 
 기업 투자 **thesis(투자 논리)를 추적**하고, 최신 자료 대비 강화/유지/약화/이탈을 판정한다(Thesis Delta).
-Folio OS Personal Overlay 계층의 기업 단위 적용(개선안 02).
+Folio Board Personal Overlay 계층의 기업 단위 적용(개선안 02).
 
 > 로컬 계획문서 `IMPLEMENTATION_PLAN.md` Step 3 기반.
 > 현재 구현은 company_thesis 노트 파싱/저장/조회, Delta 생성/저장/API/UI/Obsidian export에 더해

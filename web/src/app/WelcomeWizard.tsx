@@ -6,7 +6,7 @@ import { useThemePreference, type ThemePreference } from "./themePreference";
 
 /** 첫 실행 안내.
  *
- *  Folio OS는 자료를 모으고 읽는 도구라 첫 화면이 비어 있다. 무엇을 먼저 해야 하는지
+ *  Folio Board는 자료를 모으고 읽는 도구라 첫 화면이 비어 있다. 무엇을 먼저 해야 하는지
  *  모르면 빈 화면만 보고 닫는다. 그래서 **켠 뒤 바로 쓸 수 있게 되는 것 두 가지**만
  *  묻는다 — 어느 시장을 볼지, AI를 쓸지. 둘 다 나중에 설정에서 바꿀 수 있고, 전부
  *  건너뛰어도 앱은 규칙 기반으로 동작한다.

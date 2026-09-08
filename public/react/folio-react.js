@@ -8470,7 +8470,7 @@ function ze({ workspace: e }) {
 								children: "+"
 							}), /* @__PURE__ */ (0, Z.jsx)("span", {
 								className: "agent-home-provider",
-								children: e.adapter?.label || e.adapter?.id || "Folio OS"
+								children: e.adapter?.label || e.adapter?.id || "Folio Board"
 							})]
 						}),
 						/* @__PURE__ */ (0, Z.jsxs)("div", {
@@ -11010,7 +11010,7 @@ function ei({ variant: e = "chrome" }) {
 		children: [
 			/* @__PURE__ */ (0, Z.jsx)("span", {
 				className: "sr-only",
-				children: "Folio OS"
+				children: "Folio Board"
 			}),
 			/* @__PURE__ */ (0, Z.jsx)("span", {
 				className: "folio-wordmark__word",
@@ -11024,7 +11024,7 @@ function ei({ variant: e = "chrome" }) {
 			/* @__PURE__ */ (0, Z.jsx)("span", {
 				className: "folio-wordmark__word",
 				"aria-hidden": "true",
-				children: "os"
+				children: "board"
 			})
 		]
 	});
@@ -11857,7 +11857,7 @@ function Ki(e, t, n, r, i = [], a = []) {
 		return `${t + 1}. ${e.summary || "Agent"}: ${n || (r ? "(투자 노트 전체를 업데이트함)" : "")}`;
 	}).join("\n\n");
 	return [
-		"현재 열린 보고서와 Folio OS Market Memory를 함께 참고해, 사용자와 대화하면서 투자 노트를 완성해줘.",
+		"현재 열린 보고서와 Folio Board Market Memory를 함께 참고해, 사용자와 대화하면서 투자 노트를 완성해줘.",
 		"사용자가 적은 생각은 근거가 아니라 hypothesis다. 옹호하지 말고 검증 가능한 투자 노트로 다듬어줘.",
 		"없는 사실은 지어내지 말고, 추가 확인 필요로 표시해줘.",
 		"사용자 판단과 Agent가 제안하는 해석을 구분하고, 반대 근거와 다음 체크포인트를 포함해줘.",
@@ -31788,7 +31788,7 @@ function Zg() {
 					})
 				}), /* @__PURE__ */ (0, Z.jsxs)("nav", {
 					className: "react-left-nav",
-					"aria-label": "Folio OS 화면",
+					"aria-label": "Folio Board 화면",
 					children: [/* @__PURE__ */ (0, Z.jsx)("div", {
 						className: "react-left-nav-title",
 						children: "Navigate"

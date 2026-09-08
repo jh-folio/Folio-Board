@@ -42,7 +42,7 @@ export function AgentComposer({ workspace }: { workspace: AgentWorkspaceControll
             >
               +
             </button>
-            <span className="agent-home-provider">{workspace.adapter?.label || workspace.adapter?.id || "Folio OS"}</span>
+            <span className="agent-home-provider">{workspace.adapter?.label || workspace.adapter?.id || "Folio Board"}</span>
           </div>
           <div className="agent-home-toolbar-right">
             <button

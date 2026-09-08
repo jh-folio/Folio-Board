@@ -148,10 +148,10 @@ def build_pack(
 def agent_instructions(task_type: str) -> str:
     task_type = normalize_task_type(task_type)
     base = [
-        "You are the current AI agent acting as the final Folio OS author.",
+        "You are the current AI agent acting as the final Folio Board author.",
         "Use only the provided prompt/context plus clearly cited local/web material you explicitly inspect.",
         "Do not use .env, API keys, tokens, or private credentials.",
-        "Respect Folio OS layers: external evidence is evidence, Folio OS reports are source-grounded, user notes are hypotheses only.",
+        "Respect Folio Board layers: external evidence is evidence, Folio Board reports are source-grounded, user notes are hypotheses only.",
         "Include counter-evidence, uncertainties, and concrete next checkpoints when the task asks for judgment.",
         "Do not invent unavailable numbers. State data gaps and suggested verification routes.",
     ]
@@ -311,6 +311,6 @@ def agent_generation(source_count: int = 0, *, status: str = "ok_agent_authored"
         "status": status,
         "provider": "external_agent",
         "model": str(model or "").strip() or "current-agent-session",
-        "message": message or "AI 에이전트가 Folio OS context pack을 읽고 생성했습니다.",
+        "message": message or "AI 에이전트가 Folio Board context pack을 읽고 생성했습니다.",
         "sourceCount": int(source_count or 0),
     }

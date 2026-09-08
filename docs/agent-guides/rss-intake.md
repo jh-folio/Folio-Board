@@ -5,7 +5,7 @@
 
 ### RSS와 뉴스 검색 (Evidence Intake)
 
-- 수집은 RSS 단독이 아니라 Folio OS Evidence Intake 경로다. 최종 단위는 `IntakeEvidenceItem`이고 RSS는 `collector=rss` 입력원 중 하나다.
+- 수집은 RSS 단독이 아니라 Folio Board Evidence Intake 경로다. 최종 단위는 `IntakeEvidenceItem`이고 RSS는 `collector=rss` 입력원 중 하나다.
 - 모듈 경계(단방향 DAG): `rss_archive.py`(얇은 CLI/orchestration) → `fetch.py`(HTTP retry/backoff) → `parser.py`(RSS/Atom→raw item) → `article.py`(본문/요약 추출) → `relevance.py`(시장 관련성 게이트) → `normalizer.py`(raw→EvidenceItem) → `policy.py`(dedupe/retry/relevance score/full-text/paywall) → `collectors.py`(official adapter) → `writer.py`(YAML front matter Markdown 아카이브 IO + state) → `store.py`(`research-index.sqlite3::evidence_items`). `rss_archive.py`에는 run-level orchestration만 둔다(parse/fetch/write 로직 추가 금지).
 - 설정 파일로 분리: `config/rss_feeds.yaml`, `config/evidence_sources.yaml`. 코드 수정 없이 feed enable/disable이 가능하다.
 - **피드는 정기적으로 죽는다.** 매체가 호스트를 옮기면 기존 URL이 200 OK와 옛 항목을 계속 반환해 정상처럼 보인다(2026-08 확인: WSJ `feeds.a.dj.com` 3개가 553일, MarketWatch `feeds.marketwatch.com`이 396일 정체 상태로 응답 중이었고 `feeds.content.dowjones.io`가 현행 호스트다). 커버리지가 이상하면 건수가 아니라 **최신 항목 시각**을 먼저 확인한다.

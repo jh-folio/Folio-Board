@@ -800,7 +800,7 @@ def _render_market_memory_snapshot_context(snapshot, *, max_sources=6):
 
     lines = [
         "## Market Memory Context",
-        "이 블록은 Folio OS의 중기 시장 배경입니다. 기업 고유 사실의 evidence가 아니라 시장 배경/context로만 사용하세요.",
+        "이 블록은 Folio Board의 중기 시장 배경입니다. 기업 고유 사실의 evidence가 아니라 시장 배경/context로만 사용하세요.",
         "- layer: source-grounded market context (비교 맥락 전용)",
         f"- source: market_state_snapshot",
         f"- asOf: {snapshot.get('asOf', '')}",

@@ -28,7 +28,7 @@
 12. **끝까지 완성**: 꼬리 섹션(반론과 리스크, 시나리오, 앞으로 확인할 체크포인트, 결론, Source & Data Notes)을 절대 생략하지 마라. 다만 이것은 **잘림 방지 규칙이지 짧게 쓰라는 뜻이 아니다** — 각 섹션은 입력에 배정된 문자 예산의 최소 70%를 채워라. 채울 말이 없으면 분량을 줄이지 말고, 무엇을 확인하지 못했는지와 그것이 판단에 어떤 한계를 남기는지를 그 자리에 써라.
 13. **품질 기준 선충족**: 보고서는 생성 후 sourceGrounding, coverage, counterEvidence, personalBiasRisk 기준으로 평가된다. 초안부터 Evidence Pack의 supporting/challenging/data_point를 구분하고, 비어 있는 분석축은 dataGap으로 남기며, userContext를 evidence로 쓰지 마라.
 14. **딥 리서치 모드**: 입력 컨텍스트에 `딥 리서치 모드`가 있으면 하위 질문별 근거 커버리지, 남은 갭, 시나리오, 반대 논지, 반증 조건, 정량 근거표를 반드시 포함하라. 라운드는 입력에 적힌 상한을 넘었다고 쓰지 마라.
-15. **딥 리서치 근거 연결**: 입력에 `Deep Research generation contract`가 있으면 각 근거 사용 섹션 끝에 `<!-- folio-source-ids: 허용된_source_id -->`를 한 번 넣어라. 제공된 ID만 쓰고, 사용자 컨텍스트나 Folio OS 생성물을 근거 ID로 만들지 마라. 이 주석은 독자에게 보이는 본문이 아니다.
+15. **딥 리서치 근거 연결**: 입력에 `Deep Research generation contract`가 있으면 각 근거 사용 섹션 끝에 `<!-- folio-source-ids: 허용된_source_id -->`를 한 번 넣어라. 제공된 ID만 쓰고, 사용자 컨텍스트나 Folio Board 생성물을 근거 ID로 만들지 마라. 이 주석은 독자에게 보이는 본문이 아니다.
     **근거 ID를 본문 문장에 노출하지 마라** — `[macro_DGS10]`처럼 쓰면 독자는 뜻 없는 식별자를 읽게 된다.
     출처를 본문에서 밝히려면 ID가 아니라 매체명이나 자료 이름으로 쓴다("Reuters 보도에 따르면", "FRED 기준").
 
