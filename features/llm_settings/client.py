@@ -1,4 +1,7 @@
 """LLM HTTP client, provider config, and env settings management."""
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 import json
 import os
 import re
@@ -8,15 +11,21 @@ import urllib.request
 from pathlib import Path
 
 from features.llm_settings.model_catalog import normalize_model_id
+from features.llm_settings.reasoning import (
+    is_supported_reasoning_effort,
+    normalize_reasoning_effort,
+)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_OPENAI_MODEL = "gpt-5.5"
+DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+GLOBAL_REASONING_ENV = "AI_AGENT_REASONING_EFFORT"
+TOSS_OPEN_API_DEFAULT_BASE_URL = "https://openapi.tossinvest.com"
 SECRET_STORE_SERVICE = "Folio OS"
 SECRET_ENV_KEYS = {
     "OPENAI_API_KEY",
@@ -37,6 +46,28 @@ class LlmRequestError(RuntimeError):
         self.status_code = status_code
         self.body = body
         super().__init__(f"HTTP {status_code}: {message}" + (f" · {body[:500]}" if body else ""))
+
+
+# A producer binds one resolved task configuration for the duration of its
+# request.  Feature modules intentionally import ``selected_llm_config``
+# directly, so a ContextVar gives all nested calls the same provider/model
+# without mutating ``os.environ`` or the process-wide global setting.
+_TASK_LLM_CONFIG: ContextVar[dict | None] = ContextVar("folio_task_llm_config", default=None)
+
+
+@contextmanager
+def bind_task_llm_config(config):
+    """Bind an in-memory API configuration to the current producer context.
+
+    The config may contain a credential while it is being used, but this
+    context never serializes or logs it.  Callers should pass a fresh mapping
+    obtained at execution time; nested contexts restore the previous value.
+    """
+    token = _TASK_LLM_CONFIG.set(deepcopy(dict(config)) if isinstance(config, dict) else None)
+    try:
+        yield
+    finally:
+        _TASK_LLM_CONFIG.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -132,20 +163,105 @@ def ai_agent_mode() -> str:
     return "cli"
 
 
+def configured_global_reasoning_effort(*, mode: str, provider: str, model: str, runtime: bool = False) -> str:
+    """Read the global effort without treating a display label as transport.
+
+    A missing new setting is deliberately exposed as ``provider_default`` so
+    existing installations do not acquire a new persisted preference.  At
+    runtime, an older Astra-only environment setting keeps its prior behavior
+    (including the historical low default) until the user explicitly saves a
+    global effort in Settings.
+    """
+    load_dotenv()
+    raw = os.environ.get(GLOBAL_REASONING_ENV)
+    if raw is None:
+        if runtime and str(mode or "").strip().lower() in {"api", "llm_api"} and str(provider or "").strip().lower() == "openai" and str(model or "").strip().lower() == "gpt-6-astra":
+            raw = os.environ.get("OPENAI_ASTRA_REASONING_EFFORT", "low") or "low"
+        else:
+            return "provider_default"
+    try:
+        normalized = normalize_reasoning_effort(raw)
+    except ValueError as exc:
+        raise ValueError("Invalid AI_AGENT_REASONING_EFFORT") from exc
+    if not is_supported_reasoning_effort(mode, provider, model, normalized):
+        raise ValueError("Unsupported AI_AGENT_REASONING_EFFORT for selected model")
+    return normalized
+
+
 def default_generation_mode() -> str:
     if not ai_agent_enabled():
         return "rules"
     return "llm_api" if ai_agent_mode() == "api" else "llm_cli"
 
 
+def config_for_provider(provider=None, *, model=None, reasoning_effort=None):
+    """Build an API client config for an explicit provider at call time.
+
+    Task defaults must be able to keep using their own provider when the
+    global provider changes.  ``selected_llm_config`` intentionally follows
+    the global setting; this helper selects only the provider-specific key and
+    model while retaining the existing credential store.
+    """
+    cfg = openai_config()
+    selected = str(provider or cfg.get("provider") or "openai").strip().lower()
+    if selected == "anthropic":
+        selected = "claude"
+    if selected not in {"openai", "gemini", "claude"}:
+        raise ValueError(f"Unsupported API provider: {selected}")
+    if selected == "gemini":
+        api_key = cfg.get("geminiApiKey", "")
+        default_model = cfg.get("geminiModel", DEFAULT_GEMINI_MODEL)
+    elif selected == "claude":
+        api_key = cfg.get("anthropicApiKey", "")
+        default_model = cfg.get("anthropicModel", DEFAULT_ANTHROPIC_MODEL)
+    else:
+        api_key = cfg.get("apiKey", "")
+        default_model = cfg.get("model", DEFAULT_OPENAI_MODEL)
+    result = {
+        "provider": selected,
+        "apiKey": str(api_key or "").strip(),
+        "model": str(model or default_model or "").strip(),
+        "enabled": bool(cfg.get("enabled")),
+    }
+    # Keep this field present for task snapshots so provider_default means
+    # "let the selected model decide" rather than inheriting a hidden global
+    # Astra environment variable.
+    result["reasoningEffort"] = str(reasoning_effort or "provider_default").strip().lower().replace("-", "_")
+    return result
+
+
 def selected_llm_config():
+    bound = _TASK_LLM_CONFIG.get()
+    if isinstance(bound, dict):
+        return deepcopy(bound)
     cfg = openai_config()
     provider = cfg["provider"]
     if provider == "gemini":
-        return {"provider": provider, "apiKey": cfg["geminiApiKey"], "model": cfg["geminiModel"], "enabled": cfg["enabled"]}
+        model = cfg["geminiModel"]
+        return {
+            "provider": provider,
+            "apiKey": cfg["geminiApiKey"],
+            "model": model,
+            "enabled": cfg["enabled"],
+            "reasoningEffort": configured_global_reasoning_effort(mode="api", provider=provider, model=model, runtime=True),
+        }
     if provider in {"claude", "anthropic"}:
-        return {"provider": "claude", "apiKey": cfg["anthropicApiKey"], "model": cfg["anthropicModel"], "enabled": cfg["enabled"]}
-    return {"provider": "openai", "apiKey": cfg["apiKey"], "model": cfg["model"], "enabled": cfg["enabled"]}
+        model = cfg["anthropicModel"]
+        return {
+            "provider": "claude",
+            "apiKey": cfg["anthropicApiKey"],
+            "model": model,
+            "enabled": cfg["enabled"],
+            "reasoningEffort": configured_global_reasoning_effort(mode="api", provider="claude", model=model, runtime=True),
+        }
+    model = cfg["model"]
+    return {
+        "provider": "openai",
+        "apiKey": cfg["apiKey"],
+        "model": model,
+        "enabled": cfg["enabled"],
+        "reasoningEffort": configured_global_reasoning_effort(mode="api", provider="openai", model=model, runtime=True),
+    }
 
 
 def mask_secret(value):
@@ -259,11 +375,10 @@ def toss_open_api_key():
 
 
 def toss_open_api_enabled() -> bool:
-    """Return whether the hidden Toss Open API adapter may be used.
+    """Return whether the optional read-only Toss provider may be used.
 
-    Toss Securities Open API is excluded from the 0.1 public surface.  Existing
-    adapter code remains for future/internal validation, but credentials alone
-    must not activate the provider path.
+    Credentials alone never activate the REST/realtime provider: the local
+    operator must explicitly opt in with ``FOLIO_ENABLE_TOSS_OPEN_API``.
     """
     load_dotenv()
     return os.environ.get("FOLIO_ENABLE_TOSS_OPEN_API", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -281,7 +396,11 @@ def toss_open_api_client_secret():
 
 def toss_open_api_base_url():
     load_dotenv()
-    return os.environ.get("TOSS_OPEN_API_BASE_URL", "https://openapi.tossinvest.com").strip()
+    # REST and realtime share this opt-in settings boundary.  A blank value in
+    # a copied template is not a custom endpoint; use the pinned official REST
+    # origin instead.
+    value = os.environ.get("TOSS_OPEN_API_BASE_URL", "").strip()
+    return value or TOSS_OPEN_API_DEFAULT_BASE_URL
 
 
 def sec_user_agent():
@@ -446,6 +565,23 @@ def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=Non
         "input": context,
         "max_output_tokens": int(max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000"))),
     }
+    if cfg["model"] == "gpt-6-astra":
+        # A task snapshot with ``provider_default`` deliberately omits the
+        # reasoning field.  A legacy/global config that does not carry the
+        # field continues to honor the existing environment default.
+        configured_effort = cfg.get("reasoningEffort")
+        if configured_effort is not None and str(configured_effort).strip().lower() in {
+            "provider_default", "default", "providerdefault",
+        }:
+            effort = ""
+        else:
+            effort = str(configured_effort or os.environ.get("OPENAI_ASTRA_REASONING_EFFORT", "low")).strip().lower() or "low"
+            if effort in {"none", "minimal"}:
+                effort = "low"
+            if effort not in {"low", "medium", "high", "xhigh", "max"}:
+                raise ValueError("Invalid OPENAI_ASTRA_REASONING_EFFORT")
+        if effort:
+            body["reasoning"] = {"effort": effort}
     if json_mode:
         body["text"] = {"format": {"type": "json_object"}}
         # OpenAI Responses API는 json_object 포맷 사용 시 input 안에 literal "json"을 요구한다.
@@ -463,7 +599,20 @@ def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=Non
         },
         int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
     )
-    result = (extract_response_text(payload), payload.get("id", ""))
+    # A partial paragraph is not a completed report. Let each producer's existing
+    # failure/fallback policy handle it without leaking response content to logs.
+    if payload.get("status") not in {None, "completed"} or payload.get("error"):
+        raise RuntimeError("OpenAI response did not complete")
+    if any(
+        content.get("type") == "refusal"
+        for item in payload.get("output", []) or []
+        for content in item.get("content", []) or []
+    ):
+        raise RuntimeError("OpenAI response refused")
+    response_text = extract_response_text(payload)
+    if not response_text:
+        raise RuntimeError("OpenAI response contained no text")
+    result = (response_text, payload.get("id", ""))
     if include_usage:
         return (*result, extract_openai_usage(payload))
     return result

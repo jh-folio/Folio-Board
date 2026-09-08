@@ -20,46 +20,61 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 CACHE_PATH = data_dir() / "llm-model-cache.json"
 
 API_MODEL_FALLBACKS = {
+    # Keep the no-key / no-cache list aligned with the current production
+    # families and present the newest family first. API and CLI defaults are
+    # configured independently, so selector order never changes them.
     "openai": [
+        {"value": "gpt-6-astra", "label": "GPT-6 Astra"},
+        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+        {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
         {"value": "gpt-5.5", "label": "GPT-5.5"},
         {"value": "gpt-5.4", "label": "GPT-5.4"},
         {"value": "gpt-5.4-mini", "label": "GPT-5.4-mini"},
     ],
     "gemini": [
+        {"value": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
         {"value": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
-        {"value": "gemini-3.1-pro", "label": "Gemini 3.1 Pro"},
+        {"value": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite"},
+        {"value": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview"},
     ],
     "claude": [
         {"value": "claude-fable-5", "label": "Claude Fable 5"},
         {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
         {"value": "claude-opus-5", "label": "Claude Opus 5"},
         {"value": "claude-haiku-4-5", "label": "Claude Haiku 4.5"},
+        {"value": "claude-opus-4-8", "label": "Claude Opus 4.8"},
+        {"value": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
     ],
 }
 
-DEPRECATED_MODEL_REPLACEMENTS = {
-    "claude": {
-        "claude-opus-4-8": "claude-opus-5",
-        "claude-sonnet-4-6": "claude-sonnet-5",
-    },
-}
+# Kept as an extension point for genuine provider retirement migrations.  Do
+# not rewrite active model IDs: doing so makes a user's explicit selection
+# disappear before the provider has retired it.
+DEPRECATED_MODEL_REPLACEMENTS: dict[str, dict[str, str]] = {}
 
 CLI_MODEL_FALLBACKS = {
+    # Codex keeps the API order but does not expose the retired GPT-5.4 choice.
     "codex": [
-        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
-        {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
-        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
-        *API_MODEL_FALLBACKS["openai"],
+        choice
+        for choice in API_MODEL_FALLBACKS["openai"]
+        if choice["value"] != "gpt-5.4"
     ],
     "claude": API_MODEL_FALLBACKS["claude"],
     # agy는 모델 이름에 노력 단계를 함께 담는다(`...-high`). 단계 없는 예전 이름
     # (`gemini-3.5-pro` 등)은 1.1.7이 "not recognized"로 거부하는데, 실시간 목록에
     # 이 기본값이 덧붙어 선택지에 남아 있었다 — 고르면 실행 시점에 실패한다.
     "antigravity": [
-        {"value": "gemini-3.1-pro-high", "label": "Gemini 3.1 Pro High"},
         {"value": "gemini-3.6-flash-medium", "label": "Gemini 3.6 Flash Medium"},
+        {"value": "gemini-3.1-pro-high", "label": "Gemini 3.1 Pro High"},
         {"value": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
     ],
+}
+
+# Display order follows recency. Keep a deliberate default for each adapter so
+# a reordered selector cannot silently change a no-override workflow.
+CLI_DEFAULT_MODELS = {
+    "codex": "gpt-5.6-sol",
 }
 
 MAX_MODEL_ID_LENGTH = 128

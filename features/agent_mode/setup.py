@@ -7,7 +7,8 @@ from pathlib import Path
 
 from features.common.jobs import submit_job
 from features.llm_settings.client import load_dotenv, write_env_values
-from features.llm_settings.model_catalog import CLI_MODEL_FALLBACKS, choices_from_catalog, discover_cli_models, normalize_model_id
+from features.llm_settings.model_catalog import CLI_DEFAULT_MODELS, CLI_MODEL_FALLBACKS, choices_from_catalog, discover_cli_models, normalize_model_id
+from features.llm_settings.reasoning import reasoning_choices
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTERS = {"codex", "claude", "antigravity"}
@@ -50,7 +51,7 @@ def configured_model(adapter: str) -> str:
     configured = str(os.environ.get(f"FOLIO_AGENT_{adapter.upper()}_MODEL", "") or "").strip()
     if configured:
         return normalize_model_id(adapter, configured)
-    return MODEL_CHOICES[adapter][0]["value"]
+    return CLI_DEFAULT_MODELS.get(adapter, MODEL_CHOICES[adapter][0]["value"])
 
 
 def configured_provider() -> str:
@@ -74,10 +75,21 @@ def settings_payload(*, refresh: bool = False) -> dict:
         adapter = item.get("id")
         bridge_supported = adapter in ADAPTERS and item.get("bridgeSupported") is not False
         catalog = discover_cli_models(adapter, executable=str(item.get("executable") or ""), refresh=refresh) if bridge_supported else {}
+        model_choices = choices_from_catalog(catalog) if bridge_supported else []
+        configured = configured_model(adapter) if bridge_supported else ""
+        reasoning_by_model = {
+            str(choice.get("value")): reasoning_choices("cli", adapter, str(choice.get("value")))
+            for choice in model_choices
+            if isinstance(choice, dict) and choice.get("value")
+        }
+        if configured and configured not in reasoning_by_model:
+            reasoning_by_model[configured] = reasoning_choices("cli", adapter, configured)
         adapters.append({
             **item,
-            "model": configured_model(adapter) if bridge_supported else "",
-            "modelChoices": choices_from_catalog(catalog) if bridge_supported else [],
+            "model": configured,
+            "modelChoices": model_choices,
+            "reasoningChoices": reasoning_choices("cli", adapter, configured) if bridge_supported else [],
+            "reasoningByModel": reasoning_by_model,
             "modelDiscovery": {k: v for k, v in catalog.items() if k != "modelChoices"} if bridge_supported else {},
             "docsUrl": INSTALL_INFO.get(adapter, {}).get("docsUrl", ""),
             "installCommand": INSTALL_INFO.get(adapter, {}).get("windowsCommand", "") if bridge_supported and os.name == "nt" else "",

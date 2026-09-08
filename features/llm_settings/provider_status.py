@@ -24,14 +24,14 @@ PROVIDER_INFO = {
 }
 
 
-def _provider_config(provider: str) -> tuple[str, str]:
+def _provider_config(provider: str, *, model: str = "") -> tuple[str, str]:
     cfg = openai_config()
     if provider == "openai":
-        return cfg["apiKey"], cfg["model"]
+        return cfg["apiKey"], str(model or cfg["model"] or "").strip()
     if provider == "gemini":
-        return cfg["geminiApiKey"], cfg["geminiModel"]
+        return cfg["geminiApiKey"], str(model or cfg["geminiModel"] or "").strip()
     if provider == "claude":
-        return cfg["anthropicApiKey"], cfg["anthropicModel"]
+        return cfg["anthropicApiKey"], str(model or cfg["anthropicModel"] or "").strip()
     raise ValueError(f"Unsupported LLM API provider: {provider}")
 
 
@@ -68,11 +68,11 @@ def _result(provider: str, model: str, status: str, message: str, *, available: 
     }
 
 
-def check_provider(provider: str, *, timeout: int = 15) -> dict:
+def check_provider(provider: str, *, model: str = "", timeout: int = 15) -> dict:
     provider = str(provider or "").strip().lower()
     if provider not in PROVIDER_INFO:
         raise ValueError(f"Unsupported LLM API provider: {provider}")
-    api_key, model = _provider_config(provider)
+    api_key, model = _provider_config(provider, model=model)
     if not api_key:
         return _result(provider, model, "not_configured", "저장된 API Key가 없습니다.")
     try:

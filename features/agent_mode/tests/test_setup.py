@@ -57,7 +57,7 @@ def test_save_settings_persists_provider_and_models(monkeypatch):
     assert probed["refresh"] is False
     write_values.assert_called_once_with({
         "AGENT_CLI_PROVIDER": "codex",
-        "FOLIO_AGENT_CLAUDE_MODEL": "claude-sonnet-5",
+        "FOLIO_AGENT_CLAUDE_MODEL": "claude-sonnet-4-6",
         "FOLIO_AGENT_CODEX_MODEL": "gpt-6.1",
     })
 

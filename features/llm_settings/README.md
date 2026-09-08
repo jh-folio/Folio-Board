@@ -27,7 +27,11 @@
 
 LLM API 연결 확인은 생성 요청을 보내지 않고 Provider의 모델 조회 endpoint를 사용합니다. 키가 없거나, 인증이 실패하거나, 선택 모델에 접근할 수 없거나, 사용량 제한에 도달한 상태를 구분해 표시합니다.
 
-브리핑·기업분석·테마분석·시장 내러티브·투자 리뷰 화면은 더 이상 생성 방식 드롭다운을 노출하지 않습니다. 생성 시점에는 전역 `AI_AGENT_ENABLED`와 `AI_AGENT_MODE`만 읽습니다. Agent가 꺼져 있으면 규칙 기반, 켜져 있으면 선택된 CLI/API 모드로 생성합니다.
+브리핑·기업분석·테마분석·시장 내러티브·투자 리뷰 화면은 더 이상 생성 방식 드롭다운을 노출하지 않습니다. 생성 시점에는 전역 `AI_AGENT_ENABLED`가 최상위 실행 허용 스위치로 적용되고, 설정에서 켠 작업만 별도 CLI/API·Provider·Model·추론 강도를 사용합니다. 작업별 토글이 꺼져 있으면 현재 전역 설정을 따르고, Agent가 꺼져 있으면 모든 작업이 규칙 기반으로 동작합니다.
+
+설정 화면의 `AI Agent 모델 설정`은 상단의 전역 모델 설정과 브리핑·기업분석·딥 리서치·시장 내러티브 네 작업별 설정을 한 패널에서 편집합니다. 작업별 설정은 `data/ai-agent-task-settings.json`에 비밀 없는 설정을 저장합니다. 나머지 내부 작업 키도 저장소와 런타임에는 남아 있지만 화면에서 별도 설정을 켤 수 없고 저장 시 비활성으로 직렬화됩니다. 파일이 없는 기존 설치는 revision 0의 모든 작업 OFF로 읽으며 파일을 자동 생성하지 않습니다. ON으로 저장한 행은 실행 방식·Provider·Model·추론 강도를 모두 가지며, OFF로 바꾸어도 이전 별도 설정을 보관합니다. 전역 모델과 작업별 설정은 각각 저장·취소하며, 저장은 revision 충돌 확인과 원자적 교체를 사용합니다. 수동 실행과 예약 실행은 같은 task resolver를 거치고, 실행이 접수된 뒤에는 해당 job의 설정 snapshot을 사용합니다.
+
+추론 강도에서 `제공자 기본값`은 전역 추론값을 이어받는 의미가 아니라 선택한 Provider/Model의 기본 동작을 뜻합니다. API에서 명시 강도는 OpenAI API의 `gpt-6-astra`에서만 허용하며 Gemini·Claude API와 다른 OpenAI 모델은 제공자 기본값만 저장할 수 있습니다. CLI는 Codex의 모델별 지원 목록을 `Light`부터 `Max`/`Ultra`까지, Claude Code는 모델별 지원 목록을 `Low`부터 `Max`까지, Antigravity는 `Low`부터 `High`까지 표시하고 해당 transport 값만 실행 프로세스에 전달합니다. 예를 들어 Claude Sonnet/Opus 4.6은 `Low|Medium|High|Max`를 지원하며 `Extra High`를 표시하지 않습니다. `auto` Provider를 확정할 수 없거나 저장 파일이 손상된 경우 다른 모델로 조용히 대체하지 않고 설정 오류를 표시합니다.
 
 파일:
 
@@ -50,7 +54,7 @@ USE_LLM_ANALYSIS=1
 USE_WEB_SEARCH_FOR_BRIEFING=1
 USE_WEB_SEARCH_FOR_ANALYSIS=1
 
-OPENAI_MODEL=gpt-5.5
+OPENAI_MODEL=gpt-5.6-sol
 OPENAI_API_KEY=...
 
 GEMINI_MODEL=gemini-3.5-flash
@@ -63,7 +67,7 @@ NOTION_TOKEN=secret_xxx
 NOTION_DB_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 AGENT_CLI_PROVIDER=codex
-FOLIO_AGENT_CODEX_MODEL=gpt-5.5
+FOLIO_AGENT_CODEX_MODEL=gpt-5.6-sol
 FOLIO_AGENT_CLAUDE_MODEL=claude-sonnet-5
 ```
 
@@ -72,21 +76,49 @@ FOLIO_AGENT_CLAUDE_MODEL=claude-sonnet-5
 fallback 모델 목록:
 
 ```text
-Codex CLI: GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, GPT-5.4-mini
-OpenAI API: GPT-5.5, GPT-5.4, GPT-5.4-mini
-Claude: Claude Fable 5, Claude Sonnet 5, Claude Opus 5, Claude Haiku 4.5
-Gemini: Gemini 2.5 Pro, Gemini 2.5 Flash, Gemini 2.5 Flash-Lite
+Codex CLI: GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4-mini
+OpenAI API: GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, GPT-5.4-mini
+Claude: Claude Fable 5, Claude Sonnet 5, Claude Opus 5, Claude Haiku 4.5, Claude Opus 4.8, Claude Sonnet 4.6
+Gemini: Gemini 3.6 Flash, Gemini 3.5 Flash, Gemini 3.5 Flash-Lite, Gemini 3.1 Pro Preview
 ```
+
+## GPT-6 Astra 사용과 Folio OS 설정
+
+2026-09-05 확인한 [공식 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model)와
+[모델 사양](https://developers.openai.com/api/docs/models/gpt-6-astra)에 따라 `gpt-6-astra`를 선택할 수 있다.
+API 접근은 순차 제공 중이므로 기본값 `gpt-5.6-sol`과 저장된 사용자 모델은 유지한다.
+설정에서 OpenAI 모델을 선택하고 연결 확인을 실행한다. 모델 목록에 있다는 사실은 계정 접근 권한의 증명이 아니다.
+연결 확인도 모델 조회만 수행하므로 실제 생성 품질·속도까지 검증하지는 않는다.
+
+- API 생성은 기존 Responses API를 사용한다. Astra는 도구 호출에 Responses가 필요하며 `temperature`, `top_p`, `top_logprobs`를 보내지 않는다.
+- `OPENAI_ASTRA_REASONING_EFFORT`는 Astra에만 적용하며 기본은 `low`다. `medium`, `high`, `xhigh`, `max`도 허용한다. 이전 설정의 `none`/`minimal`은 `low`로 보정하고 오타는 요청 전에 거부한다.
+- 내부 호출자는 `cfg["reasoningEffort"]`로 환경 변수보다 우선하는 강도를 지정할 수 있다. 다른 모델의 기존 요청 파라미터는 유지한다.
+- 추론 강도 권장 시작점은 정해진 자료를 요약하는 브리핑에 `low`, 상충 근거를 비교하는 기업분석에 `medium`이다. 이는 아직 실측 전인 운영 권고이며 기능별 자동 라우팅은 구현하지 않았다.
+- 출력 토큰 상한과 timeout은 기존 기능별 값을 유지한다. 모든 OpenAI API 응답에서 미완료·실패·거절·빈 본문을 예외로 돌려 기존 생산자의 실패/규칙 대체 정책으로 처리한다. 잘린 본문을 정상 보고서로 반환하거나 자동으로 토큰 예산을 늘리지 않는다.
+- 요청의 기존 instructions, JSON 형식, 웹 검색 ON/OFF를 유지한다. 최신 모델을 선택해도 근거 검증과 Canonical/Personal Overlay 분리는 그대로 적용된다.
+- 작업별 CLI 설정은 선택한 모델과 지원되는 추론 강도를 해당 실행 한 번에만 전달한다. Codex는 `model_reasoning_effort` 설정 override를, Claude Code와 Antigravity는 `--effort`를 사용하며 사용자 CLI 전역 설정은 바꾸지 않는다. `제공자 기본값`은 별도 인자를 보내지 않는다.
+
+API 모드에서 Astra를 선택한 경우의 선택적 로컬 설정:
+
+```dotenv
+OPENAI_MODEL=gpt-6-astra
+OPENAI_ASTRA_REASONING_EFFORT=low
+```
+
+실제 비교는 동일한 저장 입력과 출력 상한에서 기존 모델과 비교한다. 근거 일치, 반대 근거, JSON/enum 검증,
+완료율, 지연, 사용 토큰을 함께 보고 모델·추론 강도를 결정한다. 고강도 추론이나 큰 컨텍스트만으로 보고서 품질이 보장되지는 않는다.
+이번 변경의 검증은 모의 HTTP 경계를 사용한 회귀 테스트이며 유료 생성이나 기존 보고서 재생성은 수행하지 않았다.
 
 ## 관련 코드
 
 - `features/llm_settings/settings_service.py`: `public_settings()`, `save_settings()` (Notion 설정 포함)
 - `features/llm_settings/provider_status.py`: 공식 Key 발급 URL과 Provider 연결 확인
 - `features/llm_settings/model_catalog.py`: API/CLI 모델 목록 수동 조회, fallback 병합, 캐시 우선 로딩
+- `features/llm_settings/task_policy.py`: 작업별 설정 schema, revision-safe 저장, runtime task alias와 실행 resolver
 - `features/agent_mode/setup.py`: CLI 설치, 로그인 실행, Provider/Model 설정
 - `features/agent_mode/bridge.py`: CLI 인증 상태 확인과 최종 생성 실행
 - `app.py`: `selected_llm_config()`
-- `app.py`: `request_openai()`, `request_gemini()`, `request_claude()`
+- `features/llm_settings/client.py`: `request_openai()`, `request_gemini()`, `request_claude()` 공통 API 호출
 - `public/app.js`: `renderSettings()`, 설정 저장 이벤트
 
 ## 보안 규칙

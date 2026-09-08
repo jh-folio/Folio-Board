@@ -51,15 +51,20 @@ def test_api_model_catalog_falls_back_without_api_key():
     assert catalog["modelChoices"] == [{"value": "claude-opus-5", "label": "Claude Opus 5"}]
 
 
-def test_codex_fallback_includes_gpt_5_6_family_in_role_order():
+def test_codex_fallback_is_newest_first_and_excludes_gpt_5_4():
     choices = model_catalog.CLI_MODEL_FALLBACKS["codex"]
 
-    assert choices[:3] == [
+    assert choices[:4] == [
+        {"value": "gpt-6-astra", "label": "GPT-6 Astra"},
         {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
         {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
         {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
     ]
-    assert "gpt-5.5" in {item["value"] for item in choices}
+    values = {item["value"] for item in choices}
+    assert "gpt-5.5" in values
+    assert "gpt-5.4" not in values
+    assert "gpt-5.4-mini" in values
+    assert model_catalog.CLI_DEFAULT_MODELS["codex"] == "gpt-5.6-sol"
 
 
 def test_cli_model_catalog_parses_stdout_and_keeps_fallback(tmp_path, monkeypatch):
@@ -110,7 +115,7 @@ def test_claude_cli_catalog_uses_help_model_hints_when_list_commands_are_missing
     assert "claude-opus-5" in values
 
 
-def test_claude_catalog_filters_deprecated_models_from_existing_cache(tmp_path, monkeypatch):
+def test_claude_catalog_keeps_active_models_from_existing_cache(tmp_path, monkeypatch):
     cache_path = tmp_path / "llm-model-cache.json"
     cache_path.write_text(json.dumps({
         "api:claude": {
@@ -129,12 +134,14 @@ def test_claude_catalog_filters_deprecated_models_from_existing_cache(tmp_path, 
 
     catalog = model_catalog.discover_api_models("claude", api_key="test-key")
 
-    assert [item["value"] for item in catalog["modelChoices"]] == ["claude-opus-5"]
+    assert [item["value"] for item in catalog["modelChoices"]] == [
+        "claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-5",
+    ]
 
 
-def test_deprecated_claude_selections_migrate_to_current_family():
-    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-5"
-    assert model_catalog.normalize_model_id("claude", "claude-sonnet-4-6") == "claude-sonnet-5"
+def test_active_claude_selections_are_not_rewritten():
+    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-4-8"
+    assert model_catalog.normalize_model_id("claude", "claude-sonnet-4-6") == "claude-sonnet-4-6"
 
 
 def test_model_catalog_uses_cached_models_without_refresh(tmp_path, monkeypatch):
