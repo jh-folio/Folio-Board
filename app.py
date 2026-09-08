@@ -8,7 +8,8 @@ import os
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
+import uuid
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response
@@ -18,9 +19,16 @@ from features.common.health import health_payload
 
 from features.common.utils import kst_date, now_iso, read_json, write_json
 from features.common.jobs import (
+    close_diagnostics_runtime,
+    diagnostic_job_lookup,
+    diagnostics_runtime,
     load_jobs,
     submit_job,
 )
+from features.common.diagnostics.authority import default_authority_snapshot
+from features.common.diagnostics.routes import create_diagnostics_router
+from features.common.diagnostics.retention_routes import create_retention_router
+from features.common.diagnostics.support import bind_request_id
 from features.common.jobs_routes import router as jobs_router
 from features.agent_mode.work_log_routes import router as work_log_router
 from features.agent_mode.bridge import (
@@ -48,6 +56,7 @@ from features.agent_mode.setup import (
 )
 from features.automation.schema import wants_prerequisites as automation_wants_prerequisites
 from features.automation.service import (
+    diagnostic_authority_for_run,
     list_runs as list_automation_runs,
     read_settings as read_automation_settings,
     run_briefing_prerequisites,
@@ -56,6 +65,8 @@ from features.automation.service import (
     save_settings as save_automation_settings,
 )
 from features.common.company_resolution import resolve_company_query, schedule_sec_exchange_cache
+from features.company_analysis.direct_observer import run_direct_analysis
+from features.personal_overlay.direct_observer import run_direct_overlay
 from features.common.content_revision import content_revisions
 from features.common.company_lookup import ensure_company_files
 from features.common.dataframe_ops import top_records
@@ -80,9 +91,17 @@ from features.common.research_library.search.service import (
     search_documents,
 )
 from features.llm_settings.settings_service import public_settings, save_settings
+from features.llm_settings.task_policy import TaskPolicyError, public_task_policy, save_task_policy
+from features.llm_settings.task_policy_check import check_task_policy
+from features.llm_settings.task_runtime import (
+    bind_task_policy,
+    generation_mode as task_generation_mode,
+    task_snapshot,
+)
 from features.llm_settings.provider_status import check_provider as check_llm_api_provider
 from features.company_analysis.cache_cleanup import cache_stats, cleanup_cache
 from features.market_memory.service import run_llm_market_memory, schedule_startup_regime_refresh
+from features.market_memory.direct_observer import run_direct_market_memory
 from features.market_memory.verification_view import narrative_verification_payload
 from features.market_memory.digest import run_rss_market_memory_update
 from features.market_memory.routes import create_market_state_router
@@ -108,6 +127,7 @@ from features.common.market_data.snapshot import fetch_market_snapshot
 from features.common.market_data.providers import fetch_korea_market_data
 from features.common.market_data.tape import build_market_tape
 from features.common.market_data.routes import create_market_data_router
+from features.common.market_data.toss_realtime_hub import TossRealtimeHub
 from features.dashboard.routes import create_dashboard_router
 from features.market_calendar.routes import create_market_calendar_router
 from features.portfolio.routes import create_portfolio_router
@@ -260,8 +280,14 @@ from features.common.quality_generation.schema import normalize_quality_mode
 from features.investment_review.service import (
     get_review as get_investment_review,
     generate_review as generate_investment_review,
+    mark_reviewed as mark_investment_review_reviewed,
+    review_history as get_investment_review_history,
     normalize_review_date,
 )
+from features.investment_review.direct_observer import run_direct_review
+from features.thesis_tracking.direct_observer import run_direct_thesis_delta
+from features.daily_briefing.direct_observer import run_direct_briefings
+from features.investment_review.review_v2 import ReviewRevisionConflict
 from features.investment_review.context_routes import create_investment_context_router
 from features.common.workspace import config_dir, data_dir, research_inbox_dir
 
@@ -320,7 +346,22 @@ def build_briefing(
     briefing_type="default",
     markets=None,
     kind="daily",
+    task_policy_snapshot=None,
 ):
+    if isinstance(task_policy_snapshot, dict):
+        with bind_task_policy(task_policy_snapshot):
+            return build_daily_briefing(
+                date=date,
+                strict_date=strict_date,
+                web_search_override=web_search_override,
+                llm_override=llm_override,
+                persist=persist,
+                quality_mode=quality_mode,
+                market_scope=market_scope,
+                briefing_type=briefing_type,
+                markets=markets,
+                kind=kind,
+            )
     return build_daily_briefing(
         date=date,
         strict_date=strict_date,
@@ -335,8 +376,10 @@ def build_briefing(
     )
 
 
-def analyze_company(q, web_search_override=None, llm_override=None, analysis_style="beginner"):
-    return generate_company_analysis(
+def analyze_company(q, web_search_override=None, llm_override=None, analysis_style="beginner", task_policy_snapshot=None):
+    context = bind_task_policy(task_policy_snapshot) if isinstance(task_policy_snapshot, dict) else nullcontext()
+    with context:
+        return generate_company_analysis(
         q,
         web_search_override=web_search_override,
         llm_override=llm_override,
@@ -367,13 +410,17 @@ async def lifespan(_app: FastAPI):
     schedule_startup_regime_refresh(MARKET_MEMORY_DB_PATH)
     schedule_automation_loop()
     start_signal_runtime(DATA_DIR, CONFIG_DIR / "evidence_sources.yaml")
+    await TOSS_REALTIME_HUB.start()
     try:
         yield
     finally:
+        await TOSS_REALTIME_HUB.stop()
         stop_signal_runtime()
+        close_diagnostics_runtime()
 
 
 fastapi_app = FastAPI(title="Folio OS", version=APP_VERSION, lifespan=lifespan)
+TOSS_REALTIME_HUB = TossRealtimeHub()
 SMART_COLLECTION_SERVICE = create_smart_collection_service(DATA_DIR)
 TOPIC_APPROVAL_BOUNDARY = ApprovedRequestBoundary(
     DATA_DIR,
@@ -396,11 +443,25 @@ fastapi_app.include_router(
     )
 )
 fastapi_app.include_router(jobs_router)
+fastapi_app.include_router(
+    create_diagnostics_router(
+        runtime_provider=diagnostics_runtime,
+        job_lookup=diagnostic_job_lookup,
+        run_lookup=diagnostic_authority_for_run,
+        authority_provider=default_authority_snapshot,
+        )
+)
 fastapi_app.include_router(work_log_router)
+fastapi_app.include_router(
+    create_retention_router(
+        runtime_provider=diagnostics_runtime,
+        authority_provider=default_authority_snapshot,
+    )
+)
 fastapi_app.include_router(create_signal_router(DATA_DIR))
 fastapi_app.include_router(create_dashboard_router(DATA_DIR))
 fastapi_app.include_router(create_market_calendar_router(DATA_DIR))
-fastapi_app.include_router(create_market_data_router(DATA_DIR))
+fastapi_app.include_router(create_market_data_router(DATA_DIR, realtime_hub=TOSS_REALTIME_HUB))
 fastapi_app.include_router(create_portfolio_router(DATA_DIR))
 
 
@@ -411,13 +472,29 @@ def api_health():
 
 @fastapi_app.exception_handler(Exception)
 def unhandled_exception_handler(request: Request, exc: Exception):
-    return JSONResponse({"error": "internal_server_error"}, status_code=500)
+    # ``request`` is present in FastAPI, but keeping this boundary defensive
+    # also preserves the existing direct-handler regression harness.
+    request_id = getattr(getattr(request, "state", None), "folio_request_id", None)
+    headers: dict[str, str] = {}
+    if isinstance(request_id, str):
+        headers["X-Folio-Request-Id"] = request_id
+        try:
+            run_id = diagnostics_runtime().observe_unhandled_http(request_id, exc)
+        except Exception:
+            run_id = None
+        if isinstance(run_id, str):
+            headers["X-Folio-Run-Id"] = run_id
+    return JSONResponse({"error": "internal_server_error"}, status_code=500, headers=headers)
 
 
 @fastapi_app.middleware("http")
 async def no_store_for_local_app(request: Request, call_next):
-    response = await call_next(request)
+    request_id = "req_" + str(uuid.uuid4())
+    request.state.folio_request_id = request_id
+    with bind_request_id(request_id):
+        response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
+    response.headers.setdefault("X-Folio-Request-Id", request_id)
     return response
 
 
@@ -425,8 +502,34 @@ def query_lists(request: Request):
     return {key: request.query_params.getlist(key) for key in request.query_params.keys()}
 
 
+def _task_request_context(payload: dict | None, task_key: str) -> tuple[dict, str]:
+    """Resolve a fresh policy for a public HTTP request.
+
+    ``_task_policy_snapshot`` is an internal handoff field used only after a
+    job has been accepted.  Treating a request body value as an already
+    trusted snapshot would turn it into an undocumented one-run override and
+    let a caller select an unsaved model or bypass the global gate.  Queued
+    and continuation workers pass their snapshot directly to the feature or
+    bridge boundary instead.
+    """
+    snapshot = task_snapshot(task_key)
+    # Keep the one-argument request_generation_mode seam used by older callers
+    # and source tests while carrying the immutable snapshot through it.
+    mode = request_generation_mode({"_task_policy_snapshot": snapshot})
+    return snapshot, mode
+
+
 def request_generation_mode(_payload: dict | None) -> str:
+    payload = _payload if isinstance(_payload, dict) else {}
+    frozen = payload.get("_task_policy_snapshot")
+    if isinstance(frozen, dict):
+        return task_generation_mode(frozen)
     return default_generation_mode()
+
+
+def _run_task_thesis_delta(task_policy: dict, ticker: str, payload: dict) -> dict:
+    with bind_task_policy(task_policy):
+        return run_thesis_delta(ticker, payload)
 
 
 def canonical_write_http_error(exc: Exception) -> HTTPException:
@@ -570,9 +673,9 @@ def api_create_briefing(body: dict | None = Body(default=None)):
     prerequisites = {}
     # 손으로 만드는 브리핑은 어느 스케줄에도 속하지 않는다. 켜 둔 스케줄 중
     # 하나라도 수집을 원하면 수집한다(싱글톤이던 시절 동작과 같다).
-    if automation_wants_prerequisites(automation_settings):
-        prerequisites = run_briefing_prerequisites()
-    generation_mode = request_generation_mode(body)
+    task_policy, generation_mode = _task_request_context(body, "daily_briefing")
+    # CLI submission keeps its pre-existing eager prerequisite collection.
+    # Direct generation moves it inside the feature-owned diagnostic context.
     # 시장 다중 선택. 없으면 예전 단일 범위로 해석한다. 날짜 변환은 선택된
     # 시장 집합에 달려 있으므로 여기서 먼저 확정한다.
     requested_markets = list(
@@ -623,6 +726,10 @@ def api_create_briefing(body: dict | None = Body(default=None)):
             publication_date_groups(requested_date, accepted)
             if requested_date else [(kst_date(), accepted)]
         )
+    from features.daily_briefing.news_selection_runtime import pin_selection_context
+    selection_contexts = {date: pin_selection_context(date, markets, briefing_kind) for date, markets in date_groups}
+    if generation_mode == "llm_cli" and automation_wants_prerequisites(automation_settings):
+        prerequisites = run_briefing_prerequisites()
     if generation_mode == "llm_cli":
         jobs = [
             submit_agent_task("briefing", {
@@ -636,6 +743,8 @@ def api_create_briefing(body: dict | None = Body(default=None)):
                 # 규칙 경로의 web_search_override와 **같은 값**이 도착해야 한다(§6 규칙 14).
                 # `is True`로 접지 않는다 — None은 pack 빌더가 설정으로 푼다.
                 "web_search": bool_override(body.get("webSearch")),
+                "selection_context": selection_contexts[date],
+                "_task_policy_snapshot": task_policy,
             }, adapter=body.get("agentAdapter", ""))
             for date, markets in date_groups
         ]
@@ -653,20 +762,27 @@ def api_create_briefing(body: dict | None = Body(default=None)):
         if skipped:
             payload["skippedMarkets"] = skipped
         return payload
-    reports = [
-        build_briefing(
-            date,
-            strict_date=body.get("strictDate", False),
-            web_search_override=bool_override(body.get("webSearch")),
-            llm_override=llm_override_for_mode(generation_mode),
-            quality_mode=body.get("qualityMode", "diagnose_only"),
-            market_scope=market_selection_scope(markets),
-            markets=markets,
-            briefing_type=body.get("briefingType", "default"),
-            kind=briefing_kind,
-        )
-        for date, markets in date_groups
-    ]
+    reports, prerequisites = run_direct_briefings(
+        wants_prerequisites=automation_wants_prerequisites(automation_settings),
+        run_prerequisites=run_briefing_prerequisites,
+        build=build_briefing,
+        build_requests=[
+            {
+                "date": date,
+                "strict_date": body.get("strictDate", False),
+                "web_search_override": bool_override(body.get("webSearch")),
+                "selection_context": selection_contexts[date],
+                "llm_override": llm_override_for_mode(generation_mode),
+                "quality_mode": body.get("qualityMode", "diagnose_only"),
+                "market_scope": market_selection_scope(markets),
+                "markets": markets,
+                "briefing_type": body.get("briefingType", "default"),
+                "kind": briefing_kind,
+                "task_policy_snapshot": task_policy,
+            }
+            for date, markets in date_groups
+        ],
+    )
     if len(reports) == 1:
         if prerequisites and isinstance(reports[0], dict):
             reports[0]["prerequisites"] = prerequisites
@@ -736,7 +852,7 @@ def api_briefing_personal_overlay(date: str, marketScope: str = "both", kind: st
     # **종류를 받지 않으면 주간 보고서의 개인 해석이 그날 일간 보고서에 얹힌다.**
     # 주간의 저장 키는 발행일이라 같은 날 일간과 날짜가 겹친다.
     requested_kind = normalize_briefing_kind(body.get("kind") or kind)
-    generation_mode = request_generation_mode(body)
+    task_policy, generation_mode = _task_request_context(body, "personal_overlay")
     if generation_mode == "llm_cli":
         return submit_agent_task("personal_overlay", {
             "report_kind": "briefing",
@@ -744,15 +860,17 @@ def api_briefing_personal_overlay(date: str, marketScope: str = "both", kind: st
             # (`canonical_identity.BRIEFING_KIND_SUFFIXES`가 그 형태를 안다).
             "report_id": date if requested_kind == "daily" else f"{date}.{requested_kind}",
             "market_scope": requested_scope,
+            "_task_policy_snapshot": task_policy,
         }, adapter=body.get("agentAdapter", ""))
     try:
-        return attach_overlay_to_briefing(
-            date,
-            market_scope=requested_scope,
-            kind=requested_kind,
-            llm_override=llm_override_for_mode(generation_mode),
-            web_search_override=bool_override(body.get("webSearch")),
-        )
+        def _generate_overlay():
+            with bind_task_policy(task_policy):
+                return attach_overlay_to_briefing(
+                    date, market_scope=requested_scope, kind=requested_kind,
+                    llm_override=llm_override_for_mode(generation_mode),
+                    web_search_override=bool_override(body.get("webSearch")),
+                )
+        return run_direct_overlay(_generate_overlay)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Briefing not found")
     except (CanonicalConflictError, CanonicalValidationError, CanonicalIdentityError) as exc:
@@ -787,7 +905,7 @@ def api_company_resolve(request: Request):
 def api_analyze(request: Request):
     qs = query_lists(request)
     quality_mode = normalize_quality_mode(qs.get("qualityMode", ["diagnose_only"])[0])
-    generation_mode = request_generation_mode(None)
+    task_policy, generation_mode = _task_request_context({}, "company_analysis")
     query = qs.get("q", [""])[0]
     analysis_style = normalize_analysis_style(qs.get("analysisStyle", qs.get("analysis_style", ["beginner"]))[0])
     # **두 경로가 웹 검색을 같은 방법으로 정한다.** 예전에는 CLI만 `is True`로 접어서
@@ -802,24 +920,21 @@ def api_analyze(request: Request):
             "quality_mode": quality_mode,
             "analysis_style": analysis_style,
             "web_search": use_web_search_for_analysis() if web_search is None else web_search,
+            "_task_policy_snapshot": task_policy,
         }, adapter=qs.get("agentAdapter", [""])[0])
-    report = analyze_company(
-        query,
+    return run_direct_analysis(
+        query=query,
         web_search_override=web_search,
         llm_override=llm_override_for_mode(generation_mode),
         analysis_style=analysis_style,
+        quality_mode=quality_mode,
+        generate=lambda *args, **kwargs: analyze_company(
+            *args, task_policy_snapshot=task_policy, **kwargs
+        ),
+        apply_quality=apply_quality_loop,
+        apply_ceiling=apply_company_report_ceiling,
+        save=save_analysis_report,
     )
-    try:
-        preflight = report.pop("qualityPreflight", None)
-        report = apply_quality_loop("company_analysis", report, mode=quality_mode, preflight=preflight)
-        report = apply_company_report_ceiling(report)
-    except Exception:
-        report["quality"] = {"status": "warn", "warnings": ["quality evaluation failed"]}
-    # 생성한 보고서를 자동 저장한다(같은 기업·같은 날은 최신본으로 덮어씀).
-    try:
-        return save_analysis_report(report)
-    except Exception:
-        return report
 
 
 @fastapi_app.get("/api/analysis-reports")
@@ -857,18 +972,21 @@ def api_get_analysis_report(report_id: str, includePersonal: bool = False):
 @fastapi_app.post("/api/analysis-reports/{report_id}/personal-overlay")
 def api_analysis_personal_overlay(report_id: str, body: dict | None = Body(default=None)):
     body = body or {}
-    generation_mode = request_generation_mode(body)
+    task_policy, generation_mode = _task_request_context(body, "personal_overlay")
     if generation_mode == "llm_cli":
         return submit_agent_task("personal_overlay", {
             "report_kind": "company_analysis",
             "report_id": report_id,
+            "_task_policy_snapshot": task_policy,
         }, adapter=body.get("agentAdapter", ""))
     try:
-        return attach_overlay_to_report(
-            report_id,
-            llm_override=llm_override_for_mode(generation_mode),
-            web_search_override=bool_override(body.get("webSearch")),
-        )
+        def _generate_overlay():
+            with bind_task_policy(task_policy):
+                return attach_overlay_to_report(
+                    report_id, llm_override=llm_override_for_mode(generation_mode),
+                    web_search_override=bool_override(body.get("webSearch")),
+                )
+        return run_direct_overlay(_generate_overlay)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Analysis report not found")
     except (CanonicalConflictError, CanonicalValidationError, CanonicalIdentityError) as exc:
@@ -926,16 +1044,23 @@ def api_promote_note_to_thesis(note_id: str, body: dict | None = Body(default=No
 @fastapi_app.post("/api/theses/{ticker}/delta")
 def api_run_thesis_delta(ticker: str, body: dict | None = Body(default=None)):
     body = body or {}
-    generation_mode = request_generation_mode(body)
+    task_policy, generation_mode = _task_request_context(body, "thesis_review")
     if generation_mode == "llm_cli":
         return submit_agent_task("thesis_delta", {
             "ticker": ticker,
             "period": body.get("period", "90d"),
             "limit": body.get("evidenceLimit", body.get("limit", 12)),
+            "_task_policy_snapshot": task_policy,
         }, adapter=body.get("agentAdapter", ""))
     body["useLlm"] = llm_override_for_mode(generation_mode)
     try:
-        return run_thesis_delta(ticker, body)
+        return run_direct_thesis_delta(
+            ticker,
+            body,
+            generate=lambda symbol, payload: _run_task_thesis_delta(
+                task_policy, symbol, payload
+            ),
+        )
     except LookupError as e:
         raise HTTPException(status_code=404, detail="Thesis not found") from e
     except ValueError as e:
@@ -1194,12 +1319,49 @@ def api_save_investment_note(body: dict | None = Body(default=None)):
 
 @fastapi_app.get("/api/settings")
 def api_get_settings(refresh: bool = False):
-    return public_settings(refresh=refresh)
+    try:
+        return public_settings(refresh=refresh)
+    except TaskPolicyError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
 @fastapi_app.post("/api/settings")
 def api_save_settings(body: dict | None = Body(default=None)):
-    return save_settings(body or {})
+    try:
+        return save_settings(body or {})
+    except TaskPolicyError as exc:
+        detail = {"code": exc.code, "message": str(exc)}
+        if exc.latest is not None:
+            detail["latest"] = exc.latest
+        raise HTTPException(status_code=exc.status, detail=detail) from exc
+
+
+@fastapi_app.get("/api/settings/task-policies")
+def api_get_task_policies():
+    try:
+        return public_task_policy()
+    except TaskPolicyError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@fastapi_app.post("/api/settings/task-policies")
+def api_save_task_policies(body: dict | None = Body(default=None)):
+    try:
+        return save_task_policy(body or {})
+    except TaskPolicyError as exc:
+        detail = {"code": exc.code, "message": str(exc)}
+        if exc.latest is not None:
+            detail["latest"] = exc.latest
+        raise HTTPException(status_code=exc.status, detail=detail) from exc
+
+
+@fastapi_app.post("/api/settings/task-policies/check")
+def api_check_task_policy(body: dict | None = Body(default=None)):
+    try:
+        config = (body or {}).get("config") if isinstance(body, dict) else None
+        return check_task_policy(config)
+    except TaskPolicyError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
 @fastapi_app.get("/api/automation/settings")
@@ -1358,16 +1520,32 @@ def api_investment_review_generate(body: dict | None = Body(default=None)):
         body["date"] = normalize_review_date(body.get("date"))
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid_review_date")
-    generation_mode = request_generation_mode(body)
+    # The Portfolio's "오늘 리뷰 갱신" is an explicit local rules action.
+    # Do not let a global CLI default silently turn it into a background job.
+    task_policy, generation_mode = _task_request_context(body, "investment_review")
+    # The explicit rules action remains deterministic.  The persisted task
+    # policy controls the AI producer route when the caller did not request
+    # that local action explicitly.
+    if body.get("generationMode") == "rules":
+        generation_mode = "rules"
     if generation_mode == "llm_cli":
         return submit_agent_task("investment_review", {
             "date": body.get("date"),
             "include_portfolio": body.get("includePortfolio", True),
             "include_watchlist": body.get("includeWatchlist", True),
             "include_obsidian": body.get("includeObsidian", True),
+            "_task_policy_snapshot": task_policy,
         }, adapter=body.get("agentAdapter", ""))
     body["useLlm"] = llm_override_for_mode(generation_mode)
-    return generate_investment_review(body)
+    try:
+        return run_direct_review(body, generate=generate_investment_review)
+    except ReviewRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "latest": exc.latest})
+
+
+@fastapi_app.get("/api/investment-review/history")
+def api_investment_review_history():
+    return get_investment_review_history()
 
 
 @fastapi_app.get("/api/investment-review/{date}")
@@ -1376,6 +1554,16 @@ def api_investment_review_by_date(date: str):
         return get_investment_review(date)
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid_review_date")
+
+
+@fastapi_app.post("/api/investment-review/{date}/reviewed")
+def api_investment_review_reviewed(date: str, body: dict | None = Body(default=None)):
+    try:
+        return mark_investment_review_reviewed(date, (body or {}).get("expectedReviewRevision"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_review_date")
+    except ReviewRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "latest": exc.latest})
 
 
 @fastapi_app.get("/api/agent-bridge/status")
@@ -1599,10 +1787,11 @@ def api_delete_memory(memory_id: str):
 @fastapi_app.post("/api/memory/llm")
 def api_run_llm_market_memory(body: dict | None = Body(default=None)):
     body = body or {}
-    generation_mode = request_generation_mode(body)
+    task_policy, generation_mode = _task_request_context(body, "market_memory")
     if generation_mode == "llm_cli":
         return submit_agent_task("market_memory_llm", {
             "date": body.get("date") or kst_date(),
+            "_task_policy_snapshot": task_policy,
         }, adapter=body.get("agentAdapter", ""))
     if generation_mode == "rules":
         return {
@@ -1611,7 +1800,12 @@ def api_run_llm_market_memory(body: dict | None = Body(default=None)):
             "saved": [],
             "message": "규칙 기반 내러티브 후보는 브리핑 생성 시 자동으로 누적됩니다.",
         }
-    return run_llm_market_memory(body.get("date") or kst_date())
+    def _generate_market_memory(date):
+        with bind_task_policy(task_policy):
+            return run_llm_market_memory(date)
+    return run_direct_market_memory(
+        body.get("date") or kst_date(), generate=_generate_market_memory
+    )
 
 
 @fastapi_app.post("/api/memory/rss-digest")
@@ -1776,18 +1970,21 @@ def api_evaluate_topic_report(report_id: str):
 @fastapi_app.post("/api/topic-reports/{report_id}/personal-overlay")
 def api_topic_report_personal_overlay(report_id: str, body: dict | None = Body(default=None)):
     body = body or {}
-    generation_mode = request_generation_mode(body)
+    task_policy, generation_mode = _task_request_context(body, "personal_overlay")
     if generation_mode == "llm_cli":
         return submit_agent_task("personal_overlay", {
             "report_kind": "topic_report",
             "report_id": report_id,
+            "_task_policy_snapshot": task_policy,
         }, adapter=body.get("agentAdapter", ""))
     try:
-        return attach_overlay_to_topic_report(
-            report_id,
-            llm_override=llm_override_for_mode(generation_mode),
-            web_search_override=bool_override(body.get("webSearch")),
-        )
+        def _generate_overlay():
+            with bind_task_policy(task_policy):
+                return attach_overlay_to_topic_report(
+                    report_id, llm_override=llm_override_for_mode(generation_mode),
+                    web_search_override=bool_override(body.get("webSearch")),
+                )
+        return run_direct_overlay(_generate_overlay)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Topic report not found")
 
