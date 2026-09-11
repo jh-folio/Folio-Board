@@ -802,6 +802,14 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
     debt = _latest_number(sec_summary, "Long-Term Debt")
     liabilities = _latest_number(sec_summary, "Total Liabilities")
     ebitda = market.get("ebitda") if market.get("ok") else None
+    # 제공자(yfinance) EBITDA가 매출을 넘으면 통화 문제가 아니라 원본 데이터
+    # 오류로 본다 — 정상 영업기업의 EBITDA 마진은 100%를 넘지 않는다(실측:
+    # 000660.KS의 yfinance EBITDA가 매출의 약 11배로 나와 EV/EBITDA 1.2배라는
+    # 터무니없는 값을 냈다). 아래 통화 재확인(financialCurrency)은 같은 통화
+    # 라벨(KRW=KRW) 안의 크기 오류는 못 잡는다. 억지로 쓰지 않고 없는 값으로
+    # 되돌려 SEC/DART 값이나 "확인 안 됨"으로 내려가게 한다.
+    if ebitda is not None and revenue and ebitda > revenue:
+        ebitda = None
     if ebitda is None:
         ebitda = _latest_number(sec_summary, "EBITDA")
     shares = market.get("sharesOutstanding") if market.get("ok") else None
@@ -966,14 +974,21 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
             f"| 순부채 차감 후 자기자본가치 | {_money(dcf['equityValue'], currency)} |",
             f"| DCF 내재가치/주 | {_money(dcf['perShare'], currency)} |",
         ]
-        # **터미널 비중을 숨기지 않는다.** 가치의 절반 이상이 예측 기간 이후 가정에서
-        # 오는데 그 사실이 없으면 독자는 정밀한 현금흐름 모델을 봤다고 생각한다.
+        # **터미널 비중을 숨기지 않는다.** 가치의 절반 이상이 명시 예측 기간 이후
+        # 가정에서 오는데 그 사실이 없으면 독자는 정밀한 현금흐름 모델을 봤다고 생각한다.
+        fade_years = len(dcf_model.get("fadePath") or []) or PROJECTION_YEARS
         share = dcf.get("terminalShare")
         if share is not None:
-            lines.append(f"| 터미널 비중 | {_pct(share)} (예측 기간 이후 가정에서 오는 가치) |")
+            lines.append(
+                f"| 터미널 비중 | {_pct(share)} (명시 예측 기간 {fade_years}년 이후"
+                " 영구성장 가정에서 오는 가치) |"
+            )
         implied = dcf_model.get("impliedGrowth") or {}
         if implied.get("status") == "solved":
-            lines.append(f"| 역산 성장률 | {_pct(implied['growth'])} (현재가를 정당화하는 초기 FCF 성장률) |")
+            lines.append(
+                f"| 역산 성장률 | {_pct(implied['growth'])} (현재가를 정당화하는 1년차 FCF"
+                f" 성장률 — 이후 {fade_years}년간 영구성장률까지 감쇠) |"
+            )
         lines += [
             "",
             "| 민감도: 내재가치/주 | 영구성장 2.0% | 영구성장 2.5% | 영구성장 3.0% |",

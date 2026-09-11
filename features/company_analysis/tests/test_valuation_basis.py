@@ -157,6 +157,32 @@ def test_known_enterprise_value_does_not_authorize_foreign_quote_market_cap_deri
     assert "| EV/EBITDA | 11.0x" in out
 
 
+def test_provider_ebitda_over_revenue_is_rejected_not_divided():
+    """실측: 000660.KS의 yfinance EBITDA가 매출의 약 11배로 나와 EV/EBITDA 1.2배라는
+    터무니없는 값을 냈다. 같은 통화 라벨(KRW=KRW) 안의 크기 오류라 기존 통화 재확인은
+    못 잡는다 — 매출을 넘는 EBITDA는 원본 데이터 오류로 보고 계산하지 않는다."""
+    from features.company_analysis.report_rules import build_valuation_metrics
+
+    sec = {
+        "ok": True,
+        "currency": "USD",
+        "rows": [{"metric": "Revenue", "annual": [{"end": "2025-12-31", "val": 1_000}]}],
+    }
+    # 위 테스트와 같은 필드 구성이되 시세·재무 통화를 전부 USD로 맞춰(불일치 없음)
+    # EBITDA 크기 자체만 본다.
+    base = dict(
+        price=100, currency="USD", quoteCurrency="USD",
+        marketValueCurrency="USD", marketValueCurrencyKnown=True,
+        financialCurrency="USD", enterpriseValue=5_500, sharesOutstanding=10,
+    )
+    out = build_valuation_metrics({"ticker": "X"}, sec, _market(**base, ebitda=11_000))
+    assert "| EV/EBITDA | 확인 필요" in out
+
+    # 매출 미만(정상적인 마진)이면 그대로 계산한다 — 회귀 방지.
+    out = build_valuation_metrics({"ticker": "X"}, sec, _market(**base, ebitda=400))
+    assert "| EV/EBITDA | 13.8x" in out
+
+
 def _valuation_sec(currency="USD"):
     return {
         "ok": True,

@@ -598,19 +598,31 @@ def _agent_prompt(pack_path: Path, pack: dict, *, inline_briefing: bool = False)
             "Do not write a combined tail section (notes or references) that spans multiple markets."
         )
     required = contract.get("requiredSections") or []
-    expected_titles = [
-        str(value).strip() for value in (contract.get("expectedTitles") or {}).values()
-        if str(value).strip()
-    ]
-    expected_leaders = contract.get("expectedLeadingCompanies") or {}
-    title_instruction = (
-        "Market title H1 lines must exactly match: " + " / ".join(f"'# {title}'" for title in expected_titles) + "."
-        if expected_titles
-        else "Each market title must be an H1 with a session date and status, like '# US Market Briefing — YYYY.MM.DD 마감' or '# Korea Market Briefing — YYYY.MM.DD 장중'."
-    )
+    # 태스크 공통 — 어떤 taskType이 requiredSections를 채우든 맞는 말이다.
     if required:
         lines.extend([
             "Do not summarize, shorten, merge, or omit required report sections (필수 섹션을 축약하지 마세요).",
+            "Required Markdown heading fragments, in contract order:",
+            *(f"- {section}" for section in required),
+        ])
+    # 브리핑 전용 — 마켓 타이틀·분량 하한·"오늘의 ... 성격"·주도 기업 em dash 서식은
+    # briefing_contract.py만 채우는 필드다(company_analysis 등 다른 outputContract는
+    # 이 키들을 안 쓴다). taskType 조건 없이 requiredSections만 보고 붙였더니 기업분석에
+    # "최소 분량 0자"·브리핑 제목 형식·**"blockquotes 금지"**가 새어 들어갔다 — 마지막
+    # 항목은 §글쓰기 방식의 섹션 요약 blockquote 규칙과 정면으로 충돌한다(실측 P3:
+    # 섹션 요약 blockquote 준수율 13/16).
+    if required and pack.get("taskType") == "briefing":
+        expected_titles = [
+            str(value).strip() for value in (contract.get("expectedTitles") or {}).values()
+            if str(value).strip()
+        ]
+        expected_leaders = contract.get("expectedLeadingCompanies") or {}
+        title_instruction = (
+            "Market title H1 lines must exactly match: " + " / ".join(f"'# {title}'" for title in expected_titles) + "."
+            if expected_titles
+            else "Each market title must be an H1 with a session date and status, like '# US Market Briefing — YYYY.MM.DD 마감' or '# Korea Market Briefing — YYYY.MM.DD 장중'."
+        )
+        lines.extend([
             f"Minimum report length: {int(contract.get('minimumCharacters') or 0)} characters.",
             f"Minimum '**한 줄 결론:**' count: {int(contract.get('minimumOneLineConclusions') or 0)}.",
             f"Minimum middle-dot summary line count: {int(contract.get('minimumMiddleDotBullets') or 0)}.",
@@ -623,8 +635,6 @@ def _agent_prompt(pack_path: Path, pack: dict, *, inline_briefing: bool = False)
                 ) + "."]
                 if expected_leaders else []
             ),
-            "Required Markdown heading fragments, in contract order:",
-            *(f"- {section}" for section in required),
         ])
     if inline_briefing:
         # The shared context builder already pins the writer evidence, market

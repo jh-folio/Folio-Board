@@ -95,6 +95,11 @@ class GenerationInputs:
     def webSummary(self) -> dict | None:
         return company_web.lookup_summary(self.webRow) if self.webRow else None
 
+    @property
+    def webSourceItems(self) -> list:
+        """웹 조회로 인용한 자료. `sources`(reader 표시 목록)에도 들어가야 한다."""
+        return company_web.web_source_items(self.webRow) if self.webRow else []
+
     def resolve_gaps(self, *, web_search_ran: bool) -> dict:
         """최종 데이터 갭. **설정이 아니라 실제로 웹 검색이 돌았는지**로 정한다 —
         설정만 보면 CLI 모드·LLM 실패·자료 없음처럼 검색이 한 번도 돌지 않은 경로에서도
@@ -301,7 +306,9 @@ def draft_artifact(inputs: GenerationInputs, query: str, *, analysis_style: str,
         "resolutionAttempts": gaps.get("gaps", []),
         "analysisCharts": inputs.charts,
         "analysisInputs": inputs.analysis_inputs(),
-        "sources": company_analysis_sources(inputs.materials, inputs.selected[:14]),
+        "sources": company_analysis_sources(
+            inputs.materials, inputs.selected[:14], inputs.webSourceItems
+        ),
         "depthPolicy": inputs.depthPolicy,
         "sourceLedger": inputs.sourceLedger,
         "webLookup": inputs.webSummary,

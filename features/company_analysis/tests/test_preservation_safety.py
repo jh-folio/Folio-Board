@@ -37,6 +37,7 @@ def _inputs() -> SimpleNamespace:
         preflight={},
         depthPolicy={},
         sourceLedger=[],
+        webSourceItems=[],
         dataGaps={"gaps": []},
         quoteSources=[],
         context="",

@@ -112,6 +112,21 @@ CLI 선택은 **범위가 둘**이다. 자리도 둘이고, 화면이 어느 쪽
 - **`expectedTitles`도 계약이 자기 시장으로 좁힌다.** `_agent_prompt()`와 `_briefing_correction_prompt()`가 이 표를 **전부 펼쳐** "H1은 정확히 이것들이어야 한다"고 지시하므로, 넓은 표가 들어오면 모델에게 네 시장을 쓰라고 시키는 셈이다. 호출자가 범위 이름으로 만든 표를 넘겨도 `briefing_output_contract()`가 걸러 낸다.
 - 규칙 기반 경로(`build_briefing(markets=...)`)는 목록을 직접 받으므로 영향이 없었다. 어긋난 것은 Agent 경로뿐이다.
 
+### `_agent_prompt()`의 requiredSections 지시는 브리핑 전용이었다 (0.6, 2026-09-11)
+
+**`requiredSections`를 채우는 taskType이 브리핑 하나가 아니다.** 기업분석도 누락 섹션을 잡으려고 `outputContract.requiredSections`를 쓴다(§company_analysis README "팩의 `requiredSections`가 손으로 적은 6개라..."). 그런데 `_agent_prompt()`의 `if required:` 블록은 `taskType` 게이트 없이 `requiredSections`가 있기만 하면 분량 하한·마켓 타이틀 서식·주도 기업 em dash 서식까지 통째로 붙였다 — 전부 `briefing_contract.py`만 채우는 필드라 다른 태스크에서는 값이 비어 있는데도 그렇다.
+
+실측(P3, Claude Code CLI, SK하이닉스·RIVN): 기업분석 실행이 다음을 그대로 받았다.
+
+- `"Minimum report length: 0 characters."` — 기업분석은 이 필드를 안 채우니 "최소 분량 0자"가 된다.
+- `"Each market title must be an H1 with a session date and status, like '# US Market Briefing — YYYY.MM.DD 마감'..."` — 브리핑 제목 형식.
+- `"...Do not add market-scope notes, source-date explanations, **blockquotes**, or any preamble."` — §company_analysis "글쓰기 방식"의 섹션 요약 blockquote 규칙과 **정면으로 충돌**한다. 실측 blockquote 준수율이 13/16(81%)에 그친 것과 맞아떨어진다.
+- `"Leading company headings must include... '## 3. 미국장을 주도한 기업 ① — NVIDIA'"` — 역시 브리핑 전용.
+
+모델이 결국 `beginner.md`의 올바른 지시(pack 파일 안, 나중에 읽음)를 따라가 제목 형식 자체는 맞게 나왔지만, 시작부터 모순되고 무관한 영어 지시문을 먼저 읽는 구조였다 — P1(동결 컨텍스트 + `beginner.md`만 이어붙인 단순 하네스)과 실제 파이프라인의 문체·형식 차이가 이 지시문 오염과 무관하지 않을 것으로 본다.
+
+`if required:` 블록을 둘로 쪼갰다 — 태스크 공통(섹션 누락 금지 + 필수 제목 목록)은 그대로, 브리핑 전용(분량 하한·타이틀 서식·주도 기업 서식)은 `pack.get("taskType") == "briefing"`으로 게이트. `test_company_analysis_agent_prompt_does_not_leak_briefing_instructions`가 회귀를 잡는다.
+
 ### 브리핑 출력 계약은 시장마다 라벨이 다르다
 
 `briefing_contract_violations()`의 검사 둘이 `us`가 아니면 전부 `한국장`으로 취급했다.

@@ -65,11 +65,17 @@ function sourceLink(item) {
   return `<span>${escapeHtml(title)}</span>`;
 }
 
+// ReportBody·서버와 같은 안전-느슨 헤딩 계약(번호 접두·시장 접미·괄호 부연 허용, 자유 꼬리 불허).
 function markdownSourceSection(value) {
-  const text = String(value || "");
-  // ReportBody·서버와 같은 안전-느슨 헤딩 계약(번호 접두·괄호 부연 허용, 자유 꼬리 불허).
-  const match = text.match(/^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$/im);
-  return match ? text.slice(match.index) : "";
+  const text = String(value || "").replace(/\r\n/g, "\n");
+  // 참고자료 섹션(들)만 모은다 — 뒤따르는 다른 섹션의 링크를 패널로 끌고 오지 않고,
+  // 참고자료 헤딩이 둘이어도(2026-08-22 사용자 보고) 둘 다 걷는다.
+  const headings = [...text.matchAll(/^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|sources(?:\s+used)?)\s*(?:[—-]\s*(?:미국장|한국장|유럽장|일본장))?\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$/gim)];
+  return headings.map((match) => {
+    const bodyStart = match.index + match[0].length;
+    const next = /^#{1,3}\s/m.exec(text.slice(bodyStart));
+    return next ? text.slice(match.index, bodyStart + next.index) : text.slice(match.index);
+  }).join("\n\n");
 }
 
 function markdownSourceSectionHasLinks(value) {
@@ -167,6 +173,12 @@ function renderMarkdown(value) {
   let listOpen = false;
   let tableOpen = false;
   let calendarTable = false;
+  // 섹션 요약 blockquote — 헤딩 바로 다음에 오면(사이에 빈 줄이 있어도 됨, html[]에
+  // 아무것도 안 쌓이므로) 그 자리에서만 특수 스타일을 입힌다. 본문 중간의 일반
+  // blockquote(임원 인용 등)는 그대로 둔다.
+  let blockquoteOpen = false;
+  let blockquoteIsSummary = false;
+  let blockquoteBuffer = [];
   const closeList = () => {
     if (listOpen) {
       html.push("</ul>");
@@ -179,59 +191,93 @@ function renderMarkdown(value) {
       tableOpen = false;
     }
   };
+  const closeBlockquote = () => {
+    if (blockquoteOpen) {
+      const cls = blockquoteIsSummary ? ' class="section-summary"' : "";
+      html.push(`<blockquote${cls}><p>${blockquoteBuffer.join(" ")}</p></blockquote>`);
+      blockquoteOpen = false;
+      blockquoteBuffer = [];
+    }
+  };
   const isTableLine = (line) => line.startsWith("|") && line.endsWith("|") && line.includes("|");
   const isTableSeparator = (line) => /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line);
-  const tableCells = (line) => line.split("|").slice(1, -1).map((cell) => inlineMarkdown(cell.trim()));
+  // 셀 하나하나를 본다(열 위치가 아니라) — 같은 표 안에도 "확인되지 않음" 같은 텍스트
+  // 값과 "$8.25B" 같은 숫자 값이 섞이고, 리스크·체크포인트 표는 첫 열 말고도 전부
+  // 산문이라 "첫 열만 라벨" 규칙이 안 통한다.
+  const NUMERIC_CELL = /^[+-]?[$₩]?[\d,]+(\.\d+)?\s*(%|배|bp|[BMK])?$/;
+  const tableCells = (line) => line.split("|").slice(1, -1).map((cell) => {
+    const raw = cell.trim();
+    return { html: inlineMarkdown(raw), numeric: NUMERIC_CELL.test(raw) };
+  });
   const listDepth = (space) => Math.min(2, Math.floor(String(space || "").replace(/\t/g, "  ").length / 2));
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
     const bulletMatch = rawLine.match(/^(\s*)[-*·]\s+(.+)$/);
+    const blockquoteMatch = line.match(/^>\s?(.*)$/);
     if (!line) {
       closeList();
       closeTable();
+      closeBlockquote();
       continue;
     }
     if (isTableSeparator(line)) continue;
     if (isTableLine(line)) {
       closeList();
+      closeBlockquote();
       const cells = tableCells(line);
       if (!tableOpen) {
-        calendarTable = cells.some((cell) => /일정|이벤트/.test(cell)) && cells.some((cell) => /날짜|일자/.test(cell));
-        html.push(`<div class="table-wrap${calendarTable ? " briefing-calendar-table" : ""}"><table><thead><tr>${cells.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead><tbody>`);
+        calendarTable = cells.some((cell) => /일정|이벤트/.test(cell.html)) && cells.some((cell) => /날짜|일자/.test(cell.html));
+        html.push(`<div class="table-wrap${calendarTable ? " briefing-calendar-table" : ""}"><table><thead><tr>${cells.map((cell) => `<th${cell.numeric ? ' class="num"' : ""}>${cell.html}</th>`).join("")}</tr></thead><tbody>`);
         tableOpen = true;
       } else {
         const statuses = { confirmed: "확정", estimated: "예상", actual: "발표됨", tentative: "잠정" };
-        html.push(`<tr>${cells.map((cell) => `<td>${calendarTable ? statuses[cell] || cell : cell}</td>`).join("")}</tr>`);
+        html.push(`<tr>${cells.map((cell) => `<td${cell.numeric ? ' class="num"' : ""}>${calendarTable ? statuses[cell.html] || cell.html : cell.html}</td>`).join("")}</tr>`);
       }
       continue;
     }
     if (line === "---") {
       closeList();
       closeTable();
+      closeBlockquote();
       html.push("<hr />");
       continue;
     }
     if (line.startsWith("# ")) {
       closeList();
       closeTable();
+      closeBlockquote();
       html.push(`<h2>${inlineMarkdown(line.slice(2))}</h2>`);
       continue;
     }
     if (line.startsWith("## ")) {
       closeList();
       closeTable();
+      closeBlockquote();
       html.push(`<h3>${inlineMarkdown(line.slice(3).replace(/^Source & Data Notes$/, "자료 기준과 한계"))}</h3>`);
       continue;
     }
     if (line.startsWith("### ")) {
       closeList();
       closeTable();
+      closeBlockquote();
       html.push(`<h4>${inlineMarkdown(line.slice(4))}</h4>`);
+      continue;
+    }
+    if (blockquoteMatch) {
+      closeList();
+      closeTable();
+      if (!blockquoteOpen) {
+        blockquoteIsSummary = html.length > 0 && /^<h3>/.test(html[html.length - 1]);
+        blockquoteOpen = true;
+        blockquoteBuffer = [];
+      }
+      if (blockquoteMatch[1].trim()) blockquoteBuffer.push(inlineMarkdown(blockquoteMatch[1].trim()));
       continue;
     }
     if (bulletMatch) {
       closeTable();
+      closeBlockquote();
       if (!listOpen) {
         html.push("<ul>");
         listOpen = true;
@@ -241,10 +287,12 @@ function renderMarkdown(value) {
     }
     closeList();
     closeTable();
+    closeBlockquote();
     html.push(`<p>${inlineMarkdown(line)}</p>`);
   }
   closeList();
   closeTable();
+  closeBlockquote();
   return html.join("");
 }
 

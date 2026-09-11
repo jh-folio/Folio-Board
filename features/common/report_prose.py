@@ -13,7 +13,13 @@ import re
 # 태그 이름을 특정하지 않는다. 모델이 새 이름을 만들어 쓰면 분량 계산에 주석이 섞인다.
 _HIDDEN_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-SOURCE_ID_RE = re.compile(r"(?:ev|market|macro|web)_[A-Za-z0-9_.\-]+")
+# 접두 있는 ID(ev_/market_/macro_/web_ — 브리핑 evidence, 웹 조회 인용)와 접두 없는
+# 16자 hex(로컬 문서 ID, `research_library/indexing`·RSS writer·
+# source_ledger_from_items()가 기존 id를 보존할 때 전부 이 형태 — 실측: 기업분석
+# 로컬 출처 태그가 전부 이 꼴이었는데 접두만 찾는 옛 정규식이 전부 놓쳐 섹션마다
+# 정확히 하나씩 단 보고서도 `unlinked_section`·`low_source_linkage`로 오판되고
+# 품질 점수가 69점에 묶였다) 둘 다 받는다.
+SOURCE_ID_RE = re.compile(r"(?:ev|market|macro|web)_[A-Za-z0-9_.\-]+|\b[0-9a-f]{16}\b")
 
 # 유보 표현. 제안서 §13 Rule 3의 목록에 실측에서 실제로 나온 것을 더했다.
 HEDGE_PHRASES = (

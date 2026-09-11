@@ -589,7 +589,10 @@ def test_briefing_agent_prompt_embeds_full_output_contract():
             "kr": "Korea Market Briefing — 2026.08.04 장중",
         },
     )
-    prompt = bridge._agent_prompt(Path("pack.json"), {"outputContract": contract})
+    # 실제 호출부(A.build_pack)는 항상 taskType을 싣는다 — 이 필드가 브리핑 전용
+    # 지시문(분량 하한·마켓 타이틀 서식 등)의 게이트다(company_analysis 등 다른
+    # taskType으로 새는 것을 막는다, 실측 P3).
+    prompt = bridge._agent_prompt(Path("pack.json"), {"taskType": "briefing", "outputContract": contract})
     assert "0. 오늘의 미국장 성격" in prompt
     assert "6. 다음 한국장 체크포인트" in prompt
     assert "10000" in prompt
@@ -597,6 +600,25 @@ def test_briefing_agent_prompt_embeds_full_output_contract():
     assert "# US Market Briefing — 2026.08.03 마감" in prompt
     assert "# Korea Market Briefing — 2026.08.04 장중" in prompt
     assert "기업명" in prompt
+
+
+def test_company_analysis_agent_prompt_does_not_leak_briefing_instructions():
+    """requiredSections를 채우는 taskType이 briefing 하나가 아니다 — company_analysis도
+    §6 규칙 14용 'requiredSections'(0.5.4)를 쓴다. 예전엔 taskType 게이트가 없어
+    브리핑 전용 지시(분량 0자·마켓 타이틀 서식·"blockquotes 금지")가 새어 들어갔다
+    (실측 P3: SK하이닉스·RIVN 둘 다). 마지막 항목은 §글쓰기 방식의 섹션 요약
+    blockquote 규칙과 정면으로 충돌해 그 준수율을 13/16으로 끌어내렸다."""
+    from features.company_analysis.style import REQUIRED_SECTION_HEADINGS
+
+    contract = {"format": "markdown", "analysisStyle": "beginner", "requiredSections": list(REQUIRED_SECTION_HEADINGS)}
+    prompt = bridge._agent_prompt(Path("pack.json"), {"taskType": "company_analysis", "outputContract": contract})
+    assert "핵심 판단" in prompt  # 필수 섹션 목록 자체는 여전히 실린다
+    assert "축약" in prompt
+    assert "Minimum report length: 0 characters" not in prompt
+    assert "오늘의" not in prompt
+    assert "마감" not in prompt
+    assert "blockquotes" not in prompt
+    assert "주도한 기업" not in prompt
 
 
 def test_briefing_contract_rejects_missing_title_date_and_company_names():

@@ -119,7 +119,12 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
             "prompt": read_company_analysis_prompt(analysis_style),
             "promptPath": llm_result.get("promptPath") or str(analysis_prompt_path(analysis_style)),
             "generation": generation,
-            "sources": sources_fn(inputs.materials, llm_result.get("usedDocs", [])[:14]),
+            # 문서 목록은 LLM이 실제 인용한 것으로 좁히되(usedDocs), 웹 조회 인용은
+            # `draft_artifact`와 같게 전달한다 — 3번째 인자를 빠뜨리면 API 생성본만
+            # 참고자료에서 웹 인용이 사라진다(§6 규칙 14).
+            "sources": sources_fn(
+                inputs.materials, llm_result.get("usedDocs", [])[:14], inputs.webSourceItems
+            ),
             # 프롬프트로 부탁한 것과 실제로 지킨 것은 다르다. 무엇이 목록 밖이었는지
             # 남겨야 다음에 목록을 고칠 수 있다.
             "webSearchAudit": audit_urls(llm_result.get("markdown", ""), load_source_scope(company)),
@@ -131,7 +136,11 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
         report = {
             **common, "headline": f"{company['name']} 규칙 기반 기업 분석",
             "markdown": rule_fn(inputs.materials, analysis_style=analysis_style), "generation": generation,
-            "sources": sources_fn(inputs.materials, inputs.materials.get("selectedDocs", inputs.docs[:10])[:14]),
+            "sources": sources_fn(
+                inputs.materials,
+                inputs.materials.get("selectedDocs", inputs.docs[:10])[:14],
+                inputs.webSourceItems,
+            ),
         }
         report["analysisInputs"].update({
             "topTags": sorted(set(tags), key=tags.count, reverse=True)[:6],

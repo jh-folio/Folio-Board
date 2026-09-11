@@ -35,7 +35,7 @@ from features.company_analysis.report_rules import (
     build_valuation_metrics,
     fetch_market_valuation_data,
 )
-from features.company_analysis.sec_companyfacts import build_companyfacts_summary
+from features.company_analysis.sec_companyfacts import SEC_FACTS_URL, build_companyfacts_summary
 from features.company_analysis.sec_filings import (
     ranked_10k_paragraphs,
     ranked_paragraphs_to_markdown,
@@ -1040,7 +1040,7 @@ def get_analysis_report(report_id):
     return read_json(ANALYSIS_REPORTS_DIR / f"{safe_id}.json", None)
 
 
-def company_analysis_sources(materials, docs):
+def company_analysis_sources(materials, docs, web_items=None):
     sources = []
     seen = set()
 
@@ -1051,19 +1051,34 @@ def company_analysis_sources(materials, docs):
         seen.add(key)
         sources.append(source)
 
-    ranked = materials.get("rankedFiling", {}) or {}
-    metadata = ranked.get("metadata", {}) or {}
-    if metadata.get("url"):
+    def add_filing(result):
+        """연차(10-K/20-F)·분기(10-Q) 발췌 모두 같은 모양이다. 컨텍스트가 그 서술을
+        쓰는데 출처 목록에서 빠지면 독자는 근거를 열 수 없다.
+
+        `ok`가 아니면 넣지 않는다 — 컨텍스트도 "확보하지 못했습니다"로 적으므로,
+        fetch 실패한 문서를 출처로 올리면 목록과 본문이 어긋난다."""
+        result = result or {}
+        if not result.get("ok"):
+            return
+        meta = result.get("metadata", {}) or {}
+        if not meta.get("url"):
+            return
+        form = str(result.get("form") or meta.get("form") or "").strip()
         add({
             # 출처 표기는 실제 form을 따른다. 20-F 제출사의 근거를 "10-K"로 적으면
             # source ledger가 존재하지 않는 문서를 가리킨다.
-            "title": metadata.get("title") or f"SEC {metadata.get('form') or '10-K'} HTML",
+            "title": meta.get("title") or f"SEC {form or '10-K'} HTML",
             "source": "SEC EDGAR",
-            "date": metadata.get("filingDate", ""),
-            "url": metadata.get("url", ""),
+            "date": meta.get("filingDate", ""),
+            "url": meta.get("url", ""),
             "path": "",
-            "type": metadata.get("form") or "filing",
+            "type": form or "filing",
         })
+
+    add_filing(materials.get("rankedFiling"))
+    # 최근 10-Q MD&A 발췌는 연차보고서를 대체하지 않고 덧붙는 근거다. 컨텍스트의
+    # "## 최근 분기 공시 서술 (10-Q MD&A)"가 이 문서를 읽는다.
+    add_filing(materials.get("rankedQuarterlyFiling"))
     sec_facts = materials.get("secFacts", {}) or {}
     dart_facts = materials.get("dartFacts", {}) or {}
     if dart_facts.get("corpCode"):
@@ -1090,7 +1105,9 @@ def company_analysis_sources(materials, docs):
             "title": f"SEC companyfacts CIK {sec_facts.get('cik')}",
             "source": "SEC companyfacts",
             "date": "",
-            "url": f"https://data.sec.gov/submissions/CIK{sec_facts.get('cik')}.json",
+            # 링크는 실제로 companyfacts API를 가리켜야 한다. submissions URL을
+            # "companyfacts"로 적으면 독자가 연 자료가 재무 숫자의 출처가 아니다.
+            "url": SEC_FACTS_URL.format(cik=sec_facts.get("cik")),
             "path": "",
             "type": "financials",
         })
@@ -1108,6 +1125,8 @@ def company_analysis_sources(materials, docs):
             "path": "",
             "type": "market data",
         })
+    # 로컬 선별 자료가 먼저다 — 웹은 보완이지 대체가 아니다(Rule 9). 상한을 웹이
+    # 먼저 채우면 점수화된 로컬 리포트·기사가 밀린다.
     for d in docs:
         add({
             "title": d.get("title", ""),
@@ -1116,6 +1135,22 @@ def company_analysis_sources(materials, docs):
             "url": d.get("url", ""),
             "path": d.get("path", ""),
             "type": d.get("type", ""),
+        })
+        if len(sources) >= 16:
+            break
+    # 웹 조회로 실제 인용한 자료. 지금까지 sourceLedger에만 있어 reader·내보내기에서
+    # 빠졌다 — 본문이 근거로 쓴 것을 독자가 열 수 없었다.
+    for item in web_items or []:
+        url = str(item.get("url") or "")
+        if not url.startswith("http"):
+            continue
+        add({
+            "title": item.get("title", "") or url,
+            "source": item.get("source", "") or "웹 조회",
+            "date": item.get("date", ""),
+            "url": url,
+            "path": "",
+            "type": item.get("type", "") or "web_reference",
         })
         if len(sources) >= 16:
             break
@@ -1286,14 +1321,22 @@ def build_company_analysis_charts(materials):
                     metric_maps[metric][year] = abs(float(value)) if metric == "Capital Expenditure" else float(value)
             except Exception:
                 pass
-    years = sorted(set().union(*[set(values.keys()) for values in metric_maps.values()]))[-5:]
+    # 손익 4종(실적 추이·마진 추이)과 현금흐름 2종은 **다른 폭**일 수 있다 — 현금흐름은
+    # yfinance cashflowRows로 보강돼(위) 손익 원자료보다 한 해 더 먼 과거를 가진 경우가
+    # 실측됐다(예: 000660 DART — 손익 3개년, 현금흐름 4개년). 예전에는 `years` 하나를
+    # 전 지표 union으로 잡아 그 최원년이 실적 추이·마진 추이에도 섞여 들어가, 4종 지표가
+    # 전부 없는데도 그 해가 라벨로 나오고 값은 전부 null이었다(차트에 빈 점 하나).
+    performance_metrics = ("Revenue", "Gross Profit", "Operating Income", "Net Income")
+    cashflow_metrics = ("Operating Cash Flow", "Capital Expenditure")
+    performance_years = sorted(set().union(*[set(metric_maps[m].keys()) for m in performance_metrics]))[-5:]
+    cashflow_years = sorted(set().union(*[set(metric_maps[m].keys()) for m in cashflow_metrics]))[-5:]
 
     charts = []
-    if years:
-        revenue = _series_for_years(metric_maps["Revenue"], years)
-        gross_profit = _series_for_years(metric_maps["Gross Profit"], years)
-        operating_income = _series_for_years(metric_maps["Operating Income"], years)
-        net_income = _series_for_years(metric_maps["Net Income"], years)
+    if performance_years:
+        revenue = _series_for_years(metric_maps["Revenue"], performance_years)
+        gross_profit = _series_for_years(metric_maps["Gross Profit"], performance_years)
+        operating_income = _series_for_years(metric_maps["Operating Income"], performance_years)
+        net_income = _series_for_years(metric_maps["Net Income"], performance_years)
         net_margin = _ratio_series(net_income, revenue)
         if _has_any_number(revenue) or _has_any_number(net_income):
             charts.append({
@@ -1301,7 +1344,7 @@ def build_company_analysis_charts(materials):
                 "title": "실적 추이",
                 "subtitle": "SEC companyfacts 연간 보고 기준",
                 "kind": "performance",
-                "years": years,
+                "years": performance_years,
                 "revenue": revenue,
                 "grossProfit": gross_profit,
                 "operatingIncome": operating_income,
@@ -1309,44 +1352,51 @@ def build_company_analysis_charts(materials):
                 "netMargin": net_margin,
                 "currency": reporting_currency,
             })
+    else:
+        revenue = gross_profit = operating_income = net_income = net_margin = []
 
-        # 분기 흐름은 연간 추세와 다른 질문에 답한다. 둘 다 그린다.
-        quarter_maps = {
-            metric: _metric_quarterly_map(sec_summary, metric)
-            for metric in ("Revenue", "Operating Income", "Net Income")
-        }
-        quarters = sorted({q for values in quarter_maps.values() for q in values})[-8:]
-        if quarters:
-            q_revenue = [_finite_number(quarter_maps["Revenue"].get(q)) for q in quarters]
-            q_operating = [_finite_number(quarter_maps["Operating Income"].get(q)) for q in quarters]
-            q_net = [_finite_number(quarter_maps["Net Income"].get(q)) for q in quarters]
-            if _has_any_number(q_revenue) or _has_any_number(q_net):
-                charts.append({
-                    "id": "quarterly",
-                    "title": "분기 흐름",
-                    "subtitle": "SEC companyfacts 분기 보고 기준",
-                    "kind": "quarterly",
-                    "years": quarters,
-                    "revenue": q_revenue,
-                    "operatingIncome": q_operating,
-                    "netIncome": q_net,
-                    "netMargin": _ratio_series(q_net, q_revenue),
-                    "currency": reporting_currency,
-                    # 분기는 계절성이 있어 직전 분기가 아니라 전년 동기와 비교한다.
-                    # 화면은 라벨(`2026 Q2`→`2025 Q2`)로 전년 동기를 찾는다 — 10-Q에는
-                    # Q4가 없어 고정 오프셋 4는 전년 동기가 아니다. 이 값은 옛 저장
-                    # 페이로드와의 호환으로만 남는다.
-                    "compareOffset": 4,
-                })
+    # 분기 흐름은 연간 추세와 다른 질문에 답한다. 둘 다 그린다.
+    quarter_maps = {
+        metric: _metric_quarterly_map(sec_summary, metric)
+        for metric in ("Revenue", "Operating Income", "Net Income")
+    }
+    quarters = sorted({q for values in quarter_maps.values() for q in values})[-8:]
+    if quarters:
+        q_revenue = [_finite_number(quarter_maps["Revenue"].get(q)) for q in quarters]
+        q_operating = [_finite_number(quarter_maps["Operating Income"].get(q)) for q in quarters]
+        q_net = [_finite_number(quarter_maps["Net Income"].get(q)) for q in quarters]
+        if _has_any_number(q_revenue) or _has_any_number(q_net):
+            charts.append({
+                "id": "quarterly",
+                "title": "분기 흐름",
+                "subtitle": "SEC companyfacts 분기 보고 기준",
+                "kind": "quarterly",
+                "years": quarters,
+                "revenue": q_revenue,
+                "operatingIncome": q_operating,
+                "netIncome": q_net,
+                "netMargin": _ratio_series(q_net, q_revenue),
+                "currency": reporting_currency,
+                # 분기는 계절성이 있어 직전 분기가 아니라 전년 동기와 비교한다.
+                # 화면은 라벨(`2026 Q2`→`2025 Q2`)로 전년 동기를 찾는다 — 10-Q에는
+                # Q4가 없어 고정 오프셋 4는 전년 동기가 아니다. 이 값은 옛 저장
+                # 페이로드와의 호환으로만 남는다.
+                "compareOffset": 4,
+            })
 
-        cfo = _series_for_years(metric_maps["Operating Cash Flow"], years)
-        capex_raw = _series_for_years(metric_maps["Capital Expenditure"], years)
+    if cashflow_years:
+        cfo = _series_for_years(metric_maps["Operating Cash Flow"], cashflow_years)
+        capex_raw = _series_for_years(metric_maps["Capital Expenditure"], cashflow_years)
         capex = [-abs(value) if value is not None else None for value in capex_raw]
         free_cash_flow = [
             (a - b) if a is not None and b is not None else None
             for a, b in zip(cfo, capex_raw)
         ]
-        fcf_margin = _ratio_series(free_cash_flow, revenue)
+        # margin의 분모는 cashflow_years에 맞춰 다시 읽는다 — performance_years와
+        # 폭이 다를 수 있어(위 주석) performance_years 정렬의 `revenue`를 그대로
+        # zip하면 해가 어긋난 값끼리 나뉜다.
+        revenue_for_cashflow = _series_for_years(metric_maps["Revenue"], cashflow_years)
+        fcf_margin = _ratio_series(free_cash_flow, revenue_for_cashflow)
         if _has_any_number(cfo) or _has_any_number(free_cash_flow):
             charts.append({
                 "id": "cashflow",
@@ -1356,7 +1406,7 @@ def build_company_analysis_charts(materials):
                     [("영업활동", cfo), ("설비투자", capex), ("잉여현금흐름", free_cash_flow)],
                 ),
                 "kind": "cashflow",
-                "years": years,
+                "years": cashflow_years,
                 "operatingCashFlow": cfo,
                 "capitalExpenditure": capex,
                 "freeCashFlow": free_cash_flow,
@@ -1364,6 +1414,7 @@ def build_company_analysis_charts(materials):
                 "currency": reporting_currency,
             })
 
+    if performance_years:
         gross_margin = _ratio_series(gross_profit, revenue)
         operating_margin = _ratio_series(operating_income, revenue)
         if _has_any_number(gross_margin) or _has_any_number(operating_margin):
@@ -1375,7 +1426,7 @@ def build_company_analysis_charts(materials):
                     [("매출총이익률", gross_margin), ("영업이익률", operating_margin), ("순이익률", net_margin)],
                 ),
                 "kind": "margins",
-                "years": years,
+                "years": performance_years,
                 "grossMargin": gross_margin,
                 "operatingMargin": operating_margin,
                 "netMargin": net_margin,

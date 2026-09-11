@@ -54,6 +54,43 @@ class TestNormalizedBase:
         assert D.normalized_base_fcf(no_revenue)["method"] == "median_fcf"
         assert D.normalized_base_fcf(_summary({"Revenue": [1]})) == {}
 
+    def test_a_genuine_multiyear_trend_weights_toward_the_recent_margin(self):
+        """중앙값은 상승 추세에서 항상 한두 해 뒤처진다 — 최근 연도 가중으로 따라잡는다."""
+        trending = _summary({
+            "Revenue": [10_000, 9_000, 8_000],
+            "Operating Cash Flow": [2_300, 1_760, 1_300],
+            "Capital Expenditure": [500, 500, 500],
+        })
+        base = D.normalized_base_fcf(trending)
+        assert base["method"] == "trend_weighted_margin"
+        assert base["marginTrend"] == "increasing"
+        # 마진 중앙값(0.14)보다 최근 마진(0.18)에 더 가깝게 나와야 한다.
+        assert base["usedMargin"] > 0.14
+        # median_margin이면 -22.2%가 났을 자리다 — 실제에 더 가까워야 한다.
+        assert base["deviationFromRecent"] > -0.20
+
+    def test_a_declining_trend_also_gets_weighted_not_just_growth(self):
+        """추세는 방향과 무관하다 — 악화 추세도 중앙값 대신 최근 연도로 당긴다."""
+        declining = _summary({
+            "Revenue": [10_000, 9_000, 8_000],
+            "Operating Cash Flow": [1_300, 1_760, 2_300],  # 위 증가 케이스의 시간 역순
+            "Capital Expenditure": [500, 500, 500],
+        })
+        base = D.normalized_base_fcf(declining)
+        assert base["method"] == "trend_weighted_margin"
+        assert base["marginTrend"] == "decreasing"
+
+    def test_the_spike_case_still_falls_back_to_median(self):
+        """한 구간이 마진 폭을 지배하는 스파이크는 추세로 보지 않는다(회귀 방지)."""
+        spike = _summary({
+            "Revenue": [10_000, 9_800, 9_600],
+            "Operating Cash Flow": [2_400, 2_350, 2_300],
+            "Capital Expenditure": [2_000, 400, 380],
+        })
+        base = D.normalized_base_fcf(spike)
+        assert base["method"] == "median_margin"
+        assert base["marginTrend"] == "flat"
+
 
 class TestGrowthDriver:
     def test_revenue_leads_because_fcf_growth_contradicts_it(self):
@@ -188,6 +225,25 @@ class TestBuildDcf:
         assert "역산 성장률" in block
         assert "고평가·저평가라고 단정하지 마세요" in block
         assert "다시 계산하지 마세요" in block
+
+    def test_the_terminal_and_implied_wording_tracks_the_real_horizon(self):
+        """`fadePath`는 10년인데 문구가 "6년차 이후"라고 박혀 있었다 — 10년 명시
+        예측 모델에서 터미널은 11년차부터다. 역산 성장률도 1년차 값일 뿐 여러 해
+        유지되는 요구 성장률이 아니다."""
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000)
+        years = len(model["fadePath"])
+        block = D.render_dcf_context(model)
+        assert "6년차" not in block
+        assert f"명시 예측 기간({years}년) 이후" in block
+        # 역산 성장률은 1년차 값이고 이후 감쇠한다고 밝힌다.
+        assert "1년차 FCF 성장률 한 값만" in block
+        assert "여러 해 유지되는" in block
+
+    def test_a_shorter_horizon_moves_the_wording_with_it(self):
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000)
+        model["fadePath"] = model["fadePath"][:5]
+        block = D.render_dcf_context(model)
+        assert "명시 예측 기간(5년) 이후" in block
 
 
 class TestAssumptionSensitivity:

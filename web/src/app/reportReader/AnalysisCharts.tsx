@@ -27,6 +27,9 @@ type Series = {
   label: string;
   values: Array<number | null>;
   kind?: "money" | "percent" | "plain";
+  /** 재무 캐스케이드 차트(실적·현금흐름·마진 추이)만 채운다. 없으면 렌더 쪽이
+   *  COLORS 순환으로 되돌아간다(주가 수익률 비교처럼 진짜 범주인 차트). */
+  color?: string;
 };
 
 type ChartTooltip = {
@@ -44,6 +47,45 @@ const COLORS = [
   "var(--folio-chart-4)",
   "var(--folio-chart-5)",
 ];
+
+// --folio-chart-1~5는 진짜 범주(서로 무관한 항목 여럿이 한 그림에 같이 나오는
+// 차트)용이다. 아래 차트들은 범주가 아니라 캐스케이드다 — 매출→영업이익→
+// 순이익은 같은 돈이 비용을 거치며 줄어드는 한 흐름이지 서로 다른 항목 셋이
+// 아니다. FundamentalsPanel.tsx(워치리스트 분기 지표)가 쓰는 규칙을 그대로
+// 가져온다: 첫 계열(규모 기준)은 무채색 잉크, 세트의 정체성은 그 차트만의
+// 색 하나와 그 옅은 톤이 만든다. 한 세트 안에 여러 색을 섞으면 알록달록하고,
+// 네 세트가 같은 색이면 지금 어느 차트를 보고 있는지 색이 말해주지 않는다.
+const INK = "color-mix(in srgb, var(--folio-ink) 42%, transparent)";
+const tint = (token: string) => `color-mix(in srgb, ${token} 45%, transparent)`;
+
+const SERIES_COLOR_BY_KIND: Record<string, Record<string, string>> = {
+  performance: {
+    revenue: INK,
+    operatingIncome: "var(--folio-chart-1)",
+    netIncome: tint("var(--folio-chart-1)"),
+    // 순이익률만 금액이 아니라 비율이다 — 캐스케이드가 아니라 진짜 다른 종류의
+    // 숫자라 이 넷 중 유일하게 별도 색(--folio-chart-accent-ratio)을 받는다.
+    netMargin: "var(--folio-chart-accent-ratio)",
+  },
+  quarterly: {
+    revenue: INK,
+    operatingIncome: "var(--folio-chart-1)",
+    netIncome: tint("var(--folio-chart-1)"),
+    netMargin: "var(--folio-chart-accent-ratio)",
+  },
+  cashflow: {
+    operatingCashFlow: INK,
+    freeCashFlow: "var(--folio-chart-accent-cashflow)",
+    capitalExpenditure: tint("var(--folio-chart-accent-cashflow)"),
+  },
+  // 매출총이익률 ⊇ 영업이익률 ⊇ 순이익률 — 셋 다 비율이고 서로 포함관계인
+  // 같은 캐스케이드라 막대가 아니라 선이어도 같은 규칙을 쓴다.
+  margins: {
+    grossMargin: INK,
+    operatingMargin: "var(--folio-chart-5)",
+    netMargin: tint("var(--folio-chart-5)"),
+  },
+};
 
 const SERIES_LABELS: Record<string, string> = {
   revenue: "매출",
@@ -98,13 +140,16 @@ function chartSeries(chart: AnalysisChart): Series[] {
     cashflow: [["operatingCashFlow", "money"], ["freeCashFlow", "money"], ["capitalExpenditure", "money"]],
     margins: [["grossMargin", "percent"], ["operatingMargin", "percent"], ["netMargin", "percent"]],
   };
-  const keys = keysByKind[String(chart.kind || chart.id || "")] || [];
+  const chartKind = String(chart.kind || chart.id || "");
+  const keys = keysByKind[chartKind] || [];
+  const colorsForKind = SERIES_COLOR_BY_KIND[chartKind];
   return keys
     .map(([key, kind]) => ({
       key,
       label: SERIES_LABELS[key] || key,
       values: arrayValues(chart[key]),
       kind,
+      color: colorsForKind?.[key],
     }))
     .filter((series) => series.values.some((value) => value !== null));
 }
@@ -284,7 +329,7 @@ function BarsChart({
               width={Math.max(2, barWidth - 3)}
               height={Math.max(2, Math.abs(zeroY - y))}
               rx="3"
-              fill={COLORS[seriesIndex % COLORS.length]}
+              fill={item.color ?? COLORS[seriesIndex % COLORS.length]}
             />
           );
         }),
@@ -303,7 +348,7 @@ function BarsChart({
             points={points}
             fill="none"
             strokeWidth="2"
-            stroke={COLORS[(amounts.length + rateIndex) % COLORS.length]}
+            stroke={item.color ?? COLORS[(amounts.length + rateIndex) % COLORS.length]}
           />
         );
       })}
@@ -413,12 +458,13 @@ function LineChart({
           .filter(Boolean)
           .join(" ");
         const active = item.values[activeIndex];
+        const color = item.color ?? COLORS[seriesIndex % COLORS.length];
         return (
           <g key={item.key}>
             <polyline
               points={points}
               fill="none"
-              stroke={COLORS[seriesIndex % COLORS.length]}
+              stroke={color}
               strokeWidth="2"
               strokeLinejoin="round"
               strokeLinecap="round"
@@ -428,7 +474,7 @@ function LineChart({
                 cx={at(activeIndex)}
                 cy={yFor(active, min, max, top, plot)}
                 r="4"
-                fill={COLORS[seriesIndex % COLORS.length]}
+                fill={color}
               />
             )}
           </g>
@@ -560,7 +606,7 @@ function PeriodPanel({
         }
         return (
           <p className="analysis-chart-readout-row" key={item.key}>
-            <span className="analysis-chart-swatch" style={{ background: COLORS[seriesIndex % COLORS.length] }} />
+            <span className="analysis-chart-swatch" style={{ background: item.color ?? COLORS[seriesIndex % COLORS.length] }} />
             <span>{item.label}</span>
             <b>{formatValue(value, item.kind, chart.currency)}</b>
             <em data-direction={direction}>{change}</em>
@@ -640,7 +686,7 @@ function ChartCard({ chart }: { chart: AnalysisChart }) {
             <b>{labels[index] || ""}</b>
             {series.map((item, seriesIndex) => (
               <p key={item.key}>
-                <span className="analysis-chart-swatch" style={{ background: COLORS[seriesIndex % COLORS.length] }} />
+                <span className="analysis-chart-swatch" style={{ background: item.color ?? COLORS[seriesIndex % COLORS.length] }} />
                 <span>{item.label}</span>
                 <em>{formatValue(item.values[index] ?? null, item.kind, banded.chart.currency)}</em>
               </p>

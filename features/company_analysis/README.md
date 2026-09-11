@@ -120,6 +120,28 @@ CLI   app.py → submit_agent_task() → agent_mode/service.py::prepare_company_
 - `어떻게 접근할까`와 `자료 한계와 참고자료`는 면제다 — 판단을 적는 자리와 데이터 메모는
   근거를 인용하는 자리가 아니다.
 
+### 출처 목록 (`company_analysis_sources`)
+
+리더가 표시하는 `sources`다. **컨텍스트가 근거로 읽는 것은 전부 여기 있어야 한다.**
+
+- 연차보고서(`rankedFiling`, 10-K/20-F)와 **최근 10-Q(`rankedQuarterlyFiling`)를 각자 form
+  라벨과 함께** 싣는다. 10-Q MD&A 발췌는 컨텍스트의 `## 최근 분기 공시 서술`이 쓰는데
+  출처 목록에서 빠져 있었다.
+- `secFacts`의 companyfacts 링크는 `SEC_FACTS_URL`(`api/xbrl/companyfacts/CIK…`)을 가리킨다
+  — submissions URL을 "SEC companyfacts"로 적으면 독자가 연 자료가 재무 숫자의 출처가 아니다.
+- 웹 조회로 인용한 자료(`GenerationInputs.webSourceItems`)는 `sourceLedger`뿐 아니라
+  `sources`에도 들어간다. `draft_artifact`가 두 경로(API/CLI) 공통으로 전달한다.
+
+### 리더 렌더링 (`web/src/app/reportReader/CompanyAnalysisBody.tsx`)
+
+- **차트는 섹션에 2-pass로 배정한다.** 전체 섹션의 의미 매칭(제목 키워드)을 먼저 끝내고,
+  남은 차트만 고정 위치(`fallbackIndex`)로 떨어뜨린다(`assignSectionCharts`). 인덱스
+  fallback을 먼저 소비하면 "기업 개요"가 뒤 "실적과 재무 품질"의 실적·마진 차트를 가져간다.
+  서론 문단이 붙어도 `fallbackIndex`는 헤딩 순번(`headingOrdinals`) 기준이라 밀리지 않는다.
+- 공통 `ReportBody::stripInlineReferenceSections`는 참고자료 헤딩부터 **다음 동급·상위
+  헤딩까지만** 걷어낸다. 문서 끝까지 자르면 그 아래에 온 정상 섹션("밸류에이션과 DCF
+  관련 주의")이 사라진다. 참고자료가 문서 맨 끝이면(브리핑) 기존처럼 끝까지 제거된다.
+
 ### 점수 상한
 
 `apply_report_ceiling`이 `common/research_quality/contract_ceiling.py`를 부른다(딥 리서치와
@@ -214,6 +236,8 @@ LLM에는 전체 10-K나 전체 PDF를 넣지 않습니다. 입력은 `공식 �
 - `advanced`: 같은 9개 섹션 골격을 유지하되, 경쟁우위·재무품질·밸류에이션·반증조건을 더 압축적이고 깊게 다루는 숙련자용 보고서입니다.
 
 두 모드는 공통 base prompt를 조합하지 않고 완전히 분리된 prompt 파일을 사용합니다. 다만 두 prompt는 같은 9개 섹션 순서, 자료 우선순위, 조작 금지, data gap 처리 규칙을 반드시 공유해야 합니다.
+
+`beginner.md`는 문단 첫 문장에 관찰 사실을 담은 강한 문장을 쓰되, 마크다운 볼드는 섹션당 판단을 좌우하는 1~2곳에만 남깁니다(문단마다 볼드하면 강조가 사라진다는 실측 지적으로 0.6 P3에서 조정). 0번을 제외한 각 섹션 제목 바로 다음 줄에는 blockquote(`> `)로 2~3줄 섹션 요약을 둡니다. 리더 렌더러가 "헤딩 바로 다음 blockquote"만 `.section-summary` 카드로 스타일하므로 제목 → 요약 → 본문 순서를 지켜야 합니다(자세한 렌더링 규칙은 `features/frontend_ui/DESIGN_SYSTEM.md` §5 "리포트 표"). §3 밸류에이션 표는 PER·PSR·EV/EBITDA·FCF Yield 뜻을 표 안이나 표 아래에 밝히도록 명시합니다.
 
 자료가 부족할 때는 곧바로 "확인 불가"로 끝내지 않고 `features/company_analysis/data_gap_resolver.py`의 data-gap resolver가 먼저 SEC companyfacts/DART, SEC 10-K HTML, 로컬 공식자료, 시장 데이터, 로컬 IR·기사·RSS, 웹 검색 허용 여부를 기준으로 어떤 확인 경로를 시도했는지 구조화합니다. 보고서 JSON에는 `dataGaps`와 `resolutionAttempts`가 저장되고, Reader는 해결되지 않은 항목을 "자료 한계"로 보여줍니다.
 
@@ -445,13 +469,19 @@ ADR 비율이나 주식종류를 검증했다고 주장하지 않으며, 공급�
 
 - `build_dcf()` — 정상화 → 할인율 → 감쇠 → 시나리오 → 역산. `analysisCharts.dcf`에
   저장되고 차트·본문 컨텍스트·규칙 보고서가 **같은 객체**를 읽는다.
-- `normalized_base_fcf()` — 중앙값 FCF 마진 × 최근 매출. 최근 1년이 회사 가치를 정하지
-  않게 한다. 어느 방법으로 내려갔는지 `method`가 말한다.
+- `normalized_base_fcf()` — FCF 마진 × 최근 매출. 최근 1년이 회사 가치를 정하지 않게
+  한다. 마진이 완만한 다년 추세면(`_margin_trend()`, 한 구간이 마진 폭의 70% 넘지 않음)
+  최근 연도 가중 평균(`trend_weighted_margin`)을 쓰고 — 우량성장주처럼 개선세가 이어지는
+  회사에서 중앙값이 추세에 뒤처지는 것을 줄인다 — 스파이크나 횡보면 기존 중앙값
+  (`median_margin`)을 쓴다. 어느 방법으로 내려갔는지 `method`가, 추세 방향은 `marginTrend`가
+  말한다.
 - `growth_driver()` — 매출 CAGR 우선. FCF 성장률은 매출과 부호까지 어긋난다.
 - `estimate_discount_rate()` — 회사별 WACC, 블룸 조정 베타. 입력이 없으면 고정값으로
   내려가되 `method: fallback_fixed`와 `missing`을 남긴다.
 - `implied_growth()` — 현재가를 정당화하는 초기 성장률. **이 층의 핵심 숫자다.**
 - 예측 기간 10년, 선형 감쇠, 터미널 비중 공시(`TERMINAL_SHARE_WARN` 70%).
+- **문구의 연차 숫자는 `fadePath` 길이를 따라간다.** "6년차 이후"로 박아 두면 10년 모델에서 터미널이 11년차부터라는 사실과 어긋나고 본문이 그대로 옮긴다 — `render_dcf_context`(LLM 컨텍스트)와 `report_rules` 셀이 같은 "명시 예측 기간 N년 이후" 표현을 쓴다.
+- **역산 성장률은 1년차 값이고 이후 N년에 걸쳐 감쇠한다.** 정상화 FCF·할인율·영구성장률·감쇠 경로를 고정하고 초기 성장률 한 변수만 역산한 결과다. 컨텍스트가 이 조건을 함께 실어, 매출·EBITDA 성장률 한 숫자와 그대로 비교하거나 "시장의 요구 성장률"처럼 읽지 않게 한다.
 - 시나리오는 성장률만, 민감도 표가 할인율·영구성장. 둘은 같은 모델을 쓴다.
 - `assumption_sensitivity()` — 무위험수익률(±0.5%p)·ERP(4/5/6%)가 내재가치와 역산
   성장률을 얼마나 움직이는지의 감도표(`assumptionSensitivity`). **값을 맞히는 것보다

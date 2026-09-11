@@ -106,6 +106,34 @@ PROJECTION_YEARS = 10
 # 원시 베타 2.12인 회사가 할인율 14.8%를 받아 어떤 성장률로도 현재가가 설명되지
 # 않는다 — 모델이 답을 못 내는 것이지 그 회사가 그만큼 위험한 것이 아니다.
 BETA_SHRINK, BETA_ANCHOR = 2 / 3, 1.0
+# 완만한 다년 추세만 추세로 인정한다. 스파이크가 한 구간을 지배하면(예: CapEx 급증
+# 한 해) 그 구간이 전체 마진 폭의 대부분을 차지한다 — 실측 `test_one_bad_year_does_
+# not_set_the_whole_valuation` 케이스는 마지막 구간이 폭의 99%였다. HWM처럼 매 구간이
+# 고르게 벌어지는 진짜 추세(59%)는 통과시키고, 그런 스파이크는 걸러 median으로 내린다.
+TREND_STEP_DOMINANCE_LIMIT = 0.7
+
+
+def _margin_trend(margins_recent_first: list[float]) -> str:
+    """'increasing' | 'decreasing' | 'flat'. 인자는 최근 연도가 앞이라 시간순으로 뒤집어 본다."""
+    chronological = list(reversed(margins_recent_first))
+    diffs = [b - a for a, b in zip(chronological, chronological[1:])]
+    span = max(chronological) - min(chronological)
+    if span <= 0 or not diffs:
+        return "flat"
+    if max(abs(d) for d in diffs) > span * TREND_STEP_DOMINANCE_LIMIT:
+        return "flat"
+    if all(d >= 0 for d in diffs):
+        return "increasing"
+    if all(d <= 0 for d in diffs):
+        return "decreasing"
+    return "flat"
+
+
+def _recency_weighted(values_recent_first: list[float]) -> float:
+    """최근 연도에 선형으로 더 무게를 준 평균 — 가장 최근이 n, 가장 오래된 것이 1."""
+    n = len(values_recent_first)
+    weights = range(n, 0, -1)
+    return sum(w * v for w, v in zip(weights, values_recent_first)) / sum(weights)
 
 
 def _positive(value) -> float | None:
@@ -119,9 +147,11 @@ def _positive(value) -> float | None:
 def normalized_base_fcf(sec_summary: dict, *, years: int = 5) -> dict:
     """정상화 기준 FCF.
 
-    **마진은 안정적이고 금액은 아니다.** 중앙값 FCF 마진에 최근 매출을 곱한다. 매출이
-    없으면 FCF 중앙값으로 내려가고, 그것도 없으면 최근값을 쓴다 — 어느 쪽인지 `method`가
-    말한다.
+    **마진은 안정적이고 금액은 아니다.** FCF 마진에 최근 매출을 곱한다. 마진이 완만한
+    다년 추세면(우량성장주처럼 개선되거나, 반대로 악화되는 경우) 중앙값이 항상 추세보다
+    한두 해 뒤처지므로 최근 연도에 선형 가중을 준 평균을 쓴다. 추세가 아니라 횡보하거나
+    한 해가 튀는 것이면(예: CapEx 급증) 기존대로 중앙값이 이상치를 걸러낸다. 매출이 없으면
+    FCF 중앙값으로 내려가고, 그것도 없으면 최근값을 쓴다 — 어느 쪽인지 `method`가 말한다.
     """
     cfo = financial_engine.annual_year_values(sec_summary, "Operating Cash Flow")
     capex = financial_engine.annual_year_values(sec_summary, "Capital Expenditure")
@@ -141,11 +171,18 @@ def normalized_base_fcf(sec_summary: dict, *, years: int = 5) -> dict:
         "series": [round(fcf_by_year[y], 2) for y in aligned],
     }
     if len(margins) >= 2 and latest_revenue:
-        margin = median(margins)
+        trend = _margin_trend(margins)
+        if trend in ("increasing", "decreasing"):
+            margin = _recency_weighted(margins)
+            method = "trend_weighted_margin"
+        else:
+            margin = median(margins)
+            method = "median_margin"
         result.update({
             "value": round(margin * latest_revenue, 2),
-            "method": "median_margin",
-            "medianMargin": round(margin, 4),
+            "method": method,
+            "marginTrend": trend,
+            "usedMargin": round(margin, 4),
             "marginSpread": round(max(margins) - min(margins), 4),
             "revenue": round(latest_revenue, 2),
         })
@@ -301,8 +338,8 @@ def dcf_value(
         "enterpriseValue": enterprise_value,
         "equityValue": equity_value,
         "perShare": equity_value / shares,
-        # 가치의 몇 %가 6년차 이후 가정에서 오는가. 숨기면 독자는 정밀한 현금흐름
-        # 모델을 봤다고 생각한다.
+        # 가치의 몇 %가 명시 예측 기간 이후의 영구성장 가정에서 오는가. 숨기면 독자는
+        # 정밀한 현금흐름 모델을 봤다고 생각한다.
         "terminalShare": pv_terminal / enterprise_value if enterprise_value else None,
     }
 
@@ -548,8 +585,13 @@ def render_dcf_context(dcf: dict) -> str:
         f"- 기준 FCF: {base['value']:,.0f} {unit} — {_BASE_METHOD_LABELS.get(base.get('method'), base.get('method'))}",
     ]
     if base.get("deviationFromRecent") is not None:
+        trend_note = {
+            "increasing": " (마진이 다년간 개선 추세라 최근 연도 가중이 이 차이를 줄였습니다)",
+            "decreasing": " (마진이 다년간 악화 추세라 최근 연도 가중이 이 차이를 줄였습니다)",
+        }.get(base.get("marginTrend"), "")
         lines.append(
             f"  최근 연도 실제 FCF {base['recent']:,.0f} 대비 {base['deviationFromRecent'] * 100:+.1f}%"
+            f"{trend_note}"
         )
     if discount["method"] == "wacc":
         lines.append(
@@ -581,9 +623,13 @@ def render_dcf_context(dcf: dict) -> str:
             lines.append(f"| {row['name']} | {row['growth'] * 100:.1f}% | 계산 불가 | 계산 불가 |")
 
     lines.append("")
+    years = len(dcf.get("fadePath") or []) or PROJECTION_YEARS
     share = dcf.get("terminalShare")
     if share is not None:
-        lines.append(f"- **터미널 비중 {share * 100:.0f}%** — 가치의 그만큼이 6년차 이후 가정에서 옵니다.")
+        lines.append(
+            f"- **터미널 비중 {share * 100:.0f}%** — 가치의 그만큼이 명시 예측 기간"
+            f"({years}년) 이후의 영구성장 가정에서 옵니다."
+        )
         if dcf.get("terminalHeavy"):
             lines.append(
                 "  절반을 크게 넘으므로 이 DCF는 현금흐름 추정이라기보다 영구성장률 가정에"
@@ -592,11 +638,15 @@ def render_dcf_context(dcf: dict) -> str:
     implied = dcf.get("impliedGrowth") or {}
     if implied.get("status") == "solved":
         lines.append(
-            f"- **역산 성장률 {implied['growth'] * 100:.1f}%** — 현재가 {dcf['price']:,.2f} {unit}가"
-            f" 정당화되려면 초기 FCF 성장률이 이 값이어야 합니다."
+            f"- **역산 성장률 {implied['growth'] * 100:.1f}%** — 정상화 FCF·할인율"
+            f" {discount['rate'] * 100:.1f}%·영구성장률 {dcf['terminalGrowth'] * 100:.1f}%와"
+            f" {years}년 감쇠 경로를 그대로 두고 **1년차 FCF 성장률 한 값만** 움직여 현재가"
+            f" {dcf['price']:,.2f} {unit}를 맞춘 결과입니다."
         )
         lines.append(
-            "  이 숫자가 그 회사의 사업으로 가능한지를 근거를 들어 논하세요. **적정가와"
+            f"  이 값은 이후 {years}년에 걸쳐 영구성장률까지 감쇠하므로 여러 해 유지되는"
+            " 성장률이 아니고, 매출·EBITDA 성장률 한 숫자와 그대로 비교할 수 없습니다."
+            " 이 1년차 값이 그 회사의 사업으로 가능한지를 근거를 들어 논하세요. **적정가와"
             " 현재가를 비교해 고평가·저평가라고 단정하지 마세요** — DCF는 가정 위에 섰고"
             " 위 항목이 그 가정입니다."
         )
@@ -663,6 +713,7 @@ def sensitivity_band_collapsed(rows: list[dict]) -> bool:
 
 _BASE_METHOD_LABELS = {
     "median_margin": "3년 이상 FCF 마진 중앙값 × 최근 매출로 정상화",
+    "trend_weighted_margin": "다년 마진 추세에 최근 연도 가중 × 최근 매출로 정상화",
     "median_fcf": "매출을 못 읽어 FCF 중앙값으로 정상화",
     "recent_only": "연도가 하나뿐이라 최근값 그대로",
 }

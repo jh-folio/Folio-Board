@@ -199,14 +199,32 @@
   --folio-purple-soft: #e9e6f6;
   --folio-teal: #266c5b;
   --folio-teal-soft: #e4f2ec;
-  /* 채도만 낮추고 명도는 눌러 둔 계열 색. 채도를 낮추면서 밝기까지 올리면
-     파스텔이 되어 가벼워진다. 명도 30% 안팎을 지켜 무게를 남기고, 흰 배경 대비는
-     6.6:1 이상이라 비텍스트 요소 기준(WCAG 1.4.11)을 넉넉히 넘는다. */
-  --folio-chart-1: #33506b;
-  --folio-chart-2: #71383f;
-  --folio-chart-3: #3f5c39;
-  --folio-chart-4: #6f5a2c;
-  --folio-chart-5: #514961;
+  /* 진짜 범주(서로 무관한 항목 5개가 한 그림에 같이 나오는 차트 — 브리핑 이야기
+     비중 등)용. 2026-09 재검증: 이전 값은 채도가 다 낮아 회색에 가깝게 읽혔고
+     (OKLCH C 전부 0.10 미만), 색맹 시뮬레이션에서도 인접한 두 색이 거의 안
+     갈렸다. 지금 값은 dataviz 스킬 validate_palette.js로 라이트·다크 각각
+     명도대(0.43~0.77 / 0.48~0.67)·채도 하한(C≥0.10)·색맹 구별(ΔE)·흰/검 배경
+     대비를 전부 통과한 것만 남겼다. */
+  --folio-chart-1: #2f6fb0;
+  --folio-chart-2: #8a2c52;
+  --folio-chart-3: #3f7a3a;
+  --folio-chart-4: #b8862a;
+  --folio-chart-5: #6a52a8;
+  /* 재무 캐스케이드 차트(기업분석의 실적·현금흐름·마진 추이) 전용. 위
+     --folio-chart-1~5(진짜 범주용)와 고의로 분리했다 — 이 차트들은 매출→영업
+     이익→순이익처럼 "같은 값이 줄어드는 한 흐름"이라 첫 계열은 무채색 잉크
+     (`color-mix(in srgb, var(--folio-ink) 42%, transparent)`), 나머지는 그
+     차트만의 색 하나와 그 옅은 톤만 쓴다(FundamentalsPanel.tsx 워치리스트
+     분기 지표와 같은 규칙). 이 색들은 한 차트 안에서 서로 다른 색과 나란히
+     놓일 일이 없으므로(각자 자기 자신의 옅은 톤하고만 붙는다) --folio-chart-N처럼
+     다섯 색이 서로 구별돼야 하는 제약이 없다 — 실측으로 이 자유를 그대로
+     썼다: accent-ratio(다홍 계열)는 --folio-chart-3(초록)과 색맹 시뮬레이션에서
+     거의 구별되지 않아 범주 팔레트에는 못 쓰지만, 초록과 한 차트에 같이 나올
+     일이 없는 여기서는 안전하다. accent-cashflow도 같은 이유로 --folio-chart-4와
+     다른 값을 쓴다. 실적·분기 흐름의 막대 색은 --folio-chart-1(파랑)을 그대로
+     재사용한다(다홍과의 실제 조합만 새로 검증: ΔE 18~19, 문제 없음). */
+  --folio-chart-accent-cashflow: #985700;
+  --folio-chart-accent-ratio: #a1423b;
   --folio-border: #dde2e9;
   --folio-border-strong: #c4ccd6;
   --folio-shadow: 0 6px 14px rgba(7, 17, 31, 0.045), 0 0 10px rgba(7, 17, 31, 0.025);
@@ -418,12 +436,18 @@
   --folio-purple-soft: #343147;
   --folio-teal: #8ac2b4;
   --folio-teal-soft: #1b3732;
-  /* 다크에서는 밝기를 올려야 보이지만 채도는 같은 수준으로 눌러 둔다. */
-  --folio-chart-1: #7f9cbb;
-  --folio-chart-2: #bd868d;
-  --folio-chart-3: #89a681;
-  --folio-chart-4: #ab9358;
-  --folio-chart-5: #948aa3;
+  /* 진짜 범주용. 라이트와 같은 재검증(명도대·채도 하한·색맹 구별·대비) 통과. */
+  --folio-chart-1: #4a8cc7;
+  --folio-chart-2: #b5658a;
+  --folio-chart-3: #1f9e58;
+  --folio-chart-4: #c66a1e;
+  --folio-chart-5: #8f74c2;
+  /* 재무 캐스케이드 전용 — 라이트 쪽 설명과 같음. 다크는 배경(#13151b) 대비
+     3:1을 지키는 선에서 라이트 값과 최대한 같은 색으로 남게 밝기만 최소로
+     올렸다 — accent-ratio(빨강 계열)는 밝기를 다른 색만큼 올리면 다홍이 아니라
+     연어살색처럼 보여서(실측), 다른 넷보다 적게 올렸다. */
+  --folio-chart-accent-cashflow: #b57730;
+  --folio-chart-accent-ratio: #af5145;
   --folio-border: #2e374c;
   --folio-border-strong: #4a5673;
   --folio-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
@@ -3312,12 +3336,6 @@ body:has(#folioReactRoot .react-shell) main.page {
   gap: 10px;
 }
 
-.react-note-panel-head button {
-  width: auto;
-  min-height: 32px;
-  padding: 6px 10px;
-}
-
 .react-note-panel textarea {
   min-height: 240px;
   resize: vertical;
@@ -5680,6 +5698,9 @@ button:disabled {
   padding: 26px 30px;
   background: var(--folio-surface-dark);
   color: var(--folio-ink-inverse);
+  /* hero 카드는 테마와 무관하게 어둡다. 라이트 테마의 진한 금색(#795a1d)은
+     이 위에서 2.77:1이라 안 읽힌다 — 어두운 면용 금색을 쓴다(kicker). */
+  --folio-gold: #d6b168;
   border-radius: var(--folio-radius-lg);
   box-shadow: var(--folio-shadow);
 }
@@ -6276,6 +6297,7 @@ button:disabled {
 
 .markdown-brief h3 + ul,
 .markdown-brief h3 + p,
+.markdown-brief h3 + blockquote,
 .markdown-brief ul + p,
 .markdown-brief p + ul {
   margin-top: 0.58em;
@@ -6285,6 +6307,8 @@ button:disabled {
   width: 100%;
   margin: 0.72em 0;
   overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-group);
 }
 
 .markdown-brief table {
@@ -6292,20 +6316,100 @@ button:disabled {
   margin: 0;
   border-collapse: collapse;
   font-size: var(--fs-sm);
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .markdown-brief th,
 .markdown-brief td {
-  border: 1px solid var(--border);
-  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
   text-align: left;
   vertical-align: top;
+  /* 한글은 띄어쓰기 없이도 음절 경계마다 끊을 수 있어, 좁은 열에서는 글자
+     하나하나가 줄이 된다(실측: "무엇을 훼손하나"가 7줄로 쪼개짐). 어절 단위로만
+     끊는다 — 캘린더 표(.briefing-calendar-table)가 이미 쓰던 규칙과 같다. */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
-.markdown-brief th {
-  background: var(--surface-muted);
+.markdown-brief thead th {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   font-weight: var(--fw-bold);
+  color: var(--muted);
+  border-bottom: 2px solid var(--folio-gold);
+  padding-bottom: 8px;
+}
+
+.markdown-brief tbody tr:last-child td,
+.markdown-brief tbody tr:last-child th {
+  border-bottom: none;
+}
+
+/* 줄무늬 — 행이 여러 개면(체크포인트 5행, 재무표 6~7행) 지금 보던 행을 눈으로
+   계속 놓친다는 실측 지적에 대응한다. */
+.markdown-brief tbody tr:nth-child(odd) {
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+/* 값 셀만 nowrap — 리스크·체크포인트 표의 산문 셀까지 막으면 표가 가로로
+   한없이 길어진다("$8.25B"가 "$8.25"/"B"로 줄바꿈되던 문제만 겨냥한다). */
+.markdown-brief td.num,
+.markdown-brief th.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* 첫 열(항목명) 고정 — 가로로 스크롤해도 지금 보는 값이 어느 행인지 화면에
+   남아 있는다. 배경을 명시해야 스크롤되는 다른 열이 밑으로 비치지 않는다. */
+.markdown-brief td:first-child,
+.markdown-brief th:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--folio-surface);
+  font-weight: var(--fw-medium);
+  /* nowrap을 안 쓴다 — 리스크 표처럼 라벨이 길면 그 한 열이 표 폭을 독차지해
+     나머지 산문 열이 쥐어짜인다(실측 93px). keep-all만으로 "매출"류 짧은 라벨은
+     어차피 끊을 공간이 없어 한 줄을 유지하고, 긴 라벨은 필요하면 두 줄로 접힌다. */
+  max-width: 40%;
+}
+.markdown-brief tbody tr:nth-child(odd) td:first-child {
+  background: color-mix(in srgb, var(--ink) 3%, var(--folio-surface));
+}
+.markdown-brief thead th:first-child {
+  background: var(--folio-surface);
+}
+
+.markdown-brief blockquote {
+  margin: 0 0 1em;
+  padding: 12px 16px;
+  border-left: 3px solid var(--border);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  background: var(--surface-muted);
+}
+.markdown-brief blockquote p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+/* 섹션 요약 — 헤딩 바로 다음 blockquote에만 렌더러가 붙이는 클래스(§글쓰기
+   방식 "섹션 요약" 규칙). 본문 중간의 일반 인용은 위 기본 스타일 그대로다. */
+.markdown-brief blockquote.section-summary {
+  border-left-color: var(--folio-gold);
+}
+.markdown-brief blockquote.section-summary::before {
+  content: "이 섹션 요약";
+  display: block;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  color: var(--folio-gold);
+  margin-bottom: 4px;
 }
 
 .desc {
@@ -8139,22 +8243,8 @@ body.report-reader-open { overflow: hidden; }
   font-size: var(--fs-2xs);
   line-height: 1.25;
 }
-.report-note-tabs { display: flex; align-items: center; gap: 4px; }
-.report-note-tab {
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-  padding: 4px 10px;
-  border: 1px solid var(--folio-border);
-  border-radius: var(--r-control);
-  background: var(--folio-surface);
-  color: var(--folio-ink-muted);
-  cursor: pointer;
-}
-.report-note-tab[aria-pressed="true"] {
-  background: var(--folio-surface-dark);
-  color: var(--folio-ink-inverse);
-  border-color: var(--folio-surface-dark);
-}
+/* 모양은 `.segment` 프리미티브가 갖는다 — 여기는 flex 머리에서 안 눌리게만. */
+.report-note-tabs { flex: 0 0 auto; }
 /* '연결' 탭: 이 보고서에 연결되는 노트 안내 + 기존 Obsidian 노트 목록 */
 .report-note-links { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
 .report-note-link-head { color: var(--folio-ink-muted); font-size: var(--fs-sm); line-height: 1.6; margin-bottom: 12px; }
@@ -10653,10 +10743,9 @@ body.watchlist-detail-open #watchlist > :not(.watchlist-detail-inline) {
     word-break: keep-all;
   }
 
-  .briefing-reader-inline .markdown-brief table,
-  .report-reader-inline .markdown-brief table,
-  .briefing-reader-inline .report-body table,
-  .report-reader-inline .report-body table,
+  /* table은 여기서 뺐다 — display:block으로 바꾸면 table-row/table-cell 형태가
+     깨져 첫 열 position:sticky가 자리를 잃는다. .table-wrap이 이미 모든 화면
+     폭에서 overflow-x:auto를 갖고 있어 표 쪽은 이 규칙이 필요 없다. */
   .briefing-reader-inline .markdown-brief pre,
   .report-reader-inline .markdown-brief pre,
   .briefing-reader-inline .report-body pre,

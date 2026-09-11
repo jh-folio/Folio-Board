@@ -121,6 +121,40 @@ def test_both_paths_persist_the_contract_fields():
         assert report.get("contractValidation"), f"{label}: contractValidation 없음"
 
 
+def test_both_paths_keep_web_lookup_citations_in_sources():
+    """§3.2 — 웹 조회로 인용한 자료가 sourceLedger에만 남고 reader가 표시하는 `sources`에서
+    빠졌다. `draft_artifact`는 넣지만 API 경로의 `sources` 오버라이드가 3번째 인자를
+    빠뜨려 다시 뺐다. CLI는 draftArtifact를 그대로 써 원래 정상이다."""
+    web_row = {
+        "status": "ok",
+        "facts": [{"statement": "2026년 2분기 가이던스 상향", "url": "https://investor.hwm.example/q2"}],
+        "quotes": [],
+    }
+
+    def llm(*_args, **_kwargs):
+        return ({"markdown": _draft(), "usedDocs": [], "webSearch": True}, "ok")
+
+    with ExitStack() as stack:
+        for patcher in (
+            *_stubbed(),
+            patch.object(gen_ctx.company_web, "lookup_company", return_value=web_row),
+            patch.object(agent_service.A, "write_pack", side_effect=lambda pack: Path("pack.json")),
+        ):
+            stack.enter_context(patcher)
+        api_report = generation_service.analyze_company("HWM", runtime={
+            "generate_llm_company_analysis": llm,
+            "use_web_search_for_analysis": lambda: True,
+        })
+        pack, _path = agent_service.prepare_company_analysis_pack("HWM", web_search=True)
+        cli_report = agent_service.write_company_analysis_from_markdown(pack, _draft(), persist=False)
+
+    for report, label in ((api_report, "API"), (cli_report, "CLI")):
+        source_urls = {str(s.get("url") or "") for s in report.get("sources") or []}
+        ledger_urls = {str(s.get("url") or "") for s in report.get("sourceLedger") or []}
+        assert "https://investor.hwm.example/q2" in ledger_urls, f"{label}: sourceLedger에서 빠졌다"
+        assert "https://investor.hwm.example/q2" in source_urls, f"{label}: sources(리더 표시)에서 빠졌다"
+
+
 def test_the_cli_output_contract_lists_every_required_section():
     # 손으로 여섯 개만 적어 두면 나머지 셋은 빠져도 아무도 모른다.
     with ExitStack() as stack:

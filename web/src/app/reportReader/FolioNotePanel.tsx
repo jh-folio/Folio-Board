@@ -363,13 +363,12 @@ export function FolioNotePanel({
     <div className="react-note-panel" data-report-note-panel>
       <div className="report-note-head react-note-panel-head">
         <p className="section-kicker">투자 생각 정리</p>
-        <div className="report-note-tabs" role="tablist" aria-label="투자 노트 모드">
+        <div className="segment report-note-tabs" role="group" aria-label="투자 노트 모드">
           {([
             ["chat", "작성"],
             ["links", "연결 자료"],
           ] as Array<[NoteTab, string]>).map(([value, label]) => (
             <button
-              className="report-note-tab"
               type="button"
               key={value}
               aria-pressed={noteTab === value}
