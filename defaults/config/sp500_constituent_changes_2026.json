@@ -1,0 +1,64 @@
+{
+  "snapshotAsOf": "2026-09-08",
+  "sourceAsOf": "2026-09-08",
+  "verifiedThrough": "2026-09-08",
+  "baselineAsOf": "2026-06-23",
+  "baselineTickerFingerprint": "17e67bf01fd7157781cb83da6baf8ac4d4f74ff885b1801ad8e8a146d4af5365",
+  "source": "S&P Dow Jones Indices official index-change releases and issuer investor-relations ticker/merger notices",
+  "marketCapSource": "Yahoo Finance quoteSummary marketCap, retrieved 2026-09-09; values are USD and only used for the dated current snapshot",
+  "marketCapAsOf": "2026-09-08",
+  "baselineMarketCapAsOf": "2026-06-23",
+  "overridesMarketCapAsOf": "2026-09-08",
+  "marketCapVintage": "mixed_baseline_2026-06-23_plus_current_overrides_2026-09-08",
+  "metadataUpdates": [
+    {
+      "ticker": "HON",
+      "label": "Honeywell Technologies",
+      "source": "https://press.spglobal.com/2026-06-23-Honeywell-Aerospace-Set-to-Join-S-P-500-S-P-100-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600"
+    }
+  ],
+  "changes": [
+    {
+      "effectiveDate": "2026-06-24",
+      "action": "ticker_change",
+      "oldTicker": "SATS",
+      "newTicker": "ECHO",
+      "label": "EchoStar",
+      "providerSymbol": "ECHO",
+      "source": "https://ir.echostar.com/news-releases/news-release-details/echostar-changing-stocker-ticker-sats-echo-marking-companys-next"
+    },
+    {
+      "effectiveDate": "2026-06-30",
+      "additionEffectiveDate": "2026-06-29",
+      "action": "replacement",
+      "oldTicker": "CAG",
+      "newRow": {"ticker": "HONA", "providerSymbol": "HONA", "label": "Honeywell Aerospace", "sector": "Industrials", "industry": "Aerospace & Defense", "marketCap": 49260793856.0, "marketCapAsOf": "2026-09-08"},
+      "source": "https://press.spglobal.com/2026-06-23-Honeywell-Aerospace-Set-to-Join-S-P-500-S-P-100-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600"
+    },
+    {
+      "effectiveDate": "2026-08-05",
+      "action": "replacement",
+      "oldTicker": "EA",
+      "newRow": {"ticker": "FERG", "providerSymbol": "FERG", "label": "Ferguson Enterprises", "sector": "Industrials", "industry": "Trading Companies & Distributors", "marketCap": 43778351104.0, "marketCapAsOf": "2026-09-08"},
+      "source": "https://press.spglobal.com/2026-07-31-Ferguson-Enterprises-Set-to-Join-S-P-500-and-ADI-Global-Distribution-to-Join-S-P-SmallCap-600"
+    },
+    {
+      "effectiveDate": "2026-08-18",
+      "action": "replacement",
+      "oldTicker": "AVB",
+      "newRow": {"ticker": "RDDT", "providerSymbol": "RDDT", "label": "Reddit", "sector": "Communication Services", "industry": "Interactive Media & Services", "marketCap": 28740192256.0, "marketCapAsOf": "2026-09-08"},
+      "source": "https://press.spglobal.com/2026-08-13-Reddit-Set-to-Join-S-P-500-and-Sun-Communities-to-Join-S-P-MidCap-400"
+    },
+    {
+      "effectiveDate": "2026-08-18",
+      "action": "ticker_change",
+      "oldTicker": "EQR",
+      "newRow": {"ticker": "VMRK", "providerSymbol": "VMRK", "label": "Vivmark Residential", "sector": "Real Estate", "industry": "Multi-Family Residential REITs", "marketCap": 51216441344.0, "marketCapAsOf": "2026-09-08"},
+      "source": "https://investors.equityapartments.com/news-events/press-releases-news/news-details/2026/Equity-Residential-and-AvalonBay-Communities-Announce-Shareholder-Approvals-for-Merger-to-Create-Vivmark-Residential/default.aspx"
+    }
+  ],
+  "currentRows": [
+    {"ticker": "BF.B", "providerSymbol": "BF-B", "label": "Brown-Forman", "sector": "Consumer Staples", "industry": "Distillers & Vintners", "marketCap": 12109427712.0, "marketCapAsOf": "2026-09-08"},
+    {"ticker": "ECHO", "providerSymbol": "ECHO", "label": "EchoStar", "sector": "Communication Services", "industry": "Wireless Telecommunication Services", "marketCap": 27137642496.0, "marketCapAsOf": "2026-09-08"}
+  ]
+}

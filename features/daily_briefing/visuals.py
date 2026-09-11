@@ -709,6 +709,11 @@ def collect_briefing_visuals(
             }
             warnings.append(f"{market_key} heatmap: unavailable")
         heatmap_id = f"market-heatmap:{market_key}:{date}"
+        heatmap_coverage = heatmap_payload.get("coverage") or {}
+        if heatmap_coverage.get("status") != "complete":
+            warnings.append(
+                f"{market_key} heatmap: {heatmap_coverage.get('status') or 'unavailable'}"
+            )
         sidecar_snapshots[heatmap_id] = {
             "schemaVersion": 2,
             "id": heatmap_id,
@@ -728,6 +733,10 @@ def collect_briefing_visuals(
             "rows": heatmap_payload.get("rows") or [],
             "warnings": heatmap_payload.get("warnings") or [],
         }
+        if isinstance(heatmap_payload.get("universeProvenance"), dict):
+            sidecar_snapshots[heatmap_id]["universeProvenance"] = deepcopy(
+                heatmap_payload["universeProvenance"]
+            )
         heatmap_snapshot = {
             key: value for key, value in sidecar_snapshots[heatmap_id].items()
             if key not in {"rows"}
@@ -1083,6 +1092,10 @@ def _current_heatmap_snapshot_v2(saved, payload, clock, retrieved_at):
         "marketStatus": deepcopy(clock),
         "warnings": deepcopy(payload.get("warnings") or []),
     })
+    if isinstance(payload.get("universeProvenance"), dict):
+        current["universeProvenance"] = deepcopy(payload["universeProvenance"])
+    else:
+        current.pop("universeProvenance", None)
     current.pop("sidecarRef", None)
     return current
 
@@ -1235,7 +1248,16 @@ def load_current_visuals(
             continue
         snapshots.append(current)
     available = sum(1 for row in snapshots if row.get("freshness") != "unavailable")
-    status = "ok" if snapshots and available == len(snapshots) else "partial" if available else "unavailable"
+    incomplete_heatmap = any(
+        row.get("type") == "market_heatmap"
+        and (row.get("coverage") or {}).get("status") != "complete"
+        for row in snapshots
+    )
+    status = (
+        "unavailable" if not available
+        else "partial" if incomplete_heatmap or available != len(snapshots)
+        else "ok"
+    )
     if status == "unavailable":
         warnings.append("current market snapshot is unavailable; saved briefing snapshot remains unchanged")
     return {

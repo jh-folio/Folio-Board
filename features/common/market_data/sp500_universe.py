@@ -7,15 +7,18 @@ live "top market caps" screener so that:
 * sector / sub-industry labels use the familiar GICS taxonomy (the same
   grouping finviz-style maps use) instead of the Nasdaq screener's own buckets.
 
-The file is refreshed periodically with ``build_sp500_constituents_file`` which
-joins the Wikipedia constituents table (ticker + GICS) with a market-cap source
-for box sizing.  At runtime only daily prices are fetched, so the heatmap no
-longer depends on a live screener call.
+The historical file is refreshed periodically with
+``build_sp500_constituents_file`` which joins the Wikipedia constituents table
+(ticker + GICS) with a market-cap source for box sizing.  A separate,
+date-versioned changeset supplies verified current membership and ticker
+changes without rewriting that historical file.  At runtime only daily prices
+are fetched, so the heatmap no longer depends on a live screener call.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import json
 from pathlib import Path
@@ -26,6 +29,8 @@ import urllib.request
 from features.common.config_bootstrap import resolve_config
 
 WIKIPEDIA_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+CURRENT_SP500_SNAPSHOT_AS_OF = dt.date(2026, 9, 8)
+SP500_CHANGESET_FILENAME = "sp500_constituent_changes_2026.json"
 
 
 def provider_symbol(ticker: Any) -> str:
@@ -129,14 +134,243 @@ def build_sp500_constituents_file(
     return payload
 
 
-def load_sp500_constituents(path: Path | str | None = None) -> list[dict]:
-    target = Path(path) if path is not None else resolve_config("sp500_constituents.json")
+def _coerce_date(value: Any) -> dt.date | None:
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
     try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
+        return dt.date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _ticker_fingerprint(companies: list[dict]) -> str:
+    """Fingerprint membership, not mutable labels or market-cap observations."""
+    tickers = sorted(
+        str(row.get("ticker") or "").strip().upper()
+        for row in companies
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    )
+    return hashlib.sha256("\n".join(tickers).encode("utf-8")).hexdigest()
+
+
+def _changeset_matches_baseline(payload: dict, changeset: dict) -> bool:
+    """Only apply our delta to the exact committed baseline lineage."""
+    companies = payload.get("companies")
+    return bool(
+        isinstance(companies, list)
+        and str(payload.get("asOf") or "")[:10] == str(changeset.get("baselineAsOf") or "")[:10]
+        and _ticker_fingerprint(companies) == changeset.get("baselineTickerFingerprint")
+    )
+
+
+def _changeset_path(snapshot_path: Path, *, allow_repository_fallback: bool = False) -> Path:
+    """Resolve the adjacent, date-versioned membership changeset.
+
+    A caller-provided snapshot remains self-contained for tests and historical
+    imports.  The production snapshot gets its changes from the committed
+    changeset next to the baseline config, rather than mutating that baseline.
+    """
+    snapshot_path = snapshot_path.resolve()
+    adjacent = snapshot_path.with_name(SP500_CHANGESET_FILENAME)
+    if adjacent.exists():
+        return adjacent
+    if snapshot_path.name != "sp500_constituents.json":
+        return adjacent
+    repo_root = Path(__file__).resolve().parents[3]
+    repository_dirs = (repo_root / "config", repo_root / "defaults" / "config")
+    if not allow_repository_fallback and snapshot_path.parent not in repository_dirs:
+        return adjacent
+    # ``resolve_config`` may point at the user's existing Documents workspace,
+    # where only the baseline config is seeded.  Keep the immutable changeset in
+    # the application checkout instead of copying it into user data.
+    for directory in repository_dirs:
+        candidate = directory / SP500_CHANGESET_FILENAME
+        if candidate.exists():
+            return candidate
+    return adjacent
+
+
+def _is_default_config_snapshot(path: Path) -> bool:
+    """Whether ``path`` is the active workspace config snapshot.
+
+    ``resolve_config`` is a test seam and may return an arbitrary temporary
+    file.  Such a file must remain self-contained: repository changesets are
+    only a fallback for the real active config directory when the user
+    workspace has not copied the adjacent changeset yet.
+    """
+    try:
+        from features.common.workspace import config_dir
+
+        return path.resolve().parent == config_dir().resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _apply_current_changes(companies: list[dict], changeset: dict) -> list[dict]:
+    """Apply the verified current membership delta without changing the input."""
+    result = [dict(row) for row in companies if isinstance(row, dict)]
+
+    def remove_ticker(ticker: Any) -> None:
+        key = _join_key(ticker)
+        result[:] = [row for row in result if _join_key(row.get("ticker")) != key]
+
+    def remove_new_ticker(row: dict) -> None:
+        remove_ticker(row.get("ticker"))
+
+    for change in changeset.get("changes") or []:
+        if not isinstance(change, dict):
+            continue
+        old_ticker = change.get("oldTicker")
+        new_row = change.get("newRow")
+        if old_ticker:
+            remove_ticker(old_ticker)
+        if isinstance(new_row, dict):
+            remove_new_ticker(new_row)
+            result.append(dict(new_row))
+        elif change.get("newTicker"):
+            # A pure ticker change retains the historical classification until
+            # the current dated row below supplies the current cap/metadata.
+            old_row = next(
+                (dict(row) for row in companies if _join_key(row.get("ticker")) == _join_key(old_ticker)),
+                None,
+            )
+            if old_row:
+                old_row["ticker"] = str(change["newTicker"])
+                old_row["providerSymbol"] = provider_symbol(change["newTicker"])
+                if change.get("label"):
+                    old_row["label"] = change["label"]
+                result.append(old_row)
+
+    # Rows in this list carry real, current market-cap observations.  Keeping
+    # this override separate makes it impossible to accidentally reuse the old
+    # SATS/AVB/EQR/CAG cap for a newly listed ticker.
+    for current_row in changeset.get("currentRows") or []:
+        if not isinstance(current_row, dict) or not current_row.get("ticker"):
+            continue
+        remove_new_ticker(current_row)
+        result.append(dict(current_row))
+
+    for update in changeset.get("metadataUpdates") or []:
+        if not isinstance(update, dict) or not update.get("ticker"):
+            continue
+        key = _join_key(update["ticker"])
+        for row in result:
+            if _join_key(row.get("ticker")) == key:
+                row.update({name: value for name, value in update.items() if name != "ticker"})
+
+    return sorted(result, key=lambda row: _number(row.get("marketCap")), reverse=True)
+
+
+def _load_snapshot_payload(path: Path) -> dict:
+    payload = _read_json(path)
+    companies = payload.get("companies")
+    if not isinstance(companies, list):
+        return {}
+    return payload
+
+
+def load_sp500_constituents(
+    path: Path | str | None = None,
+    *,
+    as_of_date: dt.date | dt.datetime | str | None = None,
+) -> list[dict]:
+    """Load the S&P 500 rows for a report date.
+
+    The original ``config/sp500_constituents.json`` is an immutable historical
+    baseline (2026-06-23).  Dates on/after the verified 2026-09-08 snapshot
+    select the adjacent date-versioned changeset.  This deliberately keeps
+    older reports reproducible and makes an unverified future date use the
+    latest known snapshot rather than pretending a live index feed exists.
+    """
+    target = Path(path) if path is not None else resolve_config("sp500_constituents.json")
+    payload = _load_snapshot_payload(target)
+    companies = payload.get("companies")
+    if not isinstance(companies, list):
         return []
-    companies = payload.get("companies") if isinstance(payload, dict) else None
-    return companies if isinstance(companies, list) else []
+
+    requested = _coerce_date(as_of_date) or dt.date.today()
+    if requested < CURRENT_SP500_SNAPSHOT_AS_OF:
+        return companies
+
+    changeset = _read_json(
+        _changeset_path(
+            target,
+            allow_repository_fallback=path is None and _is_default_config_snapshot(target),
+        )
+    )
+    if (
+        not changeset
+        or _coerce_date(changeset.get("snapshotAsOf")) != CURRENT_SP500_SNAPSHOT_AS_OF
+        or not _changeset_matches_baseline(payload, changeset)
+    ):
+        return companies
+    return _apply_current_changes(companies, changeset)
+
+
+def get_sp500_constituent_provenance(
+    path: Path | str | None = None,
+    *,
+    as_of_date: dt.date | dt.datetime | str | None = None,
+) -> dict:
+    """Return the source/effective-date status used by the date-aware loader."""
+    target = Path(path) if path is not None else resolve_config("sp500_constituents.json")
+    baseline = _load_snapshot_payload(target)
+    changeset = _read_json(
+        _changeset_path(
+            target,
+            allow_repository_fallback=path is None and _is_default_config_snapshot(target),
+        )
+    )
+    requested = _coerce_date(as_of_date) or dt.date.today()
+    current = bool(
+        changeset
+        and _coerce_date(changeset.get("snapshotAsOf")) == CURRENT_SP500_SNAPSHOT_AS_OF
+        and requested >= CURRENT_SP500_SNAPSHOT_AS_OF
+        and _changeset_matches_baseline(baseline, changeset)
+    )
+    verified_through = _coerce_date(changeset.get("verifiedThrough")) if changeset else None
+    status = (
+        "verified_current_snapshot"
+        if current and (verified_through is None or requested <= verified_through)
+        else "latest_known_snapshot"
+        if current
+        else "historical_baseline"
+    )
+    return {
+        "requestedAsOf": requested.isoformat(),
+        "snapshotAsOf": (
+            changeset.get("snapshotAsOf") if current else baseline.get("asOf")
+        ),
+        "sourceAsOf": changeset.get("sourceAsOf") if current else baseline.get("asOf"),
+        "verifiedThrough": changeset.get("verifiedThrough") if changeset else baseline.get("asOf"),
+        "status": status,
+        "source": changeset.get("source") if current else baseline.get("source"),
+        "changesApplied": list(changeset.get("changes") or []) if current else [],
+        "knownChanges": list(changeset.get("changes") or []) if changeset else [],
+        "marketCapSource": changeset.get("marketCapSource") if current else baseline.get("source"),
+        "marketCapAsOf": (
+            "mixed" if current else baseline.get("asOf")
+        ),
+        "baselineMarketCapAsOf": (
+            changeset.get("baselineMarketCapAsOf") if current else baseline.get("asOf")
+        ),
+        "overridesMarketCapAsOf": changeset.get("overridesMarketCapAsOf") if current else None,
+        "marketCapVintage": (
+            changeset.get("marketCapVintage") if current else "baseline"
+        ),
+    }
 
 
 if __name__ == "__main__":  # pragma: no cover - manual refresh entry point

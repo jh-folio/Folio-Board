@@ -85,6 +85,7 @@ py -3 -m features.common.market_data.nikkei225_universe
 - **섹터는 지수별 분류 대신 시세 provider의 분류를 씁니다.** 네 유럽 지수가 ICB·Prime Standard·GICS 하위산업을 제각각 쓰기 때문입니다. 네 어휘로 동시에 묶은 히트맵은 묶음이 아닙니다.
 - **일본 증권코드는 영숫자입니다.** 2024년부터 `285A`(키오시아) 같은 코드가 쓰여 숫자 4자리만 받으면 신규 편입 종목이 조용히 빠집니다.
 - provider 실패는 마지막 정상 스냅샷으로 되돌아가고 `stale`로 표시합니다. 캐시도 없으면 `unavailable`입니다 — 빈 히트맵과 무변동 장세는 화면에서 구분되지 않기 때문입니다.
+- 히트맵 일봉 bulk가 일부 종목만 돌려주면 성공한 종목은 유지하고, 현재 세션 종가·유효한 전일 종가가 없는 종목만 작은 batch와 제한된 순차 모드로 재시도합니다. 끝까지 빠진 종목이 있으면 `coverage.status=partial|unavailable`, `missingCount`, `missingSymbols`, warning을 남기며 전체 히트맵으로 표시하지 않습니다. 완전한 동일 세션·동일 universe 캐시만 재사용하고, partial 결과로 last-good을 덮어쓰지 않습니다.
 - **last-good 캐시 저장 실패는 스냅샷을 죽이지 않습니다.** `save_last_good_snapshot()`은 `atomic_replace`로 쓰고 실패 시 `False`를 돌려줍니다. 여기 오면 시세를 이미 다 받은 뒤라, 캐시 저장 하나 때문에 예외를 올리면 그 시장 히트맵이 통째로 비고 브리핑 사이드카는 immutable이라 영구히 `unavailable`로 남습니다.
 
 ## market_data/providers.py

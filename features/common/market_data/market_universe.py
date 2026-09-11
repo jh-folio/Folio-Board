@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import math
 import os
 import gzip
 import json
 from pathlib import Path
 import re
+import time
+from collections.abc import Callable as CallableABC
 from typing import Any, Callable
 import urllib.request
 
@@ -33,7 +37,8 @@ def _safe_float(value: Any) -> float | None:
     try:
         if value is None or value != value:
             return None
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -60,6 +65,15 @@ def _coverage(requested: int, returned: int) -> dict:
         "ratio": round(returned / requested, 4) if requested else 0.0,
         "status": "complete" if requested and returned == requested else "partial" if returned else "unavailable",
     }
+
+
+def _universe_key(symbols: list[str]) -> str:
+    values = []
+    for symbol in symbols:
+        value = str(symbol or "").strip()
+        if value and value not in values:
+            values.append(value)
+    return hashlib.sha256("\x1f".join(values).encode("utf-8")).hexdigest()
 
 
 def _ticker_key(value: Any) -> str:
@@ -149,7 +163,10 @@ def heatmap_row(meta: dict, price: dict | None) -> dict | None:
         return None
     close = _safe_float(price.get("close"))
     previous = _safe_float(price.get("previousClose"))
-    if close is None:
+    # A close without a valid prior close cannot carry a trustworthy heatmap
+    # colour.  Keeping it as a normal row would turn missing change data into
+    # an apparently complete, flat tile.
+    if close is None or close <= 0 or previous is None or previous <= 0:
         return None
     return {
         **meta,
@@ -160,18 +177,41 @@ def heatmap_row(meta: dict, price: dict | None) -> dict | None:
     }
 
 
-def snapshot_payload(market: str, date: str, provider: str, requested: list, rows: list[dict]) -> dict:
+def snapshot_payload(
+    market: str,
+    date: str,
+    provider: str,
+    requested: list,
+    rows: list[dict],
+    *,
+    missing_symbols: list[str] | None = None,
+    warnings: list[str] | None = None,
+    universe_symbols: list[str] | None = None,
+) -> dict:
     requested_count = len(requested)
     returned = len(rows)
-    return {
+    missing = [str(symbol) for symbol in (missing_symbols or []) if str(symbol)]
+    coverage = _coverage(requested_count, returned)
+    if missing:
+        coverage.update({"missingCount": len(missing), "missingSymbols": missing})
+        # The row count is the post-share-class-collapse count.  A missing
+        # source symbol can therefore still make a group incomplete; callers
+        # omit that group before reaching this function and this status remains
+        # explicit even if a provider returned a surprising row count.
+        coverage["status"] = "partial" if returned else "unavailable"
+    status = coverage["status"]
+    payload = {
         "market": market,
         "asOf": str(date)[:10],
         "provider": provider,
-        "freshness": "close_snapshot" if returned else "unavailable",
-        "coverage": _coverage(requested_count, returned),
+        "freshness": "close_snapshot" if status == "complete" else "partial" if returned else "unavailable",
+        "coverage": coverage,
         "rows": rows,
-        "warnings": [],
+        "warnings": list(warnings or []),
     }
+    if universe_symbols is not None:
+        payload["universeKey"] = _universe_key(universe_symbols)
+    return payload
 
 
 def unavailable_snapshot(market: str, date: str, provider: str, error: str) -> dict:
@@ -225,6 +265,176 @@ def fetch_nasdaq_screener() -> list[dict]:
     return (((payload or {}).get("data") or {}).get("rows") or [])
 
 
+HEATMAP_INITIAL_BATCH_SIZE = 100
+HEATMAP_RECOVERY_BATCH_SIZES = (25, 5, 1)
+HEATMAP_MAX_FETCH_CALLS = 32
+HEATMAP_FETCH_DEADLINE_SECONDS = 120.0
+
+
+def _chunked(values: list[str], size: int):
+    for offset in range(0, len(values), max(1, int(size))):
+        yield values[offset:offset + max(1, int(size))]
+
+
+def _valid_heatmap_price(price: Any, target: str) -> bool:
+    if not isinstance(price, dict):
+        return False
+    close = _safe_float(price.get("close"))
+    previous = _safe_float(price.get("previousClose"))
+    as_of = str(price.get("asOf") or "")[:10]
+    return bool(
+        close is not None and close > 0
+        and previous is not None and previous > 0
+        and as_of == target
+    )
+
+
+def _recover_price_batches(
+    symbols: list[str],
+    date: str,
+    fetch_batch: CallableABC[[list[str], str, bool], dict],
+    *,
+    initial_batch_size: int = HEATMAP_INITIAL_BATCH_SIZE,
+) -> tuple[dict[str, dict], list[str], list[str]]:
+    """Fetch a bounded set of heatmap prices, retrying only unresolved symbols.
+
+    The first pass keeps the existing bulk behaviour.  Later passes use smaller
+    batches and then a sequential mode, which addresses providers that return
+    a sparse frame without making every successful symbol pay for a refetch.
+    Errors are retained as warnings; successful rows are never discarded.
+    """
+    target = str(date)[:10]
+    ordered = []
+    for symbol in symbols:
+        value = str(symbol or "").strip()
+        if value and value not in ordered:
+            ordered.append(value)
+    if not ordered:
+        return {}, [], []
+
+    output: dict[str, dict] = {}
+    warnings: list[str] = []
+    calls = 0
+    deadline = time.monotonic() + HEATMAP_FETCH_DEADLINE_SECONDS
+
+    def invoke(batch: list[str], sequential: bool) -> bool:
+        nonlocal calls
+        if not batch or calls >= HEATMAP_MAX_FETCH_CALLS or time.monotonic() >= deadline:
+            return False
+        calls += 1
+        try:
+            result = fetch_batch(batch, target, sequential)
+        except Exception as exc:
+            warnings.append(f"price recovery provider error ({len(batch)} symbols): {str(exc)[:120]}")
+            return True
+        if not isinstance(result, dict):
+            warnings.append(f"price recovery returned invalid payload ({len(batch)} symbols)")
+            return True
+        for symbol in batch:
+            price = result.get(symbol)
+            if isinstance(price, dict):
+                output[symbol] = price
+        return True
+
+    # Initial calls use the provider's normal bulk mode.  A provider may return
+    # one good symbol from a 100-symbol frame; those other symbols are pending,
+    # not a reason to fetch the good one again.
+    for batch in _chunked(ordered, initial_batch_size):
+        if not invoke(batch, False):
+            break
+
+    pending = [symbol for symbol in ordered if not _valid_heatmap_price(output.get(symbol), target)]
+    for batch_size in HEATMAP_RECOVERY_BATCH_SIZES:
+        if not pending or calls >= HEATMAP_MAX_FETCH_CALLS or time.monotonic() >= deadline:
+            break
+        for batch in _chunked(pending, batch_size):
+            if not invoke(batch, batch_size == 1):
+                break
+            pending = [symbol for symbol in ordered if not _valid_heatmap_price(output.get(symbol), target)]
+            if not pending:
+                break
+
+    if pending:
+        reasons = f"missing {len(pending)} symbols without a valid {target} close and previous close"
+        warnings.append(f"heatmap incomplete: {reasons}")
+    return output, pending, warnings
+
+
+def _acquire_heatmap_prices(
+    symbols: list[str],
+    date: str,
+    price_fetcher: Callable[[list[str], str], dict] | None,
+    default_fetcher: Callable[[list[str], str], dict],
+) -> tuple[dict[str, dict], list[str], list[str]]:
+    """Use the normal fetcher, adding bounded recovery for injected fetchers."""
+    target = str(date)[:10]
+    if price_fetcher is None:
+        try:
+            prices = default_fetcher(symbols, target) or {}
+        except Exception as exc:
+            return {}, list(dict.fromkeys(symbols)), [f"price provider error: {str(exc)[:120]}"]
+        if not isinstance(prices, dict):
+            prices = {}
+        missing = [symbol for symbol in symbols if not _valid_heatmap_price(prices.get(symbol), target)]
+        warnings = []
+        if missing:
+            warnings.append(
+                f"heatmap incomplete: missing {len(missing)} symbols without a valid {target} close and previous close"
+            )
+        return {symbol: prices[symbol] for symbol in symbols if isinstance(prices.get(symbol), dict)}, missing, warnings
+
+    return _recover_price_batches(
+        symbols,
+        target,
+        lambda batch, target_date, _sequential: price_fetcher(batch, target_date),
+        initial_batch_size=len(symbols) or 1,
+    )
+
+
+def _cache_is_complete(payload: dict | None) -> bool:
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("rows")
+        and (payload.get("coverage") or {}).get("status") == "complete"
+    )
+
+
+def _cached_snapshot(
+    path: Path | None,
+    target: str,
+    reason: str,
+    *,
+    universe_key: str | None = None,
+) -> dict | None:
+    if not path:
+        return None
+    cached = load_last_good_snapshot(path)
+    if not _cache_is_complete(cached):
+        return None
+    if universe_key and cached.get("universeKey") != universe_key:
+        return None
+    cached = dict(cached)
+    cached["warnings"] = list(cached.get("warnings") or [])
+    if str(cached.get("asOf") or "")[:10] == target:
+        cached["freshness"] = "close_snapshot"
+        cached["warnings"].append(f"{reason}; same-session last-good snapshot used")
+    else:
+        cached["freshness"] = "stale"
+        cached["warnings"].append(f"{reason}; last-good snapshot used")
+    return cached
+
+
+def _complete_share_class_groups(ranked: list[dict], prices: dict[str, dict], target: str) -> set[str]:
+    """Return groups whose every source share class has a valid price."""
+    groups: dict[str, list[str]] = {}
+    for row in ranked:
+        groups.setdefault(_share_class_group_key(row), []).append(str(row.get("ticker") or "").strip())
+    return {
+        key for key, members in groups.items()
+        if all(_valid_heatmap_price(prices.get(symbol), target) for symbol in members)
+    }
+
+
 def _close_pairs(frame, ticker: str, target: str) -> list[tuple[str, float]]:
     if frame is None or getattr(frame, "empty", True):
         return []
@@ -243,49 +453,59 @@ def _close_pairs(frame, ticker: str, target: str) -> list[tuple[str, float]]:
         series = subframe["Close"]
     except Exception:
         return []
-    pairs = []
+    pairs_by_date = {}
     for index, value in series.items():
-        date = index.date().isoformat() if hasattr(index, "date") else str(index)[:10]
+        raw_date = index.date().isoformat() if hasattr(index, "date") else str(index)[:10]
+        try:
+            date = dt.date.fromisoformat(str(raw_date)[:10]).isoformat()
+        except (TypeError, ValueError):
+            continue
         close = _safe_float(value)
         if close is not None and date <= target:
-            pairs.append((date, close))
-    return pairs
+            pairs_by_date[date] = close
+    return sorted(pairs_by_date.items())
+
+
+def _download_daily_batch(tickers: list[str], date: str, sequential: bool) -> dict[str, dict]:
+    import yfinance as yf
+
+    target_date = dt.date.fromisoformat(str(date)[:10])
+    provider_symbols = {
+        ticker: f"{ticker}.KS" if re.fullmatch(r"\d{6}", str(ticker or "")) else re.sub(r"[./]", "-", ticker)
+        for ticker in tickers
+    }
+    frame = yf.download(
+        list(provider_symbols.values()),
+        start=(target_date - dt.timedelta(days=14)).isoformat(),
+        end=(target_date + dt.timedelta(days=1)).isoformat(),
+        interval="1d",
+        auto_adjust=False,
+        group_by="ticker",
+        threads=not sequential,
+        progress=False,
+    )
+    output = {}
+    for ticker, provider_symbol in provider_symbols.items():
+        pairs = _close_pairs(frame, provider_symbol, str(date)[:10])
+        if not pairs:
+            continue
+        output[ticker] = {
+            "close": pairs[-1][1],
+            "previousClose": pairs[-2][1] if len(pairs) >= 2 else None,
+            "asOf": pairs[-1][0],
+            "provider": "yfinance",
+        }
+    return output
 
 
 def fetch_bulk_daily_prices(tickers: list[str], date: str) -> dict[str, dict]:
     if os.environ.get("PYTEST_CURRENT_TEST"):
         raise RuntimeError("market_data_network_disabled_in_tests")
-    import yfinance as yf
-
-    target = str(date)[:10]
-    target_date = dt.date.fromisoformat(target)
-    output = {}
-    for offset in range(0, len(tickers), 100):
-        batch = tickers[offset:offset + 100]
-        provider_symbols = {
-            ticker: f"{ticker}.KS" if re.fullmatch(r"\d{6}", str(ticker or "")) else re.sub(r"[./]", "-", ticker)
-            for ticker in batch
-        }
-        frame = yf.download(
-            list(provider_symbols.values()),
-            start=(target_date - dt.timedelta(days=14)).isoformat(),
-            end=(target_date + dt.timedelta(days=1)).isoformat(),
-            interval="1d",
-            auto_adjust=False,
-            group_by="ticker",
-            threads=True,
-            progress=False,
-        )
-        for ticker, provider_symbol in provider_symbols.items():
-            pairs = _close_pairs(frame, provider_symbol, target)
-            if not pairs:
-                continue
-            output[ticker] = {
-                "close": pairs[-1][1],
-                "previousClose": pairs[-2][1] if len(pairs) >= 2 else None,
-                "asOf": pairs[-1][0],
-                "provider": "yfinance",
-            }
+    output, _missing, _warnings = _recover_price_batches(
+        [str(ticker or "").strip() for ticker in tickers],
+        str(date)[:10],
+        _download_daily_batch,
+    )
     return output
 
 
@@ -342,8 +562,6 @@ def fetch_toss_then_bulk_daily_prices(tickers: list[str], date: str) -> dict[str
         yfinance_prices = fetch_bulk_daily_prices(tickers, target)
     except Exception:
         yfinance_prices = {}
-    if not toss_by_symbol:
-        return yfinance_prices
     output = dict(yfinance_prices)
     for ticker in tickers:
         raw = str(ticker or "").strip().upper()
@@ -362,13 +580,97 @@ def fetch_toss_then_bulk_daily_prices(tickers: list[str], date: str) -> dict[str
             "asOf": target,
             "provider": provider,
         }
+    # When the configured Toss adapter is actually usable, give only symbols
+    # still missing a valid two-close window one bounded daily-candle attempt.
+    # This is an alternate provider for provider-side Yahoo omissions, not a
+    # second full-universe fetch or a new setting/credential path.
+    try:
+        from features.common.market_data.toss_open_api import (
+            download_toss_candle_rows,
+            toss_credentials_available,
+        )
+        if toss_credentials_available():
+            target_date = dt.date.fromisoformat(target)
+            missing = [
+                ticker for ticker in tickers
+                if not _valid_heatmap_price(output.get(ticker), target)
+            ][:16]
+            for ticker in missing:
+                try:
+                    rows = download_toss_candle_rows(
+                        ticker,
+                        start=(target_date - dt.timedelta(days=14)).isoformat(),
+                        end=(target_date + dt.timedelta(days=1)).isoformat(),
+                        interval="1d",
+                    )
+                except Exception:
+                    continue
+                pairs = []
+                for row in rows or []:
+                    day = str(row.get("time") or "")[:10]
+                    close = _safe_float(row.get("close"))
+                    if close is not None and day <= target:
+                        pairs.append((day, close))
+                pairs = sorted({day: close for day, close in pairs}.items())
+                if len(pairs) >= 2 and pairs[-1][0] == target:
+                    output[ticker] = {
+                        "close": pairs[-1][1],
+                        "previousClose": pairs[-2][1],
+                        "asOf": pairs[-1][0],
+                        "provider": "toss_open_api",
+                    }
+    except Exception:
+        pass
     return output
 
 
-def _default_constituents_loader() -> list[dict]:
+def _default_constituents_loader(as_of_date: str | None = None) -> list[dict]:
     from features.common.market_data.sp500_universe import load_sp500_constituents
 
-    return load_sp500_constituents()
+    try:
+        return load_sp500_constituents(as_of_date=as_of_date)
+    except TypeError as exc:
+        if "as_of_date" not in str(exc):
+            raise
+        return load_sp500_constituents()
+
+
+def _bounded_sp500_universe_provenance(as_of_date: str) -> dict:
+    """Return only compact provenance fields safe for a visual snapshot."""
+    from features.common.market_data.sp500_universe import get_sp500_constituent_provenance
+
+    source = get_sp500_constituent_provenance(as_of_date=as_of_date)
+    fields = (
+        "snapshotAsOf",
+        "sourceAsOf",
+        "verifiedThrough",
+        "status",
+        "marketCapAsOf",
+        "marketCapSource",
+        "marketCapVintage",
+        "baselineMarketCapAsOf",
+        "overridesMarketCapAsOf",
+        "source",
+    )
+    bounded = {}
+    for field in fields:
+        value = source.get(field)
+        if value is None or value == "":
+            continue
+        bounded[field] = str(value)[:240] if field == "source" else value
+    return bounded
+
+
+def _load_constituents(loader: Callable, target: str) -> list[dict]:
+    """Pass the target date to versioned loaders, retaining test seams."""
+    try:
+        return loader(as_of_date=target)
+    except TypeError as exc:
+        # Existing injected loaders are commonly zero-argument lambdas.  Only
+        # fall back for that signature mismatch; do not hide loader failures.
+        if "as_of_date" not in str(exc):
+            raise
+        return loader()
 
 
 def build_us_heatmap_snapshot(
@@ -386,29 +688,69 @@ def build_us_heatmap_snapshot(
     ``config/sp500_constituents.json`` (GICS taxonomy); only daily prices are
     fetched live, so there is no dependency on a Nasdaq screener call.
     """
+    target = str(date)[:10]
+    use_default_provenance = constituents is None and constituents_loader is None
+    universe_provenance = (
+        _bounded_sp500_universe_provenance(target) if use_default_provenance else None
+    )
     if constituents is None:
         loader = constituents_loader or _default_constituents_loader
-        constituents = loader()
+        constituents = _load_constituents(loader, target)
     universe = [
         row for row in (constituents or [])
         if str(row.get("ticker") or "") and _number(row.get("marketCap")) > 0
     ]
     if not universe:
-        return unavailable_snapshot("US", date, "sp500+yfinance", "embedded S&P 500 universe is empty")
+        result = unavailable_snapshot("US", date, "sp500+yfinance", "embedded S&P 500 universe is empty")
+        if universe_provenance:
+            result["universeProvenance"] = universe_provenance
+        return result
     ranked = sorted(universe, key=lambda row: _number(row.get("marketCap")), reverse=True)
     if limit is not None:
         ranked = ranked[:max(0, int(limit))]
     requested = collapse_share_class_universe(ranked)
-    try:
-        prices = (price_fetcher or fetch_toss_then_bulk_daily_prices)([row["ticker"] for row in ranked], str(date)[:10])
-    except Exception:
-        result = unavailable_snapshot("US", date, "sp500+yfinance", "market_data_unavailable")
-        result["coverage"] = _coverage(len(requested), 0)
-        return result
-    rows = [heatmap_row(meta, prices.get(meta["ticker"])) for meta in ranked]
-    rows = [row for row in rows if row is not None and row["asOf"] == str(date)[:10]]
+    symbols = [row["ticker"] for row in ranked]
+    universe_key = _universe_key(symbols)
+    prices, missing, fetch_warnings = _acquire_heatmap_prices(
+        symbols, target, price_fetcher, fetch_toss_then_bulk_daily_prices,
+    )
+    complete_groups = _complete_share_class_groups(ranked, prices, target)
+    rows = [
+        heatmap_row(meta, prices.get(meta["ticker"]))
+        for meta in ranked
+        if _share_class_group_key(meta) in complete_groups
+    ]
+    rows = [row for row in rows if row is not None and row["asOf"] == target]
     rows = collapse_share_class_rows(rows)
-    return snapshot_payload("US", date, _provider_label("sp500", rows, "sp500+yfinance"), requested, rows)
+    if not rows and not missing:
+        missing = symbols
+    warnings = list(fetch_warnings)
+    if missing and not any("heatmap incomplete:" in warning for warning in warnings):
+        warnings.append(f"heatmap incomplete: missing {len(missing)} symbols without a valid {target} close and previous close")
+    cache_path = Path(cache_dir) / "sp500-heatmap-last-good.json.gz" if cache_dir else None
+    if missing:
+        cached = _cached_snapshot(
+            cache_path, target, "current US heatmap acquisition incomplete", universe_key=universe_key,
+        )
+        if cached and str(cached.get("asOf") or "")[:10] == target:
+            if universe_provenance:
+                cached["universeProvenance"] = dict(universe_provenance)
+            return cached
+    if not rows and missing:
+        cached = _cached_snapshot(cache_path, target, "current US heatmap acquisition unavailable", universe_key=universe_key)
+        if cached:
+            if universe_provenance:
+                cached["universeProvenance"] = dict(universe_provenance)
+            return cached
+    payload = snapshot_payload(
+        "US", date, _provider_label("sp500", rows, "sp500+yfinance"), requested, rows,
+        missing_symbols=missing, warnings=warnings, universe_symbols=symbols,
+    )
+    if universe_provenance:
+        payload["universeProvenance"] = universe_provenance
+    if payload["coverage"]["status"] == "complete" and cache_path:
+        save_last_good_snapshot(cache_path, payload)
+    return payload
 
 
 def _pick(row: Any, *names: str) -> Any:
@@ -519,19 +861,17 @@ def _kospi_static_fallback_snapshot(
     *,
     provider_prefix: str = "kospi200-static",
     fallback_freshness: str = "fallback_universe",
+    universe_degraded: bool = False,
 ) -> dict:
     requested = [
         row for row in (constituents or _default_kospi200_constituents())
         if str(row.get("ticker") or "").strip()
     ]
-    try:
-        prices = (price_fetcher or fetch_toss_then_bulk_daily_prices)(
-            [str(row.get("ticker") or "").strip().zfill(6) for row in requested],
-            str(date)[:10],
-        )
-    except Exception:
-        prices = {}
     target = str(date)[:10]
+    symbols = [str(row.get("ticker") or "").strip().zfill(6) for row in requested]
+    prices, missing, fetch_warnings = _acquire_heatmap_prices(
+        symbols, target, price_fetcher, fetch_toss_then_bulk_daily_prices,
+    )
     rows = []
     priced = 0
     for row in requested:
@@ -544,7 +884,7 @@ def _kospi_static_fallback_snapshot(
         close = _safe_float(price.get("close"))
         previous = _safe_float(price.get("previousClose"))
         as_of = str(price.get("asOf") or date)[:10]
-        exact_price = close is not None and as_of == target
+        exact_price = _valid_heatmap_price(price, target)
         if exact_price:
             priced += 1
         else:
@@ -568,9 +908,25 @@ def _kospi_static_fallback_snapshot(
         _provider_label(provider_prefix, rows, provider_prefix),
         requested,
         rows,
+        warnings=fetch_warnings,
+        universe_symbols=symbols,
     )
-    payload["freshness"] = "close_snapshot" if priced else fallback_freshness if rows else "unavailable"
+    payload["coverage"] = _coverage(len(requested), priced)
+    if missing:
+        payload["coverage"].update({"missingCount": len(missing), "missingSymbols": missing})
+    payload["freshness"] = (
+        "partial" if universe_degraded and priced
+        else "close_snapshot" if priced == len(requested) and priced
+        else "partial" if priced
+        else fallback_freshness if rows else "unavailable"
+    )
     payload["priceCoverage"] = _coverage(len(requested), priced)
+    if universe_degraded:
+        payload["universeStatus"] = "degraded"
+        payload["coverage"] = _coverage(200, priced)
+        payload["warnings"].append(
+            f"KOSPI200 constituent universe fallback is limited to {len(requested)} symbols; full universe unavailable"
+        )
     if priced < len(requested):
         payload["warnings"].append(f"KOSPI200 price coverage {priced}/{len(requested)}")
     if reason:
@@ -589,15 +945,27 @@ def build_kospi_heatmap_snapshot(
     fallback_price_fetcher: Callable[[list[str], str], dict] | None = None,
 ) -> dict:
     cache_path = Path(cache_dir) / "kospi-heatmap-last-good.json.gz"
+    source_constituents = fallback_constituents
+    universe_degraded = False
+    if source_constituents is None:
+        source_constituents = _default_kospi200_constituents()
+        universe_degraded = [
+            str(row.get("ticker") or "") for row in source_constituents
+        ] == [str(row.get("ticker") or "") for row in DEFAULT_KOSPI200_FALLBACK_CONSTITUENTS]
     primary = _kospi_static_fallback_snapshot(
         date,
-        fallback_constituents,
+        source_constituents,
         "",
         fallback_price_fetcher,
         provider_prefix="kospi200",
         fallback_freshness="unavailable",
+        universe_degraded=universe_degraded,
     )
-    if (primary.get("priceCoverage") or {}).get("returned"):
+    universe_key = primary.get("universeKey")
+    if (
+        (primary.get("priceCoverage") or {}).get("status") == "complete"
+        and primary.get("universeStatus") != "degraded"
+    ):
         save_last_good_snapshot(cache_path, primary)
         return primary
     try:
@@ -606,31 +974,43 @@ def build_kospi_heatmap_snapshot(
         # pykrx 기반 기본 fetcher는 2026-08-12에 제거했다 — 1.2.x부터 KRX 계정
         # 자격증명을 요구해 자격증명 없는 설치에서는 절대 성공할 수 없었다.
         rows = krx_fetcher(str(date)[:10]) if krx_fetcher else []
-        if rows:
-            payload = snapshot_payload("KR", date, "krx_direct", rows, rows)
+        valid_rows = [
+            row for row in (rows or [])
+            if isinstance(row, dict)
+            and str(row.get("ticker") or "").strip()
+            and _safe_float(row.get("close")) is not None
+            and _safe_float(row.get("close")) > 0
+            and _safe_float(row.get("marketCap")) is not None
+            and _safe_float(row.get("marketCap")) > 0
+            and _safe_float(row.get("changePct")) is not None
+            and str(row.get("asOf") or "")[:10] == str(date)[:10]
+        ]
+        if rows and len(valid_rows) == len(rows):
+            payload = snapshot_payload(
+                "KR", date, "krx_direct", valid_rows, valid_rows,
+                universe_symbols=[str(row.get("ticker") or "").strip() for row in valid_rows],
+            )
             save_last_good_snapshot(cache_path, payload)
             return payload
-        cached = load_last_good_snapshot(cache_path)
-        if cached and cached.get("rows"):
-            cached["freshness"] = "stale"
-            cached.setdefault("warnings", []).append(
-                "KRX returned no KOSPI200 rows; last-good snapshot used"
-            )
+        cached = _cached_snapshot(
+            cache_path, str(date)[:10], "KRX returned no KOSPI200 rows", universe_key=universe_key,
+        )
+        if cached:
             return cached
         return _kospi_static_fallback_snapshot(
             date,
-            fallback_constituents,
+            source_constituents,
             "KRX returned no KOSPI200 rows",
             fallback_price_fetcher,
+            universe_degraded=universe_degraded,
         )
     except Exception:
-        cached = load_last_good_snapshot(cache_path)
-        if not cached or not cached.get("rows"):
-            return _kospi_static_fallback_snapshot(date, fallback_constituents, "krx_unavailable", fallback_price_fetcher)
-        cached["freshness"] = "stale"
-        cached.setdefault("warnings", []).append(
-            "KRX unavailable; last-good snapshot used"
-        )
+        cached = _cached_snapshot(cache_path, str(date)[:10], "KRX unavailable", universe_key=universe_key)
+        if not cached:
+            return _kospi_static_fallback_snapshot(
+                date, source_constituents, "krx_unavailable", fallback_price_fetcher,
+                universe_degraded=universe_degraded,
+            )
         return cached
 
 
@@ -648,15 +1028,10 @@ def fetch_bulk_daily_prices_by_symbol(symbols: list[str], date: str) -> dict[str
     # (2026-08-28 실측). 여기서 막으면 어떤 테스트도 캐시를 오염시킬 수 없다.
     if os.environ.get("PYTEST_CURRENT_TEST"):
         raise RuntimeError("market_data_network_disabled_in_tests")
-    import yfinance as yf
+    def _download_symbol_batch(batch: list[str], target: str, sequential: bool) -> dict[str, dict]:
+        import yfinance as yf
 
-    target = str(date)[:10]
-    target_date = dt.date.fromisoformat(target)
-    output: dict[str, dict] = {}
-    for offset in range(0, len(symbols), 100):
-        batch = [str(symbol or "").strip() for symbol in symbols[offset:offset + 100] if str(symbol or "").strip()]
-        if not batch:
-            continue
+        target_date = dt.date.fromisoformat(target)
         frame = yf.download(
             batch,
             start=(target_date - dt.timedelta(days=14)).isoformat(),
@@ -664,9 +1039,10 @@ def fetch_bulk_daily_prices_by_symbol(symbols: list[str], date: str) -> dict[str
             interval="1d",
             auto_adjust=False,
             group_by="ticker",
-            threads=True,
+            threads=not sequential,
             progress=False,
         )
+        output = {}
         for symbol in batch:
             pairs = _close_pairs(frame, symbol, target)
             if not pairs:
@@ -677,6 +1053,13 @@ def fetch_bulk_daily_prices_by_symbol(symbols: list[str], date: str) -> dict[str
                 "asOf": pairs[-1][0],
                 "provider": "yfinance",
             }
+        return output
+
+    output, _missing, _warnings = _recover_price_batches(
+        [str(symbol or "").strip() for symbol in symbols],
+        str(date)[:10],
+        _download_symbol_batch,
+    )
     return output
 
 
@@ -714,40 +1097,54 @@ def build_overseas_heatmap_snapshot(
     if limit is not None:
         ranked = ranked[:max(0, int(limit))]
     symbols = [str(row.get("providerSymbol") or row.get("ticker")) for row in ranked]
+    universe_key = _universe_key(symbols)
     cache_path = Path(cache_dir) / f"{provider_prefix}-heatmap-last-good.json.gz" if cache_dir else None
 
     def _stale_or_unavailable(reason: str) -> dict:
-        cached = load_last_good_snapshot(cache_path) if cache_path else None
-        if cached and cached.get("rows"):
-            cached["freshness"] = "stale"
-            cached.setdefault("warnings", []).append(f"{reason}; last-good snapshot used")
+        cached = _cached_snapshot(cache_path, str(date)[:10], reason, universe_key=universe_key)
+        if cached:
             return cached
         result = unavailable_snapshot(market, date, provider_prefix, reason)
         result["coverage"] = _coverage(len(ranked), 0)
         result["weightBasis"] = weight_basis
         return result
 
-    try:
-        prices = (price_fetcher or fetch_bulk_daily_prices_by_symbol)(symbols, str(date)[:10])
-    except Exception:
-        return _stale_or_unavailable("market_data_unavailable")
+    target = str(date)[:10]
+    prices, missing, fetch_warnings = _acquire_heatmap_prices(
+        symbols, target, price_fetcher, fetch_bulk_daily_prices_by_symbol,
+    )
     rows = [
         row for row in (
             heatmap_row({**meta, "ticker": str(meta.get("providerSymbol") or meta.get("ticker"))},
                         prices.get(str(meta.get("providerSymbol") or meta.get("ticker"))))
             for meta in ranked
         )
-        if row is not None and row["asOf"] == str(date)[:10]
+        if row is not None and row["asOf"] == target
     ]
+    if missing:
+        cached = _cached_snapshot(
+            cache_path, target, "current heatmap acquisition incomplete", universe_key=universe_key,
+        )
+        if cached and str(cached.get("asOf") or "")[:10] == target:
+            return cached
     if not rows:
-        return _stale_or_unavailable("no constituent closed on the session date")
-    payload = snapshot_payload(market, date, _provider_label(provider_prefix, rows, provider_prefix), ranked, rows)
+        cached = _cached_snapshot(
+            cache_path, target, "no constituent has a valid current close and previous close", universe_key=universe_key,
+        )
+        if cached:
+            return cached
+    if missing and not any("heatmap incomplete:" in warning for warning in fetch_warnings):
+        fetch_warnings.append(f"heatmap incomplete: missing {len(missing)} symbols without a valid {target} close and previous close")
+    payload = snapshot_payload(
+        market, date, _provider_label(provider_prefix, rows, provider_prefix), ranked, rows,
+        missing_symbols=missing, warnings=fetch_warnings, universe_symbols=symbols,
+    )
     payload["weightBasis"] = weight_basis
     # 구성종목 명단의 출처와 기준일을 스냅샷이 함께 들고 간다. 시세 provider만
     # 표시하면 "이 200종목이 어디서 왔는가"에 답할 수 없다.
     if universe_metadata:
         payload["universe"] = dict(universe_metadata)
-    if cache_path:
+    if cache_path and payload["coverage"]["status"] == "complete":
         save_last_good_snapshot(cache_path, payload)
     return payload
 

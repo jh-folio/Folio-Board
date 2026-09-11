@@ -98,6 +98,41 @@ def test_leading_company_subjects_follow_final_markdown_headings():
     assert parsed["warnings"] == []
 
 
+def test_default_us_heatmap_provenance_reaches_summary_and_sidecar_detail():
+    provenance = {
+        "snapshotAsOf": "2026-09-08",
+        "sourceAsOf": "2026-09-08",
+        "verifiedThrough": "2026-09-08",
+        "status": "latest_known_snapshot",
+        "marketCapAsOf": "mixed",
+        "marketCapSource": "fixture",
+        "marketCapVintage": "mixed_baseline_2026-06-23_plus_current_overrides_2026-09-08",
+        "baselineMarketCapAsOf": "2026-06-23",
+        "overridesMarketCapAsOf": "2026-09-08",
+        "source": "fixture source",
+    }
+
+    def heatmap(market, session_date):
+        payload = _heatmap_payload(market, session_date)
+        payload["universeProvenance"] = provenance
+        return payload
+
+    result = collect_briefing_visuals(
+        "2026-06-19",
+        "us",
+        {"us": _scope_results()["us"]},
+        price_history_fetcher=_price_history,
+        heatmap_fetchers={"us": lambda date: heatmap("US", date)},
+        leader_subjects={"us": [], "warnings": []},
+        markets=["us"],
+    )
+    heatmap_id = "market-heatmap:us:2026-06-19"
+    summary = next(row for row in result["visualSnapshots"] if row["id"] == heatmap_id)
+    detail = result["sidecar"]["snapshots"][heatmap_id]
+    assert summary["universeProvenance"] == provenance
+    assert detail["universeProvenance"] == provenance
+
+
 def test_leading_company_subjects_infer_market_from_generic_headings():
     markdown = """
 ## 3. 시장을 주도한 기업 ① — SK하이닉스
@@ -323,6 +358,26 @@ def test_heatmap_rows_live_only_in_sidecar_and_use_historical_session_values():
     assert all(row["asOf"] == "2026-06-19" for row in stored["rows"])
     assert stored["weightBasis"] == "market_cap"
     assert all(row["marketCap"] > 0 for row in stored["rows"])
+
+
+def test_incomplete_heatmap_is_exposed_as_partial_visual_coverage():
+    payload = _heatmap_payload("US", "2026-06-18")
+    payload["coverage"] = {
+        "requested": 499, "returned": 1, "ratio": 0.002,
+        "status": "partial", "missingCount": 498, "missingSymbols": ["MISSING"],
+    }
+    payload["freshness"] = "partial"
+    result = collect_briefing_visuals(
+        "2026-06-19", "us", _scope_results(),
+        price_history_fetcher=_price_history,
+        heatmap_fetchers={"us": lambda date: payload},
+    )
+
+    snapshot = next(row for row in result["visualSnapshots"] if row["type"] == "market_heatmap")
+    stored = result["sidecar"]["snapshots"][snapshot["id"]]
+    assert snapshot["coverage"]["status"] == "partial"
+    assert stored["coverage"]["missingCount"] == 498
+    assert any("us heatmap: partial" in warning for warning in result["warnings"])
 
 
 def test_partial_sidecar_merge_preserves_sibling_market():

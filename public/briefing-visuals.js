@@ -1522,6 +1522,20 @@
   }
 
   function renderHeatmap(snapshot, title, comparison) {
+    const coverage = snapshot.coverage || {};
+    const ratio = finite(coverage.ratio);
+    const incomplete = (coverage.status && coverage.status !== "complete")
+      || (ratio !== null && ratio < 1);
+    if (incomplete) {
+      const declaredMissing = finite(coverage.missingCount);
+      const requested = finite(coverage.requested);
+      const returned = finite(coverage.returned);
+      const missing = declaredMissing !== null
+        ? declaredMissing
+        : requested !== null && returned !== null ? Math.max(0, requested - returned) : null;
+      const detail = missing === null ? "전체 구성 종목 범위를 확인할 수 없습니다." : `누락 종목 ${Math.max(0, Math.round(missing))}개`;
+      return unavailableCard(snapshot, title, `히트맵 자료가 완전하지 않아 전체 시장 지도를 표시하지 않습니다. ${detail}`);
+    }
     const rows = snapshot.rows || [];
     // 뿌리 화면은 산업 층을 접은 쪽, 들어간 뒤에는 계층이 있는 쪽을 쓴다.
     const flatNodes = heatmapNodes(rows, { flat: true });
