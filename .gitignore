@@ -24,3 +24,12 @@ data/
 
 # Checksum-verified tools downloaded by scripts/install_gitleaks.py. Never commit binaries.
 .tools/
+
+# 테스트/QA 도구가 남기는 산출물. 저장소에 커밋하지 않는다.
+.playwright-mcp/
+test-results/
+review-captures/
+web/review-captures/
+artifacts/
+.worktrees/
+.tmp-*/
