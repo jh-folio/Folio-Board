@@ -39,7 +39,7 @@ production `finalValidation`/`validationRun`은 `assessmentStatus`와 `contentAs
 
 ## 시장 범위와 출력 계약
 
-생성 API는 `markets` 또는 호환용 `marketScope`로 미국·한국·유럽·일본 중 하나 이상을 받습니다. 미국·한국 일간의 기업 절은 당일 직접 근거가 있는 기업만 0~2개로 구성하고, 빈 자리를 업종명이나 일반론으로 채우지 않습니다. 일본·유럽 및 주간의 기존 구성은 유지합니다. 저장 JSON의 시장별 section에는 markdown·세션·기준일·출처와 생성·근거 추적 메타데이터가 따로 남고, 기존 소비자는 결합 `markdown`을 계속 읽을 수 있습니다.
+생성 API는 `markets` 또는 호환용 `marketScope`로 미국·한국·유럽·일본 중 하나 이상을 받습니다. 미국·한국 일간은 당일 직접 근거가 있는 이름 있는 기업 2개를 각각 기업 ①·② 절에 넣어야 하며, 근거가 두 개 미만이면 기업명이나 일반론을 지어내지 않고 후보를 거절합니다. 일본·유럽 및 주간의 기존 구성은 유지합니다. 저장 JSON의 시장별 section에는 markdown·세션·기준일·출처와 생성·근거 추적 메타데이터가 따로 남고, 기존 소비자는 결합 `markdown`을 계속 읽을 수 있습니다.
 
 부분 시장 재생성은 같은 날짜의 반대편 시장 결과를 보존합니다. Canonical 본문이 바뀌면 기존 `personalOverlay`도 삭제하지 않고 `stale: true`로 표시합니다. 시장 내러티브 누적은 중복을 막기 위해 `both` 생성에서만 수행합니다.
 
@@ -68,7 +68,7 @@ LLM 입력과 표시 참고자료에는 같은 evidence lane·cluster dedupe·�
 - 사건 군집은 KR 일일에서 complete-link coherence를 한 번 더 적용해 A-B, B-C가 비슷하다는 이유만으로 서로 다른 A-C 사건까지 합쳐지는 연쇄 오탐을 막는다.
 - 두 번째 리더가 같은 공통 동인을 공유해도 고유 인과 경로와 독립 근거가 있으면 유지한다. 경계 사례만 Agent가 후보 whitelist 안에서 1회 판정하며, timeout·형식 오류·미사용 상태는 deterministic fallback으로 내려가고 생성을 중단하지 않는다.
 - 최근 10개 KR 일일 세션의 canonical company ID와 causal signature를 읽어 이름 반복과 같은 촉매→전달 경로→결과 반복을 따로 계산한다. 같은 기업이라도 새 인과 경로면 감점하지 않고, 같은 경로가 반복될 때만 활성 모드 순위에 최대 22% soft penalty를 적용한다. 구조화 이전 보고서는 제목에서 등장 이력만 복구하며 인과 반복은 새 구조가 쌓인 뒤부터 판정한다.
-- 직접 귀속 근거를 충족한 후보가 0개면 `오늘의 기업 신호`, 1개면 기업 ①만, 2개면 기업 ①/②를 쓴다. 빈 자리를 업종명이나 `시장 주도주` placeholder로 채우지 않는다. 이 가변 계약은 KR 일일 활성 모드에만 적용한다.
+- 미국·한국 일간은 직접 귀속 근거가 있는 이름 있는 기업 2개를 기업 ①/②로 쓴다. 충족 후보가 두 개 미만이면 빈 자리를 업종명이나 `시장 주도주` placeholder로 채우지 않고 최종 저장을 거절한다.
 - 생성 전 선별·인과 경로 판정은 유지하고, `expectedLeadingCompanies`는 기존 출력 형식 계약으로 그대로 강제한다. 작성 뒤에는 전체 본문의 causal-path 반복을 감사하거나 본문을 repair하지 않는다.
 - 호출 예산은 사전 판정 1 + 본문 생성 1이며 postwriter repair 호출·예산은 포함하지 않는다. 내부 signature·점수·선별 상태는 `concentrationControl` telemetry에 남기되 독자 Markdown에는 노출하지 않는다.
 

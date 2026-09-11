@@ -22,6 +22,7 @@ from features.common.shared_jobs_private import JobPrivateLifecycle
 from features.common.shared_jobs_projection import new_shared_job
 from features.common.shared_jobs_schema import JobStatus
 from features.common.shared_jobs_store import SharedJobStore
+from features.agent_mode.briefing_contract import briefing_output_contract
 
 
 NOW = datetime(2026, 7, 18, 1, 0, tzinfo=UTC)
@@ -53,6 +54,32 @@ def _read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _valid_briefing_markdown(scope="both"):
+    def block(market):
+        contract = briefing_output_contract(market, markets=[market])
+        names = ("NVIDIA", "Alphabet") if market == "us" else ("Samsung Electronics", "SK hynix")
+        headings = []
+        for section in contract["requiredSections"]:
+            if section == "US Market Briefing":
+                headings.append("# US Market Briefing — 2026.07.18")
+            elif section == "Korea Market Briefing":
+                headings.append("# Korea Market Briefing — 2026.07.18")
+            elif "주도한 기업 ①" in section:
+                headings.append(f"## {section} — {names[0]}")
+            elif "주도한 기업 ②" in section:
+                headings.append(f"## {section} — {names[1]}")
+            else:
+                headings.append(f"## {section}")
+        return "\n\n".join(headings + [
+            "**한 줄 결론:** 확인\n" * 7,
+            "· 확인 항목\n" * 18,
+            "근거 있는 분석 문장 " * 1000,
+        ])
+    if scope == "both":
+        return "\n\n---\n\n".join((block("us"), block("kr")))
+    return block(scope)
+
+
 def test_briefing_producer_stages_complete_multiscope_visual_matrix(tmp_path: Path) -> None:
     # Given: a two-scope briefing with one optional visual sidecar.
     data_root = tmp_path / "data"
@@ -63,7 +90,7 @@ def test_briefing_producer_stages_complete_multiscope_visual_matrix(tmp_path: Pa
     request = BriefingJobRequest(
         date="2026-07-18",
         scopes=("us", "kr"),
-        reports={"us": {"markdown": "# US"}, "kr": {"markdown": "# KR"}},
+        reports={"us": {"markdown": _valid_briefing_markdown("us")}, "kr": {"markdown": _valid_briefing_markdown("kr")}},
         visuals={"us": {"snapshots": {"SPY": {"rows": [1]}}}, "kr": {"snapshots": {}}},
         terminal_result={
             "artifactId": "2026-07-18",

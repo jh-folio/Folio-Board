@@ -109,7 +109,12 @@ class JobJsonProducers:
         rejected_codes = set()
         for scope, report in reports.items():
             try:
-                accepted[scope] = finalize_briefing_candidate(report, repair_budget=budget, visual_context=request.visuals.get(scope))
+                accepted[scope] = finalize_briefing_candidate(
+                    report,
+                    repair_budget=budget,
+                    visual_context=request.visuals.get(scope),
+                    require_structure=True,
+                )
             except BriefingFinalizationError as error:
                 _dump_rejected_candidate(scope, report, error.validation)
                 codes = set(error.validation.get("reasonCodes") or [])

@@ -24,13 +24,38 @@ def _configure(monkeypatch, tmp_path, bad):
     monkeypatch.setattr(builder, "collect_briefing_visuals", _visuals)
     monkeypatch.setattr(builder, "apply_quality_loop", lambda _kind, report, **kw: report)
     original_single_market_briefing = builder._single_market_briefing
+    def fixed_markdown(scope, text):
+        label = "미국장" if scope == "us" else "한국장"
+        title = "US Market Briefing" if scope == "us" else "Korea Market Briefing"
+        company_one = "NVIDIA" if scope == "us" else "삼성전자"
+        company_two = "Alphabet" if scope == "us" else "SK하이닉스"
+        return "\n\n".join([
+            f"# {title} — 2026.06.09 마감",
+            f"## 0. 오늘의 {label} 성격",
+            f"## 1. {label} 시장 흐름",
+            f"## 2. {label}을 움직인 핵심 변수",
+            f"## 3. {label}을 주도한 기업 ① — {company_one}",
+            f"## 4. {label}을 주도한 기업 ② — {company_two}",
+            "## 5. 일반 투자자 관점",
+            f"## 6. 다음 {label} 체크포인트",
+            "## 오늘의 결론",
+            "## Source & Data Notes",
+            "**한 줄 결론:** 확인\n" * 7,
+            "· 확인 항목\n" * 18,
+            f"{text}\n" + "근거 있는 분석 문장 " * 1000,
+        ])
     def prepare_candidate(briefing, scope, checkpoints=None):
         candidate = original_single_market_briefing(briefing, scope, checkpoints)
-        if scope == "us":
+        if scope in {"us", "kr"}:
             candidate = dict(candidate)
-            candidate["markdown"] = "NVDA -1.48% 하락했다." if bad else "NVDA +1.48% 상승했다."
-            candidate["marketSnapshot"] = {"tickers": {"NVDA": {"oneDayPct": 1.48, "asOfDate": "2026-06-09"}}}
-            if bad == "unsafe":
+            candidate["markdown"] = fixed_markdown(scope,
+                (
+                    "NVDA -1.48% 하락했다." if bad else "NVDA +1.48% 상승했다."
+                ) if scope == "us" else "삼성전자 +1.48% 상승했다."
+            )
+            if scope == "us":
+                candidate["marketSnapshot"] = {"tickers": {"NVDA": {"oneDayPct": 1.48, "asOfDate": "2026-06-09"}}}
+            if bad == "unsafe" and scope == "us":
                 candidate["sources"] = [{"sourceId": "unsafe", "url": "javascript:alert(1)"}]
         return candidate
     monkeypatch.setattr(builder, "_single_market_briefing", prepare_candidate)

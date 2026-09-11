@@ -65,16 +65,15 @@ def render_concentration_context(control: dict) -> str:
     selected = [row for row in signatures if row.get("candidateId") in final_ids]
     count = len(selected)
     structure = (
-        "근거 충족 기업이 0개이므로 기업 ①/②를 만들지 말고 `## 3. 오늘의 기업 신호` 한 절에서 직접 근거 부족을 설명하세요."
-        if count == 0 else
-        "근거 충족 기업이 1개이므로 기업 ①만 쓰고 기업 ②를 만들거나 대체 기업을 채우지 마세요."
-        if count == 1 else
-        "근거 충족 기업 2개를 기업 ①/②로 쓰세요."
+        "아래 finalPair가 두 기업보다 짧아도 고정 형식을 줄이지 마세요. 반드시 해당 시장의 `## 3. ...을 주도한 기업 ① — [실제 기업명]`과 `## 4. ...을 주도한 기업 ② — [실제 기업명]` 두 절을 작성하세요."
+        " finalPair에 없는 두 번째 기업은 제공된 직접 근거가 있는 후보에서 고르고, 근거가 없으면 기업명 placeholder나 업종명을 만들지 말고 최종 저장에서 거절되게 하세요."
+        if count < 2 else
+        "근거 충족 기업 2개를 finalPair 순서대로 고정 형식의 기업 ①/② 두 절에 쓰세요."
     )
     return "\n".join(
         [
             "## 확정된 주도 기업과 인과 경로 (내부 지침)",
-            "아래 finalPair의 기업과 순서를 권위값으로 사용하세요. 후보 순위를 다시 바꾸지 마세요.",
+            "finalPair에 포함된 기업은 그 순서를 권위값으로 사용하세요. 다만 고정된 두 슬롯을 생략하거나 번호를 바꾸지 마세요.",
             structure,
             "같은 공통 동인은 두 번째 기업에서 짧게 참조하고, 각 기업의 고유 촉매·전달 경로·결과·근거를 중심으로 쓰세요.",
             json.dumps({"decision": decision, "selectedSignatures": selected}, ensure_ascii=False, separators=(",", ":")),

@@ -1,11 +1,10 @@
 """Conservative, market-scoped final checks for generated briefings.
 
-This module intentionally stays small and deterministic.  It does not fetch
-data or ask a model to decide whether a sentence is true.  It compares claims
-which are explicitly present in the final Markdown with the structured market
-facts already carried by the briefing and with the writer excerpts retained
-in the source ledger. Missing data is reported as unknown; confirmed errors
-are locally corrected from fixed observations before the final write gate.
+Production finalization performs only structural, source-safety, storage, and
+cancellation/deadline checks. It does not fetch data, assess prose, call a
+model, or rewrite authored Markdown. The fact evaluator below remains an
+explicit offline diagnostic surface and is not part of the production write
+gate.
 """
 from __future__ import annotations
 
@@ -1339,6 +1338,38 @@ def _check_budget_active(budget: SharedRepairBudget) -> None:
     checker()
 
 
+def _production_structure_violations(candidate: dict) -> list[str]:
+    """Return production format violations for daily US/KR candidates.
+
+    The API and Agent/CLI paths must share this final boundary. A non-empty
+    one-line candidate cannot reach JSON staging merely because it avoided the
+    separate CLI preflight. Weekly reports and JP/EU retain their contracts.
+    """
+    scope = _scope(candidate)
+    kind = str(candidate.get("kind") or "daily").strip().lower()
+    if kind != "daily" or scope not in {"us", "kr"}:
+        return []
+    from features.agent_mode.briefing_contract import (
+        briefing_contract_violations,
+        briefing_output_contract,
+    )
+
+    # Concentration selection is evidence for the writer, not a second name
+    # authority at the shared save gate.  The Agent/CLI output contract checks
+    # an authoritative expected pair before writeback; the API may carry
+    # equivalent localized/ticker names (for example 삼성전자/Samsung
+    # Electronics) in the authored headings.  Re-deriving exact names here
+    # made valid KR reports fail only after generation and was stricter than
+    # the writer contract.
+    contract = briefing_output_contract(
+        scope,
+        str(candidate.get("briefingType") or "default"),
+        markets=[scope],
+        leader_section_modes={scope: "fixed_two"},
+    )
+    return briefing_contract_violations(str(candidate.get("markdown") or ""), contract)
+
+
 def _production_validation(candidate: dict, source_check: dict, errors: list[dict]) -> dict:
     """Return bounded writeback metadata without claiming semantic proof."""
     reason_codes = sorted({
@@ -1374,6 +1405,7 @@ def finalize_briefing_candidate(
     cancelled: object | None = None,
     allow_repair: bool = True,
     visual_context: dict | None = None,
+    require_structure: bool = False,
 ) -> dict:
     """Apply production-safe normalization and writeback checks only.
 
@@ -1415,6 +1447,21 @@ def finalize_briefing_candidate(
             "reasonCodes": ["format_empty"], "repairApplied": False, "repairCount": 0,
         }
         raise BriefingFinalizationError("briefing production format is empty", validation=validation, candidate=candidate)
+    if require_structure:
+        structure_violations = _production_structure_violations(working)
+        if structure_violations:
+            from features.agent_mode.briefing_contract import contract_reason_codes
+
+            validation = {
+                "version": 2, "market": _scope(working), "status": "reject",
+                "assessmentStatus": "not_assessed", "contentAssessment": "not_assessed",
+                "verifiedClaims": [], "requiredOmissions": [], "contradictions": [],
+                "sourceChecks": {"status": "not_run", "assessmentStatus": "not_assessed", "errors": []},
+                "reasonCodes": contract_reason_codes(structure_violations),
+                "structureViolations": structure_violations,
+                "repairApplied": False, "repairCount": 0,
+            }
+            raise BriefingFinalizationError("briefing production structure failed", validation=validation, candidate=candidate)
     source_check, source_errors = _production_source_check(working)
     if source_errors:
         validation = {

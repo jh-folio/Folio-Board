@@ -58,6 +58,9 @@ from features.daily_briefing.selection import (
 )
 from features.daily_briefing.source_integrity import (
     attach_source_ids,
+    attach_source_ids_preserving_aliases,
+    markdown_external_links,
+    normalize_source_url,
     reconcile_source_ledger,
     source_manifest_prompt,
 )
@@ -359,7 +362,25 @@ def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT, kind=DEFA
     markdown = strip_markdown_sources_section(str(markdown or "").strip())
     if is_weekly(kind):
         return markdown
-    sources = source_refs(sources or [], limit=limit)
+    # The JSON ledger may intentionally contain the complete safe writer
+    # ledger.  The reader list is a bounded presentation view, with visible
+    # links preferred so an authored link is not hidden by unrelated rows.
+    # Reader rendering intentionally deduplicates the already-complete ledger;
+    # the raw-alias-preserving ``limit=None`` mode belongs to writeback input.
+    source_rows = source_refs(
+        sources or [], limit=max(1, len(sources or []))
+    )
+    visible_urls = [
+        normalize_source_url(row.get("url"))
+        for row in markdown_external_links(markdown)
+        if normalize_source_url(row.get("url"))
+    ]
+    visible_set = set(visible_urls)
+    source_rows = [
+        *[row for url in visible_urls for row in source_rows if normalize_source_url(row.get("url")) == url],
+        *[row for row in source_rows if normalize_source_url(row.get("url")) not in visible_set],
+    ]
+    sources = source_rows[: max(1, int(limit or 1))]
     if not markdown or not sources:
         return markdown
     return f"{markdown}\n\n---\n\n## 참고자료\n\n{source_lines(sources, limit=limit)}"
@@ -377,6 +398,12 @@ def source_refs(docs, limit=SOURCE_REF_LIMIT):
     보고서 전체가 후보 전량 fallback으로 떨어지고 선언된 claim이 버려진다.
     `SOURCE_REF_LIMIT == CONTEXT_DOC_LIMIT` 계약도 그만큼 깎였다.
     """
+    # Writeback passes the complete pack with ``limit=None``. Preserve raw
+    # duplicate-URL IDs in that path so reconcile_source_ledger can canonicalize
+    # aliases and detect cross-URL collisions. Prompt/reference views keep the
+    # historical bounded, deduplicated behavior.
+    if limit is None:
+        return attach_source_ids_preserving_aliases(docs)
     rows = []
     seen = set()
     for d in docs:
@@ -1793,9 +1820,22 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
         else f"Daily Market Briefing — {date.replace('-', '.')}"
     )
     weekend_mode = bool(market_windows.get("weekendOrHolidayNewsMode"))
-    leaders = list(leading_companies)[:2] if leading_companies is not None else choose_leaders(
-        groups, qualified_only=market_scope in {"us", "kr"},
-    )
+    if leading_companies is not None:
+        leaders = list(leading_companies)[:2]
+        # Concentration may nominate fewer than two candidates. Keep its
+        # nominated order, then fill only from other directly evidenced
+        # companies. Never manufacture a placeholder; the fixed-two contract
+        # will reject the rules candidate if two real names are unavailable.
+        if market_scope in {"us", "kr"}:
+            for candidate in choose_leaders(groups, qualified_only=True):
+                if candidate not in leaders:
+                    leaders.append(candidate)
+                if len(leaders) >= 2:
+                    break
+    else:
+        leaders = choose_leaders(
+            groups, qualified_only=market_scope in {"us", "kr"},
+        )
     top_groups = groups[:4]
 
     # 시장 흐름 섹션 수치 앵커: 스냅샷이 있으면 실제 지수/자산가격 수치를 제시한다.
@@ -1949,6 +1989,8 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
 - 입력 자료에서 확인되지 않는 지수·금리·환율·수급 수치는 추정하지 않았습니다.
 
 ## 오늘의 결론
+
+**한 줄 결론:** {conclusion_character}
 
 **오늘의 시장 성격:** {conclusion_character}
 

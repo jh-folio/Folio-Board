@@ -845,7 +845,7 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 if control.get("mode") == "active"
             },
             leader_section_modes={
-                target: ("qualified_zero_to_two" if (concentration_by_market.get(target) or {}).get("mode") == "active" else "optional_zero_to_two")
+                target: "fixed_two"
                 for target in requested_markets
                 if kind == "daily" and target in {"us", "kr"}
             },
@@ -925,7 +925,10 @@ def write_briefing_from_markdown(
     )
     merged_ref_limit = merged_source_limit(len(generation_scopes), kind)
     candidate_sources = source_refs(
-        pack.get("sources") or draft.get("sources") or [], limit=merged_ref_limit
+        # The prompt-side catalog is capped earlier.  Writeback must see the
+        # complete pack so a manifest's external aliases and claims cannot be
+        # invalidated by a second pre-reconciliation cap.
+        pack.get("sources") or draft.get("sources") or [], limit=None
     )
     markdown, sources, generation_evidence, claim_ledger = reconcile_source_ledger(
         str(markdown or "").strip(), candidate_sources, limit=merged_ref_limit,
@@ -1133,7 +1136,12 @@ def write_briefing_from_markdown(
             from features.daily_briefing.finalize import BriefingFinalizationError, finalize_briefing_candidate
             from features.common.quality_generation.call_budget import current_briefing_budget
             try:
-                scoped_briefing = finalize_briefing_candidate(scoped_briefing, repair_budget=current_briefing_budget(), visual_context=_sidecar_for_market(sidecar, scope))
+                scoped_briefing = finalize_briefing_candidate(
+                    scoped_briefing,
+                    repair_budget=current_briefing_budget(),
+                    visual_context=_sidecar_for_market(sidecar, scope),
+                    require_structure=True,
+                )
             except BriefingFinalizationError:
                 continue
             write_json(save_path, scoped_briefing)

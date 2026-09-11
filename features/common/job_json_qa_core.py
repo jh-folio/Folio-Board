@@ -24,6 +24,7 @@ from features.common.shared_jobs_private import JobPrivateLifecycle
 from features.common.shared_jobs_projection import new_shared_job
 from features.common.shared_jobs_schema import JobStatus, SharedJob, StorageKind
 from features.common.shared_jobs_store import SharedJobStore
+from features.agent_mode.briefing_contract import briefing_output_contract
 
 
 NOW = datetime(2026, 7, 18, 2, 0, tzinfo=UTC)
@@ -81,6 +82,28 @@ def read_json(path: Path) -> JsonObject:
     if not isinstance(value, dict):
         raise JobArtifactValidationError("QA target is not a JSON object")
     return value
+
+
+def _valid_briefing_markdown(scope: str) -> str:
+    contract = briefing_output_contract(scope, markets=[scope])
+    names = ("NVIDIA", "Alphabet") if scope == "us" else ("Samsung Electronics", "SK hynix")
+    headings = []
+    for section in contract["requiredSections"]:
+        if section == "US Market Briefing":
+            headings.append("# US Market Briefing — 2026.07.18")
+        elif section == "Korea Market Briefing":
+            headings.append("# Korea Market Briefing — 2026.07.18")
+        elif "주도한 기업 ①" in section:
+            headings.append(f"## {section} — {names[0]}")
+        elif "주도한 기업 ②" in section:
+            headings.append(f"## {section} — {names[1]}")
+        else:
+            headings.append(f"## {section}")
+    return "\n\n".join(headings + [
+        "**한 줄 결론:** 확인\n" * 7,
+        "· 확인 항목\n" * 18,
+        "근거 있는 분석 문장 " * 1000,
+    ])
 
 
 def restart_boundaries(runtime: Path) -> bool:
@@ -142,7 +165,7 @@ def briefing_matrix(runtime: Path) -> tuple[bool, bool, bool]:
         BriefingJobRequest(
             date="2026-07-18",
             scopes=("kr", "us"),
-            reports={"us": {"markdown": "# US"}, "kr": {"markdown": "# KR"}},
+            reports={"us": {"markdown": _valid_briefing_markdown("us")}, "kr": {"markdown": _valid_briefing_markdown("kr")}},
             visuals={"us": {"snapshots": {"SPY": {"rows": [1, 2]}}}},
             terminal_result={
                 "artifactId": "2026-07-18",

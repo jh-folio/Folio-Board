@@ -36,10 +36,10 @@ def _doc(doc_id, title, source, date, market):
 
 
 DOCS = [
-    _doc("us-fed", "Fed rate decision moves Nasdaq and Treasury yields", "Reuters", "2026-06-09", "US"),
-    _doc("us-wsj", "Federal Reserve pause lifts Nasdaq", "WSJ", "2026-06-09", "US"),
-    _doc("kr-flow", "코스피 외국인 순매수와 반도체 강세", "연합인포맥스", "2026-06-10", "KR"),
-    _doc("kr-yna", "한국 증시 외국인 수급 개선", "연합뉴스", "2026-06-10", "KR"),
+    _doc("NVIDIA", "NVIDIA Fed rate decision moves Nasdaq and Treasury yields", "Reuters", "2026-06-09", "US"),
+    _doc("Alphabet", "Alphabet Federal Reserve pause lifts Nasdaq", "WSJ", "2026-06-09", "US"),
+    _doc("Samsung Electronics", "삼성전자 코스피 외국인 순매수와 반도체 강세", "연합인포맥스", "2026-06-10", "KR"),
+    _doc("SK hynix", "SK하이닉스 한국 증시 외국인 수급 개선", "연합뉴스", "2026-06-10", "KR"),
 ]
 
 
@@ -118,6 +118,40 @@ def test_both_scope_stores_two_complete_reports_and_structured_fields():
         assert section["sessionDate"] == section["marketSessionDate"]
         assert section["title"] and section["summary"]
         assert len(section["tags"]) == 2
+
+
+def test_api_scope_result_keeps_reconciled_ledger_beyond_reader_cap():
+    used_docs = [
+        {"sourceId": f"src-{index}", "title": f"Source {index}", "url": f"https://example.test/{index}"}
+        for index in range(24)
+    ]
+    used_docs.append({
+        "sourceId": "web-a", "title": "Public release",
+        "url": "https://example.test/public-release", "external": True,
+    })
+    llm_result = {
+        "markdown": "# US Market Briefing — 2026.06.09\n\n본문",
+        "usedDocs": used_docs,
+        "generationEvidence": {"status": "declared"},
+        "claimLedger": {"claims": [], "validation": {"status": "pass", "reasonCodes": []}},
+        "provider": "fixture", "model": "fixture", "webSearch": False,
+    }
+    with (
+        patch.object(builder, "_scope_groups_and_drivers", return_value=([], [])),
+        patch.object(builder, "prepare_concentration", return_value=([], {})),
+        patch.object(builder, "build_issue_coverage", return_value=[]),
+        patch.object(builder, "generate_llm_briefing", return_value=(llm_result, "ok_local_only")),
+        patch.object(builder, "finalize_concentration", side_effect=lambda text, control: (text, control)),
+        patch.object(builder, "normalize_briefing_markdown_titles", side_effect=lambda text, *args, **kwargs: text),
+    ):
+        result = builder._scope_result(
+            "us", "default", "2026-06-10", "2026-06-09", DOCS[:1], {},
+            {"ok": False}, {"ok": False}, [], None, {}, False, True,
+        )
+
+    assert len(result["sources"]) == 25
+    assert {row["sourceId"] for row in result["sources"]} == {f"src-{i}" for i in range(24)} | {"web-a"}
+    assert result["markdown"].count("https://example.test/") == 24
 
 
 def test_builder_passes_briefing_type_to_every_generation_path():
@@ -227,7 +261,7 @@ def test_persisted_us_generation_returns_us_view_while_storage_preserves_kr():
         ):
             response = builder.build_briefing(
                 "2026-06-10", strict_date=True, llm_override=False,
-                persist=True, market_scope="us",
+                persist=True, market_scope="us", briefing_type="concise",
             )
         legacy = builder.read_json(root / "2026-06-10.json", {})
         # 저장 키가 세션일이다. 발행 앵커 06-10(수)의 미국 세션은 직전 거래일 06-09이며,
@@ -258,7 +292,7 @@ def test_direct_persistence_commits_canonical_revision_to_disk():
         ):
             response = builder.build_briefing(
                 "2026-06-10", strict_date=True, llm_override=False,
-                persist=True, market_scope="us",
+                persist=True, market_scope="us", briefing_type="concise",
             )
 
         persisted = builder.read_json(root / "2026-06-09.us.json", {})
@@ -289,6 +323,7 @@ def test_persisted_visual_sidecar_uses_gzip_filename():
                 llm_override=False,
                 persist=True,
                 market_scope="us",
+                briefing_type="concise",
             )
 
     # 사이드카도 보고서와 같은 세션 키를 쓴다. 둘이 갈리면 저장은 됐는데 화면이

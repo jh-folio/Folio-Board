@@ -13,8 +13,25 @@ from features.daily_briefing import builder
 
 def _scope_result(scope):
     market = scope.upper()
+    label = "미국장" if scope == "us" else "한국장" if scope == "kr" else "유럽장" if scope == "europe" else "일본장"
+    title = "US" if scope == "us" else "Korea" if scope == "kr" else "Europe" if scope == "europe" else "Japan"
+    markdown = "\n\n".join([
+        f"# {title} Market Briefing — 2026.06.19 마감",
+        f"## 0. 오늘의 {label} 성격",
+        f"## 1. {label} 시장 흐름",
+        f"## 2. {label}을 움직인 핵심 변수",
+        f"## 3. {label}을 주도한 기업 ① — 첫기업",
+        f"## 4. {label}을 주도한 기업 ② — 둘째기업",
+        "## 5. 일반 투자자 관점",
+        f"## 6. 다음 {label} 체크포인트",
+        "## 오늘의 결론",
+        "## Source & Data Notes",
+        "**한 줄 결론:** 확인\n" * 7,
+        "· 확인 항목\n" * 18,
+        f"{scope} body " + "근거 있는 분석 문장 " * 1000,
+    ])
     return {
-        "markdown": f"# {'US' if scope == 'us' else 'Korea'} Market Briefing\n\n{scope} body",
+        "markdown": markdown,
         "sessionMode": f"{scope}_close",
         "marketSessionDate": "2026-06-19",
         "sources": [],

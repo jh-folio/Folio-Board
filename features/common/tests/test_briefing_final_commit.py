@@ -18,7 +18,10 @@ def test_cli_commits_contradictory_writer_verbatim_without_rules_fallback(monkey
     monkeypatch.setattr(job_json_producers, "decorate_candidate", lambda _kind, report, **kw: report)
     report = _report("us", bad=True)
     report["generation"] = {"mode": "agent", "adapter": "codex", "model": "writer-test"}
-    report["markdown"] = "기존 근거 설명은 유지한다. " + report["markdown"] + " 다른 분석도 유지한다."
+    report["markdown"] = report["markdown"].replace(
+        "## 0. 오늘의 미국장 성격",
+        "## 0. 오늘의 미국장 성격\n\n기존 근거 설명은 유지한다. ",
+    ) + " 다른 분석도 유지한다."
     store = SharedJobStore(tmp_path / "jobs-v2.json", tmp_path / "jobs.json", clock=_clock)
     job = _running(store, "briefing")
     producer = JobJsonProducers(tmp_path, clock=_clock)
@@ -31,7 +34,7 @@ def test_cli_commits_contradictory_writer_verbatim_without_rules_fallback(monkey
         producer.workspace.commit(bundle, store, JobPrivateLifecycle(tmp_path / "job-context", clock=_clock))
     saved = json.loads((tmp_path / "briefings/2026-07-18.us.json").read_text(encoding="utf-8"))
     assert "-1.48%" in saved["markdown"] and "+1.48%" not in saved["markdown"]
-    assert saved["markdown"].startswith("기존 근거 설명은 유지한다. ")
+    assert "기존 근거 설명은 유지한다. " in saved["markdown"]
     assert saved["markdown"].endswith(" 다른 분석도 유지한다.")
     assert saved["generation"] == report["generation"]
     assert saved["finalValidation"]["contentAssessment"] == "not_assessed"
@@ -58,9 +61,33 @@ def test_cancellation_boundary_aborts_all_staging(monkeypatch, tmp_path):
 
 
 def _report(scope, bad=False):
+    label = "미국장" if scope == "us" else "한국장"
+    title = "US Market Briefing" if scope == "us" else "Korea Market Briefing"
+    company_one = "NVDA" if scope == "us" else "삼성전자"
+    company_two = "Microsoft" if scope == "us" else "SK하이닉스"
+    direction = "-1.48% 하락" if bad is True else "+1.48% 상승"
+    headings = "\n\n".join([
+        f"# {title} — 2026.07.18 마감",
+        f"## 0. 오늘의 {label} 성격",
+        f"## 1. {label} 시장 흐름",
+        f"## 2. {label}을 움직인 핵심 변수",
+        f"## 3. {label}을 주도한 기업 ① — {company_one}",
+        f"## 4. {label}을 주도한 기업 ② — {company_two}",
+        "## 5. 일반 투자자 관점",
+        f"## 6. 다음 {label} 체크포인트",
+        "## 오늘의 결론",
+        "## Source & Data Notes",
+    ])
+    markdown = (
+        headings + "\n\n"
+        + f"NVDA는 {direction}했다.\n"
+        + "**한 줄 결론:** 확인\n" * 7
+        + "· 확인 항목\n" * 18
+        + "근거 있는 분석 문장 " * 1000
+    )
     return {
         "marketScope": scope,
-        "markdown": "NVDA는 -1.48% 하락했다." if bad else "NVDA는 +1.48% 상승했다.",
+        "markdown": markdown,
         "generation": {"mode": "rules"},
         "sources": [{"sourceId": "unsafe", "url": "javascript:alert(1)"}] if bad == "unsafe" else [],
         "marketSnapshot": {"tickers": {"NVDA": {"oneDayPct": 1.48, "asOfDate": "2026-07-18"}}},
@@ -83,8 +110,9 @@ def test_rejection_preserves_reason_codes_without_candidate_text(tmp_path):
 @pytest.mark.parametrize("repairs", [0, 1])
 def test_opening_and_threshold_prose_commits_unchanged_without_fallback(tmp_path, repairs):
     text = "코스피는 6,910.78에 출발해 6,995.39로 마감했다.\n코스피가 7,000선에 접근할 때 업종 확산을 본다."
-    report = {"marketScope": "kr", "markdown": text, "generation": {"mode": "rules"},
-              "koreaMarketData": {"indices": {"KOSPI": {"close": 6995.39, "changePct": 4.61, "asOfDate": "2026-09-07"}}}}
+    report = _report("kr")
+    report["markdown"] = report["markdown"].replace("NVDA는 +1.48% 상승했다.", text)
+    report["koreaMarketData"] = {"indices": {"KOSPI": {"close": 6995.39, "changePct": 4.61, "asOfDate": "2026-09-07"}}}
     store = SharedJobStore(tmp_path / "jobs-v2.json", tmp_path / "jobs.json", clock=_clock)
     job = _running(store, "briefing")
     producer = JobJsonProducers(tmp_path, clock=_clock)
@@ -95,7 +123,7 @@ def test_opening_and_threshold_prose_commits_unchanged_without_fallback(tmp_path
         ))
         producer.workspace.commit(bundle, store, JobPrivateLifecycle(tmp_path / "job-context", clock=_clock))
     saved = json.loads((tmp_path / "briefings/2026-09-07.kr.json").read_text(encoding="utf-8"))
-    assert saved["markdown"] == text
+    assert text in saved["markdown"]
     assert saved["finalValidation"]["contradictionCount"] is None
     assert saved["finalValidation"]["contentAssessment"] == "not_assessed"
     assert saved["finalValidation"]["repairCount"] == 0

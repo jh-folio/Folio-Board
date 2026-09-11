@@ -390,7 +390,10 @@ def _scope_result(
         if llm_status not in {"disabled", "missing_prompt"} and not llm_status.startswith("missing_"):
             record_call(concentration_control, "generation")
     if llm_result:
-        sources = source_refs(llm_result.get("usedDocs", []), limit=ref_limit)
+        # ``usedDocs`` is already the reconciled safe ledger from the API
+        # writer. Do not apply the reader-list cap a second time here: doing
+        # so can drop a declared external source before finalization.
+        sources = source_refs(llm_result.get("usedDocs", []), limit=None)
         markdown = llm_result["markdown"]
         generation_evidence = deepcopy(llm_result.get("generationEvidence") or {})
         claim_ledger = deepcopy(llm_result.get("claimLedger") or {})
@@ -986,7 +989,12 @@ def build_briefing(
             scoped_briefing = strip_change_metadata(scoped_briefing)
             from features.daily_briefing.finalize import BriefingFinalizationError, finalize_briefing_candidate
             try:
-                scoped_briefing = finalize_briefing_candidate(scoped_briefing, repair_budget=current_briefing_budget(), visual_context=_sidecar_for_market(visual_result.get("sidecar") or {}, scope))
+                scoped_briefing = finalize_briefing_candidate(
+                    scoped_briefing,
+                    repair_budget=current_briefing_budget(),
+                    visual_context=_sidecar_for_market(visual_result.get("sidecar") or {}, scope),
+                    require_structure=True,
+                )
             except BriefingFinalizationError:
                 scope_warnings.append(f"{scope.upper()}: briefing_final_validation_failed")
                 continue

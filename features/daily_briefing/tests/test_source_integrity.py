@@ -1,3 +1,5 @@
+import json
+
 from features.daily_briefing.source_integrity import (
     MANIFEST_END,
     MANIFEST_START,
@@ -116,3 +118,114 @@ def test_manifest_sources_accept_only_http_https_urls():
 
     assert ledger == []
     assert "manifest_external_source_invalid" in evidence["errors"]
+
+
+def test_external_manifest_id_is_preserved_and_not_evicted_by_reader_cap():
+    candidates = [
+        {"sourceId": "src_a", "title": "Input", "url": "https://example.org/input"},
+        {"sourceId": "src_b", "title": "Input B", "url": "https://example.org/input-b"},
+    ]
+    markdown = (
+        "본문\n"
+        f"{MANIFEST_START}\n"
+        '{"usedSourceIds":["src_a"],"externalSources":['
+        '{"sourceId":"web_a","title":"Public release","url":"https://example.org/release",'
+        '"publisher":"Example"}],"claims":[{"claim":"release","sourceIds":["web_a"]}]}\n'
+        f"{MANIFEST_END}"
+    )
+
+    cleaned, ledger, evidence, claims = reconcile_source_ledger(markdown, candidates, limit=2)
+
+    assert cleaned == "본문"
+    assert {row["sourceId"] for row in ledger} == {"src_a", "src_b", "web_a"}
+    assert claims["claims"][0]["sourceIds"] == ["web_a"]
+    assert evidence["accessibleSourceCount"] == 3
+    assert evidence["readerSourceLimit"] == 2
+    assert evidence["sourceLedgerSemantics"] == "complete_safe_writer_ledger"
+    rendered = append_briefing_sources(
+        "본문 [release](https://example.org/release)", ledger, limit=2, kind="daily"
+    )
+    assert "https://example.org/release" in rendered
+
+
+def test_duplicate_candidate_url_aliases_canonicalize_claims_without_losing_alias():
+    candidates = [
+        {"sourceId": "src_a", "title": "A", "url": "https://EXAMPLE.org/a/"},
+        {"sourceId": "alias_a", "title": "A alias", "url": "https://example.org/a"},
+    ]
+    markdown = (
+        f"{MANIFEST_START}\n"
+        '{"usedSourceIds":["alias_a"],"externalSources":[],'
+        '"claims":[{"claim":"A","supportingSourceIds":["alias_a"]}]}\n'
+        f"{MANIFEST_END}"
+    )
+
+    _, ledger, evidence, claims = reconcile_source_ledger(markdown, candidates, limit=1)
+
+    assert [row["sourceId"] for row in ledger] == ["src_a"]
+    assert evidence["errors"] == []
+    assert claims["claims"][0]["supportingSourceIds"] == ["src_a"]
+    assert claims["validation"] == {"status": "pass", "reasonCodes": []}
+
+
+def test_different_url_reuse_of_candidate_alias_is_ambiguous_not_attributed():
+    candidates = [
+        {"sourceId": "same", "title": "A", "url": "https://example.org/a"},
+        {"sourceId": "candidate_alias", "title": "A alias", "url": "https://example.org/a"},
+    ]
+    markdown = (
+        f"{MANIFEST_START}\n"
+        '{"usedSourceIds":["candidate_alias"],"externalSources":['
+        '{"sourceId":"candidate_alias","title":"B","url":"https://example.org/b"}],'
+        '"claims":[{"claim":"B","sourceIds":["candidate_alias"]}]}\n'
+        f"{MANIFEST_END}"
+    )
+
+    _, ledger, evidence, claims = reconcile_source_ledger(markdown, candidates, limit=2)
+
+    assert {row["url"] for row in ledger} == {"https://example.org/a", "https://example.org/b"}
+    assert evidence["actualUsedStatus"] == "unknown"
+    assert evidence["actualUsedSourceCount"] is None
+    assert evidence["ambiguousSourceIds"] == ["candidate_alias"]
+    assert claims["claims"][0].get("sourceIds") == []
+    assert claims["validation"]["status"] == "review"
+    assert "source_id_ambiguous" in claims["validation"]["reasonCodes"]
+
+
+def test_alias_registration_does_not_overwrite_existing_id_mapping():
+    candidates = [
+        {"sourceId": "a", "title": "A", "url": "https://example.org/a"},
+        {"sourceId": "b", "title": "B", "url": "https://example.org/b"},
+    ]
+    markdown = (
+        f"{MANIFEST_START}\n"
+        '{"usedSourceIds":["a"],"externalSources":['
+        '{"sourceId":"a","title":"B duplicate","url":"https://example.org/b"}],'
+        '"claims":[{"claim":"A","sourceIds":["a"]}]}\n'
+        f"{MANIFEST_END}"
+    )
+
+    _, ledger, evidence, claims = reconcile_source_ledger(markdown, candidates, limit=2)
+
+    assert {row["sourceId"] for row in ledger} == {"a", "b"}
+    assert evidence["ambiguousSourceIds"] == ["a"]
+    assert claims["claims"][0]["sourceIds"] == []
+    assert claims["claims"][0]["unresolvedSourceIds"] == ["a"]
+
+
+def test_claim_metadata_is_all_normalized_instead_of_silently_capped():
+    claims = [{"claim": str(index), "sourceIds": ["src_a"]} for index in range(25)]
+    markdown = (
+        f"{MANIFEST_START}\n"
+        f'{{"usedSourceIds":["src_a"],"externalSources":[],"claims":{json.dumps(claims)}}}\n'
+        f"{MANIFEST_END}"
+    )
+
+    _, _, _, claim_ledger = reconcile_source_ledger(
+        markdown,
+        [{**_sources()[0], "sourceId": "src_a"}, {**_sources()[1], "sourceId": "src_b"}],
+        limit=2,
+    )
+
+    assert len(claim_ledger["claims"]) == 25
+    assert all(row["sourceIds"] == ["src_a"] for row in claim_ledger["claims"])
