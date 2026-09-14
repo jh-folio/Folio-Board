@@ -16,6 +16,7 @@ from features.agent_mode import schema
 from features.agent_mode import service as agent_service
 from features.agent_mode import job_runtime
 from features.common.quality_generation.call_budget import SharedRepairBudget, bind_briefing_budget, current_briefing_budget
+from features.common.execution_result import WebSearchFacts
 from features.agent_mode.briefing_contract import briefing_contract_violations
 from features.company_analysis.report_contract import (
     missing_sections as company_missing_sections,
@@ -735,6 +736,11 @@ def _adapter_command(
             command.extend(["-c", 'web_search="live"' if web_search else 'web_search="disabled"'])
         if web_search:
             command.extend(WEB_SEARCH_ARGS["codex"])
+            # A lookup call needs to know whether the model actually searched;
+            # plain stdout never says. codex's own JSONL event log carries a
+            # `type: "web_search"` item exactly when the tool fires (실측
+            # 2026-09-12) — see `_extract_web_search_observation()`.
+            command.append("--json")
         command.append("-")
         return command
     if adapter["id"] == "claude":
@@ -748,7 +754,15 @@ def _adapter_command(
             executable,
             "--print",
             "--output-format",
-            "text",
+            # A lookup call needs to see whether WebSearch actually fired.
+            # The single-line "text" format never carries that, and even the
+            # final usage summary's own server_tool_use.web_search_requests
+            # stays 0 when the tool ran (실측 2026-09-12: Claude Code executes
+            # WebSearch through an internal helper model, so only the
+            # per-turn tool_use blocks in stream-json are reliable — see
+            # `_extract_web_search_observation()`).
+            "stream-json" if web_search else "text",
+            *(["--verbose"] if web_search else []),
             "--permission-mode",
             "dontAsk",
             "--tools", ",".join(read_tools),
@@ -866,6 +880,76 @@ def _prompt_needs_file_read(prompt: str) -> bool:
     return "Agent Context Pack" in prompt
 
 
+def _parse_jsonl(raw: str) -> list[dict]:
+    """어댑터의 구조화 이벤트 로그를 줄 단위로 읽는다. 못 읽는 줄은 조용히 건너뛴다 —
+    이 파싱은 관측용 보너스이지, 실패했다고 실행 자체를 죽일 이유가 아니다.
+    """
+    events: list[dict] = []
+    for line in str(raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            events.append(parsed)
+    return events
+
+
+def _claude_used_web_search(events: list[dict]) -> bool:
+    for event in events:
+        if event.get("type") != "assistant":
+            continue
+        content = ((event.get("message") or {}).get("content")) or []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "WebSearch":
+                return True
+    return False
+
+
+def _codex_used_web_search(events: list[dict]) -> bool:
+    for event in events:
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "web_search":
+            return True
+    return False
+
+
+def _extract_web_search_observation(adapter_id: str, raw_stdout: str) -> tuple[str | None, WebSearchFacts]:
+    """찾기 콜에서 실제로 검색이 일어났는지, 어댑터 자신의 구조화 출력에서만 읽는다.
+
+    설정 가능 여부(`adapter_supports_web_search`)는 관측이 아니다 — 이 함수는 **이번
+    실행**에서 어댑터가 남긴 이벤트를 읽는다(실측 2026-09-12: claude
+    `--output-format stream-json`의 `tool_use`/`name=WebSearch` 블록, codex `--json`의
+    `item.type == "web_search"`). 파싱에 실패하거나 지원하지 않는 어댑터면 관측하지
+    않은 것으로 남긴다 — 텍스트를 지어내거나 사용 여부를 추측하지 않는다. 호출자는
+    이때 원래 stdout을 그대로 쓴다.
+    """
+    events = _parse_jsonl(raw_stdout)
+    if not events:
+        return None, WebSearchFacts()
+    if adapter_id == "claude":
+        result_event = next((event for event in reversed(events) if event.get("type") == "result"), None)
+        text = result_event.get("result") if isinstance(result_event, dict) else None
+        if not isinstance(text, str) or not text:
+            return None, WebSearchFacts()
+        used = _claude_used_web_search(events)
+        return text, WebSearchFacts(enabled=True, used="yes" if used else "no", observation="complete")
+    if adapter_id == "codex":
+        text = None
+        for event in events:
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                text = item["text"]
+        if not text:
+            return None, WebSearchFacts()
+        used = _codex_used_web_search(events)
+        return text, WebSearchFacts(enabled=True, used="yes" if used else "no", observation="complete")
+    return None, WebSearchFacts()
+
+
 def _invoke_agent_cli(
     selected: dict,
     prompt: str,
@@ -875,17 +959,25 @@ def _invoke_agent_cli(
     *,
     web_search: bool = False,
     reasoning_effort: str = "",
+    facts_sink: dict | None = None,
 ) -> str:
+    """`facts_sink`는 순수 additive 관측 통로다: 값을 넘기지 않는 기존 호출자는
+    이전과 완전히 같게 동작한다. 넘기면, 검색이 실제로 지원되는 요청이었을 때
+    `facts_sink["webSearchFacts"]`에 `WebSearchFacts`를 채운다(관측 실패 시 기본값).
+    호출마다 새로 만든 로컬 dict를 넘기는 것을 전제한다 — 동시 호출 간에 공유되는
+    가변 상태를 두지 않기 위해서다(`serialize=False` 찾기 콜은 동시에 돌 수 있다).
+    """
     is_antigravity = selected.get("id") == "antigravity"
     if is_antigravity and _AGY_FILE_READS_BLOCKED and _prompt_needs_file_read(prompt):
         # 이미 거부당한 것을 알고 있다. 팩을 만들고 수 분을 버린 뒤 같은 곳에서
         # 실패하게 두지 않는다.
         raise RuntimeError(AGY_PERMISSION_HELP)
+    effective_web_search = bool(web_search) and adapter_supports_web_search(selected.get("id", ""))
     command = _adapter_command(
         selected,
         prompt,
         model_override=model_override,
-        web_search=bool(web_search) and adapter_supports_web_search(selected.get("id", "")),
+        web_search=effective_web_search,
         reasoning_effort=reasoning_effort,
     )
     proc = subprocess.Popen(
@@ -923,6 +1015,15 @@ def _invoke_agent_cli(
             raise AgentRateLimitError(f"Agent CLI 사용량 한도에 걸렸습니다. {hint}".strip(), hint)
         raise AgentProcessError(f"Agent CLI 실행 실패 (exit {proc.returncode}): {error}")
     output = _strip_outer_fence(stdout)
+    facts = WebSearchFacts()
+    if effective_web_search:
+        # 구조화 출력에서 최종 텍스트를 다시 뽑는다 — stream-json/--json으로 바꾼
+        # stdout은 이제 순수 응답 텍스트가 아니라 이벤트 로그이기 때문이다. 못 뽑으면
+        # (스키마가 바뀌었거나 파싱이 실패하면) 원래 stdout을 그대로 쓴다: 그 값이
+        # JSON으로 안 읽히는 것은 호출자가 이미 다루는 "조회 실패" 경로일 뿐이다.
+        observed_text, facts = _extract_web_search_observation(selected.get("id", ""), stdout)
+        if observed_text:
+            output = _strip_outer_fence(observed_text)
     if not output:
         detail = (stderr or "").strip()[-500:]
         if is_antigravity and AGY_PERMISSION_DENIED_MARK in (stderr or ""):
@@ -941,6 +1042,8 @@ def _invoke_agent_cli(
         )
     if len(output) > MAX_OUTPUT_CHARS:
         raise RuntimeError("Agent CLI 결과가 허용 크기를 초과했습니다.")
+    if facts_sink is not None:
+        facts_sink["webSearchFacts"] = facts
     return output
 
 
@@ -1051,11 +1154,18 @@ def run_agent_prompt(
             kwargs = {"model_override": model, "web_search": web_search}
             if _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model):
                 kwargs["reasoning_effort"] = _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model)
-            output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, **kwargs)
+            facts_sink: dict = {}
+            output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, facts_sink=facts_sink, **kwargs)
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
         if budget:
             budget.check_active()
-        return {"output": output, "adapter": selected["id"], "webSearch": _used_web_search(selected, web_search)}
+        web_search_facts = facts_sink.get("webSearchFacts") or WebSearchFacts()
+        return {
+            "output": output,
+            "adapter": selected["id"],
+            "webSearch": _used_web_search(selected, web_search),
+            "webSearchFacts": web_search_facts.safe_projection(),
+        }
     recorder, stage_id = diagnostic_stage_start("wait_engine")
     acquired = _RUN_SEMAPHORE.acquire(timeout=budget.remaining_seconds()) if budget else _RUN_SEMAPHORE.acquire()
     if not acquired:
@@ -1071,7 +1181,8 @@ def run_agent_prompt(
             kwargs = {"model_override": model, "web_search": web_search}
             if _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model):
                 kwargs["reasoning_effort"] = _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model)
-            output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, **kwargs)
+            facts_sink: dict = {}
+            output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, facts_sink=facts_sink, **kwargs)
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
     except Exception as error:
         # Acquisition is the only wait-engine boundary.  Once acquired, the
@@ -1087,7 +1198,13 @@ def run_agent_prompt(
         _RUN_SEMAPHORE.release()
     if budget:
         budget.check_active()
-    return {"output": output, "adapter": selected["id"], "webSearch": _used_web_search(selected, web_search)}
+    web_search_facts = facts_sink.get("webSearchFacts") or WebSearchFacts()
+    return {
+        "output": output,
+        "adapter": selected["id"],
+        "webSearch": _used_web_search(selected, web_search),
+        "webSearchFacts": web_search_facts.safe_projection(),
+    }
 
 
 def _run_agent_task_locked(

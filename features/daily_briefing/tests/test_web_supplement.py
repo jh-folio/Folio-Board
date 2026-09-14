@@ -123,6 +123,42 @@ class TestSupplement:
         assert row["ok"] is True and row["facts"] == []
         assert render_web_lookup(row, []) == ""
 
+    def test_tool_use_reflects_the_lookup_calls_own_observation(self):
+        """내부 조회(engine_lookup.py)가 실제로 관측한 값이 있으면 그 값을 그대로 쓴다."""
+        def stub(prompt, context):
+            return '{"facts":[],"notFound":["TOPIX"]}'
+        stub.web_search_facts = {"enabled": True, "used": "yes", "observation": "complete"}
+
+        _block, summary = web_supplement(
+            "jp", "2026-08-26",
+            market_snapshot=HEALTHY_SNAPSHOT, korea_market_data=None,
+            web_search=True, lookup=stub,
+        )
+        assert summary["toolUse"] == "yes"
+
+    def test_tool_use_stays_unknown_when_the_lookup_never_reports_it(self):
+        """주입된 lookup(테스트/다른 호출자)은 관측을 얹지 않는다 — 그대로 unknown."""
+        stub = lambda p, c: '{"facts":[],"notFound":["TOPIX"]}'
+        _block, summary = web_supplement(
+            "jp", "2026-08-26",
+            market_snapshot=HEALTHY_SNAPSHOT, korea_market_data=None,
+            web_search=True, lookup=stub,
+        )
+        assert summary["toolUse"] == "unknown"
+
+    def test_tool_use_ignores_a_malformed_observation_attribute(self):
+        """엉뚱한 값이 올라와도 unknown 기본값을 깨지 않는다."""
+        def stub(prompt, context):
+            return '{"facts":[],"notFound":["TOPIX"]}'
+        stub.web_search_facts = "not a dict"
+
+        _block, summary = web_supplement(
+            "jp", "2026-08-26",
+            market_snapshot=HEALTHY_SNAPSHOT, korea_market_data=None,
+            web_search=True, lookup=stub,
+        )
+        assert summary["toolUse"] == "unknown"
+
 
 class TestPathParity:
     """§6 규칙 14 — 확인은 구조가 아니라 값으로 한다."""

@@ -1,6 +1,11 @@
 """Private, additive execution facts for future provider adapters.
 
-This type has no persistence adapter.  Existing tuple/string provider APIs keep
+`WebSearchFacts` is wired: `features/agent_mode/bridge.py` constructs it from
+the CLI adapter's own structured output for web-search lookup calls (claude
+`stream-json`, codex `--json`; 2026-09-12) and threads it through
+`run_agent_prompt()` -> `features/common/engine_lookup.py` ->
+`features/daily_briefing/web_lookup.py`. `ExecutionResult` and `UsageFacts`
+still have no persistence adapter. Existing tuple/string provider APIs keep
 their return values and exception behavior; callers opt in only when a trusted
 adapter can supply structured facts.
 """

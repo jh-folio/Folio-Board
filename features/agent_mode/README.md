@@ -127,6 +127,14 @@ CLI 선택은 **범위가 둘**이다. 자리도 둘이고, 화면이 어느 쪽
 
 `if required:` 블록을 둘로 쪼갰다 — 태스크 공통(섹션 누락 금지 + 필수 제목 목록)은 그대로, 브리핑 전용(분량 하한·타이틀 서식·주도 기업 서식)은 `pack.get("taskType") == "briefing"`으로 게이트. `test_company_analysis_agent_prompt_does_not_leak_briefing_instructions`가 회귀를 잡는다.
 
+### `prepare_topic_report_pack()`이 딥 리서치 planner를 강제로 껐다 (0.6, 2026-09-13)
+
+**`llm_override=False`를 고정으로 넘겨, Agent CLI로 생성하는 custom 주제 딥 리서치는 항상 규칙 기반 planner로 떨어졌다.** 승인 플로우(`topic_report/approved_request.py`)는 `use_llm = request.plannerEngine != "rules"`(기본 True, 설정된 엔진을 그대로 씀)인데 이 함수만 별도로 `False`를 박아 뒀다 — 같은 `build_topic_plan()`을 두 경로가 공유해도 넘기는 값이 갈리면 같은 일이 난다(§6 규칙 14, 이번에도 같은 유형).
+
+실측(2026-09-13, "AI 에이전트 웹 전환" 주제로 `run_agent_task("topic_report", ...)` 직접 실행, Claude Code CLI, `deep_research=True`): 하위질문 10개 전부 `custom_label` 원문을 기계적으로 잘라 붙인 문장(`"AI 에이전트 사람 대신해의 현재 상황과 핵심 동인은 무엇인가?"`)이 됐고 `candidateTickers`가 항상 빈 `{}`였다. 그 결과 마이크로소프트·아마존 같은 개별 기업 시세를 아예 못 가져왔고, 저장된 보고서는 사용자가 물은 "미국 기업별 영향"을 전부 "데이터 갭"으로 남겼다 — 계획을 세운 함수 하나가 조용히 규칙으로 떨어진 결과가 본문까지 그대로 이어졌다.
+
+수정: `llm_override=False` 인자를 제거해 `build_topic_plan()` 자신의 기본값(`None`→`use_llm_analysis()`로 판단)을 쓰게 했다. 부수적으로 두 곳의 미가드 예외도 같이 잡았다(`planner.py::refine_plan_with_llm()`·`topic_report/service.py::generate_topic_report()`의 `selected_llm_config()` 호출이 잘못된 설정값에서 예외를 그대로 흘려보내 "실패하면 규칙으로" 계약을 못 지키고 있었다) — 상세는 [topic-report 가이드](../../docs/agent-guides/topic-report.md)를 본다. `features/agent_mode/`+`features/topic_report/` 763 passed(이 예외 미가드 하나가 이전에 "환경설정 문제"로 기록해 둔 무관 실패 36건 중 34건도 함께 해소했다).
+
 ### 브리핑 출력 계약은 시장마다 라벨이 다르다
 
 `briefing_contract_violations()`의 검사 둘이 `us`가 아니면 전부 `한국장`으로 취급했다.
@@ -239,6 +247,19 @@ Claude/Antigravity 실행 정책은 그대로이며 예외가 나도 실행별 �
 [Codex 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)를 따른다.
 변경은 Folio Board 서버를 재시작한 뒤 시작하는 작업부터 적용되며, 이미 실행 중인 브리핑을
 취소하거나 열린 브라우저 탭을 닫지 않는다.
+
+### 찾기 콜의 웹 검색 사용 여부는 어댑터의 구조화 출력에서 관측한다 (0.6, 2026-09-12)
+
+`_used_web_search()`(→ `run_agent_prompt()`의 `webSearch` 키)는 **설정 가능 여부**(요청함 AND 그 어댑터가 정적으로 지원함)일 뿐 실행 중 관측이 아니다. `features/common/execution_result.py::WebSearchFacts{enabled, used: yes/no/unknown, observation}` 계약이 이 문제를 위해 있었지만 실제로는 어디에도 배선되지 않은 scaffold였다.
+
+`web_search=True`인 찾기 콜(`run_agent_prompt(..., web_search=True)` — 본문 생성은 이 값을 넘기지 않는다)에서만 `_adapter_command()`가 어댑터 출력 형식을 구조화 형식으로 바꾼다: claude는 `--output-format text` → `stream-json`, codex는 `--json`을 추가한다. 실측(2026-09-12, claude-sonnet-5/codex-cli 0.153.4, 강제 검색 프롬프트 각 1회)으로 확인한 신호는 —
+
+- **claude**: `stream-json`의 `assistant` 메시지 `content[].type == "tool_use" && name == "WebSearch"` 블록. 최종 `result` 이벤트의 `usage.server_tool_use.web_search_requests`는 검색이 실제로 일어나도 **0으로 남는다** — Claude Code가 WebSearch를 내부 보조 모델(`claude-haiku-*`)로 실행해서다. 그 모델의 `modelUsage["claude-haiku-*"].webSearchRequests`에만 잡히므로, 최상위 usage 요약이 아니라 이벤트 스트림 자체를 읽어야 한다.
+- **codex**: `--json` JSONL의 `item.type == "web_search"` 이벤트.
+
+`_extract_web_search_observation()`이 이 이벤트를 읽어 `WebSearchFacts`를 만들고, 최종 텍스트도 이벤트에서 다시 뽑는다(claude는 `result` 이벤트의 `result` 필드, codex는 마지막 `agent_message` 아이템 — 구조화 출력으로 바뀌면 stdout 전체가 더는 순수 응답 텍스트가 아니기 때문이다). 파싱 실패나 지원하지 않는 어댑터(antigravity — 웹 검색 자체를 지원하지 않는다)는 관측하지 않은 것으로 남기고 원래 stdout을 그대로 쓴다.
+
+기존 계약 보존: 루트 `conftest.py`가 테스트의 실제 프로세스 실행을 막으려고 `_invoke_agent_cli`라는 함수 이름 자체를 전역 monkeypatch한다 — 그래서 이 함수의 이름·시그니처·반환 타입(`str`)은 그대로 두고, 새 keyword-only `facts_sink: dict | None = None`(안 넘기면 완전히 이전과 동일)으로만 관측값을 통과시킨다. `run_agent_prompt()` 반환 dict에는 additive `webSearchFacts` 키가 붙는다. `common/engine_lookup.py::invoke()`는 이 값을 반환된 콜러블 자기 자신의 `web_search_facts` 속성으로 얹어(`LookupCall = Callable[[str, str], str]` 타입은 불변 — company_analysis/topic_report는 이 값을 몰라도 그대로 동작한다) `daily_briefing/web_lookup.py`의 `toolUse`가 실제 값을 쓰게 한다.
 
 ## 사용 예시
 

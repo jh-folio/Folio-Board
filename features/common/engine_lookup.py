@@ -68,6 +68,12 @@ def configured_lookup_call(
             # This is evidence lookup, not the report's primary execution.
             diagnostic_primary=False,
         )
+        # Additive passthrough: bridge.py may have observed whether the
+        # adapter actually searched (its own structured CLI output). Callers
+        # that care read this attribute right after invoking `invoke`; it is
+        # never set when the API branch above returns first, so it stays
+        # absent exactly where there is nothing to observe.
+        invoke.web_search_facts = result.get("webSearchFacts")
         return str(result.get("output") or "")
 
     return invoke

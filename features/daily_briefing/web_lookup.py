@@ -649,9 +649,9 @@ def web_supplement(
         summary.update({
             "kind": kind,
             "lookupAttempted": False,
-            # The adapter does not expose provider-level tool telemetry.
-            # Unknown is intentional; absence of telemetry is not evidence
-            # of "no".
+            # Default until (and unless) the call below actually observes a
+            # signal. Unknown is intentional; absence of telemetry is not
+            # evidence of "no".
             "toolUse": "unknown",
             "acceptedFactCount": 0,
             "unverifiedCandidateCount": 0,
@@ -679,6 +679,14 @@ def web_supplement(
     summary.update({k: v for k, v in row.items() if k != "gaps"})
     summary["acceptedFactCount"] = len(row.get("facts") or [])
     summary["unverifiedCandidateCount"] = len(row.get("unverifiedCandidates") or [])
+    # The internal lookup call (engine_lookup.py) stamps this attribute with
+    # what bridge.py actually observed from the adapter's own structured
+    # output when the CLI path ran. An externally injected `lookup` (tests,
+    # other callers) or the API branch never sets it, so this stays "unknown"
+    # exactly where nothing was observed — never guessed.
+    observed = getattr(lookup_call, "web_search_facts", None)
+    if isinstance(observed, dict) and observed.get("used") in {"yes", "no", "unknown"}:
+        summary["toolUse"] = observed["used"]
     return render_web_lookup(row, gaps), summary
 
 

@@ -102,7 +102,7 @@ def test_briefing_policy_covers_prepare_initial_correction_and_nested_commit_cal
     }
     pack_path = Path("C:/unused-pack.json")
 
-    def fake_invoke(selected, prompt, timeout, job_id="", model_override="", *, web_search=False):
+    def fake_invoke(selected, prompt, timeout, job_id="", model_override="", *, web_search=False, **_kwargs):
         with patch("features.agent_mode.setup.configured_model", return_value="gpt-5.6-terra"):
             captured.append((prompt, bridge._adapter_command(
                 selected, prompt, model_override=model_override, web_search=web_search
@@ -155,7 +155,7 @@ def test_briefing_policy_covers_the_durable_commit_path():
     }
     captured: list[list[str]] = []
 
-    def fake_invoke(selected, prompt, timeout, job_id="", model_override="", *, web_search=False):
+    def fake_invoke(selected, prompt, timeout, job_id="", model_override="", *, web_search=False, **_kwargs):
         captured.append(_command(web_search=web_search))
         return "durable draft"
 
