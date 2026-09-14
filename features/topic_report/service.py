@@ -314,8 +314,10 @@ def _build_llm_context(
 
 
 REQUIRED_TAIL_SECTIONS = (
+    # "결론"은 0.6 Phase 1(2026-09-13)부터 고정 헤딩 이름이 아니다(topic_schema.py
+    # 참고) — 이름을 특정할 수 없는 검사는 여기서 뺀다. 잘림 감지는 여전히 유효하다:
+    # 이 둘이 있으면 뒤 내용도 대개 함께 있다.
     "앞으로 확인할 체크포인트",
-    "결론",
     "Source & Data Notes",
 )
 
@@ -358,7 +360,7 @@ def _continuation_context(topic: dict, date: str, markdown: str) -> str:
         f"보고서 날짜: {date}",
         "아래 보고서는 모델 출력 길이 제한 때문에 후반부가 누락되었거나 중간에서 끊겼을 수 있습니다.",
         "기존 내용을 반복하지 말고, 끊긴 지점부터 이어서 작성하세요.",
-        "반드시 남은 섹션을 완성하세요: 9. 앞으로 확인할 체크포인트, 10. 결론, 11. Source & Data Notes.",
+        "반드시 남은 섹션을 완성하세요: 앞으로 확인할 체크포인트, 질문에 대한 직접적인 답을 담은 마지막 본문 섹션(제목 자유), Source & Data Notes.",
         "최종 답변에는 이어지는 Markdown 본문만 출력하세요.",
         "",
         "## 기존 보고서 마지막 부분",
@@ -479,7 +481,15 @@ def generate_topic_report(
     })
 
     # 4. LLM generation — 공통 prompt + report_type별 지침 결합 (Phase 3)
-    cfg = selected_llm_config()
+    try:
+        cfg = selected_llm_config()
+    except Exception:
+        # 아래는 `cfg`가 실패하더라도 규칙 기반으로 떨어지도록 설계돼 있는데
+        # (`generation = {"mode": "rules", ...}`), 정작 그 `cfg` 자체가 설정값
+        # 오류(예: 지원 안 되는 `AI_AGENT_REASONING_EFFORT`)로 예외를 던지면
+        # 이 함수 전체가 그 순간 죽어 규칙 생성까지 막혔다. 빈 설정으로 두면
+        # 아래 `cfg.get("apiKey")`가 falsy가 되어 의도한 대로 규칙 경로로 간다.
+        cfg = {}
     prompt = _read_prompt()
     report_type = (topic_plan or {}).get("reportType") or topic.get("report_type", "")
     if prompt:

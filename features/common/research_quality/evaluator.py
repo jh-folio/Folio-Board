@@ -142,7 +142,7 @@ def evaluate_report(
     answered = 0.0
     if _has_section(low, "executive"):
         answered += 0.6
-    if any(term in md for term in ("현재 판단", "판정", "결론", "요약")):
+    if any(term in md for term in ("현재 판단", "판정", "결론", "정리", "요약")):
         answered += 0.4
     scores["topic_answered"] = min(1.0, answered)
     if answered < 0.6:

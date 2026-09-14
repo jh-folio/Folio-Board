@@ -12,14 +12,17 @@ from features.topic_report.topic_schema import (
 )
 
 # 머리·꼬리의 분량 비중은 고정이고, 남은 몫을 본문 섹션이 나눠 갖는다.
-# 본문이 기본 3개일 때 예전 고정 가중치와 같은 값이 나오도록 총합을 맞춰 뒀다
-# (deep 8·7·9 + 41 + 9·9·7·6·4 = 100, ordinary 10·7·9 + 40 + 9·8·7·6·4 = 100).
-_DEEP_HEAD_WEIGHTS = (8, 7, 9)
-_DEEP_TAIL_WEIGHTS = (9, 9, 7, 6, 4)
-_DEEP_BODY_WEIGHT = 41
-_ORDINARY_HEAD_WEIGHTS = (10, 7, 9)
-_ORDINARY_TAIL_WEIGHTS = (9, 8, 7, 6, 4)
-_ORDINARY_BODY_WEIGHT = 40
+# 머리 1개(Executive Summary, 옛 8+7)·꼬리 3개(반론과 리스크·체크포인트·Source & Data
+# Notes)로 줄인 0.6 Phase 1(2026-09-13) 이후 값이다. 옛 머리 "핵심 데이터 대시보드"(9)와
+# 옛 꼬리 "시나리오"(9)·"결론"(6)의 몫은 이제 이름을 강제하지 않는 본문으로 넘겼다 —
+# 그 내용이 필요하면 본문 섹션 하나로 자연스럽게 들어가고, 필요 없으면 안 쓴다.
+# (deep 15 + 65 + 9·7·4 = 100, ordinary 17 + 63 + 9·7·4 = 100).
+_DEEP_HEAD_WEIGHTS = (15,)
+_DEEP_TAIL_WEIGHTS = (9, 7, 4)
+_DEEP_BODY_WEIGHT = 65
+_ORDINARY_HEAD_WEIGHTS = (17,)
+_ORDINARY_TAIL_WEIGHTS = (9, 7, 4)
+_ORDINARY_BODY_WEIGHT = 63
 
 
 # `visible_markdown`·`visible_character_count`는 `features/common/report_prose.py`가

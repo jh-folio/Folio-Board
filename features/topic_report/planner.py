@@ -748,7 +748,14 @@ def refine_plan_with_llm(
         return rule_plan, "llm_unavailable"
     if not use_llm_analysis():
         return rule_plan, "llm_disabled"
-    cfg = selected_llm_config()
+    try:
+        cfg = selected_llm_config()
+    except Exception:
+        # 이 함수의 계약은 "실패하면 rule_plan"이다. `selected_llm_config()`는
+        # 설정값(예: 지원 안 되는 `AI_AGENT_REASONING_EFFORT`)이 안 맞으면 예외를
+        # 던지는데, 이 줄만 두 try 블록 사이에 안 감싸여 있어 그 예외가 그대로
+        # 새 나갔다 — 계획을 아예 못 만드는 대신 규칙 계획으로 내려가야 한다.
+        return rule_plan, "llm_config_invalid"
     prompt = _PLANNER_PROMPT.format(report_types=", ".join(sorted(REPORT_TYPE_LABELS)))
     context_lines = [f"리서치 주제: {topic}"]
     if user_context.strip():

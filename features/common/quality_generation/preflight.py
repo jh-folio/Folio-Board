@@ -72,8 +72,10 @@ def _required_sections_status(artifact_type: str, artifact: dict) -> str:
         markers = ("financial", "재무", "valuation", "밸류에이션", "risk", "리스크")
         return "available" if sum(1 for m in markers if m in low) >= 2 else "partial"
     if artifact_type == "topic_report":
-        markers = ("source & data", "체크포인트", "결론")
-        return "available" if all(m in low for m in markers) else "partial"
+        # "결론"은 0.6 Phase 1(2026-09-13)부터 고정 헤딩 이름이 아니다 — "정리"처럼
+        # 다른 이름을 쓸 수 있으므로 어느 한쪽이라도 있으면 닫는 절이 있다고 본다.
+        has_close = "결론" in low or "정리" in low
+        return "available" if "source & data" in low and "체크포인트" in low and has_close else "partial"
     return "available"
 
 

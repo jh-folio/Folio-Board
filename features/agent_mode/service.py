@@ -1272,11 +1272,20 @@ def prepare_topic_report_pack(
     topic_plan = None
     if use_planner:
         try:
+            # `llm_override`를 고정하지 않는다. `build_topic_plan()`이 None일 때
+            # `use_llm_analysis()`(API 키 또는 Agent CLI 중 설정된 엔진)로 스스로
+            # 판단하게 둔다 — 승인 플로우(`approved_request.py`)도 같은 기본값을
+            # 쓴다. 예전에 여기서만 `False`로 고정해, CLI 경로의 custom 주제
+            # 딥 리서치가 항상 규칙 기반 planner로 떨어졌다: 하위질문이 "AI
+            # 에이전트 사람 대신해..."처럼 조사가 잘려나간 기계적 문장이 되고
+            # `candidateTickers`가 항상 비어(실측 200913 "AI 에이전트 웹 전환"
+            # 재실행) 정작 물어본 미국 빅테크 개별 기업 분석이 전부 데이터
+            # 공백으로 빠졌다 — 같은 함수를 승인 경로와 공유해도 넘기는 값이
+            # 갈리면 같은 일이 난다(§6 규칙 14).
             topic_plan = build_topic_plan(
                 topic_key,
                 custom_label=custom_label,
                 user_context=user_context,
-                llm_override=False,
                 preset_config=topic if topic_key != "custom" else None,
             )
         except Exception:

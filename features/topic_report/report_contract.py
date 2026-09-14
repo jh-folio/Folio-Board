@@ -43,7 +43,7 @@ _STEP_HEADING = re.compile(
 
 _COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
 
-_SOURCE_EXEMPT = frozenset({"질문 정의와 분석 범위", "Source & Data Notes"})
+_SOURCE_EXEMPT = frozenset({"Source & Data Notes"})
 
 
 def _source_required(sections: list[str]) -> list[str]:
@@ -178,7 +178,7 @@ def validate_deep_report(
     if missing_questions:
         body_target = next(
             (heading for heading in headings if heading not in REPORT_HEAD_SECTIONS and heading not in REPORT_TAIL_SECTIONS),
-            "결론",
+            tail[-1] if tail else "",
         )
         for question in missing_questions[:3]:
             defects.append(_defect("coverage", "question_unanswered", 70, section=body_target))
