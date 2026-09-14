@@ -381,7 +381,10 @@ def _weekly_heatmap_snapshot(market_key, window, session_start, session_end, pay
             "requested": requested,
             "returned": len(rows),
             "ratio": round(len(rows) / requested, 3) if requested else 0.0,
-            "status": "ok" if rows and requested and len(rows) / requested >= 0.8 else "partial" if rows else "unavailable",
+            # 일간 히트맵(`visuals.py`)과 프론트 `renderHeatmap()`이 "완전"을
+            # "complete"로만 인식한다 — "ok"를 쓰면 100% 채워진 주간 히트맵도
+            # 매번 불완전으로 오판해 그림 자체가 나오지 않는다(2026-09-13 실측).
+            "status": "complete" if rows and requested and len(rows) / requested >= 0.8 else "partial" if rows else "unavailable",
         },
         "timezone": meta["timezone"],
         "currency": _heatmap_currency(meta, payload),
