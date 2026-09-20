@@ -13,6 +13,7 @@ import {
   isJobResponse,
   modelChoicesFor,
   preferredModel,
+  reasoningChoicesFor,
   selectedAdapter,
 } from "./presenters";
 import {
@@ -214,7 +215,7 @@ export function useAgentWorkspace(surface = "agent_home") {
         pending: true,
         runState: "pending",
         runTitle: `${providerLabel} 세션 시작`,
-        runMeta: `${modelLabel} · ${effortLabel(effort)} · on-request`,
+        runMeta: `${modelLabel} · ${effortLabel(currentAdapter, model, effort)} · on-request`,
         createdAt: new Date(startedAt).toISOString(),
       },
     ]);
@@ -247,7 +248,7 @@ export function useAgentWorkspace(surface = "agent_home") {
               proposalStatus: proposalHydration.proposalStatus,
               runState: "done",
               runTitle: `${providerLabel} 응답`,
-              runMeta: `${modelLabel} · ${effortLabel(effort)} · ${elapsedSeconds(startedAt)}`,
+              runMeta: `${modelLabel} · ${effortLabel(currentAdapter, model, effort)} · ${elapsedSeconds(startedAt)}`,
             }
           : item
       )));
@@ -263,7 +264,7 @@ export function useAgentWorkspace(surface = "agent_home") {
                 pending: false,
                 runState: "still-running",
                 runTitle: `${providerLabel} 계속 실행 중`,
-                runMeta: `${modelLabel} · ${effortLabel(effort)} · ${elapsedSeconds(startedAt)}`,
+                runMeta: `${modelLabel} · ${effortLabel(currentAdapter, model, effort)} · ${elapsedSeconds(startedAt)}`,
                 jobId: reason.job.id,
               }
             : item
@@ -280,7 +281,7 @@ export function useAgentWorkspace(surface = "agent_home") {
               pending: false,
               runState: "error",
               runTitle: `${providerLabel} 오류`,
-              runMeta: `${modelLabel} · ${effortLabel(effort)}`,
+              runMeta: `${modelLabel} · ${effortLabel(currentAdapter, model, effort)}`,
             }
           : item
       )));
@@ -418,7 +419,18 @@ export function useAgentWorkspace(surface = "agent_home") {
 
   const adapter = selectedAdapter(settings);
   const modelChoices = modelChoicesFor(adapter);
+  const effortChoices = reasoningChoicesFor(adapter, model);
   const hasConversation = messages.some((message) => message.id !== "welcome");
+
+  // CLI나 모델을 바꾸면 그 조합이 지금 고른 노력 단계를 아예 안 받을 수 있다(예:
+  // Antigravity는 max/ultra가 없고, Codex 일부 모델은 xhigh까지만 받는다). 그대로
+  // 두면 다음 전송에서 CLI가 그 값을 거부한다 — 새 목록에 없으면 안전한 값으로 옮긴다.
+  useEffect(() => {
+    setEffort((current) => {
+      if (effortChoices.some((choice) => choice.value === current)) return current;
+      return effortChoices.find((choice) => choice.value === "medium")?.value || effortChoices[0]?.value || "medium";
+    });
+  }, [adapter?.id, model]);
 
   async function persistModel(nextModel: string) {
     setModel(nextModel);
@@ -452,6 +464,7 @@ export function useAgentWorkspace(surface = "agent_home") {
     settingsMessage,
     adapter,
     modelChoices,
+    effortChoices,
     hasConversation,
     legacyConsultationImportAvailable,
     handleSubmit,

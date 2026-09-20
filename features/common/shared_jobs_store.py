@@ -322,6 +322,12 @@ class SharedJobStore:
             "fallbackReason",
             "failureDetail",
             "proposalId",
+            "phaseCode",
+            "queueWaitMs",
+            "contextMs",
+            "cliMs",
+            "postprocessMs",
+            "totalMs",
         }
         with self.lock:
             state = self.load()

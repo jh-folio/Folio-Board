@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from features.agent_mode import consultation_store as store
 from features.agent_mode.consultation_store import append_user_message, create_session
 from features.agent_mode.consultation_context import assemble_consultation_context
-from features.agent_mode.consultation_prompt import build_consultation_prompt
+from features.agent_mode.chat import build_chat_prompt
 from features.agent_mode.job_runtime import run_consultation_job
 from features.investment_notes.service import normalize_note
 from features.market_memory import memory as MM
@@ -97,6 +97,59 @@ def test_100_turn_context_is_bounded_and_valid_json(tmp_path):
     assert len(context["serialized"]) <= 32_000
     assert json.loads(context["serialized"])["rules"]["consultationIsEvidence"] is False
     assert len(context["pack"]["recentMessages"]) <= 20
+
+
+def test_current_message_is_excluded_from_recent_messages_to_avoid_repeating_it(tmp_path):
+    """Agent Dock Stage B: 방금 저장된 질문은 recentMessages에 다시 넣지 않는다 —
+    `build_chat_prompt()`가 같은 문장을 `사용자 질문:` 자리에 이미 따로 싣는다."""
+    session = store.create_session(tmp_path, {"scope": {"kind": "general"}})
+    appended = store.append_user_message(tmp_path, session["id"], "이 질문은 딱 한 번만 나와야 한다", operation_id="op-dedupe")
+    message_id = appended["message"]["id"]
+
+    with_id = assemble_consultation_context(tmp_path, session["id"], current_message_id=message_id)
+    assert all(row["content"] != "이 질문은 딱 한 번만 나와야 한다" for row in with_id["pack"]["recentMessages"])
+
+    without_id = assemble_consultation_context(tmp_path, session["id"])
+    assert any(row["content"] == "이 질문은 딱 한 번만 나와야 한다" for row in without_id["pack"]["recentMessages"])
+
+
+def test_truly_general_scope_still_gets_lightweight_market_context(tmp_path):
+    """주제·보고서·티커가 전혀 없는 순수 질문도 marketState/recentChanges는 받는다 —
+    둘 다 이미 상한이 걸린 요약값이라 "요즘 시장 어때" 류 질문의 근거가 된다.
+    실사용 확인(2026-09-16): 완전히 비웠더니 이런 일반 시장 질문의 답이 얕아져서
+    되돌렸다. fastSignals는 티커별 조회라 티커가 없으면 여전히 안 붙는다."""
+    session = store.create_session(tmp_path, {"scope": {"kind": "general"}})
+    store.append_user_message(tmp_path, session["id"], "오늘 기분이 어때?", operation_id="op-general")
+    source = assemble_consultation_context(tmp_path, session["id"])["pack"]["sourceContext"]
+    assert "marketState" in source
+    assert "recentChanges" in source
+    assert "fastSignals" not in source
+
+
+def test_general_scope_with_a_mentioned_ticker_still_gets_fast_signals(tmp_path):
+    """관련 있는 티커가 있으면(주제 자체는 general이어도) 여전히 근거를 붙인다."""
+    session = store.create_session(tmp_path, {"scope": {"kind": "general", "tickers": ["NVDA"]}})
+    store.append_user_message(tmp_path, session["id"], "NVDA 어때?", operation_id="op-ticker")
+    source = assemble_consultation_context(tmp_path, session["id"])["pack"]["sourceContext"]
+    assert "fastSignals" in source
+    assert "marketState" in source
+
+
+def test_recent_messages_shrink_once_a_rolling_summary_exists_to_avoid_repeating_old_turns(tmp_path):
+    """`_update_memory()`가 요약한 구간이 `recentMessages`에도 원문 그대로 다시 실리면
+    같은 옛 턴을 두 번 지불하는 것과 같다."""
+    session = store.create_session(tmp_path, {"scope": {"kind": "general"}})
+    for index in range(10):
+        row = store.append_user_message(tmp_path, session["id"], f"OLDQ{index}", operation_id=f"op-{index}")
+        store.append_assistant_message(tmp_path, session["id"], row["message"]["id"], f"OLDA{index}")
+    saved = store.get_session(tmp_path, session["id"])
+    assert saved["memory"]["summary"]  # `_update_memory`가 정확히 20개째에 발동했다
+
+    context = assemble_consultation_context(tmp_path, session["id"])
+    assert len(context["pack"]["recentMessages"]) <= 12
+    recent_texts = {row["content"] for row in context["pack"]["recentMessages"]}
+    assert "OLDQ0" not in recent_texts
+    assert "OLDA0" not in recent_texts
 
 
 def test_context_reads_latest_market_snapshot_by_as_of(tmp_path):
@@ -260,9 +313,11 @@ def test_saved_user_turn_can_be_retried_after_restart_without_proposal(tmp_path,
 
 
 def test_prompt_is_answer_first_and_note_snapshot_stays_hypothesis():
-    prompt = build_consultation_prompt("{}", "질문")
-    assert "Answer the user's current question or request first" in prompt
-    assert "Do not force a questionnaire" in prompt
+    """`build_consultation_prompt()`는 죽은 코드라 삭제했다(Agent Dock Stage B) — 실제
+    프로덕션 경로인 `build_chat_prompt()`가 같은 answer-first 원칙을 갖는지 검사한다."""
+    prompt = build_chat_prompt("질문", {}, {})
+    assert "사용자의 현재 질문에 먼저 직접 답한다" in prompt
+    assert "정해진 절차나 질문지를 강요하지 않는다" in prompt
     note = normalize_note({"noteType": "portfolio_decision", "title": "상담 정리", "consultationRef": "consult-abc", "body": CANARY})
     assert note["sourceLayer"] == "user_consultation"
     assert note["reuseAsEvidence"] is False
@@ -302,6 +357,50 @@ def test_consultation_http_contract_and_explicit_delete(tmp_path, monkeypatch):
     assert error.value.status_code == 409 and error.value.detail == "consultation_not_empty"
     empty = boundary.create_consultation({"title": "빈 대화", "scope": {"kind": "general"}})
     assert boundary.delete_consultation(empty["id"], {"confirm": True})["deleted"] is True
+
+
+def test_get_consultation_message_route_returns_the_message_or_404(tmp_path):
+    """Agent Dock Stage C: 단일 메시지 endpoint — 전체 스레드 재조회의 대안."""
+    from features.agent_mode import routes
+
+    boundary = routes.AgentCompanionBoundary(object(), data_dir=tmp_path)
+    session = boundary.create_consultation({"title": "대화", "scope": {"kind": "general"}})
+    appended = store.append_user_message(tmp_path, session["id"], "질문", operation_id="op-single")
+    store.append_assistant_message(tmp_path, session["id"], appended["message"]["id"], "답변 본문")
+    reply_id = store.get_session(tmp_path, session["id"])["messages"][-1]["id"]
+
+    message = boundary.get_consultation_message(session["id"], reply_id)
+    assert message["content"] == "답변 본문"
+    assert message["role"] == "assistant"
+
+    with pytest.raises(HTTPException) as error:
+        boundary.get_consultation_message(session["id"], "msg-missing")
+    assert error.value.status_code == 404
+
+    with pytest.raises(HTTPException) as error:
+        boundary.get_consultation_message("session-missing", reply_id)
+    assert error.value.status_code == 404
+
+
+def test_assistant_message_carries_bounded_search_metadata_when_given(tmp_path):
+    """Agent Dock Stage D: `search` 메타데이터는 옵션이고 저장되면 그대로 읽힌다.
+    없으면(대부분의 기존 메시지) 필드 자체가 없다 — 기본값을 지어내지 않는다."""
+    session = store.create_session(tmp_path, {"scope": {"kind": "general"}})
+    appended = store.append_user_message(tmp_path, session["id"], "질문", operation_id="op-search")
+    search_meta = {
+        "requestedPolicy": "on", "toolEnabled": True, "toolUsed": "yes",
+        "sourceRefs": [{"url": "https://www.reuters.com/x", "tier": "media", "label": "Reuters"}],
+    }
+    store.append_assistant_message(tmp_path, session["id"], appended["message"]["id"], "답변", search=search_meta)
+
+    saved = store.get_session(tmp_path, session["id"])["messages"][-1]
+    assert saved["search"] == search_meta
+
+    without_search = store.create_session(tmp_path, {"scope": {"kind": "general"}})
+    other_appended = store.append_user_message(tmp_path, without_search["id"], "질문2", operation_id="op-no-search")
+    store.append_assistant_message(tmp_path, without_search["id"], other_appended["message"]["id"], "답변2")
+    plain_saved = store.get_session(tmp_path, without_search["id"])["messages"][-1]
+    assert "search" not in plain_saved
 
 
 def test_delete_requires_json_true_not_truthy_string(tmp_path, monkeypatch):

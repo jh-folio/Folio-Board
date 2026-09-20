@@ -190,13 +190,46 @@ const AMD_WORKSPACE_FIXTURE = {
   thesis: { ...WORKSPACE_FIXTURE.thesis, ticker: "AMD", company: "AMD", coreThesis: "AMD 새 화면 Thesis" },
 };
 
+// Agent Dock Stage E: web search control fixtures. supportsWebSearch is
+// server-authoritative (bridge.py::adapter_supports_web_search()) — the
+// popover only reads it, it never guesses per-CLI capability itself.
+const AGENT_BRIDGE_SETTINGS = {
+  provider: "codex",
+  adapters: [
+    { id: "codex", label: "Codex CLI", model: "gpt-5.6-sol", modelChoices: [{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" }], bridgeSupported: true, supportsWebSearch: true },
+  ],
+};
+
+const AGENT_BRIDGE_SETTINGS_NO_SEARCH = {
+  provider: "antigravity",
+  adapters: [
+    { id: "antigravity", label: "Antigravity", modelChoices: [], bridgeSupported: true, supportsWebSearch: false },
+  ],
+};
+
+const AGENT_BRIDGE_PREFLIGHT_OK = { ok: true, adapter: "codex", checks: [] };
+
 type FixtureOptions = {
   workspace?: (ticker: string) => unknown | Promise<unknown>;
   onThesisPost?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   agent?: { threads: Array<Record<string, unknown>>; messages: Array<Record<string, unknown>>; beforeCreate?: () => Promise<void> | void };
+  // Agent Dock Stage C: lets one test keep the job "running" (with a
+  // phaseCode) for a few poll ticks before "done", to prove the live phase
+  // hint actually reaches the rendered pending card — every other test's job
+  // still completes on the first response, unaffected.
+  jobPolls?: Array<{ status: string; phaseCode?: string | null; result?: Record<string, unknown> }>;
+  // Agent Dock Stage E: only tests that open the run-settings popover need a
+  // real adapter list (supportsWebSearch, model choices) — every other test
+  // leaves this unset and /api/agent-bridge/* keeps 404ing as before.
+  agentBridge?: { settings: Record<string, unknown>; preflight?: Record<string, unknown> };
+  // Agent Dock Stage E: lets a test attach `search` metadata to the single-message
+  // GET response the reply is fetched through, without touching the fixed
+  // default body every other test relies on.
+  getMessageResponse?: (messageId: string) => Record<string, unknown>;
 };
 
 async function prepare(page: Page, theme: "light" | "dark", options: FixtureOptions = {}) {
+  let jobPollIndex = 0;
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.hostname !== "127.0.0.1") {
@@ -215,10 +248,29 @@ async function prepare(page: Page, theme: "light" | "dark", options: FixtureOpti
       await options.agent?.beforeCreate?.();
       return json({ id: `challenge-${options.agent?.threads.length || 1}`, title: body.title || "반박 대화", scope: body.scope, status: "active", revision: 1, messages: [] });
     }
+    if (/^\/api\/agent\/threads\/challenge-\d+\/messages\/[^/]+$/.test(url.pathname) && route.request().method() === "GET") {
+      const messageId = url.pathname.split("/").at(-1) || "";
+      return json(options.getMessageResponse?.(messageId) ?? { id: messageId, role: "assistant", content: "단일 메시지 조회로 받은 답변" });
+    }
+    if (url.pathname === "/api/agent-bridge/settings") {
+      if (!options.agentBridge) return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"fixture"}' });
+      return json(options.agentBridge.settings);
+    }
+    if (url.pathname === "/api/agent-bridge/preflight") {
+      if (!options.agentBridge) return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"fixture"}' });
+      return json(options.agentBridge.preflight ?? AGENT_BRIDGE_PREFLIGHT_OK);
+    }
     if (/^\/api\/agent\/threads\/challenge-\d+\/messages$/.test(url.pathname) && route.request().method() === "POST") {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       options.agent?.messages.push(body);
-      return json({ job: { id: `agent-job-${options.agent?.messages.length || 1}`, status: "done", result: {} } });
+      const jobId = `agent-job-${options.agent?.messages.length || 1}`;
+      if (options.jobPolls?.length) return json({ job: { id: jobId, status: "queued" } });
+      return json({ job: { id: jobId, status: "done", result: {} } });
+    }
+    if (options.jobPolls?.length && /^\/api\/jobs\/[^/]+$/.test(url.pathname) && route.request().method() === "GET") {
+      const step = options.jobPolls[Math.min(jobPollIndex, options.jobPolls.length - 1)];
+      jobPollIndex += 1;
+      return json({ id: url.pathname.split("/").at(-1), status: step.status, phaseCode: step.phaseCode ?? null, result: step.result ?? {} });
     }
     if (/^\/api\/agent\/threads\/challenge-\d+$/.test(url.pathname) && route.request().method() === "GET") {
       const id = url.pathname.split("/").at(-1) || "challenge-1";
@@ -491,6 +543,32 @@ test.describe("0.6 verification surfaces", () => {
     expect(agent.messages).toHaveLength(1);
   });
 
+  test("pending card shows the real job phase and the reply comes from the single-message endpoint", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
+    // Agent Dock Stage A/C: proves `onUpdate` actually reaches the rendered
+    // pending card (not just that the code compiles), and that a completed
+    // reply is read via the single-message endpoint, not a full-thread
+    // refetch — the two fixture reply strings below are deliberately
+    // different so the assertion can tell which path actually ran.
+    const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
+    await prepare(page, "light", {
+      agent,
+      jobPolls: [
+        { status: "running", phaseCode: "wait_engine" },
+        { status: "running", phaseCode: "generate" },
+        { status: "done", result: { assistantMessageId: "agent-reply-single", sessionId: "challenge-1" } },
+      ],
+    });
+    await open(page, "market-memory");
+    await page.getByRole("button", { name: /전제를 반박해줘/ }).first().click();
+    await expect.poll(() => agent.messages.length).toBe(1);
+
+    await expect(page.locator(".agent-run-eta")).toHaveText(/다른 작업이 끝나길 기다리는 중|Agent가 응답을 생성하는 중/);
+
+    await expect(page.getByText("단일 메시지 조회로 받은 답변")).toBeVisible();
+    await expect(page.getByText("반박 검토를 시작했습니다.")).toHaveCount(0);
+  });
+
   test("Thesis challenge keeps the selected ticker scope and opens the dock", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
     const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
@@ -531,4 +609,91 @@ test.describe("0.6 verification surfaces", () => {
     await expect.poll(() => agent.messages.length).toBe(1);
     expect(agent.threads).toHaveLength(1);
   });
+
+  test("Agent Dock Stage E: choosing 사용 sends searchPolicy in the submit body", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the run-settings popover contract.");
+    const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
+    await prepare(page, "light", { agent, agentBridge: { settings: AGENT_BRIDGE_SETTINGS } });
+    await open(page, "market-memory");
+    await page.getByRole("button", { name: "AI Agent 열기" }).click();
+    const dock = page.getByRole("complementary", { name: "AI Agent" });
+    await expect(dock).toBeVisible();
+    await dock.locator('[data-qa="agent-input"]').fill("이 화면 요약해줘");
+    await dock.getByRole("button", { name: /^실행 설정:/ }).click();
+    const searchGroup = dock.getByRole("group", { name: "웹 검색" });
+    await expect(searchGroup.getByRole("button", { name: "끔" })).toHaveAttribute("aria-pressed", "true");
+    await searchGroup.getByRole("button", { name: "사용" }).click();
+    await expect(searchGroup.getByRole("button", { name: "사용" })).toHaveAttribute("aria-pressed", "true");
+    await dock.locator('[data-qa="agent-submit"]').click();
+    await expect.poll(() => agent.messages.length).toBe(1);
+    expect(agent.messages[0]).toMatchObject({ options: { searchPolicy: "on" } });
+  });
+
+  test("Agent Dock Stage E: an unsupported adapter disables the web search segment", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the run-settings popover contract.");
+    await prepare(page, "light", { agentBridge: { settings: AGENT_BRIDGE_SETTINGS_NO_SEARCH } });
+    await open(page, "market-memory");
+    await page.getByRole("button", { name: "AI Agent 열기" }).click();
+    const dock = page.getByRole("complementary", { name: "AI Agent" });
+    await dock.getByRole("button", { name: /^실행 설정:/ }).click();
+    const searchGroup = dock.getByRole("group", { name: "웹 검색" });
+    await expect(searchGroup.getByRole("button", { name: "끔" })).toBeEnabled();
+    await expect(searchGroup.getByRole("button", { name: "자동" })).toBeDisabled();
+    await expect(searchGroup.getByRole("button", { name: "사용" })).toBeDisabled();
+    await expect(dock.getByText("이 CLI는 웹 검색을 지원하지 않습니다.")).toBeVisible();
+  });
+
+  test("Agent Dock Stage E: a completed reply that used web search shows its sources", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the run-settings popover contract.");
+    const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
+    await prepare(page, "light", {
+      agent,
+      agentBridge: { settings: AGENT_BRIDGE_SETTINGS },
+      jobPolls: [{ status: "done", result: { assistantMessageId: "reply-with-sources" } }],
+      getMessageResponse: (messageId) => ({
+        id: messageId,
+        role: "assistant",
+        content: "웹에서 확인한 최신 내용입니다.",
+        search: {
+          requestedPolicy: "on",
+          toolEnabled: true,
+          toolUsed: "yes",
+          sourceRefs: [
+            { url: "https://example.com/a", tier: "primary", label: "출처 A" },
+            { url: "https://example.com/b", tier: "secondary", label: "출처 B" },
+          ],
+        },
+      }),
+    });
+    await open(page, "market-memory");
+    await page.getByRole("button", { name: "AI Agent 열기" }).click();
+    const dock = page.getByRole("complementary", { name: "AI Agent" });
+    await dock.locator('[data-qa="agent-input"]').fill("최근 뉴스 찾아줘");
+    await dock.locator('[data-qa="agent-submit"]').click();
+    await expect.poll(() => agent.messages.length).toBe(1);
+    await expect(dock.getByText("웹에서 확인한 최신 내용입니다.")).toBeVisible();
+    await expect(dock.getByText("웹 검색 · 출처 2개", { exact: false })).toBeVisible();
+    await expect(dock.getByRole("link", { name: "출처 A" })).toHaveAttribute("href", "https://example.com/a");
+    await expect(dock.getByRole("link", { name: "출처 B" })).toHaveAttribute("href", "https://example.com/b");
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`Agent Dock open state passes axe in ${theme} mode`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the axe sweep.");
+      await prepare(page, theme, { agentBridge: { settings: AGENT_BRIDGE_SETTINGS } });
+      await open(page, "market-memory");
+      await page.getByRole("button", { name: "AI Agent 열기" }).click();
+      const dock = page.getByRole("complementary", { name: "AI Agent" });
+      await expect(dock).toBeVisible();
+      await dock.getByRole("button", { name: /^실행 설정:/ }).click();
+      await expect(dock.getByRole("group", { name: "웹 검색" })).toBeVisible();
+
+      const results = await new AxeBuilder({ page })
+        .include(".react-agent-dock")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+        .analyze();
+      const blocking = results.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+      expect(blocking, blocking.map((v) => v.id).join(", ")).toEqual([]);
+    });
+  }
 });

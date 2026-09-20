@@ -109,6 +109,22 @@ class FallbackReason(StrEnum):
     CONFIRMED_ZERO_EVIDENCE = "confirmed_zero_evidence"
 
 
+class PhaseCode(StrEnum):
+    """Live observation of where a running job actually is.
+
+    Additive to ``status``/``messageCode``, never a substitute: those two stay
+    equal by contract (see ``validate_state``). This distinguishes, within a
+    single ``running`` status, whether the job is still queued behind another
+    Agent CLI call (``wait_engine``) or actually generating.
+    """
+
+    CONTEXT = "context"
+    WAIT_ENGINE = "wait_engine"
+    GENERATE = "generate"
+    POSTPROCESS = "postprocess"
+    COMMIT = "commit"
+
+
 class LabelCode(StrEnum):
     INDEX_REBUILD = "index_rebuild"
     RSS_IMPORT = "rss_import"
@@ -201,6 +217,11 @@ class CompanionProjection(StrictModel):
     adapter: Adapter
     mode: JobMode
     proposalId: str | None
+    # Agent Dock Stage C: lets the Dock fetch the exact reply instead of
+    # re-reading the whole thread. Optional with a None default so a job
+    # record persisted before this field existed keeps validating unchanged.
+    sessionId: str | None = None
+    assistantMessageId: str | None = None
 
 
 class ArtifactProjection(StrictModel):
@@ -278,6 +299,15 @@ class SharedJob(StrictModel):
     artifactRefs: list[ArtifactRef]
     commitIntent: CommitIntent | None
     proposalId: str | None
+    # Observation-only timing/phase fields (Agent Dock Stage A). Optional with
+    # a None default so job records persisted before this field existed keep
+    # validating unchanged.
+    phaseCode: PhaseCode | None = None
+    queueWaitMs: Annotated[int, Field(ge=0)] | None = None
+    contextMs: Annotated[int, Field(ge=0)] | None = None
+    cliMs: Annotated[int, Field(ge=0)] | None = None
+    postprocessMs: Annotated[int, Field(ge=0)] | None = None
+    totalMs: Annotated[int, Field(ge=0)] | None = None
     resultProjection: ResultProjection | None
 
     @model_validator(mode="after")

@@ -41,7 +41,9 @@ def dock(monkeypatch, tmp_path):
 
 def _cli(output: str, captured: dict):
     # 실제 시그니처는 `adapter`도 받는다 — 이 대화만 다른 CLI로 돌리는 경로다.
-    def run(prompt, adapter="", model="", job_id=""):
+    # `**_kwargs`는 `on_phase` 같은 additive 키워드 인자를 흡수해, 실제 시그니처가
+    # 늘어나도 이 fake가 매번 따라 바뀌지 않게 한다.
+    def run(prompt, adapter="", model="", job_id="", **_kwargs):
         captured["prompt"] = prompt
         return {"adapter": "test-cli", "output": output}
     return run

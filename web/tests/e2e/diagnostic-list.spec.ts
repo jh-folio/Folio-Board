@@ -38,6 +38,11 @@ const WORK_LOG_ENTRY = {
   proposalId: null,
   proposalStatus: null,
   resultStatus: "done",
+  queueWaitMs: null,
+  contextMs: null,
+  cliMs: null,
+  postprocessMs: null,
+  totalMs: null,
 };
 
 const DETAIL = {

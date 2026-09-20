@@ -11,6 +11,7 @@ const WORK_LOG_ENTRY = {
   updatedAt: "2026-09-05T00:00:05Z", finishedAt: "2026-09-05T00:00:05Z", errorCode: null, generationMode: "rules", adapter: "rules",
   requestedMode: null, mode: "answer", attemptedEngine: "rules", finalEngine: "rules", fallbackReason: null, artifactTypes: [], artifactCount: 0,
   proposalId: null, proposalStatus: null, resultStatus: "done",
+  queueWaitMs: null, contextMs: null, cliMs: null, postprocessMs: null, totalMs: null,
 };
 const DETAIL = {
   version: 1, runId: RUN_ID, diagnosticQuality: "complete", availabilityReason: "present", authorityState: "matched", authorityStatus: "done",

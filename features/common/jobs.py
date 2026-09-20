@@ -242,6 +242,32 @@ def diagnostic_stage_end(recorder, stage_id: str | None, stage_code: str) -> Non
         return
 
 
+_TIMED_STAGE_CODES = ("wait_engine", "context", "generate", "postprocess")
+
+
+def stage_timing_summary(recorder) -> dict[str, int | None]:
+    """Sum this run's already-measured stage durations into bounded job-facing keys.
+
+    Reads the diagnostics record the caller already wrote to via
+    ``diagnostic_stage_start``/``diagnostic_stage_end`` — it does not start a
+    second clock. A stage that never ran (e.g. no CLI attempt) sums to 0,
+    which is a real fact; ``None`` means the run has no diagnostics record at
+    all (diagnostics unavailable), not that the stage was skipped.
+    """
+    keys = {"wait_engine": "queueWaitMs", "context": "contextMs", "generate": "cliMs", "postprocess": "postprocessMs"}
+    if recorder is None:
+        return {key: None for key in keys.values()}
+    totals = dict.fromkeys(_TIMED_STAGE_CODES, 0)
+    try:
+        events = recorder.record.events
+    except Exception:
+        events = ()
+    for event in events:
+        if event.event_code == "end" and event.duration_ms is not None and event.stage_code in totals:
+            totals[event.stage_code] += event.duration_ms
+    return {keys[stage_code]: total for stage_code, total in totals.items()}
+
+
 def diagnostic_resume(stage_code: str = "context") -> None:
     """Record only a concrete producer's consumption of a saved checkpoint."""
     recorder, stage_id = diagnostic_stage_start(stage_code)
@@ -619,6 +645,10 @@ def update_job(job_id: str, **changes) -> dict[str, JsonValue] | None:
     return get_job(job_id)
 
 
+_PHASE_CODES = {"context", "wait_engine", "generate", "postprocess", "commit"}
+_TIMING_KEYS = ("queueWaitMs", "contextMs", "cliMs", "postprocessMs", "totalMs")
+
+
 def job_progress(job_id: str):
     def _progress(_message=None, progress=None, **extra) -> None:
         changes: dict[str, JsonValue] = {}
@@ -631,6 +661,16 @@ def job_progress(job_id: str):
             if key in {"engine", "adapter"} and value is None:
                 continue
             if value is None or isinstance(value, str):
+                changes[key] = value
+        if "phaseCode" in extra:
+            phase = extra["phaseCode"]
+            if phase is None or (isinstance(phase, str) and phase in _PHASE_CODES):
+                changes["phaseCode"] = phase
+        for key in _TIMING_KEYS:
+            if key not in extra:
+                continue
+            value = extra[key]
+            if value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0):
                 changes[key] = value
         if changes:
             _store().update_runtime(job_id, changes)

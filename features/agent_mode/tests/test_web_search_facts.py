@@ -177,7 +177,7 @@ class TestRunAgentPromptReturnsWebSearchFacts:
 
     def test_serialize_false_branch_carries_the_observed_facts(self):
         def fake_invoke(selected, prompt, timeout, job_id="", model_override="", *, web_search=False,
-                         reasoning_effort="", facts_sink=None):
+                         reasoning_effort="", facts_sink=None, **_kwargs):
             if facts_sink is not None:
                 facts_sink["webSearchFacts"] = WebSearchFacts(enabled=True, used="yes", observation="complete")
             return "looked-up text"
@@ -193,7 +193,7 @@ class TestRunAgentPromptReturnsWebSearchFacts:
 
     def test_serialize_true_branch_carries_the_observed_facts(self):
         def fake_invoke(selected, prompt, timeout, job_id="", model_override="", *, web_search=False,
-                         reasoning_effort="", facts_sink=None):
+                         reasoning_effort="", facts_sink=None, **_kwargs):
             if facts_sink is not None:
                 facts_sink["webSearchFacts"] = WebSearchFacts(enabled=True, used="no", observation="complete")
             return "looked-up text"

@@ -335,7 +335,7 @@ The global Agent starts in Companion Mode on every screen. Companion Mode can an
 
 When the user explicitly asks to revise, create, update, schedule, or write back work, the Agent switches to Task Mode. Task Mode must show the intended operation and require approval before saved JSON, SQLite, or report markdown is changed.
 
-`POST /api/agent/companion`은 `message`, `context` 외에 채팅 도구 옵션 `options{model, effort, attachments}`를 받는다. `companion.normalize_agent_options()`가 effort enum(`low/medium/high/max`), 모델 문자열 길이, 첨부(최대 5개, 이름 120자, 본문 4,000자)를 코드에서 정규화해 응답 `options` 필드로 되돌려준다. 첨부파일 본문은 사용자 참고 입력(hypothesis)일 뿐 evidence로 승격하지 않는다.
+`POST /api/agent/companion`은 `message`, `context` 외에 채팅 도구 옵션 `options{model, effort, attachments}`를 받는다. `companion.normalize_agent_options()`가 effort enum(`low/medium/high/xhigh/max/ultra` — 2026-09-16까지 `low/medium/high/max`뿐이었다, 아래 참고), 모델 문자열 길이, 첨부(최대 5개, 이름 120자, 본문 4,000자)를 코드에서 정규화해 응답 `options` 필드로 되돌려준다. 첨부파일 본문은 사용자 참고 입력(hypothesis)일 뿐 evidence로 승격하지 않는다. **정식 이름은 `responseDepth`, `effort`는 하위 호환 별칭이다**(Agent Dock Stage B, 2026-09-15) — 둘 다 받고 둘 다 같은 값으로 돌려준다. Dock 화면의 실제 라벨/셀렉터는 이제 CLI·모델마다 실제로 받는 이름과 범위를 그대로 쓴다(아래 "노력 단계 표기" 참고).
 
 **이미지 첨부는 CLI가 파일을 직접 읽는다 (0.5).** 이미지는 본문 텍스트가 없어 예전에는 프롬프트에 파일명만 실렸고, 이미지를 읽을 수 있는 Agent CLI에 파일이 닿지 못했다. 이제 `features/agent_mode/attachment_files.py`가 바이트를 임시 파일로 내리고 프롬프트에는 **경로만** 싣는다(`bridge.py`가 Agent Context Pack 경로를 싣는 방식과 같다).
 
@@ -371,7 +371,7 @@ Agent 출력은 해석·도전 근거·불확실성·모니터링 질문·한계
 
 ## Agent Work Log
 
-Work Log는 SharedJob과 현재 proposal 파일에서 요청 시점에 파생되는 metadata-only 보기다. 별도 작업 본문을 복사해 저장하지 않으며, 각 entry는 엄격한 26개 필드만 반환한다. prompt/context, reply, Markdown, diff, 경로, traceback, operation/commit metadata와 report·artifact ID는 반환하지 않는다. Pending proposal의 본문이 필요하면 Work Log가 아니라 `GET /api/agent/proposals/{id}`로 다시 조회한다.
+Work Log는 SharedJob과 현재 proposal 파일에서 요청 시점에 파생되는 metadata-only 보기다. 별도 작업 본문을 복사해 저장하지 않으며, 각 entry는 엄격한 31개 필드만 반환한다(2026-09-15, Agent Dock Stage A에서 26→31: 아래 실행 타이밍 5종 추가). prompt/context, reply, Markdown, diff, 경로, traceback, operation/commit metadata와 report·artifact ID는 반환하지 않는다. Pending proposal의 본문이 필요하면 Work Log가 아니라 `GET /api/agent/proposals/{id}`로 다시 조회한다.
 
 - `GET /api/agent/work-log` — `kind=all|companion|task`, `limit`, `offset`으로 파생 목록을 조회한다.
 - `POST /api/agent/work-log/clear-preview` → `DELETE /api/agent/work-log` — preview token으로 현재 보이기만 숨긴다. SharedJob, 보고서, proposal 파일은 변경하거나 삭제하지 않는다.
@@ -379,15 +379,99 @@ Work Log는 SharedJob과 현재 proposal 파일에서 요청 시점에 파생되
 
 보존 표시는 최대 30일/200건이며, companion만 `category=companion`, artifact-producing task는 `category=task`다. 동기 direct Briefing/Company, index/RSS/setup/install은 Work Log에 들어가지 않는다. Direct Topic과 CLI/Agent Briefing·Company는 SharedJob이므로 포함된다.
 
+### 실행 phase·타이밍 관측 (Agent Dock Stage A, 2026-09-15)
+
+`SharedJob`에 순수 관측 필드 6개를 추가했다 — 기존 `finalEngine`/`fallbackReason`처럼 값이 없으면 `null`이고, 없던 시절 저장된 job JSON도 그대로 읽힌다(옵셔널, 기본값 `None`).
+
+- `phaseCode`(`context|wait_engine|generate|postprocess|commit|null`) — `status`/`messageCode`는 그대로 `queued/running/...`를 유지한 채, 그 안에서 지금 어디에 있는지만 덧붙인다. **`status`를 대신하지 않는다** — `messageCode`는 여전히 `status`와 항상 같아야 하는 별도 불변식이다. `wait_engine`은 Agent CLI 프로세스 전역 세마포어(`Semaphore(1)`) 대기 중, `generate`는 실제 CLI 실행 중을 뜻한다.
+- `queueWaitMs`/`contextMs`/`cliMs`/`postprocessMs`/`totalMs` — 이미 진단 스테이지(`wait_engine`/`context`/`generate`/`postprocess`)가 측정해 두던 값을 job에도 투영한 것뿐이라 별도 시계를 새로 두지 않는다(`features/common/jobs.py::stage_timing_summary()`). `totalMs`는 job 시작~답변 저장 직전까지의 wall-clock이라 스테이지 합보다 큰 게 정상이다(스테이지 사이 빈틈 포함).
+- 컨설테이션(`run_consultation_job`) 경로에서만 채워진다. rules fallback이면 `finalEngine="rules"`, `adapter="rules"`, `fallbackReason="engine_failed"`로 실제 원인이 job에 그대로 남는다 — 이전에는 이 배선이 없어 CLI가 실패해 규칙으로 떨어져도 `adapter: "auto"`, `finalEngine: null`로 보였다.
+- Work Log(`WorkLogEntry`)에는 타이밍 5종만 옮긴다 — `phaseCode`는 완결된 항목(항상 종료 상태)에는 의미가 없어 뺐다.
+- **이번 범위는 관측뿐이다.** 토큰 사용량(`UsageFacts`)은 아직 어느 provider에도 연결돼 있지 않고, Dock 화면이 이 값을 실제로 그리는 일은 후속 범위다 — 이번 변경은 API 응답 필드만 늘어난다.
+
+### 프롬프트·토큰 효율 (Agent Dock Stage B, 2026-09-15)
+
+컨설테이션 프롬프트 조립(`consultation_context.py::assemble_consultation_context()`, `chat.py::build_chat_prompt()`)에서 실측으로 확인한 낭비 세 가지를 고쳤다.
+
+- **현재 질문 중복 제거.** 사용자 메시지는 job이 돌기 전에 이미 세션에 저장되므로 `recentMessages`(최근 대화 창)에 방금 그 질문이 포함돼 있었는데, `build_chat_prompt()`가 그 질문을 `message` 인자로 또 받아 프롬프트 끝에 붙이고 있었다 — 같은 문장이 두 번. `assemble_consultation_context(..., current_message_id=...)`가 그 메시지를 `recentMessages`에서 제외한다.
+- **"general"(주제 없음) 대화의 fast signals는 관련 티커가 있을 때만.** 주제·보고서·티커 어느 것도 없는 순수 질문에도 티커별 조회인 fast signals까지 매번 붙이고 있었다 — 티커가 없으면 낼 수조차 없는 값이라 티커가 언급될 때만 붙인다. **2026-09-16 정정**: 처음엔 이 참에 marketState/recentChanges까지 함께 비웠는데, 실사용 확인 결과 "요즘 시장 어때" 류의 순수 일반 질문에서도 그 둘은 여전히 근거가 되고(둘 다 티커와 무관한 요약값, 프롬프트 부담도 작다) 완전히 비우면 답이 얕아진다는 게 확인돼 marketState/recentChanges는 general 대화에도 그대로 남기는 것으로 되돌렸다(`_scope_context()`).
+- **롤링 요약과 최근 대화 창의 경계를 맞췄다.** `consultation_store.py::_update_memory()`는 메시지 20개가 쌓이면 그 중 오래된 부분(`messages[:-12]`)을 요약하는데, `recentMessages`는 요약 여부와 무관하게 항상 최근 20개를 그대로 실어 8개 구간이 요약과 원문 양쪽에 동시에 실렸다. 요약이 존재하면 `recentMessages`도 `messages[-12:]`로 좁혀 겹침을 없앤다.
+- **대화 답변에 보고서 생성용 4M자 안전 상한을 쓰지 않는다.** `bridge.py`의 `MAX_OUTPUT_CHARS`(4,000,000)는 호출 목적과 무관하게 전부 같은 값이었다. 새 `MAX_CHAT_OUTPUT_CHARS`(60,000)를 컨설테이션 경로에만 적용한다(`_invoke_agent_cli`/`run_agent_prompt`의 새 `max_output_chars` 키워드 인자, 기본값은 기존 4M 그대로라 보고서 생성 경로는 무변경).
+- **죽은 프롬프트를 지웠다.** `consultation_prompt.py::build_consultation_prompt()`는 "답변을 먼저, 정해진 질문지를 강요하지 않는다"는 좋은 원칙을 갖고 있었지만 프로덕션 어디서도 호출되지 않았다(유일한 참조는 테스트 하나). 그 원칙 문구를 실제 사용되는 `build_chat_prompt()`에 흡수하고 죽은 함수는 삭제했다.
+- **이번 범위도 아직 안 한 것들이 있다.** provider별 tokenizer가 필요한 soft token budget은 Stage A에서 미룬 실측 사용량 조사와 같은 이유로 미뤘다. `effort`→`responseDepth`는 백엔드 계약만 정리했다(Dock 화면 라벨은 2026-09-16에 별도로 CLI·모델별 실제 이름으로 바뀌었다 — 아래 "노력 단계 표기" 참고).
+
+### 단일 메시지 fetch·실시간 phase 표시 (Agent Dock Stage C, 2026-09-15)
+
+Dock이 완료된 답변을 읽는 방법과 대기 화면이 실제로 무엇을 보여주는지를 고쳤다 — 이번이 Stage A/B와 달리 처음으로 `ReactAgentDock.tsx`/`useDockThreads.ts`/`AgentMessageContent.tsx`(프론트엔드)를 건드린 단계다.
+
+- **완료된 답변을 전체 스레드 재조회 없이 읽는다.** `job_runtime.py::run_consultation_job()`이 `append_assistant_message()`의 반환값(새 메시지 id)을 이제 `assistantMessageId`로 job 결과에 담는다(`CompanionProjection.sessionId`/`assistantMessageId`, 둘 다 옵셔널). 새 `GET /api/agent/threads/{id}/messages/{messageId}` endpoint(`consultation_store.get_message()`)가 그 메시지 하나만 돌려준다. Dock(`useDockThreads.getMessage()`)은 `assistantMessageId`가 있으면 그것만 읽고, 없거나 실패하면 기존처럼 `latestReply()`(전체 스레드 재조회)로 떨어진다 — 하위 호환.
+- **pending 카드가 실제 phase와 경과 시간을 보여준다.** Stage A가 만든 `job.phaseCode`를 이제 Dock이 읽는다 — `pollAgentJobBounded(..., { onUpdate })`가 매 폴링(1초)마다 `phaseHint()`(새 헬퍼, `context|wait_engine|generate|postprocess|commit`을 한국어 문구로 변환 + 경과 시간)로 pending 카드의 고정 문구 `"보통 40~60초"`를 실제 값으로 바꾼다. 첫 폴링 tick 전까지는 기존 고정 문구가 그대로 보여 화면이 비는 순간은 없다.
+- **검증**: 새 Playwright e2e(`web/tests/e2e/verification-surfaces.spec.ts`)가 job을 두 tick 동안 `running`(다른 phaseCode)으로 유지한 뒤 `done`으로 만들어, 실제 브라우저에서 pending 카드 문구가 바뀌는 것과 완료 후 답변이 단일 메시지 endpoint에서 왔는지(전체 스레드 재조회 결과와 다른 문자열을 써서 구분)를 함께 확인한다 — mock만 쓰고 실제 CLI 사용량은 없다.
+- **이번에 미룬 것.** 세마포어 대기 중 취소가 CLI 프로세스 시작을 막는지는 실측으로 확인한 진짜 결함(`cancel_agent_task()`가 등록된 프로세스가 없으면 아무 것도 못 멈춘다)이지만, job 상태 전이·취소 의미론을 잘못 건드리면 job이 멈추거나 이중 종결될 위험이 있어 별도 라운드로 남겼다. 120초 타임아웃 후 다른 대화를 열었다 돌아와도 재개되는지, first-turn 왕복 합치기도 마찬가지로 미착수.
+
+### 웹 검색 백엔드 계약 (Agent Dock Stage D, 2026-09-15)
+
+Dock 채팅이 웹 검색을 요청·관측·감사할 수 있게 됐다 — **이번엔 백엔드 계약만이다.** 실제 UI 컨트롤(`웹 검색: 끔/자동/사용` 셀렉터)은 Stage E(아래)가 붙였다.
+
+- **`searchPolicy: off|auto|on`**(기본 `off`)이 `companion.py::normalize_agent_options()`의 새 옵션이다. 실제로 검색할지는 새 `bridge.resolve_effective_web_search(policy, adapter_override)`가 **그 turn에 실제로 쓰일 adapter**(`_select_adapter()`와 같은 방식으로 미리 확인) 기준으로 판정한다 — `off`는 항상 안 검색, `auto`/`on`은 그 adapter가 `adapter_supports_web_search()`(codex/claude만 지원, antigravity는 원래부터 아니다)를 지원할 때만 검색한다.
+- **`on`인데 지원 안 되면 CLI를 아예 안 부른다.** 검색 없이 조용히 실행하고 성공처럼 보이지 않는다 — 즉시 규칙 기반 답변 + "선택한 CLI(...)는 웹 검색을 지원하지 않아 이 요청을 실행하지 않았습니다" notice로 답한다. `auto`는 반대로 조용히 검색 없이 진행한다(시도가 필수가 아니다).
+- **관측은 새로 안 만들었다.** 이번 세션 맨 처음(Stage A 이전) Q4 작업으로 이미 구현된 `WebSearchFacts`/`_extract_web_search_observation()`(codex/claude의 구조화 출력에서 실제 tool-use를 읽는 메커니즘, `docs/agent-guides/daily-briefing.md` 참고)을 그대로 재사용한다 — `_run_with_images()`가 `web_search=`를 `bridge.run_agent_prompt()`에 넘기고, 돌아온 `result["webSearchFacts"]["used"]`(`yes|no|unknown`)를 그대로 `search.toolUsed`로 옮긴다.
+- **실제로 검색을 썼을 때만(`toolUsed=="yes"`) URL을 감사한다.** 브리핑이 쓰는 것과 **같은 함수**(`features/common/web_search_scope.py::load_source_scope()`/`audit_urls()`)를 재사용한다. 허용 목록 밖 URL은 evidence처럼 안 보이게 그냥 뺀다(별도 "거부됨" 표시도 안 만듦), 최대 8개까지만 `search.sourceRefs`에 남는다.
+- **`search` 메타데이터는 답변마다 저장된다.** `{"requestedPolicy", "toolEnabled", "toolUsed", "sourceRefs"}`가 `consultation_store.append_assistant_message(..., search=...)`를 통해 그 assistant 메시지에 그대로 남는다(옵셔널 필드 — 안 주면 메시지에 키 자체가 없다). task/revision 응답과 CLI-불가 경로도 일관되게 `toolEnabled=False`로 채워 모든 응답이 같은 모양을 갖는다.
+- **보고서용 `USE_WEB_SEARCH_FOR_BRIEFING`/`USE_WEB_SEARCH_FOR_ANALYSIS`도 같이 고쳤다.** 실측으로 확인한 진짜 죽은 설정이었다 — `use_web_search_for_briefing()`은 이 이름이 아니라 `USE_LLM_BRIEFING`(LLM 전체 켜짐 여부)을 읽고 있었고, `use_web_search_for_analysis()`는 아예 `use_llm_analysis()`를 그대로 돌려주고 있어서, 두 문서화된 변수는 켜든 끄든 아무 효과가 없었다. 이제 각자 자기 이름의 변수를 읽되(미설정 시 기존처럼 `True`), LLM 자체가 꺼져 있으면 여전히 `False`다.
+
+### Dock UX와 접근성 (Agent Dock Stage E, 2026-09-16)
+
+Stage D가 만든 `searchPolicy` 백엔드 계약을 실제로 켤 수 있는 화면 컨트롤이 이번에 처음 생겼다 — 그 외에는 이미 있던 계약(pending phase 표시, notice/본문 분리, 색+모양 이중 상태 구분)을 손대지 않고 확인만 했다.
+
+- **웹 검색 컨트롤은 새 영구 toolbar가 아니라 기존 접힌 run-settings popover 안에 있다.** `ReactAgentDock.tsx`의 CLI/모델/노력 단계 셀렉터 아래 `<div className="segment" role="group" aria-label="웹 검색">`(끔/자동/사용, `aria-pressed` 소유)를 추가했다 — `MarketChartFigure.tsx` 등 기존 화면과 같은 `.segment` 패턴 재사용. `searchPolicy`는 `providerOverride`/`effort`와 같은 자리의 로컬 state이고 전역 설정에 저장하지 않는다(대화마다 초기화). 어댑터가 `supportsWebSearch === false`(Antigravity)면 자동/사용 버튼이 비활성화되고 "이 CLI는 웹 검색을 지원하지 않습니다" 문구가 뜬다.
+- **`useDockThreads.getMessage()`의 계약이 바뀌었다.** Stage C에서는 문자열(`Promise<string>`)만 돌려줬지만, 이제 `{ content, search? }` 객체를 돌려줘 Stage D가 메시지에 저장한 `search` 메타데이터(`requestedPolicy`/`toolEnabled`/`toolUsed`/`sourceRefs`)까지 Dock이 읽을 수 있다. 실패 시 `{ content: "" }`.
+- **답변 아래 검색 출처 줄은 실제로 검색을 썼을 때만 보인다.** `SearchSourcesLine`이 `search.toolUsed === "yes" && sourceRefs.length > 0`일 때만 "웹 검색 · 출처 N개 — [출처1], [출처2] ... 외 M개"를 렌더한다(최대 5개 링크, 나머지는 텍스트 요약 — 드롭다운·내부 스크롤 없음). "켰는데 실제로는 안 씀" 같은 상태 고지는 Stage D가 이미 채운 `notice`가 맡아 중복을 안 만든다.
+- **접근성**: 전역 제출 오류(`react-agent-error`)는 `role="alert"`(암묵적 `aria-live="assertive"`), notice/검색 출처 줄은 `role="status"`(암묵적 `polite`). 매초 갱신되는 pending 경과 시간(`pendingHint`)은 그대로 live 처리하지 않는다 — 대신 `runState`가 `done`/`error`로 바뀌는 순간에만 문구가 채워지는 별도 `<span className="sr-only" role="status" aria-live="polite">`를 둬서 스크린리더 소음을 피한다.
+- **검증**: 소스 텍스트 회귀(`web/tests/reactAgentDockSource.test.mjs`, `getMessage` 객체 계약 포함), 새 Playwright e2e 4건(`web/tests/e2e/verification-surfaces.spec.ts`) — `searchPolicy` 제출 확인, 출처 줄 렌더링, 미지원 어댑터 비활성화, desktop Light/Dark axe(serious/critical 0, `.react-agent-dock` 스코프). 실행 중인 실제 서버(`localhost:8787`)에서 desktop Light/Dark 수동 확인 및 375px에서 `scrollWidth - clientWidth === 0` 확인 — 실제 CLI 호출은 하지 않았다(mock/구조 확인만, §12 정책과 동일).
+- **미룬 것**: 기존 3개 `<select>`(CLI/모델/노력 단계)를 `.segment`로 재작업하는 것은 이번 요청 범위 밖이라 손대지 않았다. `effort` 라벨을 `답변 깊이`로 화면에 노출하는 것(Stage B가 남긴 항목)과 Dock search policy가 보고서 전역 검색 설정과 독립임을 화면 문구에 명시하는 것(Stage D가 남긴 항목)도 이번 Stage E 승인 범위에 포함되지 않아 그대로 남는다.
+
+### streaming·추가 업그레이드 판정 (Agent Dock Stage F, 2026-09-16) — 판정: 이번 라운드는 streaming 보류
+
+계획 §1이 F에 요구한 건 "조사와 채택/보류 판단"이다. 이번 세션은 조사 후 **채택하지 않기로(보류) 판정**했고, 코드 변경은 없다.
+
+- **조사는 새 실제 CLI 호출 없이 했다.** `--help`/`changelog`(전부 로컬, 비용 없음)와 이 세션 이전 Q4(2026-09-12) 조사에서 이미 실측된 이벤트 종류만 근거로 삼았다 — 사용자가 이 계획 앞부분에서 확정한 "실사용 검증은 릴리스 후 직접"과 같은 결이다.
+- **Claude Code CLI(2.1.266)는 `--include-partial-messages`를 공식 지원한다** — "Include partial message chunks as they arrive"로 문서화된, 세 어댑터 중 유일하게 진짜 토큰/청크 단위 스트리밍이 `--help`로 확인되는 경로다. 지금 코드는 이 플래그를 안 쓰고, `stream-json`은 Stage D의 웹 검색 관측용으로만 켜며 최종 완성 텍스트만 읽는다.
+- **Codex CLI(0.153.4)의 `--json`은 Q4 실측에서 `item.type == "agent_message"`(완성된 전체 텍스트)와 `item.type == "web_search"`만 관측됐다** — 델타 이벤트 존재 여부는 이번 조사로 확인 못 했다.
+- **Antigravity의 실제 실행 파일은 `agy`이며(설정상 이름, `antigravity`가 아니다) 이 환경에 설치돼 있다** — `agy --help`가 codex/claude와 같은 값 공간으로 `--output-format stream-json`을 이미 문서화한다. 이 계획이 지금까지 "Antigravity는 스트리밍도 조사 불가"로 가정하지 않았다는 점에서 이번 신규 발견이다. 다만 정확한 이벤트 스키마는 미확인이고, 웹 검색 지원 여부(`WEB_SEARCH_ARGS`, codex/claude만)와는 별개 축이라 Stage D의 "Antigravity 웹 검색 미지원" 판정은 그대로다.
+- **보류 근거 세 가지** — (1) 지금 `_invoke_agent_cli()`는 `proc.communicate()`로 프로세스가 끝날 때까지 블로킹한 뒤 stdout 전체를 한 번에 받는다. 세 어댑터 전부, 웹 검색 여부와 무관하게 동일하다 — 저장소 어디에도 stdout을 프로세스 실행 중 줄 단위로 읽는 코드가 없다. (2) `cancel_agent_task()`는 `_RUNNING_PROCESSES`에 등록된, 즉 이미 시작된 프로세스만 종료할 수 있다 — `_RUN_SEMAPHORE` 대기 중인 job은 취소 요청이 와도 멈출 프로세스가 아직 없다(Stage C가 이미 발견해 별도 라운드로 남긴 구멍). Gate F 자신이 "cancellation이 가능할 때만 streaming을 연다"는 조건을 걸었는데 그 전제가 아직 안 갖춰졌다. (3) 부분 출력을 안전하게 버리는 장치가 없다 — 지금은 CLI가 끝까지 성공해야만 `append_assistant_message()`가 불려 이 위험 자체가 존재하지 않지만, streaming을 열면 새로 설계해야 한다. 위 셋이 갖춰지지 않은 채 streaming부터 열면 Gate F가 막으려는 정확한 실패 모드(취소 실패, 불완전 문장 저장)를 새로 만든다.
+- **guardrail 항목은 지금 이미 참이라 확인만 했다.** streaming 미지원 adapter의 실제 단계+경과 시간 UI(Stage C/E의 `phaseHint()`/`pendingHint`, 지금은 셋 다 미지원이라 유일한 대기 화면)와 fake typewriter 미구현(코드 전체에 문자 단위 지연 렌더링 없음)은 새로 손대지 않고 그대로 유지된다.
+- **adapter별 process warm-up/재사용**: 별도 결정 = 지금은 안 한다. 매 호출을 독립 `subprocess.Popen`으로 새로 띄우는 지금 방식이 프로세스 간 인증·컨텍스트 누수를 원천적으로 막는다 — 지연 시간이 실측 병목이라는 근거 없이 그 격리를 프로세스 수명 동안 공유 상태로 바꿀 이유가 없다.
+- **대화별 feedback/regenerate — 설계만, 미구현**: 새 `POST /api/agent/threads/{id}/messages/{messageId}/regenerate`가 그 assistant 메시지의 원본 user turn을 다시 읽어 새 job을 돌리고, 결과를 기존 메시지를 덮어쓰지 않고 같은 메시지 아래 추가 attempt로 쌓는 설계를 남긴다 — "새 시도"는 새 레코드이지 기존 대화의 권위를 바꾸는 수정이 아니다. Thesis verdict/Portfolio review state 등 §10의 권위 저장소는 애초에 대화 생성 경로에서 안 건드리므로 이 설계로 새로 생기는 위험은 없다.
+- **Gate F는 대부분 공허하게 충족된다.** streaming을 아예 안 열어서 "adapter별 지원/미지원"도, "partial output 실패 시 불완전 문장 저장"도 발생할 상황 자체가 아직 없다 — 둘 다 streaming을 실제로 채택할 때 다시 검증해야 할 항목으로 남는다.
+
+### 노력 단계 표기 — CLI·모델마다 실제로 받는 이름·범위로 통일 (2026-09-16)
+
+Dock과 Home 화면 composer의 "노력 단계" 셀렉터가 CLI/모델과 무관하게 항상 같은 4개(낮음/중간/높음/최대, 한글 번역 라벨)를 보여주고 있었다 — 실제로는 CLI마다, 같은 CLI 안에서도 모델마다 받는 값과 이름이 다르다(`features/llm_settings/reasoning.py`가 이미 이 계산을 갖고 있었고 Settings 화면은 이미 그걸 쓰고 있었다). 사용자 요청("Codex는 Light~Ultra, Claude Code는 Low~Ultra처럼 모델에 맞는 노력 수준이 대응되도록")으로 Dock·Home 두 화면을 이 실제 계약에 맞췄다.
+
+- **표시는 provider-native 영어 이름이다.** Codex는 `low`를 "Light"로 부르고 Medium/High/Extra High/Max/Ultra까지, Claude Code는 "Low"로 부르고 대개 Max까지(모델에 따라 Extra High 없이 Max에서 끝나는 경우도 있다 — `CLAUDE_MODEL_REASONING_EFFORTS`), Antigravity는 Low/Medium/High만 지원한다. 라벨을 화면에서 다시 번역하지 않는다 — `reasoning_label()`이 이미 "Codex Ultra 같은 라벨을 지원 안 하는 값으로 잘못 보내는 사고를 막으려고" provider별로 고정해 둔 값이라(`features/llm_settings/reasoning.py` 모듈 docstring), 그 값을 그대로 쓰는 것 자체가 계약이다.
+- **모델을 바꾸면 목록도 같이 바뀐다.** `/api/agent-bridge/settings`가 이미 각 어댑터에 `reasoningChoices`(현재 모델 기준)와 `reasoningByModel`(모델별 전체 목록)을 실어 보내고 있었다 — Settings 화면(`SettingsRoute.tsx`)은 이미 이걸 쓰고 있었지만 Dock(`ReactAgentDock.tsx`)과 Home composer(`agentWorkspace/presenters.ts`+`useAgentWorkspace.ts`+`AgentComposer.tsx`)는 각자 독립적으로 하드코딩된 4개짜리 목록을 갖고 있었다. 두 화면 모두 새 `reasoningChoicesFor(adapter, model)`(모델별 목록 우선, 없으면 어댑터 기본 목록, `provider_default`는 제외 — 도크는 항상 명시적인 단계 하나를 보낸다)로 바꿨다.
+- **CLI·모델을 바꾸면 선택된 단계도 안전하게 옮긴다.** 예를 들어 Codex GPT-6 Astra에서 "Ultra"를 고른 채 GPT-5.5(Extra High까지만 지원)로 모델을 바꾸면, 새 목록에 "Ultra"가 없으므로 자동으로 "Medium"(있으면)이나 첫 번째 값으로 옮긴다 — 실측 확인(`localhost:8787`에서 직접 재현). 이 클램프가 없으면 다음 전송에서 `bridge.py::_cli_reasoning_effort()`가 그 조합을 `ValueError`로 거부한다(fail-closed 설계라 조용히 다른 값으로 안 바뀌고 그 자리에서 막힌다).
+- **백엔드가 실제로 `xhigh`/`ultra`를 받게 고쳤다 — 이게 진짜 버그였다.** `companion.py::VALID_EFFORT_LEVELS`가 `{low, medium, high, max}` 넷뿐이라(2026-09-16까지), 화면에서 아무리 "Ultra"를 골라 보내도 `normalize_agent_options()`가 조용히 "medium"으로 깎아 CLI에는 전혀 다른 값이 전달됐을 것이다(§6 규칙14와 같은 유형 — 화면 계약과 서버 계약이 따로 놀았다). `xhigh`/`ultra`를 추가하고, `chat.py::EFFORT_HINTS`(프롬프트에 박히는 자연어 지침 문장)에도 두 단계의 문구를 새로 채워 넣었다(둘 다 없으면 그 자리도 조용히 "medium" 문구로 떨어진다).
+- **검증**: 새 Python 테스트 2건(`test_companion.py::test_normalize_agent_options_accepts_the_full_provider_reasoning_range`, `test_chat.py::test_build_chat_prompt_carries_the_full_provider_reasoning_range`), `features/agent_mode/` 461 passed. 프론트 `tsc --noEmit` 0 errors, `test:source` 282·`test:unit` 184·영향 Playwright e2e 18 passed(회귀 없음). 실행 중인 실제 서버(`localhost:8787`)에서 Codex(Light~Ultra, GPT-6 Astra 기준)·Claude Code(Low~Max)·모델 전환 시 클램프를 직접 확인 — Antigravity는 이 환경에서 `bridgeSupported: false`(미인증)라 셀렉터 자체가 비활성화돼 실사용 확인은 못 했다(구조상 도달 불가능한 경로이므로 안전한 자리표시자 목록으로 대체). 테스트 중 전역 Codex 모델 설정이 일시적으로 바뀐 것을 원래 값으로 되돌렸다.
+
+### 실사용 확인 — 노력 단계가 CLI에 안 닿던 결함, 일반 대화 컨텍스트 과다 축소 (2026-09-16)
+
+사용자가 릴리스 없이 바로 실사용해보고 "확실히 빨라지긴 했는데, 분석이 필요한 질문에서도 생각하는 시간이 짧아지면서 답변 품질이 내려간 것 같다"고 보고했다. 원인을 추적해 서로 다른 두 가지를 찾았다.
+
+- **진짜 결함: "노력 단계" 선택이 CLI의 실제 추론 강도에 한 번도 안 닿고 있었다(master에도 있던 오래된 문제, 이번 세션이 만든 게 아니다).** `chat.py::_run_with_images()`가 `bridge.run_agent_prompt()`를 부를 때 `reasoning_effort`를 아예 안 넘기고 있어서, `_cli_reasoning_effort()`가 항상 빈 값을 받아 `--effort`/`-c model_reasoning_effort=` 플래그 자체가 커맨드에 안 실렸다 — CLI는 매번 자기 기본값으로 돌았다. 지금까지 "노력 단계" 셀렉터는 프롬프트에 박히는 자연어 문장(`EFFORT_HINTS`, "응답 지침: ...")에만 영향을 줬다. `_run_with_images()`가 `options.get("effort")`를 `reasoning_effort=`로 넘기도록 고쳐 이제 실제로 CLI 추론 강도까지 바뀐다.
+- **이번 세션이 만든 진짜 회귀: "general" 대화의 컨텍스트를 과하게 비웠다.** Stage B가 fast signals(티커별 조회라 애초에 티커 없인 낼 게 없다)와 함께 marketState/recentChanges까지 같이 비워서, "요즘 시장 어때" 같은 순수 일반 질문에서도 근거 자료가 완전히 사라져 답이 얕아졌다. 둘 다 이미 상한이 걸린 요약값(marketState는 최대 12개 필드씩, recentChanges는 최대 20건)이라 프롬프트 부담이 크지 않은데도 통째로 비운 것은 과했다 — `_scope_context()`가 이제 general 대화에도 marketState/recentChanges는 남기고, fastSignals만 티커가 있을 때로 좁힌다.
+- **검증**: 새 테스트 2건(`test_chat.py::test_dock_chat_forwards_the_chosen_effort_to_the_cli_reasoning_flag`, `test_consultations.py::test_truly_general_scope_still_gets_lightweight_market_context` 갱신) 포함 `features/agent_mode/` 462 passed. 실제 CLI로 "전과 후 답변 깊이"를 비교하는 것은 이번 범위에 안 넣었다 — 사용자가 실사용하며 계속 확인하기로 한 기존 결정과 같은 결이다.
+
 SharedJob/Work Log의 경로별 lock registry는 프로세스 수명 동안 항목을 퇴거하지 않는다. 실제 제품의 durable store 경로는 설정된 data root 아래의 유한한 집합이며, 오래 살아 있는 service와 새 service가 같은 경로에 서로 다른 lock을 받지 않도록 lock identity를 보존하는 것이 메모리 회수보다 우선한다.
 
 실행 중인 CLI 작업을 취소할 때는 SharedJob을 먼저 `cancel_requested`로 기록한 뒤 등록된 child process를 종료한다. 이미 terminal이거나 `committing`인 작업은 취소와 process 종료를 모두 거부하며, 종료 경계에서 child가 먼저 끝나도 승인된 취소는 유지한다.
 
 ## 0.6 실행 진단 경계 (L1b–D3)
 
-앱 API에서 제출된 Agent SharedJob은 기존 job/private lifecycle의 권위를 바꾸지 않은 채 안전한 실행 관측만 남길 수 있다. 관측은 private cleanup과 job terminal 저장이 성공한 뒤에만 terminal로 닫히며, Work Log의 26개 필드·prompt/reply/diff 보존 규칙은 바뀌지 않는다. Agent CLI의 stdout·stderr·context pack·본문은 diagnostics에 복사하지 않는다.
+앱 API에서 제출된 Agent SharedJob은 기존 job/private lifecycle의 권위를 바꾸지 않은 채 안전한 실행 관측만 남길 수 있다. 관측은 private cleanup과 job terminal 저장이 성공한 뒤에만 terminal로 닫히며, Work Log의 31개 필드·prompt/reply/diff 보존 규칙은 바뀌지 않는다. Agent CLI의 stdout·stderr·context pack·본문은 diagnostics에 복사하지 않는다.
 
-`GET /api/diagnostics/jobs/{jobId}`(및 job이 없는 자동화 경로용 `GET /api/diagnostics/runs/{runId}`)는 여전히 headless 상세 API이며 Work Log의 26개 필드 응답 자체를 바꾸지 않는다. 대신 각 Work Log 항목(`web/src/app/AgentWorkLog.tsx`)과 설정의 자동화 실행 내역(`web/src/app/SettingsRoute.tsx::LastRun`)이 공유 컴포넌트 `web/src/app/DiagnosticDetail.tsx`로 이 API를 펼쳐서 조회한다 — jobId가 있으면 그쪽을, 없으면 자동화 row의 `diagnosticRunId`를 쓴다. 실패 단계·확인된 원인·마지막으로 완료된 단계·경과 시간·다음 행동과, 접어 둔 개발자 정보(실행 ID·오류 ID·지문·소스 위치)만 보여주며 `기록 없음/보존 만료/기록 일부 누락/조회 실패/실행 중/규칙 기반으로 완료` 여섯 상태를 구분한다(`web/src/app/diagnosticCopy.ts`). L1c는 실제 CLI/process·chat·durable JSON/SQL producer의 safe stage/terminal 관측을 더했지만 provider protocol/parser 소비자 변경은 하지 않았다. record 품질은 누락·legacy·외부 변경을 숨기지 않기 위해 계속 partial일 수 있다(RSS·색인만 감사된 경로에서 complete). **공통 목록**은 기존 Work Log 안의 `실패·대체 실행 찾기`를 펼쳐서 `실패만`·`대체 실행만`·기간·`모든 실행 보기`로 전환한다. 목록/진단/숨기기 미리보기·확인·제안 조회 오류는 각각 해당 메시지 옆의 제한된 진단 상세로 연결하며, 응답이 없는 숨기기 확인은 결과 미확정으로만 안내하고 자동 재시도하지 않는다. `GET /api/diagnostics/runs` headless API는 구현되어 있으며 서버가 숨긴/현재 권위에서 사라진 job을 제외하고 기존 Work Log ID를 연결한다. 기존 26필드·clear/migration 계약과 진단 자체 내보내기(D4) 경계는 불변이다.
+`GET /api/diagnostics/jobs/{jobId}`(및 job이 없는 자동화 경로용 `GET /api/diagnostics/runs/{runId}`)는 여전히 headless 상세 API이며 Work Log의 31개 필드 응답 자체를 바꾸지 않는다. 대신 각 Work Log 항목(`web/src/app/AgentWorkLog.tsx`)과 설정의 자동화 실행 내역(`web/src/app/SettingsRoute.tsx::LastRun`)이 공유 컴포넌트 `web/src/app/DiagnosticDetail.tsx`로 이 API를 펼쳐서 조회한다 — jobId가 있으면 그쪽을, 없으면 자동화 row의 `diagnosticRunId`를 쓴다. 실패 단계·확인된 원인·마지막으로 완료된 단계·경과 시간·다음 행동과, 접어 둔 개발자 정보(실행 ID·오류 ID·지문·소스 위치)만 보여주며 `기록 없음/보존 만료/기록 일부 누락/조회 실패/실행 중/규칙 기반으로 완료` 여섯 상태를 구분한다(`web/src/app/diagnosticCopy.ts`). L1c는 실제 CLI/process·chat·durable JSON/SQL producer의 safe stage/terminal 관측을 더했지만 provider protocol/parser 소비자 변경은 하지 않았다. record 품질은 누락·legacy·외부 변경을 숨기지 않기 위해 계속 partial일 수 있다(RSS·색인만 감사된 경로에서 complete). **공통 목록**은 기존 Work Log 안의 `실패·대체 실행 찾기`를 펼쳐서 `실패만`·`대체 실행만`·기간·`모든 실행 보기`로 전환한다. 목록/진단/숨기기 미리보기·확인·제안 조회 오류는 각각 해당 메시지 옆의 제한된 진단 상세로 연결하며, 응답이 없는 숨기기 확인은 결과 미확정으로만 안내하고 자동 재시도하지 않는다. `GET /api/diagnostics/runs` headless API는 구현되어 있으며 서버가 숨긴/현재 권위에서 사라진 job을 제외하고 기존 Work Log ID를 연결한다. 기존 31필드·clear/migration 계약과 진단 자체 내보내기(D4) 경계는 불변이다.
 
 ## 구현 위치
 

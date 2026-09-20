@@ -75,6 +75,14 @@ export type AgentAdapterSettings = {
   label?: string;
   model?: string;
   modelChoices?: AgentModelChoice[];
+  // 노력 단계는 CLI마다, 같은 CLI 안에서도 모델마다 실제로 받는 값·이름이 다르다
+  // (Codex는 low를 "Light"로 부르고 ultra까지, Claude는 "Low"로 부르고 대개 max까지).
+  // 서버(features/llm_settings/reasoning.py)가 계산한 값을 그대로 쓴다 — 화면에서
+  // 다시 매핑을 지어내면 실제로 그 CLI가 안 받는 값을 보낼 수 있다.
+  reasoningChoices?: AgentModelChoice[];
+  reasoningByModel?: Record<string, AgentModelChoice[]>;
+  bridgeSupported?: boolean;
+  supportsWebSearch?: boolean;
 };
 
 export type AgentSettings = {
@@ -101,6 +109,13 @@ export type InvestmentReviewPayload = {
   recentReports?: RecentReport[];
 };
 
+export type ConsultationSearchMeta = {
+  requestedPolicy: string;
+  toolEnabled: boolean;
+  toolUsed: string;
+  sourceRefs: { url: string; tier: string; label: string }[];
+};
+
 export type ConsultationMessage = {
   id: string;
   role: "user" | "assistant";
@@ -108,6 +123,9 @@ export type ConsultationMessage = {
   createdAt?: string;
   status?: string;
   engine?: string;
+  // Agent Dock Stage D/E: absent on most existing messages (only present when
+  // the turn actually resolved a search policy other than "off").
+  search?: ConsultationSearchMeta;
 };
 
 export type ConsultationSession = {

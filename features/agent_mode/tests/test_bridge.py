@@ -1,6 +1,7 @@
 import sys
 import os
 import threading
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -822,3 +823,97 @@ def test_durable_briefing_contract_violation_falls_back_to_rules_instead_of_fail
         assert invoke.call_count == 1
         writeback.assert_not_called()
         assert summary["artifactId"] == "2099-12-31"
+
+
+class TestRunAgentPromptOnPhase:
+    """Agent Dock Stage A: 세마포어 대기와 실제 실행을 `on_phase`로 실시간 구분한다."""
+
+    def test_on_phase_fires_wait_engine_then_generate_in_order(self):
+        adapter = {"id": "codex", "executable": "codex"}
+        seen: list[str] = []
+        with (
+            patch.object(bridge, "_select_adapter", return_value=adapter),
+            patch.object(bridge, "_invoke_agent_cli", return_value="ok"),
+        ):
+            bridge.run_agent_prompt("p", job_id="j-phase", on_phase=seen.append)
+        assert seen == ["wait_engine", "generate"]
+
+    def test_omitting_on_phase_behaves_exactly_as_before(self):
+        adapter = {"id": "codex", "executable": "codex"}
+        with (
+            patch.object(bridge, "_select_adapter", return_value=adapter),
+            patch.object(bridge, "_invoke_agent_cli", return_value="ok"),
+        ):
+            result = bridge.run_agent_prompt("p", job_id="j-no-phase")
+        assert result["output"] == "ok"
+
+    def test_a_second_caller_observes_wait_engine_while_the_first_holds_the_semaphore(self):
+        """실측 재현: job은 `running`이어도 실제로는 다른 Agent CLI 호출 뒤에서
+        기다릴 수 있다 — 그 대기가 이제 `on_phase("wait_engine")`으로 관측된다."""
+        adapter = {"id": "codex", "executable": "codex"}
+        first_entered_generate = threading.Event()
+        release_first = threading.Event()
+        timings: dict[str, float] = {}
+
+        def slow_invoke(selected, prompt, timeout, job_id="", **kwargs):
+            first_entered_generate.set()
+            release_first.wait(timeout=2)
+            return "first-output"
+
+        def fast_invoke(selected, prompt, timeout, job_id="", **kwargs):
+            return "second-output"
+
+        def on_phase_second(phase):
+            timings[phase] = time.monotonic()
+            if phase == "wait_engine":
+                # 관측된 뒤에도 첫 호출이 실제로 더 붙들고 있다는 걸 증명하도록 살짝 쉰다.
+                time.sleep(0.1)
+                release_first.set()
+
+        with patch.object(bridge, "_select_adapter", return_value=adapter):
+            with patch.object(bridge, "_invoke_agent_cli", side_effect=slow_invoke):
+                first_thread = threading.Thread(target=lambda: bridge.run_agent_prompt("p1", job_id="j1"))
+                first_thread.start()
+                assert first_entered_generate.wait(timeout=2)
+
+            with patch.object(bridge, "_invoke_agent_cli", side_effect=fast_invoke):
+                result = bridge.run_agent_prompt("p2", job_id="j2", on_phase=on_phase_second)
+
+        first_thread.join(timeout=2)
+        assert not first_thread.is_alive()
+        assert result["output"] == "second-output"
+        assert set(timings) == {"wait_engine", "generate"}
+        # 두 번째 호출의 generate는 첫 호출이 세마포어를 놓아준 뒤에만 올 수 있다 —
+        # wait_engine 관측과 generate 사이에 실제 대기 시간이 있었다는 뜻이다. 임계값은
+        # 위 100ms 대비 넉넉한 여유를 둬 부하 상태의 전체 스위트 실행에서도 안 흔들리게 한다.
+        assert timings["generate"] - timings["wait_engine"] >= 0.06
+
+
+class TestResolveEffectiveWebSearch:
+    """Agent Dock Stage D: searchPolicy를 실제 adapter capability와 맞춰 해석한다."""
+
+    def test_off_never_searches_regardless_of_adapter(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "codex"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("off", "codex")
+        assert (effective, adapter_id, blocked) == (False, "", None)
+
+    def test_on_with_a_supported_adapter_searches_and_is_not_blocked(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "codex"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("on", "codex")
+        assert (effective, adapter_id, blocked) == (True, "codex", None)
+
+    def test_on_with_antigravity_is_blocked_before_any_cli_call(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "antigravity"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("on", "antigravity")
+        assert (effective, adapter_id, blocked) == (False, "antigravity", "unsupported")
+
+    def test_auto_with_antigravity_degrades_silently_not_blocked(self):
+        """실측 확인된 계획 §5.3 차이: `auto`는 지원 안 되면 조용히 검색 없이 진행한다."""
+        with patch.object(bridge, "_select_adapter", return_value={"id": "antigravity"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("auto", "antigravity")
+        assert (effective, adapter_id, blocked) == (False, "antigravity", None)
+
+    def test_an_unknown_policy_string_is_treated_as_off(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "codex"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("everything", "codex")
+        assert (effective, adapter_id, blocked) == (False, "", None)

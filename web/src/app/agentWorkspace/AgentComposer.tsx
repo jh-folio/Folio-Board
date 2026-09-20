@@ -61,10 +61,9 @@ export function AgentComposer({ workspace }: { workspace: AgentWorkspaceControll
                   )) : <option value="">모델 목록 없음</option>}
                 </select>
                 <select aria-label="노력 단계" value={workspace.effort} onChange={(event) => workspace.setEffort(event.target.value)}>
-                  <option value="low">낮음</option>
-                  <option value="medium">중간</option>
-                  <option value="high">높음</option>
-                  <option value="max">최대</option>
+                  {workspace.effortChoices.map((choice) => (
+                    <option key={choice.value} value={choice.value}>{choice.label}</option>
+                  ))}
                 </select>
               </>
             )}

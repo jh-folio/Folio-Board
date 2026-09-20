@@ -11,6 +11,7 @@ from concurrent.futures import CancelledError
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Callable
 
 from features.agent_mode import schema
 from features.agent_mode import service as agent_service
@@ -48,6 +49,10 @@ from features.llm_settings.task_runtime import (
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TIMEOUT_SECONDS = 1800
 MAX_OUTPUT_CHARS = 4_000_000
+# A chat answer is not a report body. Letting it grow to the report-generation
+# ceiling meant nothing caught a runaway conversational reply until it neared
+# 4M characters.
+MAX_CHAT_OUTPUT_CHARS = 60_000
 # 어댑터 사용량 한도. 코드 결함과 대처가 완전히 다르므로(기다리면 된다 vs 고쳐야 한다)
 # 일반 실행 실패와 구분해 올린다 — 예전에는 잡에 `adapter_failed`만 남아 CLI 세션
 # 기록을 직접 열어야만 429였다는 사실을 알 수 있었다.
@@ -339,6 +344,9 @@ def _probe_adapter(adapter: str) -> dict:
         "version": "",
         "error": "",
         "bridgeSupported": True,
+        # Server-authoritative web-search capability (Agent Dock Stage D) —
+        # the Dock UI reads this later instead of guessing per adapter.
+        "supportsWebSearch": adapter_supports_web_search(adapter),
     }
     if not executable:
         result["error"] = "CLI를 찾을 수 없습니다."
@@ -664,6 +672,30 @@ def adapter_supports_web_search(adapter_id: str) -> bool:
     return str(adapter_id or "").strip().lower() in WEB_SEARCH_ARGS
 
 
+SEARCH_POLICIES = frozenset({"off", "auto", "on"})
+
+
+def resolve_effective_web_search(policy: str, adapter_override: str = "") -> tuple[bool, str, str | None]:
+    """(effective_web_search, resolved_adapter_id, blocked_reason) for Agent Dock Stage D.
+
+    `off` never searches. `auto`/`on` both need `adapter_supports_web_search()`
+    on the adapter that will actually run — `_select_adapter()` resolves that
+    the same way `run_agent_prompt()` itself will, so this reflects the real
+    outcome rather than guessing. Only `on` sets `blocked_reason` when
+    unsupported (Antigravity today): the caller should refuse the turn rather
+    than run the CLI without search and call that "on" (plan §5.3). `auto`
+    degrades silently — trying is not required.
+    """
+    normalized = policy if policy in SEARCH_POLICIES else "off"
+    if normalized == "off":
+        return False, "", None
+    selected = _select_adapter(adapter_override)
+    adapter_id = str(selected.get("id") or "")
+    if not adapter_supports_web_search(adapter_id):
+        return False, adapter_id, "unsupported" if normalized == "on" else None
+    return True, adapter_id, None
+
+
 def _cli_reasoning_effort(adapter_id: str, value: str = "", *, model: str = "") -> str:
     """Normalize a task effort and fail closed before spawning a CLI.
 
@@ -960,6 +992,7 @@ def _invoke_agent_cli(
     web_search: bool = False,
     reasoning_effort: str = "",
     facts_sink: dict | None = None,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
 ) -> str:
     """`facts_sink`는 순수 additive 관측 통로다: 값을 넘기지 않는 기존 호출자는
     이전과 완전히 같게 동작한다. 넘기면, 검색이 실제로 지원되는 요청이었을 때
@@ -1040,7 +1073,7 @@ def _invoke_agent_cli(
         raise AgentProcessError(
             "Agent CLI가 최종 결과를 반환하지 않았습니다." + (f" (stderr: {detail})" if detail else "")
         )
-    if len(output) > MAX_OUTPUT_CHARS:
+    if len(output) > max_output_chars:
         raise RuntimeError("Agent CLI 결과가 허용 크기를 초과했습니다.")
     if facts_sink is not None:
         facts_sink["webSearchFacts"] = facts
@@ -1123,7 +1156,8 @@ def _invoke_task_cli(
 def run_agent_prompt(
     prompt: str, *, adapter: str = "", model: str = "", timeout: int = 0, job_id: str = "",
     serialize: bool = True, web_search: bool = False, reasoning_effort: str = "",
-    diagnostic_primary: bool = True,
+    diagnostic_primary: bool = True, on_phase: Callable[[str], None] | None = None,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
 ) -> dict:
     """단일 프롬프트를 Agent CLI로 실행하고 텍스트 결과만 돌려준다(파일 쓰기 없음).
 
@@ -1155,7 +1189,10 @@ def run_agent_prompt(
             if _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model):
                 kwargs["reasoning_effort"] = _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model)
             facts_sink: dict = {}
-            output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, facts_sink=facts_sink, **kwargs)
+            output = _invoke_agent_cli(
+                selected, prompt, effective_timeout, job_id, facts_sink=facts_sink,
+                max_output_chars=max_output_chars, **kwargs,
+            )
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
         if budget:
             budget.check_active()
@@ -1167,6 +1204,8 @@ def run_agent_prompt(
             "webSearchFacts": web_search_facts.safe_projection(),
         }
     recorder, stage_id = diagnostic_stage_start("wait_engine")
+    if on_phase is not None:
+        on_phase("wait_engine")
     acquired = _RUN_SEMAPHORE.acquire(timeout=budget.remaining_seconds()) if budget else _RUN_SEMAPHORE.acquire()
     if not acquired:
         error = TimeoutError("deadline_expired")
@@ -1175,6 +1214,8 @@ def run_agent_prompt(
         raise error
     try:
         diagnostic_stage_end(recorder, stage_id, "wait_engine")
+        if on_phase is not None:
+            on_phase("generate")
         selected = _select_adapter(adapter)
         diagnostic_execution(attempted_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
         with _diagnostic_boundary("generate", "adapter"):
@@ -1182,7 +1223,10 @@ def run_agent_prompt(
             if _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model):
                 kwargs["reasoning_effort"] = _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model)
             facts_sink: dict = {}
-            output = _invoke_agent_cli(selected, prompt, effective_timeout, job_id, facts_sink=facts_sink, **kwargs)
+            output = _invoke_agent_cli(
+                selected, prompt, effective_timeout, job_id, facts_sink=facts_sink,
+                max_output_chars=max_output_chars, **kwargs,
+            )
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
     except Exception as error:
         # Acquisition is the only wait-engine boundary.  Once acquired, the

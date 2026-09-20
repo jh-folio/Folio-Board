@@ -95,6 +95,11 @@ const workLogEntry = {
   proposalId: "proposal-1",
   proposalStatus: "pending",
   resultStatus: "done",
+  queueWaitMs: null,
+  contextMs: null,
+  cliMs: null,
+  postprocessMs: null,
+  totalMs: null,
 };
 
 const diagnosticDetail = {

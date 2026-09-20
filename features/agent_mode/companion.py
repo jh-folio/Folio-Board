@@ -100,7 +100,12 @@ def classify_agent_intent(message: str) -> str:
     return "companion"
 
 
-VALID_EFFORT_LEVELS = {"low", "medium", "high", "max"}
+VALID_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max", "ultra"}
+
+# Agent Dock Stage D. Default `off` so an existing conversation's saved
+# options (or a client that never sends this key) keep today's behavior —
+# no network change until a caller explicitly asks for `auto`/`on`.
+VALID_SEARCH_POLICIES = {"off", "auto", "on"}
 
 
 # 대화별로 고를 수 있는 CLI. `bridge.ADAPTERS`와 같은 집합이며, 여기서 다시 적어 두는
@@ -114,7 +119,12 @@ def normalize_agent_options(raw: dict | None) -> dict:
     첨부파일 본문은 hypothesis/참고 입력일 뿐 evidence로 승격하지 않는다.
     """
     raw = raw if isinstance(raw, dict) else {}
-    effort = str(raw.get("effort") or "medium").strip().lower()
+    # `responseDepth` is the canonical name (Agent Dock Stage B) — `effort` is
+    # a read-compat alias so existing saved options/clients keep working.
+    # Whichever is valid wins; `responseDepth` wins if both are given.
+    depth_candidate = str(raw.get("responseDepth") or "").strip().lower()
+    effort_candidate = str(raw.get("effort") or "").strip().lower()
+    effort = depth_candidate if depth_candidate in VALID_EFFORT_LEVELS else effort_candidate
     attachments = []
     for item in (raw.get("attachments") or [])[:5]:
         if not isinstance(item, dict):
@@ -140,10 +150,16 @@ def normalize_agent_options(raw: dict | None) -> dict:
     # 이 대화만 다른 CLI로 돌리고 싶을 때 쓴다. 비어 있으면 설정의 전역 기본을 따른다.
     # 아는 어댑터가 아니면 무시한다 — 틀린 이름으로 전역 기본까지 못 쓰게 되면 안 된다.
     adapter = str(raw.get("adapter") or "").strip().lower()
+    resolved_depth = effort if effort in VALID_EFFORT_LEVELS else "medium"
+    search_policy = str(raw.get("searchPolicy") or "").strip().lower()
     return {
         "model": str(raw.get("model") or "").strip()[:80],
-        "effort": effort if effort in VALID_EFFORT_LEVELS else "medium",
+        # Both keys carry the same resolved value so existing readers of
+        # `effort` (e.g. chat.py's EFFORT_HINTS) keep working unchanged.
+        "effort": resolved_depth,
+        "responseDepth": resolved_depth,
         "adapter": adapter if adapter in CHAT_ADAPTERS else "",
+        "searchPolicy": search_policy if search_policy in VALID_SEARCH_POLICIES else "off",
         "attachments": attachments,
     }
 

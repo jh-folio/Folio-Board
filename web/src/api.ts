@@ -563,6 +563,12 @@ export type WorkLogEntry = {
   readonly proposalId: string | null;
   readonly proposalStatus: WorkLogProposalStatus | null;
   readonly resultStatus: "done" | "cancelled" | "failed" | null;
+  // Agent Dock Stage A (2026-09-15): observed stage timings, numeric-only.
+  readonly queueWaitMs: number | null;
+  readonly contextMs: number | null;
+  readonly cliMs: number | null;
+  readonly postprocessMs: number | null;
+  readonly totalMs: number | null;
 };
 
 export type WorkLogList = {
@@ -591,7 +597,7 @@ export type AgentProposalRecord = {
   readonly userRequest: string | null;
 };
 
-export const WORK_LOG_ENTRY_KEYS = ["id", "jobId", "category", "kind", "taskType", "labelCode", "status", "progress", "messageCode", "createdAt", "startedAt", "updatedAt", "finishedAt", "errorCode", "generationMode", "adapter", "requestedMode", "mode", "attemptedEngine", "finalEngine", "fallbackReason", "artifactTypes", "artifactCount", "proposalId", "proposalStatus", "resultStatus"] as const;
+export const WORK_LOG_ENTRY_KEYS = ["id", "jobId", "category", "kind", "taskType", "labelCode", "status", "progress", "messageCode", "createdAt", "startedAt", "updatedAt", "finishedAt", "errorCode", "generationMode", "adapter", "requestedMode", "mode", "attemptedEngine", "finalEngine", "fallbackReason", "artifactTypes", "artifactCount", "proposalId", "proposalStatus", "resultStatus", "queueWaitMs", "contextMs", "cliMs", "postprocessMs", "totalMs"] as const;
 const WORK_LOG_LIST_KEYS = ["schemaVersion", "storeRevision", "jobsStoreRevision", "retention", "total", "entries"] as const;
 const RETENTION_KEYS = ["maxEntries", "maxDays"] as const;
 const WORK_LOG_CATEGORIES = new Set(["companion", "task"]);
@@ -621,6 +627,7 @@ function isWorkLogEntry(value: unknown): value is WorkLogEntry {
   if (!hasExactKeys(value, WORK_LOG_ENTRY_KEYS)) return false;
   const nullableIn = (item: unknown, values: ReadonlySet<string>) => item === null || values.has(item as string);
   const nullableUtc = (item: unknown) => item === null || (typeof item === "string" && UTC_Z.test(item));
+  const nullableNonNegativeInt = (item: unknown) => item === null || (Number.isInteger(item) && (item as number) >= 0);
   return typeof value.id === "string" && /^wl_[0-9a-f]{24}$/.test(value.id) && typeof value.jobId === "string"
     && WORK_LOG_CATEGORIES.has(value.category as string) && WORK_LOG_KINDS.has(value.kind as string)
     && WORK_LOG_TASK_TYPES.has(value.taskType as string) && WORK_LOG_LABEL_CODES.has(value.labelCode as string)
@@ -633,7 +640,9 @@ function isWorkLogEntry(value: unknown): value is WorkLogEntry {
     && nullableIn(value.fallbackReason, WORK_LOG_FALLBACK_REASONS) && Array.isArray(value.artifactTypes)
     && value.artifactTypes.every((item) => typeof item === "string") && Number.isInteger(value.artifactCount) && (value.artifactCount as number) >= 0
     && (value.proposalId === null || typeof value.proposalId === "string") && nullableIn(value.proposalStatus, WORK_LOG_PROPOSAL_STATUSES)
-    && nullableIn(value.resultStatus, WORK_LOG_RESULT_STATUSES);
+    && nullableIn(value.resultStatus, WORK_LOG_RESULT_STATUSES)
+    && nullableNonNegativeInt(value.queueWaitMs) && nullableNonNegativeInt(value.contextMs) && nullableNonNegativeInt(value.cliMs)
+    && nullableNonNegativeInt(value.postprocessMs) && nullableNonNegativeInt(value.totalMs);
 }
 
 export function parseWorkLogList(value: unknown): WorkLogList {

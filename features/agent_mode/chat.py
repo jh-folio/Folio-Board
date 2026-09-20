@@ -50,6 +50,7 @@ from features.common.canonical_reports import (
 from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure, submit_job
 from features.common.markets import market_keys_for_scope, normalize_saved_market_scope
 from features.common.utils import read_json
+from features.common.web_search_scope import audit_urls, load_source_scope
 from features.market_memory.attempt_store import AttemptStore
 from features.market_memory.market_state_ref import MarketStateRefQuery
 from features.common.workspace import data_dir
@@ -72,7 +73,9 @@ EFFORT_HINTS = {
     "low": "간결하게 핵심만 3~5문장으로 답한다.",
     "medium": "핵심 근거와 함께 균형 있게 답한다.",
     "high": "근거·반론·확인 포인트까지 깊이 있게 답한다.",
+    "xhigh": "high보다 더 깊게, 여러 자료·관점을 교차 확인하며 꼼꼼히 답한다.",
     "max": "가능한 모든 관점(근거, 반론, 리스크, 체크포인트)을 검토해 답한다.",
+    "ultra": "동원 가능한 가장 신중한 수준으로, 모든 관점을 다각도로 반복 검증하며 철저하게 답한다.",
 }
 
 
@@ -173,7 +176,8 @@ def build_chat_prompt(message: str, context: dict, options: dict, markdown: str 
         "You are the Folio Board in-app research assistant. Folio Board is a local investment research workspace. Answer in Korean, in Markdown.",
         f"응답 지침: {effort}",
         "규칙: 제공된 자료(보고서 본문·첨부)에 없는 수치·출처를 만들어내지 않는다. 모르는 것은 data gap으로 명시한다. "
-        "사용자 메모·첨부는 hypothesis(가설)이며 객관적 근거처럼 단정하지 않는다. 저장된 파일을 수정하라는 요청이라도 이 응답에서는 수정하지 말고 답변만 한다.",
+        "사용자 메모·첨부는 hypothesis(가설)이며 객관적 근거처럼 단정하지 않는다. 저장된 파일을 수정하라는 요청이라도 이 응답에서는 수정하지 말고 답변만 한다. "
+        "사용자의 현재 질문에 먼저 직접 답한다. 정해진 절차나 질문지를 강요하지 않는다.",
         market_memory,
         "" if exact_review_challenge else render_collection_projection(context),
         "정확한 저장 투자 리뷰 반박 범위입니다. 제공된 review date/revision/roster 이외의 현재 Portfolio·시장·보고서 정보를 추론하거나 주입하지 마세요." if exact_review_challenge else "",
@@ -287,7 +291,7 @@ def _revision_payload(output: str) -> dict:
     return {"summary": str(payload.get("summary") or "").strip(), "revisedMarkdown": revised}
 
 
-def _run_with_images(build_prompt, options: dict, *, model: str, job_id: str) -> dict:
+def _run_with_images(build_prompt, options: dict, *, model: str, job_id: str, on_phase=None, web_search: bool = False) -> dict:
     """Run the CLI while the attached images exist on disk, then remove them.
 
     The scratch files must outlive prompt building and the CLI call and nothing
@@ -300,7 +304,13 @@ def _run_with_images(build_prompt, options: dict, *, model: str, job_id: str) ->
     with StagedImages(options.get("attachments")) as staged:
         prompt = build_prompt(image_block(staged))
         return bridge.run_agent_prompt(
-            prompt, adapter=options.get("adapter", ""), model=model, job_id=job_id,
+            prompt, adapter=options.get("adapter", ""), model=model, job_id=job_id, on_phase=on_phase,
+            max_output_chars=bridge.MAX_CHAT_OUTPUT_CHARS, web_search=web_search,
+            # 이 값이 없으면 "노력 단계" 선택이 프롬프트 문구(EFFORT_HINTS)에만
+            # 영향을 주고 CLI 자신의 추론 강도(--effort / -c model_reasoning_effort=)는
+            # 항상 그 CLI의 기본값으로 도는, 실사용으로 발견된 오래된 결함이었다
+            # (master에도 이미 있었다 — 이번 세션이 만든 결함이 아니다).
+            reasoning_effort=str(options.get("effort") or ""),
         )
 
 
@@ -309,6 +319,9 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
                    collection_service: SmartCollectionService | None = None,
                    prepared_context: bool = False, conversation: str = "", exact_review_challenge: bool = False) -> dict:
     progress = progress or (lambda *args, **kwargs: None)
+    # Lets the bridge report live semaphore-wait/generate phases without
+    # widening the progress contract every caller has to know about.
+    on_phase = lambda phase: progress(None, None, phaseCode=phase)
     normalized = (
         dict(context or {})
         if prepared_context
@@ -321,6 +334,12 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
     collection_projection = normalized.get("collection")
     normalized_options = normalize_agent_options(options)
     intent = classify_agent_intent(message)
+    # Agent Dock Stage D. Resolved once here so every return path (CLI
+    # unavailable, task/revision, companion) carries the same `search` shape —
+    # `job_runtime.py`/`consultation_store` persist this on the assistant
+    # message regardless of which branch produced it.
+    requested_search_policy = normalized_options.get("searchPolicy", "off")
+    no_search = {"requestedPolicy": requested_search_policy, "toolEnabled": False, "toolUsed": "no", "sourceRefs": []}
 
     # CLI가 없으면 기존 규칙 기반 companion 응답으로 fallback(LLM 없이도 동작 원칙).
     status = bridge.bridge_status()
@@ -338,6 +357,7 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
         from features.common.jobs import diagnostic_execution
 
         diagnostic_execution(final_engine="rules", fallback_reason="engine_unavailable")
+        fallback["search"] = no_search
         return fallback
 
     kind = normalized.get("reportKind", "")
@@ -355,6 +375,7 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
                 normalized_options,
                 model=normalized_options.get("model", ""),
                 job_id=job_id,
+                on_phase=on_phase,
             )
         except Exception as exc:
             # 수정안 생성 실패는 사용자가 알아야 하므로 정리된 메시지로 실패시킨다.
@@ -370,6 +391,7 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
                 "reply": "요청을 검토했지만 실제로 바꿀 내용이 없다고 판단했습니다. 더 구체적으로 요청해 주세요.",
                 "context": normalized,
                 "options": public_options(normalized_options),
+                "search": no_search,
             }
         progress("수정 제안 diff를 준비하고 있습니다.", 80)
         proposal = create_revision_proposal(
@@ -399,12 +421,30 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
             },
             "context": normalized,
             "options": public_options(normalized_options),
+            "search": no_search,
         }
 
     progress("Agent가 답변을 작성하고 있습니다.", 30)
     # Calling the bridge is the concrete execution attempt.  The selected
     # adapter is observed only after the bridge has verified it.
     from features.common.jobs import diagnostic_execution
+
+    # Agent Dock Stage D. Resolved against the adapter that will actually run
+    # (not just the requested override), so `on` + an unsupported CLI is
+    # caught here instead of silently running without search.
+    effective_search, resolved_adapter, blocked_reason = bridge.resolve_effective_web_search(
+        requested_search_policy, normalized_options.get("adapter", ""),
+    )
+    if blocked_reason == "unsupported":
+        diagnostic_execution(final_engine="rules", fallback_reason="engine_unavailable")
+        fallback = agent_companion_reply(
+            message, normalized, normalized_options, collection_projection=collection_projection
+        )
+        fallback["engine"] = "rules"
+        fallback["reply"] = fallback.pop("message", "")
+        fallback["notice"] = f"선택한 CLI({resolved_adapter})는 웹 검색을 지원하지 않아 이 요청을 실행하지 않았습니다."
+        fallback["search"] = no_search
+        return fallback
 
     diagnostic_execution(attempted_engine="cli")
     try:
@@ -413,6 +453,8 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
             normalized_options,
             model=normalized_options.get("model", ""),
             job_id=job_id,
+            on_phase=on_phase,
+            web_search=effective_search,
         )
     except Exception as exc:
         # 질문형은 규칙 기반으로 답을 이어가고, CLI 실패 사유는 정리해서 알려준다.
@@ -433,6 +475,12 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
         fallback["engine"] = "rules"
         fallback["reply"] = fallback.pop("message", "")
         fallback["notice"] = f"Agent CLI 실행 실패로 규칙 기반으로 답합니다: {_clean_cli_error(exc)}"
+        # The CLI crashed mid-attempt — whether it had searched by then is
+        # genuinely unknown, not a confirmed "no".
+        fallback["search"] = {
+            "requestedPolicy": requested_search_policy, "toolEnabled": effective_search,
+            "toolUsed": "unknown", "sourceRefs": [],
+        }
         return fallback
     reply = result["output"]
     notice = ""
@@ -440,6 +488,21 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
         notice = "저장된 보고서를 찾지 못해 수정 대신 답변만 제공합니다. 보고서를 연 상태에서 다시 요청해 주세요."
     elif intent == "task":
         notice = "보고서를 연 상태에서 요청하면 수정안(diff)을 만들어 승인 후 반영할 수 있습니다."
+    web_search_facts = result.get("webSearchFacts") or {}
+    tool_used = str(web_search_facts.get("used") or "unknown")
+    source_refs: list[dict] = []
+    if tool_used == "yes":
+        # 실제로 검색을 썼을 때만 감사한다 — 브리핑과 같은 허용 목록/함수를 그대로
+        # 재사용한다(features/common/web_search_scope.py). 목록 밖 URL은
+        # evidence처럼 보이지 않게 그냥 뺀다.
+        audit = audit_urls(reply, load_source_scope(None))
+        source_refs = [
+            {"url": row["url"], "tier": row["tier"], "label": row["label"]}
+            for row in audit["allowed"][:8]
+        ]
+    if requested_search_policy == "on" and tool_used != "yes":
+        # 검색을 요구했는데 실제로는 안 쓰였다(또는 확인 불가) — 성공처럼 숨기지 않는다.
+        notice = " ".join(filter(None, [notice, "웹 검색을 요청했지만 이번 답변에서는 실제로 검색을 사용하지 않았습니다."]))
     return {
         "ok": True,
         "mode": "companion",
@@ -449,6 +512,10 @@ def run_agent_chat(message: str, context: dict | None = None, options: dict | No
         "notice": notice,
         "context": normalized,
         "options": public_options(normalized_options),
+        "search": {
+            "requestedPolicy": requested_search_policy, "toolEnabled": effective_search,
+            "toolUsed": tool_used, "sourceRefs": source_refs,
+        },
     }
 
 

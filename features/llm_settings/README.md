@@ -71,6 +71,8 @@ FOLIO_AGENT_CODEX_MODEL=gpt-5.6-sol
 FOLIO_AGENT_CLAUDE_MODEL=claude-sonnet-5
 ```
 
+`USE_WEB_SEARCH_FOR_BRIEFING`/`USE_WEB_SEARCH_FOR_ANALYSIS`는 `USE_LLM_BRIEFING`/`USE_LLM_ANALYSIS`(LLM 생성 자체를 켜고 끄는 값)와 별개다 — 웹 검색만 끄고 LLM 생성은 그대로 쓰고 싶을 때 이 값을 `0`으로 둔다. `client.py::use_web_search_for_briefing()`/`use_web_search_for_analysis()`가 실제로 이 두 변수를 읽는다(2026-09-15 수정 — 그 전에는 각각 `USE_LLM_BRIEFING`과 `use_llm_analysis()`를 그대로 읽고 있어서 이 두 변수 자체는 켜든 끄든 아무 효과가 없었다). 둘 다 미설정 시 기본값은 `1`(켜짐)이라 기존 동작은 그대로다.
+
 설정 화면의 모델 목록은 고정 목록이 아니라 `features/llm_settings/model_catalog.py`가 만든 동적 catalog를 사용한다. 기본 로딩은 `data/llm-model-cache.json`에 저장된 마지막 모델 목록을 계속 재사용하며, 오래된 캐시라도 자동으로 다시 조회하지 않는다. 사용자가 설정 화면에서 모델/상태 새로고침을 눌러 `refresh=true` 요청을 보낼 때만 API Provider의 read-only model list endpoint 또는 CLI의 `models`/`model list` 계열 명령을 실행해 캐시를 갱신한다. 수동 새로고침이 실패하면 마지막 캐시를 유지하고, 저장된 캐시가 없거나 키 없음·CLI 미지원이면 아래 fallback 목록을 즉시 사용한다.
 
 fallback 모델 목록:

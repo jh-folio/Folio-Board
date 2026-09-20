@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -407,6 +408,7 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
     다음 세션의 Agent가 같은 제안을 다시 하게 된다. 여기는 맥락 조립과 저장만 한다.
     """
     progress = progress or (lambda *_args, **_kwargs: None)
+    started_monotonic = time.monotonic()
     from features.agent_mode.chat import run_agent_chat
     from features.agent_mode.consultation_context import assemble_consultation_context
     from features.agent_mode.consultation_prompt import rules_fallback
@@ -420,8 +422,8 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
         if not user_message:
             raise ValueError("consultation_user_message_not_found")
         question = str(user_message.get("content") or "")
-        progress("대화 맥락을 조립하고 있습니다.", 20)
-        context = assemble_consultation_context(data_dir, session_id)
+        progress("대화 맥락을 조립하고 있습니다.", 20, phaseCode="context")
+        context = assemble_consultation_context(data_dir, session_id, current_message_id=user_message_id)
     except Exception as error:
         jobs.diagnostic_stage_failure(
             context_recorder,
@@ -449,6 +451,7 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
     engine = "rules"
     reply = rules_fallback(question)
     proposal_id = ""
+    search = None
     try:
         progress("Agent가 답변을 작성하고 있습니다.", 50)
         jobs.diagnostic_execution(attempted_engine="cli")
@@ -462,6 +465,9 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
             collection_service=None if exact_review_challenge else create_smart_collection_service(data_dir),
             exact_review_challenge=exact_review_challenge,
         )
+        postprocess_recorder, postprocess_stage = jobs.diagnostic_stage_start("postprocess")
+        progress(None, None, phaseCode="postprocess")
+        search = result.get("search") if isinstance(result.get("search"), dict) else None
         answer = str(result.get("reply") or "").strip()
         if answer:
             reply = answer
@@ -473,6 +479,7 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
         proposal_id = str(((result.get("proposal") or {}) or {}).get("id") or "")
         if proposal_id:
             reply = "\n\n".join([reply, f"(수정 제안 {proposal_id} 을 만들었습니다. 승인해야 보고서가 바뀝니다.)"])
+        jobs.diagnostic_stage_end(postprocess_recorder, postprocess_stage, "postprocess")
     except Exception as error:
         # Transcript and private provider errors never enter job result or telemetry.
         jobs.diagnostic_stage_failure(
@@ -485,13 +492,26 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
         engine = "rules"
     # The bridge already records a concrete CLI failure before its legacy
     # fallback returns.  Here we only publish the closed final engine fact.
-    jobs.diagnostic_execution(
-        final_engine="rules" if engine == "rules" else "cli",
-        fallback_reason="engine_failed" if engine == "rules" else None,
+    final_engine = "rules" if engine == "rules" else "cli"
+    fallback_reason = "engine_failed" if engine == "rules" else None
+    jobs.diagnostic_execution(final_engine=final_engine, fallback_reason=fallback_reason)
+    # Job-facing attribution and timing: nothing wrote these for chat jobs
+    # before, so `GET /api/jobs/{id}` always showed the untouched defaults
+    # (`adapter: auto`, `finalEngine: null`) even after a real CLI failure.
+    # `stage_timing_summary` reads the diagnostics stages this function and
+    # the bridge already measured — it does not start a second clock.
+    progress(
+        None, None,
+        adapter="rules" if engine == "rules" else engine,
+        finalEngine=final_engine,
+        fallbackReason=fallback_reason,
+        **jobs.stage_timing_summary(jobs.current_diagnostic_recorder()),
+        totalMs=int((time.monotonic() - started_monotonic) * 1000),
     )
     commit_recorder, commit_stage = jobs.diagnostic_stage_start("commit")
+    progress(None, None, phaseCode="commit")
     try:
-        append_assistant_message(data_dir, session_id, user_message_id, reply, engine=engine)
+        assistant = append_assistant_message(data_dir, session_id, user_message_id, reply, engine=engine, search=search)
     except Exception as error:
         jobs.diagnostic_stage_failure(
             commit_recorder,
@@ -503,7 +523,10 @@ def run_consultation_job(data_dir: Path, session_id: str, user_message_id: str, 
         jobs.diagnostic_stage_end(commit_recorder, commit_stage, "commit")
         raise
     jobs.diagnostic_stage_end(commit_recorder, commit_stage, "commit")
-    return {"sessionId": session_id, "messageId": user_message_id, "status": "answered", "proposalId": proposal_id}
+    return {
+        "sessionId": session_id, "messageId": user_message_id, "status": "answered", "proposalId": proposal_id,
+        "assistantMessageId": assistant.get("id", ""),
+    }
 
 
 def submit_consultation_job(data_dir: Path, session_id: str, user_message_id: str,

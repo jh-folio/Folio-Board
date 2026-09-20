@@ -6,11 +6,20 @@ import { useDockThreads } from "./agentWorkspace/useDockThreads";
 import type { ScopedThreadRequest } from "./agentWorkspace/openScopedThread";
 import { AgentPollTimeout, pollAgentJobBounded, releasePollController, replacePollController } from "./agentPolling";
 import { actOnProposal, boundedProposalDiff, boundedProposalSummary, hydrateAgentProposalFromResult, notifyProposalLifecycle } from "./agentProposalLifecycle";
+import type { ConsultationSearchMeta } from "./agentWorkspace/types";
 
 type AgentResult = {
   reply?: string;
   notice?: string;
   proposalId?: string | null;
+  // Agent Dock Stage C: lets the Dock fetch the exact reply message instead
+  // of re-reading the whole thread.
+  sessionId?: string;
+  assistantMessageId?: string;
+  // Agent Dock Stage D/E — only present via the single-message fetch, not the
+  // job result itself (same reasoning as `reply`: bounded metadata belongs
+  // with the answer, not the ephemeral job).
+  search?: ConsultationSearchMeta;
 };
 
 type AgentProposal = {
@@ -27,6 +36,8 @@ type AgentJob = {
   message?: string;
   error?: string;
   result?: AgentResult;
+  // Agent Dock Stage A observation field — live phase within `running`.
+  phaseCode?: "context" | "wait_engine" | "generate" | "postprocess" | "commit" | null;
 };
 
 type AgentMessage = {
@@ -40,9 +51,11 @@ type AgentMessage = {
   runState?: "pending" | "done" | "error" | "still-running";
   runTitle?: string;
   runMeta?: string;
+  pendingHint?: string;
   jobId?: string;
   createdAt?: string;
   variant?: "welcome";
+  search?: ConsultationSearchMeta;
 };
 
 type AgentModelChoice = {
@@ -55,8 +68,17 @@ type AgentAdapterSettings = {
   label?: string;
   model?: string;
   modelChoices?: AgentModelChoice[];
+  // 노력 단계는 CLI마다, 같은 CLI 안에서도 모델마다 실제로 받는 값·이름이 다르다
+  // (Codex는 low를 "Light"로 부르고 ultra까지, Claude는 "Low"로 부르고 대개
+  // max까지). 서버(features/llm_settings/reasoning.py)가 계산한 값을 그대로
+  // 쓴다 — 화면에서 다시 매핑을 지어내면 그 CLI가 실제로는 안 받는 값을 보낼 수
+  // 있다.
+  reasoningChoices?: AgentModelChoice[];
+  reasoningByModel?: Record<string, AgentModelChoice[]>;
   // 브리지가 지원하지 않는 CLI(버전이 못 미치는 agy 등)는 고를 수 없어야 한다.
   bridgeSupported?: boolean;
+  // Agent Dock Stage D — server-authoritative (bridge.py::adapter_supports_web_search()).
+  supportsWebSearch?: boolean;
 };
 
 type AgentSettings = {
@@ -129,12 +151,70 @@ function formatTime(value?: string) {
   return parsed.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function effortLabel(value: string) {
-  return value === "high" ? "높음" : value === "low" ? "낮음" : "중간";
+// 어댑터·모델 정보가 아직 없을 때만 쓰는 자리표시자(설정을 못 불러왔을 때 등) —
+// 실제 값은 항상 서버가 계산해 보내는 adapter별 reasoningChoices/reasoningByModel을
+// 그대로 쓴다.
+const FALLBACK_EFFORT_CHOICES: AgentModelChoice[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+];
+
+/** 이 CLI(모델)가 실제로 받는 노력 단계 목록. `provider_default`(제공자 기본값)는
+ *  여기서는 안 보여준다 — 도크는 항상 명시적인 단계 하나를 보낸다. */
+function reasoningChoicesFor(adapter: AgentAdapterSettings | null, model: string): AgentModelChoice[] {
+  const byModel = adapter?.reasoningByModel?.[model] || [];
+  const source = byModel.length ? byModel : adapter?.reasoningChoices || [];
+  const explicit = source.filter((choice) => choice?.value && choice.value !== "provider_default");
+  const deduped = explicit.filter((choice, index, all) => all.findIndex((item) => item.value === choice.value) === index);
+  return deduped.length ? deduped : FALLBACK_EFFORT_CHOICES;
+}
+
+function effortLabel(adapter: AgentAdapterSettings | null, model: string, value: string) {
+  return reasoningChoicesFor(adapter, model).find((choice) => choice.value === value)?.label || value;
 }
 
 function elapsedSeconds(startedAt: number) {
   return `${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}초`;
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  context: "대화 맥락을 조립하는 중",
+  wait_engine: "다른 작업이 끝나길 기다리는 중",
+  generate: "Agent가 응답을 생성하는 중",
+  postprocess: "응답을 정리하는 중",
+  commit: "답변을 저장하는 중",
+};
+
+/** 폴링 tick마다 실제 phase(Agent Dock Stage A가 관측)와 경과 시간을 보여준다.
+ *  phase를 아직 모르면(예: 첫 tick 전) 호출부가 기존 고정 문구로 대신한다. */
+function phaseHint(phaseCode: string | null | undefined, startedAt: number) {
+  const label = phaseCode ? PHASE_LABELS[phaseCode] : "";
+  return label ? `${label} · ${elapsedSeconds(startedAt)}` : "";
+}
+
+const MAX_SHOWN_SOURCE_REFS = 5;
+
+/** Agent Dock Stage E — 실제로 검색을 썼을 때만 보이는 한 줄. 드롭다운·내부
+ *  스크롤·다중 뷰를 만들지 않고, 최대 5개만 이름을 보여주고 나머지는 개수로
+ *  요약한다(계획 §Stage E). */
+function SearchSourcesLine({ search }: { search?: ConsultationSearchMeta }) {
+  if (!search || search.toolUsed !== "yes" || !search.sourceRefs.length) return null;
+  const shown = search.sourceRefs.slice(0, MAX_SHOWN_SOURCE_REFS);
+  const remaining = search.sourceRefs.length - shown.length;
+  return (
+    <p className="react-agent-search-meta">
+      {`웹 검색 · 출처 ${search.sourceRefs.length}개 — `}
+      {shown.map((source, index) => (
+        <span key={source.url}>
+          {index > 0 && ", "}
+          <a href={source.url} target="_blank" rel="noreferrer">{source.label || source.url}</a>
+        </span>
+      ))}
+      {remaining > 0 && ` 외 ${remaining}개`}
+    </p>
+  );
 }
 
 const GLOBAL_AGENT_CONTEXT_FIELDS = [
@@ -267,6 +347,10 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
   // 다시 빈 값에서 시작한다 — "이 대화에만"이 말 그대로여야 한다.
   const [providerOverride, setProviderOverride] = useState("");
   const [effort, setEffort] = useState("medium");
+  // Agent Dock Stage E. Per-conversation like `providerOverride` — never
+  // persisted to global settings (plan §5.3: 마이그레이션 기본값은 off,
+  // 기존 대화의 네트워크 동작을 조용히 바꾸지 않는다). New chats start at "off".
+  const [searchPolicy, setSearchPolicy] = useState<"off" | "auto" | "on">("off");
   const [runMenuOpen, setRunMenuOpen] = useState(false);
   const runMenuRef = useRef<HTMLDivElement | null>(null);
   const runTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -387,14 +471,25 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
   const globalId = globalProvider(settings);
   const overridden = Boolean(providerOverride) && providerOverride !== globalId;
   const modelChoices = modelChoicesFor(adapter);
+  const effortChoices = reasoningChoicesFor(adapter, model);
   // 버튼에 적을 요약. 열지 않고도 무엇으로 도는지 읽혀야 접어 둔 값이 있다.
   const runSummary = [
     (adapter?.label || meta.label || "").replace(/\s*(Code\s*)?CLI$/i, ""),
     modelChoices.find((choice) => choice.value === model)?.label || model,
-    effortLabel(effort),
+    effortLabel(adapter, model, effort),
   ].filter(Boolean).join(" · ");
   const accentStyle = useMemo(() => ({ "--react-agent-accent": meta.color } as CSSProperties), [meta.color]);
   const failedPreflightChecks = (preflight?.checks || []).filter((check) => !check.ok);
+
+  // CLI나 모델을 바꾸면 그 조합이 지금 고른 노력 단계를 아예 안 받을 수 있다(예:
+  // Antigravity는 max/ultra가 없고, Codex 일부 모델은 xhigh까지만 받는다). 그대로
+  // 두면 다음 전송에서 CLI가 그 값을 거부한다 — 새 목록에 없으면 안전한 값으로 옮긴다.
+  useEffect(() => {
+    setEffort((current) => {
+      if (effortChoices.some((choice) => choice.value === current)) return current;
+      return effortChoices.find((choice) => choice.value === "medium")?.value || effortChoices[0]?.value || "medium";
+    });
+  }, [adapter?.id, model]);
 
   const submitAgentMessage = useCallback(async (
     rawText: string,
@@ -427,7 +522,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
         pending: true,
         runState: "pending",
         runTitle: `${providerLabel} 세션 시작`,
-        runMeta: `${modelLabel} · ${effortLabel(effort)} · on-request`,
+        runMeta: `${modelLabel} · ${effortLabel(adapter, model, effort)} · on-request`,
         createdAt,
       },
     ]);
@@ -449,7 +544,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
         })).id;
       const submitted = await postJson<{ job: AgentJob }>(
         `/api/agent/threads/${encodeURIComponent(threadId)}/messages`,
-        { message: text, operationId: messageId(), context: requestContext, options: { model, effort, adapter: providerOverride } },
+        { message: text, operationId: messageId(), context: requestContext, options: { model, effort, adapter: providerOverride, searchPolicy } },
       );
       // The server has durably accepted both the user turn and its job at this
       // point.  Scoped actions must resolve now: Dock owns the longer-running
@@ -458,11 +553,22 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
       lifecycle?.onAccepted?.();
       controller = new AbortController();
       replacePollController(pollControllers.current, assistantId, controller);
-      const done = await pollAgentJobBounded(submitted.job, { signal: controller.signal });
+      const done = await pollAgentJobBounded(submitted.job, {
+        signal: controller.signal,
+        onUpdate: (current) => {
+          const hint = phaseHint(current.phaseCode, startedAt);
+          if (hint) setMessages((rows) => rows.map((row) => row.id === assistantId ? { ...row, pendingHint: hint } : row));
+        },
+      });
       releasePollController(pollControllers.current, assistantId, controller);
       // 답변 본문은 잡 결과가 아니라 스레드에서 읽는다 — 잡 결과는 Work Log에 저장되므로
-      // transcript를 담지 않는다(0.4 상담 계약).
-      const result = { ...(done.result || {}), reply: await threads.latestReply(threadId) };
+      // transcript를 담지 않는다(0.4 상담 계약). 잡이 정확한 assistantMessageId를
+      // 알려주면(Agent Dock Stage C) 그 메시지 하나만 읽고(검색 metadata도 함께,
+      // Stage E), 없거나 실패하면 전체 스레드를 다시 읽는다(그 경로는 search가 없다).
+      const raw = done.result || {};
+      const fetched = raw.assistantMessageId ? await threads.getMessage(threadId, raw.assistantMessageId) : null;
+      const reply = fetched?.content || await threads.latestReply(threadId);
+      const result = { ...raw, reply, search: fetched?.search };
       const proposalHydration = await hydrateAgentProposalFromResult(result);
       threads.bumpList();
       setMessages((current) =>
@@ -474,10 +580,11 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
                 notice: [result.notice, proposalHydration.notice].filter(Boolean).join(" "),
                 proposal: proposalHydration.proposal,
                 proposalStatus: proposalHydration.proposalStatus,
+                search: result.search,
                 pending: false,
                 runState: "done",
                 runTitle: `${providerLabel} 응답`,
-                runMeta: `${modelLabel} · ${effortLabel(effort)} · ${elapsedSeconds(startedAt)}`,
+                runMeta: `${modelLabel} · ${effortLabel(adapter, model, effort)} · ${elapsedSeconds(startedAt)}`,
               }
             : message,
         ),
@@ -492,7 +599,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
           pending: false,
           runState: "still-running",
           runTitle: `${providerLabel} 계속 실행 중`,
-          runMeta: `${modelLabel} · ${effortLabel(effort)} · ${elapsedSeconds(startedAt)}`,
+          runMeta: `${modelLabel} · ${effortLabel(adapter, model, effort)} · ${elapsedSeconds(startedAt)}`,
           jobId: err.job.id,
         } : message));
         // The first message was accepted before polling began; only the
@@ -511,7 +618,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
                 pending: false,
                 runState: "error",
                 runTitle: `${providerLabel} 오류`,
-                runMeta: `${modelLabel} · ${effortLabel(effort)}`,
+                runMeta: `${modelLabel} · ${effortLabel(adapter, model, effort)}`,
               }
             : message,
         ),
@@ -523,24 +630,34 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
     // threads.threadId/pending은 useDockThreads가 렌더마다 새로 담는 스냅샷 값이라
     // 의존성에서 빠지면 낡은 threadId로 이전 대화에 질문이 저장된다 — `새 대화`·
     // `짚어보기`·대화 전환 직후의 첫 질문이 전부 직전 스레드로 갔다.
-  }, [adapter?.label, adapter?.model, busy, effort, meta.label, model, surface, threads.threadId, threads.pending, threads.createThread, threads.latestReply, threads.bumpList]);
+  }, [adapter, busy, effort, meta.label, model, searchPolicy, surface, threads.threadId, threads.pending, threads.createThread, threads.latestReply, threads.getMessage, threads.bumpList]);
 
   async function resumeAgentJob(messageIdValue: string, jobId: string) {
     const controller = new AbortController();
+    const resumedAt = Date.now();
     replacePollController(pollControllers.current, messageIdValue, controller);
     setMessages((current) => current.map((message) => message.id === messageIdValue ? {
       ...message, pending: true, runState: "pending", runTitle: "Agent 상태 다시 확인 중",
     } : message));
     try {
       const current = await getJson<AgentJob>(`/api/jobs/${encodeURIComponent(jobId)}`, { signal: controller.signal });
-      const done = await pollAgentJobBounded(current, { signal: controller.signal });
+      const done = await pollAgentJobBounded(current, {
+        signal: controller.signal,
+        onUpdate: (job) => {
+          const hint = phaseHint(job.phaseCode, resumedAt);
+          if (hint) setMessages((rows) => rows.map((row) => row.id === messageIdValue ? { ...row, pendingHint: hint } : row));
+        },
+      });
       // 제출 경로와 같은 계약이다 — 답변 본문은 잡 결과가 아니라 스레드에서 읽는다.
-      // 스레드 메시지 잡은 {sessionId, messageId, status, proposalId}만 돌려주므로,
-      // 잡 결과에서 읽으면 답변 자리에 `작업이 완료되었습니다.`가 대신 들어간다.
-      const result: AgentResult = {
-        ...(done.result || {}),
-        reply: threads.threadId ? await threads.latestReply(threads.threadId) : "",
-      };
+      // 잡이 정확한 assistantMessageId를 알려주면(Agent Dock Stage C) 그 메시지
+      // 하나만(검색 metadata 포함, Stage E) 읽고, 없거나 실패하면 전체 스레드를
+      // 다시 읽는다(그 경로는 search가 없다).
+      const raw = done.result || {};
+      const fetched = raw.assistantMessageId && threads.threadId
+        ? await threads.getMessage(threads.threadId, raw.assistantMessageId)
+        : null;
+      const reply = fetched?.content || (threads.threadId ? await threads.latestReply(threads.threadId) : "");
+      const result: AgentResult = { ...raw, reply, search: fetched?.search };
       const proposalHydration = await hydrateAgentProposalFromResult(result);
       threads.bumpList();
       setMessages((messages) => messages.map((message) => message.id === messageIdValue ? {
@@ -549,6 +666,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
         notice: [result.notice, proposalHydration.notice].filter(Boolean).join(" "),
         proposal: proposalHydration.proposal,
         proposalStatus: proposalHydration.proposalStatus,
+        search: result.search,
         pending: false,
         runState: "done",
         runTitle: "Agent 응답",
@@ -803,7 +921,15 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
                   <time>{formatTime(message.createdAt)}</time>
                 </div>
               )}
-              {message.runTitle && <AgentRunCard state={message.runState === "still-running" ? "pending" : message.runState} title={message.runTitle} meta={message.runMeta} />}
+              {message.runTitle && <AgentRunCard state={message.runState === "still-running" ? "pending" : message.runState} title={message.runTitle} meta={message.runMeta} pendingHint={message.pendingHint} />}
+              {/* 매초 바뀌는 pendingHint를 그대로 live 처리하면 스크린리더에 소음이
+                  된다 — done/error로 바뀌는 순간에만 문구가 채워지는 별도의 숨은
+                  영역만 알린다. */}
+              {message.runTitle && (
+                <span className="sr-only" role="status" aria-live="polite">
+                  {message.runState === "done" ? "답변을 받았습니다." : message.runState === "error" ? "오류가 발생했습니다." : ""}
+                </span>
+              )}
               {message.runState === "still-running" && message.jobId && (
                 <div data-qa="agent-job-still-running">
                   <button type="button" data-qa="agent-job-resume" onClick={() => void resumeAgentJob(message.id, message.jobId!)}>상태 다시 확인</button>
@@ -814,7 +940,8 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
                   <AgentMessageContent text={message.text} />
                 </div>
               )}
-              {message.notice && <p className="react-agent-notice">{message.notice}</p>}
+              {message.notice && <p className="react-agent-notice" role="status">{message.notice}</p>}
+              <SearchSourcesLine search={message.search} />
               {message.proposal && (
                 <div className="agent-proposal">
                   <div className="agent-proposal-title">
@@ -910,12 +1037,20 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
                 <label>
                   <span>노력 단계</span>
                   <select value={effort} onChange={(event) => setEffort(event.currentTarget.value)}>
-                    <option value="low">노력 낮음</option>
-                    <option value="medium">노력 중간</option>
-                    <option value="high">노력 높음</option>
-                    <option value="max">노력 최대</option>
+                    {effortChoices.map((choice) => (
+                      <option key={choice.value} value={choice.value}>{choice.label}</option>
+                    ))}
                   </select>
                 </label>
+                <div className="react-agent-run-menu-row">
+                  <span>웹 검색</span>
+                  <div className="segment" role="group" aria-label="웹 검색">
+                    <button type="button" aria-pressed={searchPolicy === "off"} onClick={() => setSearchPolicy("off")}>끔</button>
+                    <button type="button" aria-pressed={searchPolicy === "auto"} disabled={adapter?.supportsWebSearch === false} onClick={() => setSearchPolicy("auto")}>자동</button>
+                    <button type="button" aria-pressed={searchPolicy === "on"} disabled={adapter?.supportsWebSearch === false} onClick={() => setSearchPolicy("on")}>사용</button>
+                  </div>
+                  <small>{adapter?.supportsWebSearch === false ? "이 CLI는 웹 검색을 지원하지 않습니다." : "이 대화에만 적용됩니다."}</small>
+                </div>
               </div>
             )}
           </div>
@@ -928,7 +1063,7 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
             이 대화만 {adapter?.label || providerOverride}로 돕니다. 전역 기본은 그대로입니다.
           </p>
         )}
-        {error && <p className="react-agent-error">{error}</p>}
+        {error && <p className="react-agent-error" role="alert">{error}</p>}
       </form>
     </aside>
   );

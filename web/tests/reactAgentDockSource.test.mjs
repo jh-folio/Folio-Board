@@ -154,12 +154,16 @@ test("resuming a still-running job reads the reply from the thread, not the job 
   const resume = dockSource.match(/async function resumeAgentJob\([\s\S]*?\n  \}\n\n/)?.[0];
   assert.ok(resume, "resumeAgentJob not found");
 
-  // 스레드 메시지 잡은 {sessionId, messageId, status, proposalId}만 돌려준다. 잡 결과에서
-  // 답변을 읽으면 `상태 다시 확인` 후 답변 자리에 `작업이 완료되었습니다.`가 들어간다.
-  // 계약: features/agent_mode/README.md — 답변 본문은 잡 결과가 아니라 스레드에서 읽는다.
+  // 스레드 메시지 잡은 {sessionId, messageId, status, proposalId, assistantMessageId}만
+  // 돌려준다. 잡 결과에서 답변을 읽으면 `상태 다시 확인` 후 답변 자리에
+  // `작업이 완료되었습니다.`가 들어간다. 계약: features/agent_mode/README.md —
+  // 답변 본문은 잡 결과가 아니라 스레드(또는 정확한 assistantMessageId 하나, Agent
+  // Dock Stage C)에서 읽는다.
   assert.match(resume, /threads\.latestReply\(threads\.threadId\)/);
   assert.doesNotMatch(resume, /const result\s*(:[^=]*)?=\s*done\.result \|\| \{\}/);
-  assert.match(resume, /\.\.\.\(done\.result \|\| \{\}\)/);
+  assert.match(resume, /const raw = done\.result \|\| \{\}/);
+  assert.match(resume, /\.\.\.raw, reply/);
+  assert.match(resume, /threads\.getMessage\(threads\.threadId, raw\.assistantMessageId\)/);
   assert.match(resume, /threads\.bumpList\(\)/);
   assert.match(resume, /result\.reply \|\| done\.message/);
 });
@@ -176,4 +180,48 @@ test("submitAgentMessage tracks thread state in its dependencies (no stale threa
   assert.match(deps, /threads\.pending/);
   assert.match(deps, /threads\.createThread/);
   assert.match(deps, /threads\.latestReply/);
+});
+
+test("useDockThreads.getMessage returns an object contract, not a bare reply string", async () => {
+  const threadsSource = await readFile(new URL("../src/app/agentWorkspace/useDockThreads.ts", import.meta.url), "utf8");
+
+  const getMessageFn = threadsSource.match(/const getMessage = useCallback\(async[\s\S]*?\}, \[\]\);/)?.[0];
+  assert.ok(getMessageFn, "getMessage not found");
+  // Stage C 원래 계약(Promise<string>)이 아니라 Stage E가 content+search를 함께
+  // 돌려주는 객체 계약으로 바뀌었다 — 호출부가 .content로 꺼내 쓴다.
+  assert.match(getMessageFn, /Promise<\{ content: string; search\?: ConsultationMessage\["search"\] \}>/);
+  assert.match(getMessageFn, /return \{ content: String\(message\.content \|\| ""\), search: message\.search \};/);
+  assert.match(getMessageFn, /return \{ content: "" \};/);
+  assert.doesNotMatch(getMessageFn, /Promise<string>/);
+});
+
+test("Agent Dock Stage E: web search control, source metadata, and live-region roles", async () => {
+  const dockSource = await readFile(new URL("../src/app/ReactAgentDock.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../../public/styles.css", import.meta.url), "utf8");
+
+  // 웹 검색 세그먼트: 팝오버 안 role="group" 버튼 3개(끔/자동/사용), aria-pressed 소유.
+  assert.match(dockSource, /className="segment" role="group" aria-label="웹 검색"/);
+  assert.match(dockSource, /aria-pressed=\{searchPolicy === "off"\}/);
+  assert.match(dockSource, /aria-pressed=\{searchPolicy === "auto"\}/);
+  assert.match(dockSource, /aria-pressed=\{searchPolicy === "on"\}/);
+  // 지원하지 않는 adapter에서는 자동/사용이 비활성화된다.
+  assert.match(dockSource, /disabled=\{adapter\?\.supportsWebSearch === false\}/);
+  assert.match(styles, /\.react-agent-run-menu-row/);
+
+  // searchPolicy가 실제 제출 body(options)에 실린다.
+  assert.match(dockSource, /options: \{ model, effort, adapter: providerOverride, searchPolicy \}/);
+  assert.match(dockSource, /searchPolicy,\s*surface,\s*threads\.threadId/);
+
+  // 답변에 딸린 검색 출처 metadata 줄 — 실제 사용했을 때만 렌더된다.
+  assert.match(dockSource, /function SearchSourcesLine\(/);
+  assert.match(dockSource, /search\.toolUsed !== "yes" \|\| !search\.sourceRefs\.length/);
+  assert.match(dockSource, /<SearchSourcesLine search=\{message\.search\} \/>/);
+  assert.match(styles, /\.react-agent-search-meta/);
+
+  // 접근성: 오류는 assertive, 안내/전역 상태는 polite. 매초 갱신되는 pendingHint는
+  // 그대로 live 처리하지 않고, runState 전환 시에만 채워지는 별도 sr-only 발표자를 쓴다.
+  assert.match(dockSource, /className="react-agent-error" role="alert"/);
+  assert.match(dockSource, /className="react-agent-notice" role="status"/);
+  assert.match(dockSource, /className="sr-only" role="status" aria-live="polite"/);
+  assert.doesNotMatch(dockSource, /pendingHint[\s\S]{0,80}aria-live/);
 });

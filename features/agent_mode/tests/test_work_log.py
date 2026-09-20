@@ -150,7 +150,7 @@ def test_strict_entry_schema_has_exact_26_keys_and_no_forbidden_fields(tmp_path:
     entry = service.list(limit=200, offset=0, kind="all")["entries"][0]
     serialized = json.dumps(entry)
 
-    assert len(WORK_LOG_ENTRY_KEYS) == 26
+    assert len(WORK_LOG_ENTRY_KEYS) == 31
     assert set(entry) == WORK_LOG_ENTRY_KEYS
     assert not (set(entry) & FORBIDDEN)
     assert all(f'"{key}"' not in serialized for key in FORBIDDEN)

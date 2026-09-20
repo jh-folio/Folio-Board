@@ -419,12 +419,28 @@ def use_llm_analysis():
 
 
 def use_web_search_for_briefing():
+    """Whether the briefing find-pass may use web search — distinct from
+    whether LLM generation itself is on.
+
+    This used to read `USE_LLM_BRIEFING` (the legacy LLM-enable flag `
+    ai_agent_enabled()` also reads), so the documented `USE_WEB_SEARCH_FOR_BRIEFING`
+    variable had no effect at all — turning it off did nothing. Web search
+    obviously still needs the LLM path enabled to run at all.
+    """
+    if not ai_agent_enabled():
+        return False
     load_dotenv()
-    return os.environ.get("USE_LLM_BRIEFING", os.environ.get("USE_OPENAI_BRIEFING", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    return os.environ.get("USE_WEB_SEARCH_FOR_BRIEFING", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def use_web_search_for_analysis():
-    return use_llm_analysis()
+    """Same distinction as `use_web_search_for_briefing()`: this used to just
+    return `use_llm_analysis()` outright, so `USE_WEB_SEARCH_FOR_ANALYSIS` was
+    never actually read."""
+    if not use_llm_analysis():
+        return False
+    load_dotenv()
+    return os.environ.get("USE_WEB_SEARCH_FOR_ANALYSIS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 # ---------------------------------------------------------------------------

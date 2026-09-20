@@ -267,25 +267,42 @@ def _scope_context(data_dir: Path, session: dict) -> dict:
     else:
         report = _report(data_dir, scope)
         primary = {"report": report} if report else {}
+    # 실사용 확인(2026-09-16): 종목·보고서·주제가 전혀 없는 순수 시장 질문("요즘
+    # 시장 어때" 류)도 여전히 marketState/recentChanges를 근거로 삼을 수 있다 —
+    # 둘 다 티커와 무관하게 이미 상한(최대 12~20개)이 걸린 요약값이라 붙여도
+    # 프롬프트 부담이 크지 않다. 이전에는 이 둘까지 완전히 비워 답이 얕아졌다.
+    # fastSignals는 티커별 조회라 정말로 아무 티커도 없으면 낼 것이 없다.
     changes = list_change_events(Path(data_dir) / "market-memory.sqlite3", limit=20)
-    signals = []
-    for ticker in tickers[:8]:
-        signals.extend(query_signals(default_db_path(data_dir), ticker=ticker, limit=5).get("items") or [])
-    return {
+    result = {
         **primary,
         "marketState": _market_state(data_dir),
         "recentChanges": changes[:20],
-        "fastSignals": signals[:20],
-        "signalNotice": "fastSignals are unconfirmed metadata-only leads and are not evidence",
     }
+    if tickers:
+        signals = []
+        for ticker in tickers[:8]:
+            signals.extend(query_signals(default_db_path(data_dir), ticker=ticker, limit=5).get("items") or [])
+        result["fastSignals"] = signals[:20]
+        result["signalNotice"] = "fastSignals are unconfirmed metadata-only leads and are not evidence"
+    return result
 
 
-def assemble_consultation_context(data_dir: Path, session_id: str) -> dict:
+def assemble_consultation_context(data_dir: Path, session_id: str, *, current_message_id: str = "") -> dict:
     started = time.perf_counter()
     session = get_session(data_dir, session_id)
     if not session:
         raise KeyError("consultation_not_found")
     messages = session.get("messages") or []
+    if current_message_id:
+        # The caller's own question is already the newest saved message (the
+        # route persists it before the job runs) and is passed to the prompt
+        # separately — including it here too would repeat it verbatim.
+        messages = [row for row in messages if row.get("id") != current_message_id]
+    # `_update_memory()` (consultation_store.py) only ever summarizes
+    # `messages[:-12]` once it fires, so once that summary exists the last 12
+    # is exactly the window it does *not* cover. Without a summary yet, keep
+    # the older wider window — nothing has been condensed away to duplicate.
+    recent_window = 12 if str((session.get("memory") or {}).get("summary") or "").strip() else 20
     scope = session.get("scope") or {}
     rules = {
         "canonicalWriteback": False, "proposalIntent": False, "noteActionOnly": True, "consultationIsEvidence": False,
@@ -308,7 +325,7 @@ def assemble_consultation_context(data_dir: Path, session_id: str) -> dict:
         "schemaVersion": 1,
         "session": {"id": session["id"], "scope": session.get("scope") or {}, "title": session.get("title") or ""},
         "consultationMemory": {**(session.get("memory") or {}), "layer": "hypothesis", "sourceLayer": "user_consultation", "reuseAsEvidence": False},
-        "recentMessages": [{"role": row.get("role"), "content": str(row.get("content") or "")[:6000], "sourceLayer": row.get("sourceLayer"), "reuseAsEvidence": False} for row in messages[-20:]],
+        "recentMessages": [{"role": row.get("role"), "content": str(row.get("content") or "")[:6000], "sourceLayer": row.get("sourceLayer"), "reuseAsEvidence": False} for row in messages[-recent_window:]],
         "sourceContext": _scope_context(Path(data_dir), session),
         "rules": rules,
     }

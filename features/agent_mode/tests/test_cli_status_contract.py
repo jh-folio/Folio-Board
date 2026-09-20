@@ -104,4 +104,6 @@ def test_the_dock_never_saves_a_conversation_choice_as_the_default():
     ).read_text(encoding="utf-8")
 
     assert "if (providerOverride || !adapter?.id || !nextModel) return;" in source
-    assert "options: { model, effort, adapter: providerOverride }" in source
+    # Agent Dock Stage E: searchPolicy joined the same per-conversation options
+    # object (not a separately-saved global setting).
+    assert "options: { model, effort, adapter: providerOverride, searchPolicy }" in source

@@ -51,6 +51,24 @@ def test_shared_job_schema_rejects_unknown_fields_and_nonterminal_projection() -
         )
 
 
+def test_a_job_persisted_before_stage_a_timing_fields_still_validates() -> None:
+    """Agent Dock Stage A added phaseCode/queueWaitMs/contextMs/cliMs/postprocessMs/totalMs.
+
+    They must default to `None` so a job JSON written before this change (missing
+    the keys entirely, not just null) keeps validating unchanged on read."""
+    job = _queued()
+    dumped = job.model_dump(mode="json")
+    for key in ("phaseCode", "queueWaitMs", "contextMs", "cliMs", "postprocessMs", "totalMs"):
+        assert key in dumped
+        del dumped[key]
+
+    restored = jobs.SharedJob.model_validate(dumped)
+
+    assert restored.phaseCode is None
+    assert restored.queueWaitMs is None
+    assert restored.totalMs is None
+
+
 def test_store_recovers_backup_and_fails_closed_when_both_are_corrupt(tmp_path: Path) -> None:
     # Given: a store with one valid write and then a corrupt primary
     store = jobs.SharedJobStore(tmp_path / "jobs-v2.json", tmp_path / "jobs.json", clock=_clock)

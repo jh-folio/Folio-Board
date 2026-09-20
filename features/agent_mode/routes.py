@@ -24,6 +24,7 @@ from features.agent_mode.consultation_store import (
     append_user_message,
     create_session,
     delete_session,
+    get_message,
     get_session,
     list_sessions,
     update_session,
@@ -118,6 +119,14 @@ class AgentCompanionBoundary:
             raise HTTPException(status_code=404, detail="consultation_not_found")
         return session
 
+    def get_consultation_message(self, consultation_id: str, message_id: str):
+        # Bounded alternative to re-fetching the whole thread once a job's
+        # result names the exact assistant message it produced.
+        message = get_message(self._consultation_data_dir(), consultation_id, message_id)
+        if message is None:
+            raise HTTPException(status_code=404, detail="consultation_message_not_found")
+        return message
+
     def update_consultation(self, consultation_id: str, body: dict | None = Body(default=None)):
         try:
             return update_session(self._consultation_data_dir(), consultation_id, body or {})
@@ -205,6 +214,7 @@ class AgentCompanionBoundary:
         router.add_api_route("/api/agent/threads", self.create_consultation, methods=["POST"])
         router.add_api_route("/api/agent/threads", self.list_consultations, methods=["GET"])
         router.add_api_route("/api/agent/threads/{consultation_id}", self.get_consultation, methods=["GET"])
+        router.add_api_route("/api/agent/threads/{consultation_id}/messages/{message_id}", self.get_consultation_message, methods=["GET"])
         router.add_api_route("/api/agent/threads/{consultation_id}", self.update_consultation, methods=["POST"])
         router.add_api_route("/api/agent/threads/{consultation_id}", self.delete_consultation, methods=["DELETE"])
         router.add_api_route("/api/agent/threads/{consultation_id}/messages", self.add_consultation_message, methods=["POST"])

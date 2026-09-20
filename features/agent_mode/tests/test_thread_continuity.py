@@ -19,7 +19,8 @@ def cli(monkeypatch):
     captured: dict = {}
 
     # 실제 시그니처는 `adapter`도 받는다 — 이 대화만 다른 CLI로 돌리는 경로다.
-    def run(prompt, adapter="", model="", job_id=""):
+    # `**_kwargs`는 `on_phase` 같은 additive 키워드 인자를 흡수한다.
+    def run(prompt, adapter="", model="", job_id="", **_kwargs):
         captured.setdefault("prompts", []).append(prompt)
         return {"adapter": "test-cli", "output": "전력 공급 제약이 병목입니다."}
 
