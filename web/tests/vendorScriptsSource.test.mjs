@@ -23,6 +23,14 @@ test("index.html serves the chart libraries locally, before the scripts that use
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net\/npm\/lightweight-charts/);
 });
 
+// 히트맵이 Plotly에서 ECharts로 옮겨 갔다. 남은 외부 스크립트가 없어야 앱이 오프라인에서도 차트를 그린다.
+// (글꼴은 styles.css가 아직 CDN에서 받는다 — 별건이다.)
+test("index.html loads no script from the network", () => {
+  const external = [...html.matchAll(/<script[^>]+src="(?:https?:)?\/\/[^"]+"/g)].map((match) => match[0]);
+  assert.deepEqual(external, []);
+  assert.doesNotMatch(html, /plotly/i);
+});
+
 // 벤더 파일이 슬며시 다른 버전으로 바뀌면 히트맵 라벨 계획이 읽는 배치(계획 §6.5)도 바뀔 수 있다.
 test("vendored chart libraries are pinned to exact versions", () => {
   assert.match(pkg.devDependencies.echarts, /^\d+\.\d+\.\d+$/, "echarts must not use ^ or ~");

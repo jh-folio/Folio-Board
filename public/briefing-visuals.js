@@ -512,12 +512,6 @@
       .concat("…");
   }
 
-  function heatmapLayoutHeight(stage) {
-    const measured = finite(stage?.clientHeight);
-    if (!measured) return 620;
-    return Math.max(520, Math.round(measured));
-  }
-
   /** 히트맵 계층을 만든다.
    *
    *  `options.flat`이면 산업 층을 접고 섹터 바로 아래에 종목을 붙인다. 뿌리
@@ -599,21 +593,33 @@
   }
 
   const HEATMAP_FONT_FAMILY = 'Inter, "IBM Plex Sans", SUIT, sans-serif';
-  // 트레이스 기본 글꼴. Plotly는 줄 간격(dy)을 span 크기가 아니라 **이 값**의 약
-  // 1.3배로 잡는다. 줄바꿈이 들어가는지 계산할 때 그 사실을 반영해야 하고,
-  // 겹침 없이 쓸 수 있는 최대 크기도 여기서 나온다 — 이름+등락률 두 줄의 상한은
-  // 11px에서 16px, 12px에서 18px, **13px에서 20px**이다. 상한을 올리려면 이 값을
-  // 올려야 하지만 두 줄 라벨의 세로 비용도 같이 오른다(14.3px → 16.9px).
-  const HEATMAP_BASE_FONT_PX = 13;
-  const HEATMAP_LINE_STEP_PX = HEATMAP_BASE_FONT_PX * 1.3;
+  // 라벨 글자는 6px에서 20px 사이다. 정한 크기가 곧 그려지는 크기라(ECharts는 라벨을 줄이지
+  // 않는다) 하한이 곧 화면에 나오는 가장 작은 글자다.
   const HEATMAP_MAX_LABEL_PX = 20;
-  // 하한 아래는 비운다. 지금 방식에서는 정해진 크기가 곧 그려지는 크기라
-  // (Plotly가 줄이지 않는다) 이 값이 곧 화면에 나오는 가장 작은 글자다.
   const HEATMAP_MIN_LABEL_PX = 6;
-  const HEATMAP_LABEL_PAD_PX = 3;
+  // **좌우 여백 3px.** ECharts는 라벨이 칸 폭보다 넓으면 `...`로 자른다. 등락률이 잘리면 `-0.53%`가 `-0.5`로 읽혀
+  // 틀린 숫자가 되고, 이름이 잘리면 `Samsung…`이 12개사를 가리킨다. 정확한 타일 폭(heatmapTileSizes)으로 재고 라벨
+  // padding을 0으로 두면(heatmapSeriesBase) 브라우저 실측에서 KR·JP·US 모두 여백 **1px부터 잘림 0**이었고 0px에서만
+  // 잘렸다. 3px는 예전 Plotly 때와 같은 숨 쉴 자리이자, 글꼴이 늦게 내려와 폭이 조금 달라져도 받아낼 여유(2px)다.
+  // 글꼴을 바꾸면 다시 잰다.
+  const HEATMAP_LABEL_SIDE_PAD_PX = 3;
+  // 위아래는 자르지 않고 넘칠 뿐이라 여유만 둔다.
+  const HEATMAP_LABEL_VERTICAL_PAD_PX = 3;
   // 칸 크기에 글자 크기가 따라붙는 정도. 완전 비례가 아니라 면적의 제곱근에
   // 완만하게 따라간다(면적을 그대로 쓰면 큰 칸만 남고 작은 칸은 전부 하한이 된다).
   const HEATMAP_SIZE_PER_ROOT_AREA = 0.105;
+  // 섹터·산업 머리띠. 이름은 한 줄이고 이 띠 안에 들어가야 한다.
+  const HEATMAP_HEADER_PX = 26;
+  const HEATMAP_HEADER_MAX_LABEL_PX = 13;
+  // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
+  const HEATMAP_MAX_LABEL_LINES = 2;
+  // 글자가 baseline 위아래로 차지하는 몫. 렌더된 줄 상자가 글꼴 크기의 약 1.2배다.
+  const HEATMAP_ASCENT_RATIO = 0.95;
+  const HEATMAP_DESCENT_RATIO = 0.25;
+  const HEATMAP_LINE_HEIGHT = 1.3;
+  // 정확한 타일 크기를 못 읽을 때의 추정. 실측 타일 폭 / √면적의 **최소**가 0.58이었다.
+  // 라벨은 줄지만 잘리지는 않는다 — 틀린 숫자를 그리는 쪽으로는 실패하지 않는다.
+  const HEATMAP_FALLBACK_WIDTH_RATIO = 0.58;
 
   /** 이 칸이 쓸 수 있는 최대 글자 크기.
    *
@@ -628,26 +634,9 @@
     const scaled = HEATMAP_MIN_LABEL_PX + HEATMAP_SIZE_PER_ROOT_AREA * Math.sqrt(area);
     return Math.max(HEATMAP_MIN_LABEL_PX, Math.min(HEATMAP_MAX_LABEL_PX, Math.round(scaled)));
   }
-  // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
-  const HEATMAP_MAX_LABEL_LINES = 2;
-  // 글자가 baseline 위아래로 차지하는 몫. 실측으로 렌더된 줄 상자가 글꼴 크기의
-  // 약 1.2배였다(30px → 36px, 19px → 23px).
-  const HEATMAP_ASCENT_RATIO = 0.95;
-  const HEATMAP_DESCENT_RATIO = 0.25;
-
-  /** 위아래 두 줄이 겹치지 않는가.
-   *
-   *  Plotly는 줄 간격을 `dy="1.3em"`로 주는데 그 `em`은 span 크기가 아니라
-   *  **`<text>`의 기본 글꼴**(HEATMAP_BASE_FONT_PX) 기준이다. 간격이 14.3px로
-   *  고정이라 첫 줄을 30px로 키우면 아랫줄이 그 위로 올라온다 — 실측에서 큰 타일의
-   *  종목명과 등락률이 36px 높이만큼 통째로 겹쳤다. 그래서 줄이 둘 이상이면
-   *  **간격이 허락하는 크기까지만** 키운다.
-   */
-  const linesClear = (upper, lower) =>
-    upper * HEATMAP_DESCENT_RATIO + lower * HEATMAP_ASCENT_RATIO <= HEATMAP_LINE_STEP_PX;
 
   /** 어절 경계로만 줄을 나눈다. 한 줄도 폭을 넘으면 실패로 돌려준다. */
-  function wrapLabelLines(text, size, width, measure) {
+  function wrapLabelLines(text, size, width, measure, maxLines) {
     const words = String(text).split(/\s+/).filter(Boolean);
     const lines = [];
     let current = "";
@@ -660,31 +649,32 @@
       }
     }
     if (current) lines.push(current);
-    if (!lines.length || lines.length > HEATMAP_MAX_LABEL_LINES) return null;
+    if (!lines.length || lines.length > (maxLines || HEATMAP_MAX_LABEL_LINES)) return null;
     return lines.every((line) => measure(line, size, true) <= width) ? lines : null;
   }
 
-  /** 이 타일에 실제로 들어가는 라벨을 만든다. 안 들어가면 빈 문자열이다.
+  /** 이 타일에 실제로 들어가는 라벨을 **그리기 전에** 정한다. 안 들어가면 null이다.
    *
-   *  예전에는 시가총액 비율만 보고 크기를 정했다(7 + 21·√(cap/max)). 타일 픽셀을
-   *  모르니 넘치는 라벨이 생기고, 그러면 Plotly가 통째로 축소해 1~5px 얼룩으로
-   *  남았다 — 실측 US 데스크톱에서 그려진 라벨 424개 중 276개가 6px 미만이었다.
-   *  "너무 작으면 비운다"는 규칙이 있었지만 명목 크기로만 걸러 소용이 없었다.
+   *  `box`는 타일의 정확한 폭·높이다(heatmapTileSizes). 예전에는 그린 뒤 타일을 재서 라벨을
+   *  얹고, Plotly가 넘치는 라벨을 통째로 축소하면 폭 예산을 깎아 다시 그렸다(4패스 + 비동기 대기).
+   *  ECharts는 축소하지 않고 잘라 버리므로 처음부터 **들어가는 것만** 고르면 되고, 고른 값이 곧
+   *  그려지는 값이라 수렴할 대상이 없다.
    *
-   *  이름+등락 → 어절 줄바꿈+등락 → 이름만 순으로 물러난다. 어절 단위로 **잘라
-   *  내지는** 않는다: 한 어절로 줄이면 KR에서 `Samsung…`이 12개사를, JP에서
-   *  `Mitsubishi…`가 7개사를 가리켜 다른 회사 이름을 말하게 된다.
+   *  이름+등락 → 어절 줄바꿈+등락 → 이름만 순으로 물러난다. 어절 단위로 **잘라 내지는** 않는다:
+   *  한 어절로 줄이면 KR에서 `Samsung…`이 12개사를, JP에서 `Mitsubishi…`가 7개사를 가리켜 다른
+   *  회사 이름을 말하게 된다.
    */
-  function heatmapLabelMarkup(label, change, box, measure) {
+  function heatmapLabelPlan(label, change, box, measure) {
     const text = String(label || "").trim();
-    if (!text) return "";
-    const width = (finite(box && box.width) || 0) - HEATMAP_LABEL_PAD_PX * 2;
-    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_PAD_PX;
-    if (width <= 0 || height <= 0) return "";
+    if (!text) return null;
+    const width = (finite(box && box.width) || 0) - HEATMAP_LABEL_SIDE_PAD_PX * 2;
+    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_VERTICAL_PAD_PX;
+    if (width <= 0 || height <= 0) return null;
     const ceiling = Math.min(
       finite(box && box.maxSize) ?? HEATMAP_MAX_LABEL_PX,
       heatmapSizeCeiling(width, height),
     );
+    const maxLines = finite(box && box.maxLines) ?? HEATMAP_MAX_LABEL_LINES;
     const tail = String(change || "");
     for (const withTail of [true, false]) {
       if (withTail && !tail) continue;
@@ -692,20 +682,32 @@
       for (let size = ceiling; size >= HEATMAP_MIN_LABEL_PX; size -= 1) {
         const tailSize = Math.max(8, Math.round(size * 0.62));
         if (suffix && measure(suffix, tailSize, false) > width) continue;
-        const lines = wrapLabelLines(text, size, width, measure);
+        const lines = wrapLabelLines(text, size, width, measure, maxLines);
         if (!lines) continue;
-        // 줄이 둘 이상이면 고정 간격 안에 들어와야 한다. 안 그러면 겹친다.
-        if (lines.length > 1 && !linesClear(size, size)) continue;
-        if (suffix && !linesClear(size, tailSize)) continue;
+        const nameStep = Math.round(size * HEATMAP_LINE_HEIGHT);
+        const tailStep = Math.round(tailSize * HEATMAP_LINE_HEIGHT);
         const needed = size * (HEATMAP_ASCENT_RATIO + HEATMAP_DESCENT_RATIO)
-          + (lines.length - 1 + (suffix ? 1 : 0)) * HEATMAP_LINE_STEP_PX;
+          + (lines.length - 1) * nameStep + (suffix ? tailStep : 0);
         if (needed > height) continue;
-        const body = lines.map(escapeHtml).join("<br>");
-        const tailLine = suffix ? `<br><span style="font-size:${tailSize}px">${escapeHtml(suffix)}</span>` : "";
-        return `<span style="font-size:${size}px"><b>${body}</b></span>${tailLine}`;
+        return { lines, size, suffix, tailSize, nameStep, tailStep };
       }
     }
-    return "";
+    return null;
+  }
+
+  /** 계획을 ECharts 라벨 설정으로. 줄 간격도 우리가 정한다(글꼴 기본 간격에 맡기지 않는다). */
+  function heatmapRichLabel(plan) {
+    // `{스타일|글자}` 문법의 예약 문자는 지운다. 이름에 들어 있으면 라벨이 통째로 깨진다.
+    const safe = (value) => String(value).replace(/[{}|]/g, "");
+    const body = plan.lines.map((line) => `{n|${safe(line)}}`).join("\n");
+    const tail = plan.suffix ? `\n{c|${safe(plan.suffix)}}` : "";
+    return {
+      formatter: body + tail,
+      rich: {
+        n: { fontSize: plan.size, lineHeight: plan.nameStep, fontWeight: 700, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+        c: { fontSize: plan.tailSize, lineHeight: plan.tailStep, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+      },
+    };
   }
 
   let labelMeasureContext = null;
@@ -724,109 +726,171 @@
     return change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
   };
 
-  /** 지금 그려진 타일의 픽셀 상자. 이 층에서 그려지지 않은 타일은 빠진다. */
-  function heatmapTileBoxes(stage) {
-    const boxes = new Map();
-    stage.querySelectorAll?.("g.slice").forEach((slice) => {
-      const path = slice.querySelector("path.surface");
-      if (!path) return;
-      const box = path.getBBox();
-      if (box.width * box.height <= 0.5) return;
-      const bound = slice.__data__;
-      const nodeId = bound && bound.data ? bound.data.id : null;
-      if (nodeId) boxes.set(nodeId, box);
+  /** heatmapNodes의 평면 배열을 ECharts가 받는 중첩 트리로. 자료 모양 변환일 뿐이다. */
+  function heatmapTree(nodes) {
+    const byId = new Map();
+    nodes.ids.forEach((id, index) => {
+      byId.set(id, {
+        id,
+        name: nodes.labels[index],
+        value: nodes.values[index],
+        children: [],
+        itemStyle: { color: nodes.colors[index] },
+        _row: nodes.customdata[index],
+        _change: nodes.changes[index],
+      });
     });
-    return boxes;
+    const roots = [];
+    nodes.ids.forEach((id, index) => {
+      const parent = nodes.parents[index];
+      const node = byId.get(id);
+      if (parent && byId.has(parent)) byId.get(parent).children.push(node);
+      else roots.push(node);
+    });
+    const prune = (node) => {
+      if (!node.children.length) delete node.children;
+      else node.children.forEach(prune);
+    };
+    roots.forEach(prune);
+    return roots;
   }
 
-  /** Plotly가 칸에 맞추려고 줄여 버린 라벨과 그 배율. */
-  function heatmapShrunkLabels(stage) {
-    const shrunk = new Map();
-    stage.querySelectorAll?.("g.slice").forEach((slice) => {
-      const node = slice.querySelector("text.slicetext");
-      if (!node || !(node.textContent || "").trim()) return;
-      const match = /scale\(([-\d.]+)/.exec(node.getAttribute("transform") || "");
-      const scale = match ? parseFloat(match[1]) : 1;
-      if (!(scale < 0.985)) return;
-      const bound = slice.__data__;
-      if (bound && bound.data) shrunk.set(bound.data.id, scale);
-    });
-    return shrunk;
+  /** 시리즈 설정 — **진짜 차트와 배치 선계산이 같은 것을 쓴다.** 머리띠 높이·테두리·간격이 다르면
+   *  배치가 달라져 계획한 라벨 폭이 어긋난다. `depth`는 뿌리에서 몇 겹까지 그리는지(잎 포함). */
+  function heatmapSeriesBase(depth) {
+    return {
+      type: "treemap",
+      roam: false,
+      nodeClick: false,
+      // 깊이 상한에서 잎이 된 그룹 앞에 ECharts가 `▶ `를 붙인다(기본값). 그 자리만큼 라벨 폭이 줄어 계획한 폭과 어긋나고
+      // 이름이 잘린다. 들어갈 수 있다는 안내는 위 경로 버튼의 힌트가 이미 한다.
+      drillDownIcon: "",
+      breadcrumb: { show: false },
+      leafDepth: depth,
+      width: "100%",
+      height: "100%",
+      top: 0, left: 0, right: 0, bottom: 0,
+      squareRatio: 1,
+      itemStyle: { borderColor: "#ffffff", borderWidth: 0.45, gapWidth: 0 },
+      // 라벨은 노드마다 heatmapPlanLabels가 정한다. 여기서 자르거나 줄바꿈하지 않는다.
+      // **padding 0.** 트리맵 라벨의 기본 padding은 5라서 ECharts가 글자에 쓸 수 있는 폭을 칸 폭보다 양쪽 5px씩
+      // 줄인다 — 계획한 폭이 넉넉히 들어가는데도 `...`로 잘렸다(브라우저 실측: 여백 5px 이하에서 잘림 다수).
+      label: { show: false, position: "inside", padding: 0, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+      upperLabel: { show: true, height: HEATMAP_HEADER_PX, padding: 0, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY, overflow: "truncate" },
+      levels: [
+        // 보이지 않는 뿌리는 머리띠를 갖지 않는다 — 안 그러면 맨 위 26px이 빈 띠로 남는다.
+        { itemStyle: { borderWidth: 0, gapWidth: 1 }, upperLabel: { show: false } },
+        { itemStyle: { borderWidth: 0.45, gapWidth: 0.45 } },
+      ],
+    };
   }
 
-  function heatmapTextForBoxes(stage, nodes, budget) {
-    // 자식이 함께 그려지는 부모는 사각형 전체가 아니라 위쪽 머리띠(marker.pad.t)에만
-    // 이름이 들어간다. 전체 사각형으로 재면 606x427에 맞춰 놓고 실제로는 606x28에
-    // 그려져 다시 축소된다.
-    const pad = stage._fullData?.[0]?.marker?.pad || { t: 28, l: 7, r: 7, b: 7 };
-    const boxes = heatmapTileBoxes(stage);
-    const parentsWithChildren = new Set();
-    nodes.parents.forEach((parent, index) => {
-      if (parent && boxes.has(nodes.ids[index])) parentsWithChildren.add(parent);
-    });
-    return nodes.ids.map((nodeId, index) => {
-      const box = boxes.get(nodeId);
-      if (!box) return "";
-      const room = budget.get(nodeId) || 1;
-      const label = nodes.labels[index];
-      if (parentsWithChildren.has(nodeId)) {
-        return heatmapLabelMarkup(label, "", {
-          width: (box.width - pad.l - pad.r) * room,
-          height: Math.min(pad.t, box.height),
-          maxSize: pad.t - 10,
-        }, measureLabelWidth);
-      }
-      return heatmapLabelMarkup(label, heatmapChangeText(nodes.changes[index]), {
-        width: box.width * room,
-        height: box.height,
-      }, measureLabelWidth);
-    });
-  }
-
-  /** 라벨을 실측해 얹고, 그래도 Plotly가 줄인 만큼 폭 예산을 깎아 다시 맞춘다.
+  /** 타일의 정확한 크기를 그리기 **전에** 얻는다.
    *
-   *  캔버스 글자폭 추정은 SVG 실제 렌더와 조금 어긋난다. 축소 배율이 곧 얼마나
-   *  넘쳤는지이므로 그만큼 예산을 줄여 다시 고르면 몇 번 만에 수렴한다. 끝내
-   *  안 맞는 타일은 라벨을 포기한다 — 줄여서 얹지 않는다.
-   */
-  /** Plotly 내부 레이아웃이 지금 컨테이너 폭을 따라잡을 때까지 기다린다.
+   *  squarify는 자료와 크기의 순수 함수라, DOM 없는 ssr 인스턴스에 같은 시리즈 설정으로 배치만
+   *  시키면 진짜 차트와 같은 좌표가 나온다. 예전에는 Plotly가 그린 SVG를 읽었다
+   *  (`__data__`·`_fullLayout`) — Plotly가 무엇을 했는지 알아내려는 역공학이었다. 이건 **우리가 그릴
+   *  것의 크기를 미리 묻는** 것이다.
    *
-   *  responsive 리사이즈는 비동기다. 폭이 막 바뀐 직후에는 clientWidth가 820인데
-   *  `_fullLayout.width`는 아직 380이고, 실측으로 약 60ms 뒤에 맞춰진다. 그 사이에
-   *  타일을 재면 옛 크기 기준으로 라벨이 정해진다. 그렇게 작아진 라벨은 축소가
-   *  걸리지 않아 아래 수렴 루프도 눈치채지 못한다 — 창을 넓혔는데 지도가 오히려
-   *  비어 보였다(실측 820px에서 라벨 167개가 78개로).
+   *  **배치를 읽는 경로(`getModel().getSeriesByIndex(0).getData().tree`의 `getLayout()`)는 ECharts의
+   *  공개 API가 아니다.** 그래서 (1) 벤더 파일이 정확 고정 버전이고, (2) briefing-visuals.test.js가
+   *  실제 벤더 번들로 이 함수를 매번 확인하며(ECharts를 올리면 여기서 먼저 걸린다), (3) 읽지 못하면
+   *  null을 돌려주고 호출자가 추정으로 물러난다 — 틀린 크기를 조용히 내주지 않는다.
+   *  ssr 인스턴스는 dispose하지 않으면 Node 프로세스가 끝나지 않는다(6.1.0). 반드시 finally에서 푼다.
    */
-  async function heatmapAwaitSize(stage) {
+  function heatmapTileSizes(echarts, series, width, height) {
+    if (!echarts || typeof echarts.init !== "function" || !(width > 0) || !(height > 0)) return null;
+    let chart = null;
     try {
-      root.Plotly.Plots?.resize?.(stage);
-    } catch (_) {}
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const width = finite(stage.clientWidth) || 0;
-      const drawn = finite(stage._fullLayout?.width) || 0;
-      if (width && Math.abs(drawn - width) <= 1) return;
-      await new Promise((resolve) => setTimeout(resolve, 32));
+      chart = echarts.init(null, null, { renderer: "svg", ssr: true, width, height });
+      chart.setOption({ animation: false, series: [series] });
+      const data = chart.getModel().getSeriesByIndex(0).getData();
+      const rects = new Map();
+      for (let index = 0; index < data.count(); index += 1) {
+        const node = data.tree.getNodeByDataIndex(index);
+        const id = node.getModel().get("id");
+        const layout = node.getLayout();
+        // 깊이 상한 아래의 노드는 그려지지 않는다. 배치가 아예 없거나 면적(area)만 남아 있어
+        // 폭이 없다 — 건너뛴다. **그려진 노드**의 값이 하나라도 깨졌으면 전부 못 믿는다.
+        if (id == null || !layout || layout.width === undefined) continue;
+        if (![layout.x, layout.y, layout.width, layout.height].every(Number.isFinite)) return null;
+        rects.set(String(id), { x: layout.x, y: layout.y, width: layout.width, height: layout.height });
+      }
+      return rects.size ? rects : null;
+    } catch (_) {
+      return null;
+    } finally {
+      if (chart) chart.dispose();
     }
   }
 
-  async function heatmapApplyLabels(stage, nodes) {
-    const budget = new Map();
-    let text = [];
-    for (let pass = 0; pass < 4; pass += 1) {
-      await heatmapAwaitSize(stage);
-      text = heatmapTextForBoxes(stage, nodes, budget);
-      await root.Plotly.restyle(stage, { text: [text] });
-      // 탭이 뒤에 있으면 requestAnimationFrame이 오지 않는다. 타이머로 기다린다.
-      await new Promise((resolve) => setTimeout(resolve, 16));
-      const shrunk = heatmapShrunkLabels(stage);
-      if (!shrunk.size) return;
-      shrunk.forEach((scale, nodeId) => budget.set(nodeId, (budget.get(nodeId) || 1) * Math.max(0.2, scale)));
-    }
-    const leftover = heatmapShrunkLabels(stage);
-    if (!leftover.size) return;
-    await root.Plotly.restyle(stage, {
-      text: [nodes.ids.map((nodeId, index) => (leftover.has(nodeId) ? "" : text[index]))],
-    });
+  /** 정확한 크기를 못 읽을 때의 추정 타일. 좌표는 모르므로 머리띠 클릭 판정은 꺼진다. */
+  function heatmapFallbackSize(value, total, width, height) {
+    const area = total > 0 ? (Math.max(0, value) / total) * width * height : 0;
+    const side = Math.sqrt(area);
+    return { x: null, y: null, width: side * HEATMAP_FALLBACK_WIDTH_RATIO, height: side };
+  }
+
+  /** 트리의 모든 노드에 라벨을 계획해 붙이고, 머리띠 클릭 판정에 쓸 좌표를 돌려준다.
+   *
+   *  섹터·산업 **머리띠**(자식을 함께 그리는 부모)와 **깊이 상한에서 잎이 된 그룹**(좁은 화면의
+   *  `Materials`)도 같은 계획기를 쓴다. 안 그러면 ECharts 기본 처리가 `▶ M...`처럼 자른다.
+   *  안 들어가는 이름은 비운다 — 자르지 않는다.
+   */
+  function heatmapPlanLabels(roots, context) {
+    const { rects, total, width, height, depth, measure } = context;
+    const headers = [];
+    const rectOf = (node) => (rects && rects.get(node.id)) || heatmapFallbackSize(node.value, total, width, height);
+    const walk = (node, level) => {
+      const rect = rectOf(node);
+      const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+      if (hasChildren && level < depth) {
+        // 머리띠 색은 fill이 아니라 **자식 사이 틈의 색(borderColor)**으로 칠해진다.
+        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: node.itemStyle.color });
+        const plan = heatmapLabelPlan(node.name, "", {
+          width: rect.width,
+          height: HEATMAP_HEADER_PX,
+          maxSize: HEATMAP_HEADER_MAX_LABEL_PX,
+          maxLines: 1,
+        }, measure);
+        node.upperLabel = plan
+          ? Object.assign({ show: true, height: HEATMAP_HEADER_PX }, heatmapRichLabel(plan))
+          // 머리띠는 남기고 글자만 비운다. `show: false`면 띠 자체가 사라져 자식이 그 자리를 먹는다.
+          // 빈 문자열("")은 서식이 없는 것으로 읽혀 기본 이름이 `Steels ...`처럼 잘려 그려진다(브라우저 실측) —
+          // 공백 한 글자로 "글자 없음"을 명시한다.
+          : { show: true, height: HEATMAP_HEADER_PX, formatter: " " };
+        if (finite(rect.x) !== null && finite(rect.y) !== null) {
+          headers.push({ id: node.id, x: rect.x, y: rect.y, width: rect.width, height: HEATMAP_HEADER_PX });
+        }
+        node.children.forEach((child) => walk(child, level + 1));
+        return;
+      }
+      const plan = heatmapLabelPlan(node.name, heatmapChangeText(node._change), { width: rect.width, height: rect.height }, measure);
+      node.label = plan ? Object.assign({ show: true }, heatmapRichLabel(plan)) : { show: false };
+    };
+    roots.forEach((node) => walk(node, 1));
+    return headers;
+  }
+
+  /** 클릭 좌표가 어느 머리띠 위인가. ECharts는 머리띠를 눌러도 부모가 아니라 보이지 않는 뿌리를 알려 준다. */
+  function heatmapHeaderAt(headers, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+    const hit = (headers || []).find((header) =>
+      x >= header.x && x <= header.x + header.width && y >= header.y && y <= header.y + header.height);
+    return hit ? hit.id : "";
+  }
+
+  function heatmapTooltipTheme() {
+    const css = getComputedStyle(document.documentElement);
+    const token = (name, fallback) => {
+      const value = css.getPropertyValue(name).trim();
+      return value && !/^(var|color-mix)\(/i.test(value) ? value : fallback;
+    };
+    return {
+      backgroundColor: token("--folio-surface-dark", "#101829"),
+      borderColor: token("--folio-border-strong", "#c5ccd8"),
+      color: token("--folio-ink-inverse", "#ffffff"),
+    };
   }
 
   function createRequestGate() {
@@ -1542,8 +1606,10 @@
     if (!flatNodes.ids.length) {
       return unavailableCard(snapshot, title, "저장된 히트맵 구성 종목이 없습니다.");
     }
-    if (!root.Plotly?.newPlot) return unavailableCard(snapshot, title, "히트맵 라이브러리를 불러오지 못했습니다.");
+    if (!root.echarts?.init) return unavailableCard(snapshot, title, "히트맵 라이브러리를 불러오지 못했습니다.");
     const groupedNodes = heatmapNodes(rows);
+    const flatTree = heatmapTree(flatNodes);
+    const groupedTree = heatmapTree(groupedNodes);
     const { id, card, stage } = cardShell(snapshot, title, "heatmap");
     stage.classList.add("briefing-heatmap-stage");
     const values = document.createElement("details");
@@ -1556,69 +1622,106 @@
     stage.insertAdjacentElement("beforebegin", nav);
 
     let level = "";
-    let drawing = null;
+    let wanted = false;
+    let chart = null;
+    let resizeObserver = null;
+    let lastSize = "";
+    let headers = [];
 
-    /** 이 층에서 무엇을 몇 겹까지 그릴지.
+    const findNode = (tree, nodeId) => {
+      for (const node of tree) {
+        if (node.id === nodeId) return node;
+        const hit = node.children && findNode(node.children, nodeId);
+        if (hit) return hit;
+      }
+      return null;
+    };
+
+    /** 이 층에서 무엇을 몇 겹까지 그릴지. `roots`는 이 층의 새 뿌리, `depth`는 뿌리부터 잎까지 겹 수다.
      *
-     *  뿌리는 섹터→종목이다. 섹터에 들어가면 그 안에서 산업이 열리고(넓은 화면은
-     *  종목까지 한 겹 더), 산업에 들어가면 그 산업의 종목만 남는다. 누를 때마다
-     *  더 자세해지는 방향이라 되돌아오는 길은 위 경로 버튼이 맡는다.
+     *  뿌리는 섹터→종목이다. 섹터에 들어가면 그 섹터의 산업이 새 뿌리가 되고(넓은 화면은 종목까지 한
+     *  겹 더), 산업에 들어가면 그 산업의 종목만 남는다. 이름 띠는 위 경로 버튼이 이미 보여 주므로 다시
+     *  그리지 않는다. 누를 때마다 더 자세해지는 방향이라 되돌아오는 길은 경로 버튼이 맡는다.
      */
     const viewFor = (levelId) => {
       const compact = heatmapCompact(stage);
-      if (!levelId) return { nodes: flatNodes, maxdepth: compact ? 1 : -1 };
-      if (levelId.startsWith("sector:")) return { nodes: groupedNodes, maxdepth: compact ? 2 : 3 };
-      return { nodes: groupedNodes, maxdepth: 2 };
+      const rootView = { roots: flatTree, depth: compact ? 1 : 2 };
+      if (!levelId) return rootView;
+      const node = findNode(groupedTree, levelId);
+      if (!node || !node.children) return rootView;
+      if (levelId.startsWith("sector:")) return { roots: node.children, depth: compact ? 1 : 2 };
+      return { roots: node.children, depth: 1 };
     };
 
-    const traceFor = (nodes, view) => ({
-      type: "treemap",
-      ids: nodes.ids,
-      labels: nodes.labels,
-      parents: nodes.parents,
-      values: nodes.values,
-      branchvalues: "total",
-      // 라벨은 그린 뒤 실측해서 얹는다. 처음에는 비워 두고 크기를 잰다.
-      text: nodes.ids.map(() => ""),
-      texttemplate: "%{text}",
-      // 빈 문자열을 넣어도 Plotly는 기본 라벨(`labels`)로 되돌린다. 비운 칸이
-      // 실제로 비어 있으려면 이 fallback을 꺼야 한다.
-      textinfo: "none",
-      customdata: nodes.customdata,
-      marker: { colors: nodes.colors, line: { color: "#ffffff", width: 0.45 } },
-      textfont: { family: HEATMAP_FONT_FAMILY, color: "#ffffff", size: HEATMAP_BASE_FONT_PX },
-      textposition: "middle center",
-      hovertemplate: nodes.customdata.map((row) => heatmapHoverText(row) + "<extra></extra>"),
-      tiling: { packing: "squarify", pad: 0 },
-      // Plotly pathbar는 글자도 비어 있는 얇은 띠라 나갈 방법이 보이지 않는다.
-      // 좁은 화면에서 쓰던 우리 경로 버튼을 넓은 화면에서도 그대로 쓴다.
-      pathbar: { visible: false },
-      level: viewFor(level).nodes === nodes ? level : "",
-      maxdepth: view.maxdepth,
-      sort: true,
-    });
+    const onClick = (params) => {
+      const nodeId = String(params?.data?.id || "");
+      if (nodeId) {
+        // 종목이 마지막 층이다. 더 들어갈 곳이 없다.
+        if (!nodeId.startsWith("ticker:")) goToLevel(nodeId);
+        return;
+      }
+      // 머리띠·틈을 누르면 부모가 아니라 보이지 않는 뿌리가 온다. 좌표로 어느 머리띠인지 가린다.
+      const hit = heatmapHeaderAt(headers, params?.event?.offsetX, params?.event?.offsetY);
+      if (hit) goToLevel(hit);
+    };
 
     const draw = () => {
+      const width = stage.clientWidth;
+      const height = stage.clientHeight;
+      // 숨은 탭·접힌 곳에서는 폭이 0이다. 보이면 ResizeObserver와 relayout이 다시 부른다.
+      if (!(width > 0) || !(height > 0)) return;
+      lastSize = `${width}x${height}`;
       const view = viewFor(level);
-      const nodes = view.nodes;
+      // 라벨 계획이 노드를 바꾸므로 층마다 복사본을 쓴다(같은 트리를 다른 깊이로 다시 그린다).
+      const roots = JSON.parse(JSON.stringify(view.roots));
+      const series = Object.assign(heatmapSeriesBase(view.depth), { data: roots });
+      const total = roots.reduce((sum, node) => sum + node.value, 0);
+      // 배치를 먼저 물어 타일 폭·높이를 안다 — 그 값으로 들어가는 라벨만 고른다.
+      const rects = heatmapTileSizes(root.echarts, series, width, height);
+      headers = heatmapPlanLabels(roots, { rects, total, width, height, depth: view.depth, measure: measureLabelWidth });
+      if (!chart) {
+        chart = root.echarts.init(stage, null, { renderer: "svg" });
+        chart.on("click", onClick);
+      }
+      const tooltip = heatmapTooltipTheme();
+      chart.setOption({
+        animation: false,
+        backgroundColor: "transparent",
+        tooltip: {
+          confine: true,
+          backgroundColor: tooltip.backgroundColor,
+          borderColor: tooltip.borderColor,
+          borderWidth: 1,
+          textStyle: { color: tooltip.color, fontSize: 12, fontFamily: HEATMAP_FONT_FAMILY },
+          formatter: (params) => (params?.data?._row ? heatmapHoverText(params.data._row) : ""),
+        },
+        series: [series],
+      }, { notMerge: true });
       stage.dataset.rendered = "true";
       card.dataset.heatmapCompact = heatmapCompact(stage) ? "true" : "false";
-      drawing = Promise.resolve(root.Plotly.react(stage, [traceFor(nodes, view)], {
-        height: heatmapLayoutHeight(stage),
-        margin: { l: 0, r: 0, t: 0, b: 0 },
-        paper_bgcolor: "rgba(0,0,0,0)",
-        font: { family: HEATMAP_FONT_FAMILY, color: chartTheme().text, size: 14 },
-        hoverlabel: { font: { family: HEATMAP_FONT_FAMILY, size: 14 } },
-      }, { responsive: true, displayModeBar: false, scrollZoom: false }))
-        .then(() => heatmapApplyLabels(stage, nodes))
-        .then(() => {
-          renderPath();
-          bindDrill();
-        });
-      return drawing;
+      renderPath();
     };
 
-    const plot = () => (stage.dataset.rendered === "true" ? drawing || Promise.resolve() : draw());
+    const plot = () => {
+      wanted = true;
+      if (stage.dataset.rendered !== "true") draw();
+      return Promise.resolve();
+    };
+
+    /** 폭이 바뀌면 라벨 계획이 달라진다(깊이도 폭이 정한다). 다시 물어 다시 그린다 — 읽을 비동기 레이아웃이
+     *  없으므로 경합이 없다. */
+    const redraw = () => {
+      // 아직 한 번도 못 그렸다면(폭 0에서 시작) 그릴 차례가 온 것이다.
+      if (!chart) {
+        if (wanted) draw();
+        return;
+      }
+      const size = `${stage.clientWidth}x${stage.clientHeight}`;
+      if (size === lastSize) return;
+      lastSize = size;
+      chart.resize();
+      draw();
+    };
 
     function goToLevel(nodeId) {
       level = String(nodeId || "");
@@ -1675,35 +1778,25 @@
       }
     }
 
-    // `maxdepth`를 걸면 하위가 렌더되지 않아 Plotly의 기본 드릴다운이 걸릴 대상을
-    // 못 찾는다(섹터를 눌러도 아무 일이 없었다). 우리가 직접 `level`을 옮긴다.
-    function bindDrill() {
-      if (stage.dataset.drillBound === "true" || typeof stage.on !== "function") return;
-      stage.dataset.drillBound = "true";
-      stage.on("plotly_treemapclick", (event) => {
-        const nodeId = String(event?.points?.[0]?.id || "");
-        // 종목이 마지막 층이다. 더 들어갈 곳이 없다.
-        if (!nodeId || nodeId.startsWith("ticker:")) return false;
-        goToLevel(nodeId);
-        return false;
-      });
+    // 깊이는 폭이 정한다. 도크를 접거나 화면을 돌려 폭이 두 배가 돼도 섹터 열한 개만 남으면 안 된다.
+    if (typeof root.ResizeObserver === "function") {
+      resizeObserver = new root.ResizeObserver(redraw);
+      resizeObserver.observe(stage);
     }
-
-    // 깊이는 폭이 정한다. 첫 렌더에서 한 번 정하고 끝내면 도크를 접거나 화면을
-    // 돌려 폭이 두 배가 돼도 섹터 열한 개만 남는다.
-    const syncDepth = () => {
-      if (stage.dataset.rendered !== "true") return;
-      const next = heatmapCompact(stage) ? "true" : "false";
-      if (next === card.dataset.heatmapCompact) return;
-      draw();
-    };
-    root.addEventListener?.("resize", syncDepth);
     chartRecords.set(id, {
-      kind: "plotly",
+      kind: "echarts",
       title,
       element: stage,
       ensureRendered: plot,
-      cleanup: () => root.removeEventListener?.("resize", syncDepth),
+      redraw: () => {
+        lastSize = "";
+        redraw();
+      },
+      cleanup: () => {
+        resizeObserver?.disconnect();
+        chart?.dispose();
+        chart = null;
+      },
     });
     if (typeof root.IntersectionObserver === "function") {
       const observer = new root.IntersectionObserver((entries) => {
@@ -1748,8 +1841,9 @@
         if (record.kind === "lightweight") {
           record.chart.resize(el.clientWidth, el.clientHeight || 360);
           record.chart.timeScale().fitContent();
-        } else if (record.kind === "plotly" && root.Plotly?.Plots?.resize) {
-          root.Plotly.Plots.resize(el);
+        } else if (record.kind === "echarts") {
+          // 폭이 바뀌면 라벨 계획이 달라진다 — 다시 물어 다시 그린다.
+          record.redraw?.();
         } else if (record.kind === "svg") {
           // 1:1 좌표계라 폭이 바뀌면 다시 그려야 글자·선 두께가 유지된다.
           record.redraw?.();
@@ -1774,13 +1868,8 @@
               horzLines: { color: theme.grid },
             },
           });
-        } else if (record.kind === "plotly" && root.Plotly?.relayout) {
-          root.Plotly.relayout(record.element, {
-            paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: theme.background,
-            "font.color": theme.text,
-          });
         }
+        // 히트맵(echarts)은 타일 색이 테마와 무관하고 툴팁은 두 테마 모두 어두운 면이라 다시 그릴 것이 없다.
       } catch (_) {}
     }
   }
@@ -1791,7 +1880,6 @@
       try {
         record.cleanup?.();
         if (record.kind === "lightweight") record.chart.remove();
-        else if (record.kind === "plotly") root.Plotly?.purge(record.element);
       } catch (_) {}
       chartRecords.delete(id);
     }
@@ -2055,11 +2143,17 @@
     preferredIndexTicker,
     buildSectionSlots,
     heatmapNodes,
-    heatmapLabelMarkup,
+    heatmapLabelPlan,
+    heatmapRichLabel,
+    heatmapTree,
+    heatmapSeriesBase,
+    heatmapTileSizes,
+    heatmapFallbackSize,
+    heatmapPlanLabels,
+    heatmapHeaderAt,
     heatmapTickerLabel,
     heatmapGroupName,
     abbreviateHeatmapLabel,
-    heatmapLayoutHeight,
     createRequestGate,
     controlButton,
     exportControlSelector,
