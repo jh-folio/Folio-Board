@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { MAX_TABLE_ROWS, sampleRows } from "../charts/chartA11y";
 import { money, percent, type BacktestPoint } from "./portfolioTypes";
 
 export type ChartTone = "portfolio" | "benchmark" | "blue" | "teal" | "gold" | "purple" | "burgundy";
@@ -12,8 +13,6 @@ export type BacktestChartSeries = {
 
 type ChartKind = "value" | "percent" | "number";
 type PointAtDate = { readonly date: string; readonly values: Readonly<Record<string, number | null>> };
-
-const MAX_TABLE_ROWS = 72;
 
 function finitePoints(points: ReadonlyArray<BacktestPoint>): BacktestPoint[] {
   return points.filter((point) => typeof point.date === "string" && Number.isFinite(point.value) && Number.isFinite(new Date(point.date).getTime()));
@@ -30,12 +29,6 @@ function numberLabel(value: number, kind: ChartKind): string {
   if (kind === "percent") return percent(value);
   if (kind === "value") return money(value);
   return value.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
-}
-
-function sampleRows(rows: ReadonlyArray<PointAtDate>): PointAtDate[] {
-  if (rows.length <= MAX_TABLE_ROWS) return [...rows];
-  const step = (rows.length - 1) / (MAX_TABLE_ROWS - 1);
-  return Array.from({ length: MAX_TABLE_ROWS }, (_, index) => rows[Math.round(index * step)]);
 }
 
 /** Portfolio 결과와 비교 결과가 공유하는 최소 SVG 차트 층.

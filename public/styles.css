@@ -14279,6 +14279,8 @@ main.page {
 .chart-next small { color: var(--folio-ink-subtle); }
 /* padding-bottom을 두지 않는다. 차트는 autoSize로 컨테이너를 꽉 채운다. */
 .cockpit-chart-stage { position: relative; height: 376px; min-height: 376px; max-height: 376px; border: none; border-radius: var(--r-group); overflow: hidden; background: var(--surface-group); }
+/* 키보드 초점 링. 스테이지가 overflow: hidden이라 바깥 링은 잘린다 — 안쪽으로 그린다. */
+.cockpit-chart-stage:focus-visible { outline: 2px solid var(--folio-focus, var(--accent-strong)); outline-offset: -2px; }
 /* 브리핑 본문 차트의 크로스헤어 툴팁과 같은 형식(색은 토큰). */
 .market-chart-tooltip {
   position: absolute;
@@ -15755,7 +15757,8 @@ main.page {
 }
 
 /* 표는 좁은 화면에서 자기 안에서만 스크롤한다. 페이지가 가로로 밀리면 안 된다. */
-.portfolio-table-scroll {
+.portfolio-table-scroll,
+.chart-data__scroll {
   overflow-x: auto;
 }
 
@@ -16297,12 +16300,17 @@ main.page {
 .portfolio-chart__readout dt { color: var(--muted); font-size: var(--fs-meta); }
 .portfolio-chart__readout dd { margin: 0; font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--ink); }
 .portfolio-chart__data,
+.chart-data,
 .portfolio-report-details,
 .portfolio-advanced-metrics { color: var(--muted); font-size: var(--fs-sm); }
 .portfolio-chart__data summary,
+.chart-data summary,
 .portfolio-report-details summary,
 .portfolio-advanced-metrics summary { cursor: pointer; color: var(--ink); font-weight: var(--fw-medium); }
-.portfolio-chart__data .portfolio-table-scroll { margin-top: var(--sp-2); }
+.portfolio-chart__data .portfolio-table-scroll,
+.chart-data .chart-data__scroll { margin-top: var(--sp-2); }
+/* 봉이 72행까지 늘어나므로 표는 자기 안에서 세로로도 스크롤한다 — 페이지가 표만큼 길어지지 않게. */
+.chart-data__scroll { max-height: 320px; overflow-y: auto; }
 .portfolio-chart-empty { margin: 0; padding: var(--sp-3); color: var(--muted); font-size: var(--fs-sm); background: var(--surface-control); border-radius: var(--r-group); }
 .portfolio-report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); }
 .portfolio-contributions,
@@ -16328,7 +16336,8 @@ main.page {
 .portfolio-advanced-metrics__body dd small { max-inline-size: 210px; color: var(--muted); font-size: var(--fs-meta); line-height: 1.35; text-align: end; }
 .portfolio-period-table h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--ink); }
 .portfolio-partial-label { display: block; margin-top: 2px; color: var(--folio-warning); font-size: var(--fs-meta); font-weight: var(--fw-normal); }
-.portfolio-table-scroll:focus-visible { outline: 2px solid var(--folio-focus, var(--accent-strong)); outline-offset: 2px; }
+.portfolio-table-scroll:focus-visible,
+.chart-data__scroll:focus-visible { outline: 2px solid var(--folio-focus, var(--accent-strong)); outline-offset: 2px; }
 @media (max-width: 720px) {
   .portfolio-backtest-conditions .portfolio-backtest-fields .field { flex-basis: 100%; }
   .portfolio-backtest-result-head { align-items: stretch; }

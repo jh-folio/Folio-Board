@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { getJson } from "../../api";
+import { ChartDataTable } from "../charts/ChartDataTable";
 import { KIND_KO, STATUS_KO, timeLabelKST } from "./MarketCalendar";
+import { barReadout, barTimeText, chartSummaryLabel, isCandleView, nextBarIndex } from "./marketChartA11y";
 
 /** 네이티브 시장 차트의 **그림 한 장**.
  *
@@ -16,11 +18,14 @@ type ChartPayload = { symbol: string; range: string; interval: string; series: P
 type LiveFrame = { schemaVersion?: number; type?: string; status?: string; provider?: string; symbol?: string; market?: string; asOf?: string; price?: number | null; currency?: string; code?: string };
 type LiveQuote = { key: string; price: number; asOf: string; provider: string };
 type CalendarEvent = { id: string; kind: string; title: string; startsAt: string; status: string; allDay?: boolean; tickers?: string[] };
-type SeriesApi = { setData: (rows: unknown[]) => void; update?: (row: unknown) => void };
+type SeriesApi = { setData: (rows: unknown[]) => void; update?: (row: unknown) => void; priceToCoordinate?: (price: number) => number | null };
 type ChartApi = {
   addSeries: (definition: unknown, options?: object) => SeriesApi;
-  timeScale: () => { fitContent: () => void };
+  timeScale: () => { fitContent: () => void; timeToCoordinate?: (time: unknown) => number | null };
   subscribeCrosshairMove: (handler: (param: CrosshairParam) => void) => void;
+  /** 키보드로 고른 봉에 십자선을 얹는다 — 눈으로 보는 키보드 사용자도 툴팁을 본다. */
+  setCrosshairPosition?: (price: number, horzScaleItem: unknown, series: SeriesApi) => void;
+  clearCrosshairPosition?: () => void;
   remove: () => void;
 };
 type CrosshairParam = { point?: { x: number; y: number }; seriesData?: Map<SeriesApi, { time?: unknown; close?: number; value?: number }> };
@@ -212,6 +217,14 @@ function MarketChartFigureSession({
   const styleRef = useRef(style);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chartRef = useRef<ChartApi | null>(null);
+  // 차트 안에서 툴팁을 봉 하나에 붙여 보여 주는 함수. 그리기 효과가 만든다.
+  const showBarTipRef = useRef<((row: Point) => void) | null>(null);
+  // 키보드로 띄운 툴팁은 마우스가 십자선을 움직이기 전까지 십자선 콜백이 지우지 않는다.
+  const keyboardTipRef = useRef(false);
+  // 키보드로 고른 봉. 그림은 canvas라 화면 읽기 프로그램이 못 읽으므로 판독값을 따로 알린다.
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   useEffect(() => { styleRef.current = style; }, [style]);
 
@@ -358,6 +371,7 @@ function MarketChartFigureSession({
       ? ohlcRows.map((row) => ({ time: chartTime(row.time, intraday), open: row.open, high: row.high, low: row.low, close: row.close }))
       : rows.map((row) => ({ time: chartTime(row.time, intraday), value: row.close })));
     primarySeriesRef.current = series;
+    chartRef.current = chart;
 
     // 이동평균 — 서버가 워밍업 구간까지 받아 계산해 두므로 구간 안에서 선이 끊기지
     // 않는다. 분봉에는 없다(서버가 일봉에만 붙인다). 창을 못 채운 계열(짧은 상장
@@ -383,17 +397,10 @@ function MarketChartFigureSession({
     tooltip.className = "market-chart-tooltip";
     tooltip.hidden = true;
     target.appendChild(tooltip);
-    chart.subscribeCrosshairMove((param) => {
-      const point = param?.point;
-      const seriesPoint = param?.seriesData?.get(series);
+    const renderTooltip = (point: { x: number; y: number }, key: string, fallbackClose: number | null) => {
       const stage = target.getBoundingClientRect();
-      if (!point || !seriesPoint || point.x < 0 || point.y < 0 || point.x > stage.width || point.y > stage.height) {
-        tooltip.hidden = true;
-        return;
-      }
-      const key = String(seriesPoint.time);
       const source = closeByTime.get(key);
-      const close = source?.close ?? seriesPoint.close ?? seriesPoint.value ?? null;
+      const close = source?.close ?? fallbackClose;
       const previous = source?.previous ?? null;
       const change = close != null && previous != null ? close - previous : null;
       const changePctValue = change != null && previous ? (change / previous) * 100 : null;
@@ -423,13 +430,38 @@ function MarketChartFigureSession({
       const top = Math.min(Math.max(8, point.y - height - 12), Math.max(8, stage.height - height - 8));
       tooltip.style.transform = `translate(${left}px, ${top}px)`;
       tooltip.hidden = false;
+    };
+    chart.subscribeCrosshairMove((param) => {
+      const point = param?.point;
+      const seriesPoint = param?.seriesData?.get(series);
+      const stage = target.getBoundingClientRect();
+      if (!point || !seriesPoint || point.x < 0 || point.y < 0 || point.x > stage.width || point.y > stage.height) {
+        // 키보드로 고른 봉의 툴팁은 여기서 지우지 않는다 — 프로그램으로 놓은 십자선은 point가 없다.
+        if (!keyboardTipRef.current) tooltip.hidden = true;
+        return;
+      }
+      keyboardTipRef.current = false;
+      renderTooltip(point, String(seriesPoint.time), seriesPoint.close ?? seriesPoint.value ?? null);
     });
+    showBarTipRef.current = (row: Point) => {
+      const time = chartTime(row.time, intraday);
+      const x = chart.timeScale().timeToCoordinate?.(time);
+      const y = series.priceToCoordinate?.(row.close);
+      if (x == null || y == null) return;
+      keyboardTipRef.current = true;
+      renderTooltip({ x, y }, String(time), row.close);
+    };
     chart.timeScale().fitContent();
     return () => {
       primarySeriesRef.current = null;
+      chartRef.current = null;
+      showBarTipRef.current = null;
       chart.remove();
     };
   }, [payload, themeKey, style, showMa]);
+
+  // 새 자료가 오면 옛 위치는 뜻을 잃는다(봉 수가 달라진다).
+  useEffect(() => { setCursor(null); setAnnouncement(""); }, [payload]);
 
   useEffect(() => {
     const key = `${symbol}|${range}`;
@@ -523,6 +555,62 @@ function MarketChartFigureSession({
   const sourceCopy = providerCopy(payload?.provider, activeLiveQuote?.provider);
   const asOf = activeLiveQuote?.asOf || payload?.asOf || "";
 
+  // 텍스트 대체는 서버가 준 봉(`payload.series`)을 기준으로 한다. 장중 틱은 마지막 봉을
+  // 덮어쓰거나 한 봉을 더하는데, 그건 위 헤드라인의 현재가가 이미 말한다.
+  const libraryReady = typeof window !== "undefined" && Boolean(window.LightweightCharts);
+  const chartName = label || symbol;
+  const candleView = isCandleView(style, series);
+  const summaryLabel = useMemo(
+    () => chartSummaryLabel({ name: chartName, rangeLabel: RANGE_LABELS[range] || range, style, rows: series, intraday: intradayHeadline }),
+    [chartName, range, style, series, intradayHeadline],
+  );
+  const tableColumns = candleView
+    ? [intradayHeadline ? "시각" : "날짜", "시가", "고가", "저가", "종가"]
+    : [intradayHeadline ? "시각" : "날짜", "종가"];
+  const tableRows = useMemo(() => {
+    const fmt = (value: number | null | undefined) => (value == null ? "-" : value.toLocaleString("ko-KR", { maximumFractionDigits: 2 }));
+    return series.map((row) => {
+      const when = barTimeText(row.time, intradayHeadline);
+      return candleView ? [when, fmt(row.open), fmt(row.high), fmt(row.low), fmt(row.close)] : [when, fmt(row.close)];
+    });
+  }, [series, candleView, intradayHeadline]);
+
+  // 키보드는 **그려진 봉**을 따라간다(장중 틱이 더한 봉 포함). 이름과 표는 서버 봉 기준이다.
+  const drawnRows = () => (currentRowsRef.current.length ? currentRowsRef.current : series);
+  const moveCursor = (index: number) => {
+    const rows = drawnRows();
+    const row = rows[index];
+    if (!row) return;
+    setCursor(index);
+    setAnnouncement(barReadout({ rows, index, intraday: intradayHeadline, candle: candleView }));
+    // 십자선과 툴팁은 눈으로 보는 키보드 사용자를 위한 것이다. 라이브러리가 못 받으면 조용히 넘어간다.
+    chartRef.current?.setCrosshairPosition?.(row.close, chartTime(row.time, intradayHeadline), primarySeriesRef.current as SeriesApi);
+    showBarTipRef.current?.(row);
+  };
+  const clearCursor = () => {
+    chartRef.current?.clearCrosshairPosition?.();
+    keyboardTipRef.current = false;
+    const tip = targetRef.current?.querySelector<HTMLElement>(".market-chart-tooltip");
+    if (tip) tip.hidden = true;
+    setCursor(null);
+  };
+  const onStageKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      if (cursor === null) return;
+      clearCursor();
+      setAnnouncement("");
+      event.preventDefault();
+      return;
+    }
+    const next = nextBarIndex({ key: event.key, current: cursor, length: drawnRows().length });
+    if (next === null) return;
+    event.preventDefault();
+    moveCursor(next);
+  };
+  const onStageBlur = () => {
+    if (cursor !== null) clearCursor();
+  };
+
   return (
     <>
       <div className="chart-headline">
@@ -574,9 +662,22 @@ function MarketChartFigureSession({
           ))}
         </div>
       )}
-      <div className="cockpit-chart-stage" ref={targetRef}>
-        {!window.LightweightCharts && <p>차트 라이브러리를 사용할 수 없습니다.</p>}
+      <div
+        className="cockpit-chart-stage"
+        ref={targetRef}
+        // 그림은 canvas라 읽을 것이 없다. 이름과 방향키 판독을 붙인다.
+        // role="img"가 아니라 group인 이유: 이 무대 안에는 TradingView 출처 링크(`attributionLogo`,
+        // 라이선스가 요구해 뺄 수 없다)가 있고, img는 자손을 모두 숨겨 그 링크를 화면 읽기
+        // 프로그램에서 지운다(axe nested-interactive). 라이브러리가 없으면 그림이 아니므로
+        // 아무것도 주지 않고 아래 안내 문구를 그대로 읽게 한다.
+        {...(libraryReady && series.length > 0
+          ? { role: "group", "aria-roledescription": "차트", "aria-label": summaryLabel, tabIndex: 0, onKeyDown: onStageKeyDown, onBlur: onStageBlur }
+          : {})}
+      >
+        {!libraryReady && <p>차트 라이브러리를 사용할 수 없습니다.</p>}
       </div>
+      <p className="sr-only" role="status">{announcement}</p>
+      <ChartDataTable title={`${chartName} 가격`} unit="봉" columns={tableColumns} rows={tableRows} />
       {showEvent && nextEvent && (
         <p className="chart-next">
           <span className={`chip certainty-badge--${nextEvent.status}`}>{STATUS_KO[nextEvent.status] || nextEvent.status}</span>
