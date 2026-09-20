@@ -2,8 +2,9 @@
 
 ## TradingView Lightweight Charts™
 
-Folio Board loads TradingView Lightweight Charts version 5.2.0 for interactive
-briefing price charts.
+Folio Board bundles TradingView Lightweight Charts version 5.2.0 for interactive
+briefing price charts. The file is served from `public/vendor/lightweight-charts.js`,
+an unmodified copy of the npm release (its license header is kept in the file).
 
 - Project: <https://github.com/tradingview/lightweight-charts>
 - License: Apache License 2.0
@@ -12,6 +13,27 @@ briefing price charts.
 The user-facing chart area retains the required TradingView attribution and
 link through `layout.attributionLogo`, with an additional visible notice below
 the briefing visuals.
+
+## Apache ECharts and zrender
+
+Folio Board bundles Apache ECharts version 6.1.0 for charts that need more than
+the hand-drawn SVG charts provide, such as the market heat map. The file is served
+from `public/vendor/echarts.js`, a custom build that registers only the chart
+types and components Folio Board uses and renders to SVG. It includes zrender
+6.1.0, the rendering library ECharts is built on. The license notices are kept at
+the top of the file.
+
+- Project: <https://echarts.apache.org/> and <https://github.com/apache/echarts>
+- License: Apache License 2.0
+- Copyright 2017-2026 The Apache Software Foundation. This product includes
+  software developed at The Apache Software Foundation
+  (<https://www.apache.org/>).
+
+zrender (<https://github.com/ecomfe/zrender>) is licensed under the BSD 3-Clause
+License. Copyright (c) 2017, Baidu Inc. All rights reserved.
+
+To rebuild the bundle after changing the pinned version or the registered
+components, run `npm run build:vendor` in `web/` and update this section.
 
 ## Tesseract OCR
 
