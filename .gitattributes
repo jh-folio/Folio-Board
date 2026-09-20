@@ -9,4 +9,7 @@ defaults/config/*.yaml text eol=lf
 # 빌드 산출물 전체를 LF로 고정한다. 한 파일만 고정하면 나머지 청크가 Windows에서
 # CRLF로 체크아웃되고 빌드가 LF로 덮어써서 CI가 번들 드리프트로 오인한다.
 public/react/*.js text eol=lf
+# 벤더 번들도 같다. Lightweight Charts 복사본은 npm 배포본과 바이트 단위로 같아야 하고(테스트가 비교한다),
+# CRLF로 체크아웃되면 그 계약이 Windows에서만 깨진다.
+public/vendor/*.js text eol=lf
 requirements*.txt text eol=lf
