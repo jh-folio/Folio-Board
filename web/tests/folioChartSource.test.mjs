@@ -33,6 +33,12 @@ test("theme changes go through setTheme and give the user's zoom and legend stat
   assert.ok(chart.indexOf("chart.setTheme(themeFromDocument())") < chart.indexOf("restoreInteractionState(chart, kept)"), "restore must come after setTheme");
 });
 
+// 시리즈에 직접 준 색은 setTheme이 못 바꾼다 — 토큰에서 색을 만드는 차트는 option을 함수로 넘겨 다시 만들게 한다.
+test("token-derived series colors are rebuilt on theme change instead of going stale", () => {
+  assert.ok(chart.includes("export type OptionBuilder = (tokens: TokenReader) => EChartsCoreOption;"));
+  assert.ok(chart.includes('typeof optionRef.current === "function") chart.setOption(materializeOption('));
+});
+
 test("chart colors come from design tokens, never from literals in the component", () => {
   assert.match(theme, /--folio-chart-\$\{n\}/);
   assert.doesNotMatch(chart, /#[0-9a-fA-F]{6}\b/, "FolioChart must not hardcode colors");

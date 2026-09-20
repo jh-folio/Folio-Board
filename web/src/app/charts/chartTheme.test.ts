@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { buildChartTheme, resolveToken } from "./chartTheme";
-import { resolveChartState } from "./FolioChart";
+import { buildChartTheme, cascadeColors, resolveToken, withAlpha } from "./chartTheme";
+import { materializeOption, resolveChartState } from "./FolioChart";
 
 const light: Record<string, string> = {
   "--folio-ink": "#07111f",
@@ -77,5 +77,67 @@ describe("차트 상태", () => {
     // 이미 그리지 않는 상태는 그대로다.
     expect(resolveChartState({ state: "empty", hasOption: false, libraryReady: false })).toBe("empty");
     expect(resolveChartState({ state: "loading", hasOption: false, libraryReady: false })).toBe("loading");
+  });
+});
+
+describe("앱 차트의 기본 인상", () => {
+  it("선에는 점을 찍지 않는다 — ECharts 기본(점마다 동그라미)을 덮는다", () => {
+    const theme = buildChartTheme(reader(light)) as Loose;
+    expect(theme.line.showSymbol).toBe(false);
+    expect(theme.line.lineStyle.width).toBe(2);
+    expect(theme.line.smooth).toBe(false);
+  });
+
+  it("값 축은 선·눈금 없이 격자만, 카테고리 축은 아래 선 하나만 그린다", () => {
+    const theme = buildChartTheme(reader(light)) as Loose;
+    expect(theme.valueAxis.axisLine.show).toBe(false);
+    expect(theme.valueAxis.axisTick.show).toBe(false);
+    expect(theme.valueAxis.splitLine.show).toBe(true);
+    expect(theme.categoryAxis.axisLine.show).toBe(true);
+    expect(theme.categoryAxis.splitLine.show).toBe(false);
+  });
+
+  it("글자는 12px 무채색이다", () => {
+    const theme = buildChartTheme(reader(light)) as Loose;
+    expect(theme.textStyle.fontSize).toBe(12);
+    expect(theme.valueAxis.axisLabel.fontSize).toBe(12);
+    expect(theme.legend.textStyle.fontSize).toBe(12);
+  });
+
+  it("확대 슬라이더는 배경·테두리가 없고 채움은 잉크의 옅은 톤이다", () => {
+    const theme = buildChartTheme(reader(light)) as Loose;
+    expect(theme.dataZoom.backgroundColor).toBe("transparent");
+    expect(theme.dataZoom.borderColor).toBe("transparent");
+    expect(theme.dataZoom.fillerColor).toBe("rgba(7, 17, 31, 0.08)");
+  });
+});
+
+describe("캐스케이드 색", () => {
+  it("withAlpha는 hex를 rgba로 풀고 다른 형식은 건드리지 않는다", () => {
+    expect(withAlpha("#2f6fb0", 0.45)).toBe("rgba(47, 111, 176, 0.45)");
+    expect(withAlpha("#fff", 0.5)).toBe("rgba(255, 255, 255, 0.5)");
+    expect(withAlpha("rgb(1, 2, 3)", 0.5)).toBe("rgb(1, 2, 3)");
+  });
+
+  it("잉크 42%, 그 차트의 색, 그 색의 45% 톤 — 손 SVG 차트와 같은 세 값이다", () => {
+    const [ink, accent, tint] = cascadeColors(reader(light), "--folio-chart-1");
+    expect(ink).toBe("rgba(7, 17, 31, 0.42)");
+    expect(accent).toBe("#2f6fb0");
+    expect(tint).toBe("rgba(47, 111, 176, 0.45)");
+  });
+
+  it("다크에서는 같은 규칙에 다른 값이 나온다", () => {
+    const [ink, accent] = cascadeColors(reader(dark), "--folio-chart-1");
+    expect(ink).toBe("rgba(241, 242, 244, 0.42)");
+    expect(accent).toBe("#4a8cc7");
+  });
+});
+
+describe("option 함수", () => {
+  it("함수면 현재 토큰으로 풀고 객체면 그대로 돌려준다", () => {
+    const plain = { series: [] };
+    expect(materializeOption(plain, reader(light))).toBe(plain);
+    const built = materializeOption((tokens) => ({ color: [tokens("--folio-chart-1")] }), reader(dark));
+    expect(built).toEqual({ color: ["#4a8cc7"] });
   });
 });

@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEv
 import { ChartDataTable } from "./ChartDataTable";
 import { nextPointIndex } from "./chartA11y";
 import { captureInteractionState, restoreInteractionState } from "./chartInteractionState";
-import { subscribeThemeChange, themeFromDocument } from "./chartTheme";
+import { documentTokenReader, subscribeThemeChange, themeFromDocument, type TokenReader } from "./chartTheme";
 import { getEcharts, type EChartsCoreOption, type EChartsType } from "./echarts";
 
 /** 공통 차트 층 — ECharts를 화면 어디서나 같은 규칙으로 올린다.
@@ -19,10 +19,19 @@ import { getEcharts, type EChartsCoreOption, type EChartsType } from "./echarts"
  *  4. **텍스트 대체 계약**(계획 §5.1) — `role="img"` + 필수 `label`, 방향키 지점 이동과 `aria-live` 판독,
  *     같은 숫자의 데이터 표.
  *
- *  `option`은 **메모이즈해서 넘긴다.** 참조가 바뀔 때마다 `notMerge`로 다시 그리므로, 렌더마다 새 객체를
+ *  `option`은 **메모이즈해서 넘긴다**(객체든 함수든). 참조가 바뀔 때마다 `notMerge`로 다시 그리므로, 렌더마다 새 객체를
  *  만들면 사용자가 조작한 확대 범위가 매번 초기화된다.
  */
 export type ChartState = "loading" | "empty" | "error" | "stale" | "ready";
+
+/** 색이 토큰에서 오는 차트는 option을 **함수**로 넘긴다. 테마가 바뀌면 그 함수를 새 토큰으로 다시 부른다 —
+ *  시리즈에 직접 준 색(캐스케이드 차트의 잉크·옅은 톤)은 `setTheme`이 못 바꾸기 때문이다. */
+export type OptionBuilder = (tokens: TokenReader) => EChartsCoreOption;
+
+/** 함수면 현재 토큰으로 풀고, 객체면 그대로. */
+export function materializeOption(option: EChartsCoreOption | OptionBuilder, tokens: TokenReader): EChartsCoreOption {
+  return typeof option === "function" ? option(tokens) : option;
+}
 
 export interface FolioChartKeyboard {
   /** 방향키로 오갈 수 있는 지점 수. 0이면 키보드 이동은 꺼진다. */
@@ -47,7 +56,7 @@ export interface FolioChartTable {
 export interface FolioChartProps {
   /** 무엇을 그린 그림인지 말하는 이름. **필수** — 화면 읽기 프로그램이 읽는 유일한 그림 설명이다. */
   label: string;
-  option: EChartsCoreOption | null;
+  option: EChartsCoreOption | OptionBuilder | null;
   /** 생략하면 option이 있으면 ready, 없으면 loading. */
   state?: ChartState;
   /** 상태 안내 문구. 생략하면 상태별 기본 문구. */
@@ -106,7 +115,7 @@ export function FolioChart({ label, option, state, message, height = 320, table,
       chart = echarts.init(element, themeFromDocument(), { renderer: "svg" });
       chartRef.current = chart;
       for (const [name, handler] of Object.entries(eventsRef.current || {})) chart.on(name, handler as never);
-      if (optionRef.current) chart.setOption(optionRef.current, { notMerge: true });
+      if (optionRef.current) chart.setOption(materializeOption(optionRef.current, documentTokenReader()), { notMerge: true });
     };
     const observer = typeof ResizeObserver === "undefined"
       ? null
@@ -118,6 +127,8 @@ export function FolioChart({ label, option, state, message, height = 320, table,
       if (!chart) return;
       const kept = captureInteractionState(chart);
       chart.setTheme(themeFromDocument());
+      // 토큰에서 색을 만드는 option은 새 토큰으로 다시 만들어 병합한다(병합이라 조작 상태를 건드리지 않는다).
+      if (typeof optionRef.current === "function") chart.setOption(materializeOption(optionRef.current, documentTokenReader()));
       restoreInteractionState(chart, kept);
     });
 
@@ -132,7 +143,7 @@ export function FolioChart({ label, option, state, message, height = 320, table,
 
   // 자료가 바뀌면 다시 그린다. 사용자가 조작한 상태는 자료가 바뀐 시점에 뜻을 잃으므로 `notMerge`다.
   useEffect(() => {
-    if (option && chartRef.current) chartRef.current.setOption(option, { notMerge: true });
+    if (option && chartRef.current) chartRef.current.setOption(materializeOption(option, documentTokenReader()), { notMerge: true });
     setCursor(null);
     setAnnouncement("");
   }, [option]);

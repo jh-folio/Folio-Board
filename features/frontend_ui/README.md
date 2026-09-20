@@ -223,7 +223,7 @@ public/react/folio-react.js
 
   **새 차트를 추가하는 절차**
   - 필요한 차트 종류·컴포넌트가 `web/src/vendor/echarts.ts` 등록 목록에 없으면 한 줄 더하고 `web/`에서 `npm run build:vendor`로 다시 만든 뒤 `public/vendor/echarts.js`를 함께 커밋한다(사용자 설치본은 Node 없이 이 파일을 서빙한다).
-  - option은 차트 종류별 컴포넌트가 만든다 — 화면이 직접 쓰지 않는다. 색은 디자인 토큰, 금액·분기 표기는 `web/src/app/charts/chartFormat.ts`(KRW·JPY는 조·억, 그 외 T·B·M)를 쓴다. `option`은 메모이즈해서 넘긴다(참조가 바뀌면 다시 그리며 확대 범위가 초기화된다).
+  - option은 차트 종류별 컴포넌트가 만든다 — 화면이 직접 쓰지 않는다. 색은 디자인 토큰, 금액·분기 표기는 `web/src/app/charts/chartFormat.ts`(KRW·JPY는 조·억, 그 외 T·B·M)를 쓴다. `option`은 메모이즈해서 넘긴다(참조가 바뀌면 다시 그리며 확대 범위가 초기화된다). 색을 토큰에서 만드는 차트(캐스케이드 등)는 `(tokens) => option` 함수로 넘겨 테마 전환 때 새 토큰으로 다시 만들게 한다.
   - `FolioChart`의 `label`(필수)·`table`·`keyboard`를 채운다. 그림 안에 링크·버튼이 있으면 img가 그것을 숨기므로 `role="group"`을 쓴다.
   - 앱 소스는 ECharts를 **`import type`으로만** 가져오고 실행 코드는 `window.echarts`로만 받는다(같은 라이브러리가 React 번들에 두 벌 실리지 않게. `web/tests/vendorScriptsSource.test.mjs`가 지킨다).
   - ECharts 버전은 정확 고정이다. 올릴 때는 `charts/treemapLayout.test.ts` canary가 먼저 걸린다 — 히트맵 라벨 계획이 ECharts의 비공개 배치 경로를 읽기 때문이다.
