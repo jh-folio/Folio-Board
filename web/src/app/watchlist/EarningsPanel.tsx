@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getJson } from "../../api";
+import { compactAmount } from "../charts/chartFormat";
 import { ddayLabel, formatEarningsDate } from "../watchlistEarnings";
 
 /** 발표된 실적과 다음 발표 컨센서스.
@@ -68,28 +69,6 @@ export function panelProviderCopy(provider?: string): string {
   if (provider === "toss_open_api") return "Toss Open API";
   if (provider === "yfinance") return "yfinance";
   return "시장 데이터 제공자";
-}
-
-const COMPACT_UNITS: ReadonlyArray<{ limit: number; suffix: string }> = [
-  { limit: 1e12, suffix: "조" },
-  { limit: 1e8, suffix: "억" },
-];
-
-/** 매출은 조·억 단위가 아니면 자릿수만으로는 읽히지 않는다(삼성전자 133,873,444,000,000). */
-export function compactAmount(value: number | null | undefined, currency = "USD"): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  if (currency === "KRW" || currency === "JPY") {
-    for (const unit of COMPACT_UNITS) {
-      if (Math.abs(value) >= unit.limit) {
-        return `${(value / unit.limit).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}${unit.suffix}`;
-      }
-    }
-    return value.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
-  }
-  const scaled = Math.abs(value) >= 1e9 ? { div: 1e9, suffix: "B" } : Math.abs(value) >= 1e6 ? { div: 1e6, suffix: "M" } : null;
-  return scaled
-    ? `${(value / scaled.div).toLocaleString("en-US", { maximumFractionDigits: 2 })}${scaled.suffix}`
-    : value.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
 export function formatEps(value: number | null | undefined, currency = "USD"): string {

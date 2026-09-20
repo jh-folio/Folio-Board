@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
+import { chartMoney } from "../charts/chartFormat";
+
 type AnalysisChartsPayload = {
   available?: boolean;
   reason?: string;
@@ -109,26 +111,10 @@ function arrayValues(value: unknown): Array<number | null> {
   return Array.isArray(value) ? value.map(toNumber) : [];
 }
 
-function currencySymbol(currency?: string) {
-  const normalized = String(currency || "USD").toUpperCase();
-  if (normalized === "KRW" || normalized === "KRX") return "₩";
-  if (normalized === "JPY") return "¥";
-  if (normalized === "EUR") return "€";
-  if (normalized === "GBP") return "£";
-  return "$";
-}
-
 function formatValue(value: number | null, kind: Series["kind"] = "plain", currency?: string) {
   if (value === null) return "-";
   if (kind === "percent") return `${(value * 100).toFixed(1)}%`;
-  if (kind === "money") {
-    const symbol = currencySymbol(currency);
-    const abs = Math.abs(value);
-    if (abs >= 1_000_000_000_000) return `${symbol}${(value / 1_000_000_000_000).toFixed(1)}T`;
-    if (abs >= 1_000_000_000) return `${symbol}${(value / 1_000_000_000).toFixed(1)}B`;
-    if (abs >= 1_000_000) return `${symbol}${(value / 1_000_000).toFixed(1)}M`;
-    return `${symbol}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-  }
+  if (kind === "money") return chartMoney(value, currency);
   return value.toFixed(Math.abs(value) >= 100 ? 0 : 1);
 }
 

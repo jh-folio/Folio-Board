@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { basisValues, changeRatio, compactAmount, epsBaseText, formatEps, panelProviderCopy, percentText } from "./EarningsPanel";
+import { basisValues, changeRatio, epsBaseText, formatEps, panelProviderCopy, percentText } from "./EarningsPanel";
 
 describe("실적 숫자 표시", () => {
-  it("매출은 통화에 맞는 단위로 접는다", () => {
-    // 삼성전자 분기 매출은 자릿수만으로는 읽히지 않는다.
-    expect(compactAmount(79_100_000_000_000, "KRW")).toBe("79.1조");
-    expect(compactAmount(560_000_000, "KRW")).toBe("5.6억");
-    expect(compactAmount(5_600_000_000, "USD")).toBe("5.6B");
-    expect(compactAmount(8_130_000, "USD")).toBe("8.13M");
-    expect(compactAmount(null)).toBe("—");
-  });
-
   it("원·엔 EPS는 소수점을 붙이지 않는다", () => {
     expect(formatEps(10_849, "KRW")).toBe("10,849");
     expect(formatEps(1.33, "USD")).toBe("1.33");

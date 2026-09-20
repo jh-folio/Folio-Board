@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getJson } from "../../api";
-import { changeRatio, compactAmount, percentText, toneOf } from "./EarningsPanel";
+import { compactAmount, quarterAxisLabel } from "../charts/chartFormat";
+import { changeRatio, percentText, toneOf } from "./EarningsPanel";
 
 /** 재무·투자 지표 — 예전 TradingView 펀더멘털 위젯의 네이티브 대체.
  *
@@ -203,13 +204,6 @@ export const CHART_SETS: ChartSet[] = [
     ],
   },
 ];
-
-/** 분기 키(2026-06-30)를 축 라벨로 — 레퍼런스와 같은 "26년 6월" 형태. */
-export function quarterAxisLabel(quarter: string | undefined): string {
-  const text = String(quarter || "");
-  if (!/^\d{4}-\d{2}/.test(text)) return "";
-  return `${text.slice(2, 4)}년 ${Number(text.slice(5, 7))}월`;
-}
 
 /** 세트의 값 스케일.
  *  막대는 0을 반드시 포함한다 — 적자·순유출 분기(음수)는 기준선 아래로 내려가야 하고,

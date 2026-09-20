@@ -64,7 +64,7 @@ test("Company Analysis body interleaves charts into matching report sections", a
   assert.match(chartSource, /onMouseEnter/);
   assert.match(chartSource, /onFocus/);
   assert.match(chartSource, /analysis-chart-tooltip/);
-  assert.match(chartSource, /currencySymbol/);
+  assert.match(chartSource, /chartMoney/);
   assert.match(chartSource, /formatValue/);
   assert.match(styles, /\.markdown-brief table\s*\{/);
   assert.match(styles, /\.table-wrap\s*\{[\s\S]*margin:\s*0\.72em 0/);
