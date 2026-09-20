@@ -265,6 +265,7 @@ features/company_analysis/financial_quality_prompt.md
 
 **여러 기능에 걸쳐 지킬 경계**:
 - 사용자 자료 경로는 features/common/workspace.py의 data_dir() / research_inbox_dir() / config_dir()를 사용한다.
+- 새 차트는 web/src/app/charts/FolioChart(ECharts 벤더 번들 `public/vendor/echarts.js`) 위에 만든다. 앱 소스는 ECharts를 `import type`으로만 가져오고, 텍스트 대체(label·방향키 판독·데이터 표)는 필수다. 절차는 features/frontend_ui/README.md의 차트 층.
 - durable write는 features/common/atomic_replace.py를 거친다.
 - 개인 판단의 주 화면은 Watchlist Thesis와 Portfolio 투자 리뷰다. Agent 대화는 hypothesis이며 reuseAsEvidence=false다.
 - Agent 반박은 명시 action에서 정확한 stateId/ticker/date+reviewRevision을 읽는다. stale/missing ID를 넓은 컨텍스트로 대체하지 않는다.
