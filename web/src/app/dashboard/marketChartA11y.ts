@@ -79,19 +79,5 @@ export function barReadout(args: {
   return `${barTimeText(row.time, intraday)}. ${body}. ${change}. ${index + 1}번째 봉, 전체 ${rows.length}개.`;
 }
 
-/** 방향키 한 번이 옮기는 봉 수. 처음 누르면 가장 최근 봉에서 시작한다. */
-export function nextBarIndex(args: { key: string; current: number | null; length: number }): number | null {
-  const { key, current, length } = args;
-  if (length <= 0) return null;
-  const last = length - 1;
-  const clamp = (value: number) => Math.min(last, Math.max(0, value));
-  switch (key) {
-    case "ArrowLeft": return current === null ? last : clamp(current - 1);
-    case "ArrowRight": return current === null ? last : clamp(current + 1);
-    case "PageUp": return current === null ? last : clamp(current - 10);
-    case "PageDown": return current === null ? last : clamp(current + 10);
-    case "Home": return 0;
-    case "End": return last;
-    default: return null;
-  }
-}
+/** 방향키 이동은 모든 차트가 같은 규칙을 쓴다(charts/chartA11y.ts). 봉 차트 쪽 이름만 남긴다. */
+export { nextPointIndex as nextBarIndex } from "../charts/chartA11y";

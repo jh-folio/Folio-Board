@@ -20,3 +20,21 @@ export function sampleRows<T>(rows: ReadonlyArray<T>): T[] {
 export function tableSummaryLabel(total: number, unit: string): string {
   return total > MAX_TABLE_ROWS ? `${MAX_TABLE_ROWS}개 대표 ${unit}` : `${total}개 ${unit}`;
 }
+
+/** 방향키 한 번이 옮기는 지점 수. 처음 누르면 가장 최근(마지막) 지점에서 시작한다.
+ *  좌우 ±1, PageUp/PageDown ±10, Home/End 처음·끝 — BacktestChart 슬라이더와 같은 조작 언어다. */
+export function nextPointIndex(args: { key: string; current: number | null; length: number }): number | null {
+  const { key, current, length } = args;
+  if (length <= 0) return null;
+  const last = length - 1;
+  const clamp = (value: number) => Math.min(last, Math.max(0, value));
+  switch (key) {
+    case "ArrowLeft": return current === null ? last : clamp(current - 1);
+    case "ArrowRight": return current === null ? last : clamp(current + 1);
+    case "PageUp": return current === null ? last : clamp(current - 10);
+    case "PageDown": return current === null ? last : clamp(current + 10);
+    case "Home": return 0;
+    case "End": return last;
+    default: return null;
+  }
+}

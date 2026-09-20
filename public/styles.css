@@ -17505,3 +17505,16 @@ select { min-height: 36px; padding: 0 12px; }
   .diagnostic-retention-setting-row { align-items: stretch; flex-direction: column; }
   .diagnostic-retention-setting-row .field { min-width: 0; }
 }
+
+/* ============================================================
+   공통 차트 층 — FolioChart(web/src/app/charts). 색·간격은 기존 토큰만 쓴다.
+   ============================================================ */
+.folio-chart { display: grid; gap: var(--sp-2); margin: 0; min-inline-size: 0; }
+.folio-chart__stage { inline-size: 100%; min-inline-size: 0; border-radius: var(--r-group); }
+/* SVG가 stage를 넘어 그려지지 않게 한다. 폭은 ResizeObserver가 따라간다. */
+.folio-chart__stage svg { display: block; max-inline-size: 100%; }
+.folio-chart__stage:focus-visible { outline: 2px solid var(--folio-focus, var(--accent-strong)); outline-offset: 2px; }
+/* loading·empty·error는 그림 자리에 같은 높이로 앉는다 — 상태가 바뀌어도 페이지가 튀지 않는다. */
+.folio-chart__state { display: grid; place-items: center; padding: var(--sp-3); text-align: center; color: var(--muted); font-size: var(--fs-sm); background: var(--surface-control); border-radius: var(--r-group); }
+.folio-chart[data-state="error"] .folio-chart__state { color: var(--ink); border-inline-start: 3px solid var(--folio-warning); }
+.folio-chart__stale { justify-self: start; }

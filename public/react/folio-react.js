@@ -16229,9 +16229,23 @@ function Oc(e) {
 function kc(e, t) {
 	return e > 72 ? `72개 대표 ${t}` : `${e}개 ${t}`;
 }
+function Ac(e) {
+	let { key: t, current: n, length: r } = e;
+	if (r <= 0) return null;
+	let i = r - 1, a = (e) => Math.min(i, Math.max(0, e));
+	switch (t) {
+		case "ArrowLeft": return n === null ? i : a(n - 1);
+		case "ArrowRight": return n === null ? i : a(n + 1);
+		case "PageUp": return n === null ? i : a(n - 10);
+		case "PageDown": return n === null ? i : a(n + 10);
+		case "Home": return 0;
+		case "End": return i;
+		default: return null;
+	}
+}
 //#endregion
 //#region src/app/charts/ChartDataTable.tsx
-var Ac = (0, l.memo)(function({ title: e, unit: t, columns: n, rows: r }) {
+var jc = (0, l.memo)(function({ title: e, unit: t, columns: n, rows: r }) {
 	return r.length ? /* @__PURE__ */ (0, Q.jsxs)("details", {
 		className: "chart-data",
 		children: [/* @__PURE__ */ (0, Q.jsxs)("summary", { children: [
@@ -16252,53 +16266,39 @@ var Ac = (0, l.memo)(function({ title: e, unit: t, columns: n, rows: r }) {
 			}), e.slice(1).map((e, t) => /* @__PURE__ */ (0, Q.jsx)("td", { children: e }, n[t + 1]))] }, e[0])) })] })
 		})]
 	}) : null;
-}), jc = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }), Mc = (e) => jc.format(e);
-function Nc(e, t) {
+}), Mc = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }), Nc = (e) => Mc.format(e);
+function Pc(e, t) {
 	let n = String(e || "");
 	if (!t) return n.slice(0, 10);
 	let r = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/.exec(n);
 	return r ? `${r[1]} ${r[2]}` : n;
 }
-function Pc(e) {
+function Fc(e) {
 	return e.open != null && e.high != null && e.low != null;
 }
-function Fc(e, t) {
-	return e === "candle" && t.some(Pc);
+function Ic(e, t) {
+	return e === "candle" && t.some(Fc);
 }
-var Ic = (e, t) => `${e >= 0 ? "+" : ""}${e.toLocaleString("ko-KR", {
+var Lc = (e, t) => `${e >= 0 ? "+" : ""}${e.toLocaleString("ko-KR", {
 	maximumFractionDigits: t,
 	minimumFractionDigits: t
 })}`;
-function Lc(e) {
+function Rc(e) {
 	let { name: t, rangeLabel: n, style: r, rows: i, intraday: a } = e;
 	if (!i.length) return `${t} 가격 차트. 표시할 자료가 없습니다.`;
-	let o = i[0], s = i[i.length - 1], c = i.map((e) => e.high ?? e.close), l = i.map((e) => e.low ?? e.close), u = Fc(r, i) ? "캔들" : "라인", d = o.close ? ` (${Ic((s.close - o.close) / o.close * 100, 1)}%)` : "";
+	let o = i[0], s = i[i.length - 1], c = i.map((e) => e.high ?? e.close), l = i.map((e) => e.low ?? e.close), u = Ic(r, i) ? "캔들" : "라인", d = o.close ? ` (${Lc((s.close - o.close) / o.close * 100, 1)}%)` : "";
 	return [
 		`${t} ${n} ${u} 가격 차트.`,
-		`${Nc(o.time, a)}부터 ${Nc(s.time, a)}까지 ${i.length}개 봉.`,
-		`처음 종가 ${Mc(o.close)}, 마지막 종가 ${Mc(s.close)}${d}, 최고 ${Mc(Math.max(...c))}, 최저 ${Mc(Math.min(...l))}.`,
+		`${Pc(o.time, a)}부터 ${Pc(s.time, a)}까지 ${i.length}개 봉.`,
+		`처음 종가 ${Nc(o.close)}, 마지막 종가 ${Nc(s.close)}${d}, 최고 ${Nc(Math.max(...c))}, 최저 ${Nc(Math.min(...l))}.`,
 		"차트에 초점을 두고 좌우 방향키로 봉을 옮기면 값을 읽어 줍니다."
 	].join(" ");
 }
-function Rc(e) {
+function zc(e) {
 	let { rows: t, index: n, intraday: r, candle: i } = e, a = t[n];
 	if (!a) return "";
-	let o = n > 0 ? t[n - 1] : null, s = r ? "직전 봉" : "전일", c = o && o.close ? `${s} 대비 ${Ic(a.close - o.close, 2)} (${Ic((a.close - o.close) / o.close * 100, 2)}%)` : `${s} 대비 없음`, l = i && Pc(a) ? `시가 ${Mc(a.open)}, 고가 ${Mc(a.high)}, 저가 ${Mc(a.low)}, 종가 ${Mc(a.close)}` : `종가 ${Mc(a.close)}`;
-	return `${Nc(a.time, r)}. ${l}. ${c}. ${n + 1}번째 봉, 전체 ${t.length}개.`;
-}
-function zc(e) {
-	let { key: t, current: n, length: r } = e;
-	if (r <= 0) return null;
-	let i = r - 1, a = (e) => Math.min(i, Math.max(0, e));
-	switch (t) {
-		case "ArrowLeft": return n === null ? i : a(n - 1);
-		case "ArrowRight": return n === null ? i : a(n + 1);
-		case "PageUp": return n === null ? i : a(n - 10);
-		case "PageDown": return n === null ? i : a(n + 10);
-		case "Home": return 0;
-		case "End": return i;
-		default: return null;
-	}
+	let o = n > 0 ? t[n - 1] : null, s = r ? "직전 봉" : "전일", c = o && o.close ? `${s} 대비 ${Lc(a.close - o.close, 2)} (${Lc((a.close - o.close) / o.close * 100, 2)}%)` : `${s} 대비 없음`, l = i && Fc(a) ? `시가 ${Nc(a.open)}, 고가 ${Nc(a.high)}, 저가 ${Nc(a.low)}, 종가 ${Nc(a.close)}` : `종가 ${Nc(a.close)}`;
+	return `${Pc(a.time, r)}. ${l}. ${c}. ${n + 1}번째 봉, 전체 ${t.length}개.`;
 }
 //#endregion
 //#region src/app/dashboard/MarketChartFigure.tsx
@@ -16748,7 +16748,7 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 		unavailable: "사용할 수 없음",
 		pending: "연결 대기",
 		loading: "불러오는 중"
-	}, ae = el(u?.provider, U?.provider), oe = U?.asOf || u?.asOf || "", se = typeof window < "u" && !!window.LightweightCharts, ce = t || e, K = Fc(r, W), le = (0, l.useMemo)(() => Lc({
+	}, ae = el(u?.provider, U?.provider), oe = U?.asOf || u?.asOf || "", se = typeof window < "u" && !!window.LightweightCharts, ce = t || e, K = Ic(r, W), le = (0, l.useMemo)(() => Rc({
 		name: ce,
 		rangeLabel: Wc[n] || n,
 		style: r,
@@ -16769,7 +16769,7 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 	] : [te ? "시각" : "날짜", "종가"], de = (0, l.useMemo)(() => {
 		let e = (e) => e == null ? "-" : e.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
 		return W.map((t) => {
-			let n = Nc(t.time, te);
+			let n = Pc(t.time, te);
 			return K ? [
 				n,
 				e(t.open),
@@ -16784,7 +16784,7 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 		te
 	]), fe = () => E.current.length ? E.current : W, pe = (e) => {
 		let t = fe(), n = t[e];
-		n && (L(e), z(Rc({
+		n && (L(e), z(zc({
 			rows: t,
 			index: e,
 			intraday: te,
@@ -16895,7 +16895,7 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 						me(), z(""), e.preventDefault();
 						return;
 					}
-					let t = zc({
+					let t = Ac({
 						key: e.key,
 						current: I,
 						length: fe().length
@@ -16913,7 +16913,7 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 			role: "status",
 			children: R
 		}),
-		/* @__PURE__ */ (0, Q.jsx)(Ac, {
+		/* @__PURE__ */ (0, Q.jsx)(jc, {
 			title: `${ce} 가격`,
 			unit: "봉",
 			columns: ue,
