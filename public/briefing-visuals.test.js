@@ -529,7 +529,8 @@ test("snapshot selection cancels a pending current request", () => {
 // 아래 측정 함수는 결정적인 stub이다(어느 글꼴이 깔려 있든 같은 답이 나온다).
 // ---------------------------------------------------------------------------
 const measureStub = (text, size) => String(text).length * size * 0.6;
-const SIDE_PAD = 3;
+// 좌우 여백은 칸 폭의 8%(최소 3px)씩, 위아래는 3px씩이다.
+const sidePad = (width) => Math.max(3, width * 0.08);
 const VERTICAL_PAD = 3;
 
 // 계획이 요구하는 세로 높이. 줄 상자는 글꼴의 1.2배, 줄 간격은 우리가 정한 lineHeight다.
@@ -553,13 +554,13 @@ test("고른 라벨은 반드시 상자 안에 들어간다 — 세로로도, �
     for (const [label, change] of labels) {
       const plan = heatmapLabelPlan(label, change, { width, height }, measureStub);
       if (!plan) continue;
-      assert.ok(neededHeight(plan) <= height - VERTICAL_PAD + 0.01, `${label}@${width}x${height}: 높이 ${neededHeight(plan)}가 넘친다`);
+      assert.ok(neededHeight(plan) <= height - VERTICAL_PAD * 2 + 0.01, `${label}@${width}x${height}: 높이 ${neededHeight(plan)}가 넘친다`);
       // ECharts는 폭을 넘는 글자를 `...`로 자른다. 등락률이 잘리면 -0.53%가 -0.5로 읽혀 틀린 숫자가 된다.
       for (const line of plan.lines) {
-        assert.ok(measureStub(line, plan.size) <= width - SIDE_PAD * 2 + 0.01, `${label}@${width}x${height}: "${line}"이 잘린다`);
+        assert.ok(measureStub(line, plan.size) <= width - sidePad(width) * 2 + 0.01, `${label}@${width}x${height}: "${line}"이 잘린다`);
       }
       if (plan.suffix) {
-        assert.ok(measureStub(plan.suffix, plan.tailSize) <= width - SIDE_PAD * 2 + 0.01, `${label}@${width}x${height}: 등락률이 잘린다`);
+        assert.ok(measureStub(plan.suffix, plan.tailSize) <= width - sidePad(width) * 2 + 0.01, `${label}@${width}x${height}: 등락률이 잘린다`);
       }
     }
   }
@@ -611,11 +612,27 @@ test("좌우 여백 3px 안쪽에만 라벨이 선다 — 여백보다 좁은 �
   assert.notEqual(heatmapLabelPlan("A", "", { width: 20, height: 100 }, measureStub), null);
 });
 
+test("라벨은 칸 폭의 84%를 넘지 않는다 — 가장자리에 붙어 보이지 않게 비율로 여백을 둔다", () => {
+  // 3px 고정 여백일 때는 폭에 꼭 맞는 라벨이 칸 가장자리에 붙어 보였다(실측: 폭의 85%를 넘는 타일이 KR 8개·JP 14개).
+  // 칸 폭의 8%(최소 3px)씩이면 폭 38px 이상에서 라벨은 폭의 84% 안이다.
+  for (const width of [40, 60, 90, 130, 200, 400]) {
+    for (const [label, change] of [["Samsung Electronics", "-0.53%"], ["NVDA", "+2.00%"], ["Mitsubishi UFJ Financial", "+1.00%"]]) {
+      const plan = heatmapLabelPlan(label, change, { width, height: 200 }, measureStub);
+      if (!plan) continue;
+      const widest = Math.max(...plan.lines.map((line) => measureStub(line, plan.size)), plan.suffix ? measureStub(plan.suffix, plan.tailSize) : 0);
+      assert.ok(widest / width <= 0.84 + 1e-9, `${label}@${width}: 폭의 ${(widest / width * 100).toFixed(0)}%를 차지한다`);
+    }
+  }
+  // 아주 좁은 칸은 최소 3px씩만 남긴다.
+  const narrow = heatmapLabelPlan("AB", "", { width: 20, height: 100 }, measureStub);
+  assert.ok(measureStub(narrow.lines[0], narrow.size) <= 20 - 6 + 1e-9);
+});
+
 test("머리띠 라벨은 한 줄이고 띠 안에 들어간다", () => {
   const plan = heatmapLabelPlan("Consumer Disc.", "", { width: 200, height: 26, maxSize: 13, maxLines: 1 }, measureStub);
   assert.equal(plan.lines.length, 1);
   assert.ok(plan.size <= 13);
-  assert.ok(neededHeight(plan) <= 26 - VERTICAL_PAD);
+  assert.ok(neededHeight(plan) <= 26 - VERTICAL_PAD * 2);
   // 폭이 모자라면 줄바꿈으로 버티지 않고 비운다.
   assert.equal(heatmapLabelPlan("Consumer Discretionary Goods", "", { width: 90, height: 26, maxSize: 13, maxLines: 1 }, measureStub), null);
 });
@@ -853,7 +870,7 @@ test("파이프라인: 실제 배치로 고른 라벨은 어느 것도 타일 �
       const lines = label.formatter.split("\n").map((line) => line.replace(/^\{[nc]\|/, "").replace(/\}$/, ""));
       for (const line of lines) {
         const style = line === lines[lines.length - 1] && /%$/.test(line) ? label.rich.c : label.rich.n;
-        assert.ok(measureStub(line, style.fontSize) <= rect.width - SIDE_PAD * 2 + 0.01, `${node.id}: "${line}"이 ${rect.width}px 칸에서 잘린다`);
+        assert.ok(measureStub(line, style.fontSize) <= rect.width - sidePad(rect.width) * 2 + 0.01, `${node.id}: "${line}"이 ${rect.width}px 칸에서 잘린다`);
       }
     }
     (node.children || []).forEach(visit);

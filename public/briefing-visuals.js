@@ -597,13 +597,15 @@
   // 않는다) 하한이 곧 화면에 나오는 가장 작은 글자다.
   const HEATMAP_MAX_LABEL_PX = 20;
   const HEATMAP_MIN_LABEL_PX = 6;
-  // **좌우 여백 3px.** ECharts는 라벨이 칸 폭보다 넓으면 `...`로 자른다. 등락률이 잘리면 `-0.53%`가 `-0.5`로 읽혀
-  // 틀린 숫자가 되고, 이름이 잘리면 `Samsung…`이 12개사를 가리킨다. 정확한 타일 폭(heatmapTileSizes)으로 재고 라벨
-  // padding을 0으로 두면(heatmapSeriesBase) 브라우저 실측에서 KR·JP·US 모두 여백 **1px부터 잘림 0**이었고 0px에서만
-  // 잘렸다. 3px는 예전 Plotly 때와 같은 숨 쉴 자리이자, 글꼴이 늦게 내려와 폭이 조금 달라져도 받아낼 여유(2px)다.
-  // 글꼴을 바꾸면 다시 잰다.
-  const HEATMAP_LABEL_SIDE_PAD_PX = 3;
-  // 위아래는 자르지 않고 넘칠 뿐이라 여유만 둔다.
+  // **좌우 여백은 칸 폭의 8%(최소 3px)씩이다.** 처음엔 3px 고정이었는데, 폭에 꼭 맞게 들어가는 라벨이 칸 가장자리에
+  // 붙어 보였다 — 실측에서 라벨 폭이 칸 폭의 85%를 넘는 타일이 KR 8개·JP 14개였다. 비율로 두면 그 타일이 0개가 되고
+  // 라벨은 KR 2개·JP 2개·US 3개만 줄어든다(KR 69→67, JP 137→135, US 268→265).
+  // 안전 측면: ECharts는 트리맵 라벨의 기본 padding 5 때문에 글자 폭을 칸 폭보다 10px 줄여 자른다. heatmapSeriesBase가
+  // padding을 0으로 두면 여백 1px부터 잘림 0이었으므로(KR·JP·US 실측), 최소 3px는 글꼴이 늦게 내려와 폭이 조금
+  // 달라져도 받아낼 여유(2px)다. 글꼴을 바꾸면 다시 잰다.
+  const HEATMAP_LABEL_MIN_SIDE_PAD_PX = 3;
+  const HEATMAP_LABEL_SIDE_PAD_RATIO = 0.08;
+  // 위아래는 잘리지 않고 넘칠 뿐이고 라벨이 세로 가운데라 양쪽이 같다. 실측에서 세로로 칸의 85%를 넘는 라벨은 없었다.
   const HEATMAP_LABEL_VERTICAL_PAD_PX = 3;
   // 칸 크기에 글자 크기가 따라붙는 정도. 완전 비례가 아니라 면적의 제곱근에
   // 완만하게 따라간다(면적을 그대로 쓰면 큰 칸만 남고 작은 칸은 전부 하한이 된다).
@@ -667,8 +669,10 @@
   function heatmapLabelPlan(label, change, box, measure) {
     const text = String(label || "").trim();
     if (!text) return null;
-    const width = (finite(box && box.width) || 0) - HEATMAP_LABEL_SIDE_PAD_PX * 2;
-    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_VERTICAL_PAD_PX;
+    const boxWidth = finite(box && box.width) || 0;
+    const sidePad = Math.max(HEATMAP_LABEL_MIN_SIDE_PAD_PX, boxWidth * HEATMAP_LABEL_SIDE_PAD_RATIO);
+    const width = boxWidth - sidePad * 2;
+    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_VERTICAL_PAD_PX * 2;
     if (width <= 0 || height <= 0) return null;
     const ceiling = Math.min(
       finite(box && box.maxSize) ?? HEATMAP_MAX_LABEL_PX,
