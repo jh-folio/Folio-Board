@@ -215,18 +215,17 @@ public/react/folio-react.js
 
 - `renderMarkdown()` 변경은 브리핑과 기업분석 모두에 영향을 줍니다.
 - 표 렌더링은 `<div class="table-wrap"><table>...</table></div>` 구조입니다.
-- **차트 층은 넷이다.** 기능이 멀쩡한 차트를 기술 통일만을 이유로 옮기지 않는다.
-  1. **ECharts** — 새 차트와 히트맵 이전 대상. `public/vendor/echarts.js`가 `window.echarts`(SVG 렌더러)로 노출되고, 화면은 `web/src/app/charts/FolioChart`에 `option`을 넘긴다. `FolioChart`가 수명(마운트·해제·폭 변화, 숨은 곳에서 시작해도 보이면 바로잡기)·테마 전환(`chart.setTheme`, 확대 범위·범례 선택은 되돌려 놓는다)·loading/empty/error/stale 네 상태·텍스트 대체(`role="img"` + 필수 `label`, 방향키 판독, 데이터 표)를 맡는다.
+- **차트 층은 셋이다.** 기능이 멀쩡한 차트를 기술 통일만을 이유로 옮기지 않는다.
+  1. **ECharts** — 새 차트와 브리핑 히트맵(`public/briefing-visuals.js`, React 밖이라 `window.echarts`를 직접 부른다). `public/vendor/echarts.js`가 `window.echarts`(SVG 렌더러)로 노출되고, 화면은 `web/src/app/charts/FolioChart`에 `option`을 넘긴다. `FolioChart`가 수명(마운트·해제·폭 변화, 숨은 곳에서 시작해도 보이면 바로잡기)·테마 전환(`chart.setTheme`, 확대 범위·범례 선택은 되돌려 놓는다)·loading/empty/error/stale 네 상태·텍스트 대체(`role="img"` + 필수 `label`, 방향키 판독, 데이터 표)를 맡는다.
   2. **Lightweight Charts** — 금융 시계열(`MarketChartFigure`, 브리핑 가격 계열). `public/vendor/lightweight-charts.js`(npm 배포본과 바이트 동일)로 서빙한다.
   3. **손 SVG** — 기업분석 `AnalysisCharts`, 워치리스트 분기 지표 `FundamentalsPanel`, Portfolio `BacktestChart`. `BacktestChart`는 단일/비교 결과가 공유하며 실제 컨테이너 폭, 날짜/값 축, 범례, 날짜 hover·터치·키보드 선택과 데이터 표를 제공한다. 이들은 CSS 토큰을 직접 따른다.
-  4. **Plotly**(CDN) — 브리핑 트리맵 히트맵(`public/briefing-visuals.js::renderHeatmap`) 한 곳뿐이며 ECharts로 옮길 때까지 남는다. `index.html`에 남은 외부 스크립트가 이것 하나다.
 
   **새 차트를 추가하는 절차**
   - 필요한 차트 종류·컴포넌트가 `web/src/vendor/echarts.ts` 등록 목록에 없으면 한 줄 더하고 `web/`에서 `npm run build:vendor`로 다시 만든 뒤 `public/vendor/echarts.js`를 함께 커밋한다(사용자 설치본은 Node 없이 이 파일을 서빙한다).
   - option은 차트 종류별 컴포넌트가 만든다 — 화면이 직접 쓰지 않는다. 색은 디자인 토큰, 금액·분기 표기는 `web/src/app/charts/chartFormat.ts`(KRW·JPY는 조·억, 그 외 T·B·M)를 쓴다. `option`은 메모이즈해서 넘긴다(참조가 바뀌면 다시 그리며 확대 범위가 초기화된다). 색을 토큰에서 만드는 차트(캐스케이드 등)는 `(tokens) => option` 함수로 넘겨 테마 전환 때 새 토큰으로 다시 만들게 한다.
   - `FolioChart`의 `label`(필수)·`table`·`keyboard`를 채운다. 그림 안에 링크·버튼이 있으면 img가 그것을 숨기므로 `role="group"`을 쓴다.
   - 앱 소스는 ECharts를 **`import type`으로만** 가져오고 실행 코드는 `window.echarts`로만 받는다(같은 라이브러리가 React 번들에 두 벌 실리지 않게. `web/tests/vendorScriptsSource.test.mjs`가 지킨다).
-  - ECharts 버전은 정확 고정이다. 올릴 때는 `charts/treemapLayout.test.ts` canary가 먼저 걸린다 — 히트맵 라벨 계획이 ECharts의 비공개 배치 경로를 읽기 때문이다.
+  - ECharts 버전은 정확 고정이다. 올릴 때는 `public/briefing-visuals.test.js`의 canary(`heatmapTileSizes`)가 먼저 걸린다 — 히트맵 라벨 계획이 ECharts의 비공개 배치 경로를 읽기 때문이다.
   - 캔버스 글꼴·색은 컴포넌트가 CSS 변수를 `getComputedStyle`로 읽는다(ECharts는 `var()`·`color-mix()`를 풀지 못하므로 해석된 값을 쓴다).
 - 기업분석 본문 폭은 기본적으로 `markdown-brief`의 제한 폭을 따릅니다.
 

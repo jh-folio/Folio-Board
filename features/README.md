@@ -7,7 +7,7 @@
 
 | 폴더 | 화면/역할 | 설명 |
 | --- | --- | --- |
-| `daily_briefing/` | 브리핑 탭 | 미국장·한국장 범위별 브리핑, 이슈·출처 다양성, 생성 당시 가격 series·히트맵 사이드카, 생성 당시/현재 REST snapshot 전환, Lightweight Charts·Plotly 렌더링과 PNG 내보내기, 저장·품질 모드 |
+| `daily_briefing/` | 브리핑 탭 | 미국장·한국장 범위별 브리핑, 이슈·출처 다양성, 생성 당시 가격 series·히트맵 사이드카, 생성 당시/현재 REST snapshot 전환, Lightweight Charts·ECharts 렌더링과 PNG 내보내기, 저장·품질 모드 |
 | `company_analysis/` | 기업 분석 탭 | SEC/DART 숫자, 공시 문단, 로컬 자료를 결합한 기업분석 |
 | `topic_report/` | 딥 리서치 탭 | 질문-first 계획 승인, Smart Collection 재사용, 근거 추적 보고서(내부 Topic Report v2 호환) |
 | `smart_collections/` | 딥 리서치 내부 워크스페이스 | 결정적 저장 필터, 상태/reason, 제한된 snapshot 변화와 recovery |
@@ -27,7 +27,7 @@
 | `thesis_tracking/` | Watchlist 상세/기업 공통 | 기업 Thesis 등록·수정, 최신 근거 대비 6값 Delta, 반대 근거·다음 확인·이력 |
 | `agent_mode/` | 보고서 생성 공통 | Codex/Claude Code 같은 외부 AI 에이전트용 context pack 생성과 writeback |
 | `onboarding/` | 첫 실행 안내 | 첫 실행 판정(사용자 자료 유무), 5단계 위저드와 완료 단계의 선택 둘러보기, 완료·건너뛰기 기록 |
-| `frontend_ui/` | 웹 UI | 탭 구조, 렌더링, 모바일 대응, Markdown/Plotly 주의점, 차트 층(ECharts `FolioChart`·벤더 번들). 디자인 언어·토큰·프리미티브는 [frontend_ui/DESIGN_SYSTEM.md](frontend_ui/DESIGN_SYSTEM.md) |
+| `frontend_ui/` | 웹 UI | 탭 구조, 렌더링, 모바일 대응, Markdown 주의점, 차트 층(ECharts `FolioChart`·벤더 번들). 디자인 언어·토큰·프리미티브는 [frontend_ui/DESIGN_SYSTEM.md](frontend_ui/DESIGN_SYSTEM.md) |
 | `pixel_office/` | 보류 | 리서치 상태를 픽셀 오피스 장면으로 보여주는 기반. 0.3.0에서 배선을 끊고 릴리즈 패키지에서 제외했으며 소스만 재개용으로 남는다 |
 | `common/` | 공통 기반 | 자료 레이어, 품질/근거성, 시장 데이터, 공통 스키마, 유틸 |
 
