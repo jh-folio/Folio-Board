@@ -67,7 +67,7 @@ These locations can contain personal API keys, generated reports, RSS archives, 
 
 Optional but recommended:
 
-- OpenAI, Claude, Gemini, or CLI-based LLM access for higher-quality generation
+- An installed and authenticated Codex, Claude Code, or Antigravity CLI for higher-quality generation
 - `yfinance` and `polars` dependencies from `requirements.txt` for market data and dataframe operations
 
 ### Clone The Repository
@@ -109,7 +109,7 @@ macOS / Linux:
 cp .env.example .env
 ```
 
-Then edit `.env` only for the services you actually use. API keys are optional, but LLM features need either configured API keys or a supported local CLI bridge.
+Then edit `.env` only for the services you actually use. Data API keys are optional. AI features use a supported local CLI bridge; direct LLM API keys are no longer used. Existing API-mode settings require an explicit switch to CLI in Settings, or turning AI off.
 
 Do not commit or share `.env`.
 

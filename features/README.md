@@ -20,7 +20,7 @@
 | `investment_review/` | Portfolio `투자 리뷰` 하위 탭 | 날짜별 v2 저장 리뷰의 입력 기준·변화·우선 포지션·공동 위험·자료·이력 |
 | `automation/` | 설정 탭 | RSS 수집·시장 메모리 갱신·브리핑 예약 스케줄러와 실행 기록 |
 | `market_widgets/` | 설정 read-only | 예전 TradingView 위젯 설정. 0.5.4에서 마지막 소비자와 브리지를 삭제했고 집중 종목 fallback으로만 읽는다 |
-| `llm_settings/` | 설정 탭 | LLM provider, API Key 저장, 웹 검색 보완 설정 |
+| `llm_settings/` | 설정 탭 | CLI·모델·추론 설정, 외부 데이터 키 저장, 웹 검색 보완 |
 | `obsidian/` | 설정/보고서 공통 | Obsidian 내보내기, 사용자 노트 회수, 템플릿 생성, frontmatter 검사 |
 | `notion_export/` | 보고서 공통 | 브리핑/기업분석/테마분석 Notion DB 내보내기 |
 | `personal_overlay/` | 보고서 공통 | Canonical 보고서를 사용자 hypothesis 노트와 대조한 개인 해석 레이어 |

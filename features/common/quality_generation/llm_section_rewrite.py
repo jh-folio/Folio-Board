@@ -6,7 +6,7 @@ import os
 
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
 from features.common.utils import clean_brief_text
-from features.llm_settings.client import extract_json_object, request_llm_text, selected_llm_config
+from features.llm_settings.client import extract_json_object, request_cli_text, selected_cli_config
 from features.common.quality_generation.preflight_enrichment import build_preflight_evidence_context
 from features.common.quality_generation.report_format import enforce_report_format, unwrap_markdown_payload
 from features.common.quality_generation.telemetry import normalize_token_usage
@@ -134,7 +134,7 @@ def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int, allow_repa
         "Required JSON shape: {\"markdown\":\"...\", \"changedSections\":[], \"notes\":[]}",
     ])
     try:
-        repaired, _repair_id, repair_usage = request_llm_text(
+        repaired, _repair_id, repair_usage = request_cli_text(
             cfg,
             _json_repair_prompt(),
             repair_context,
@@ -176,10 +176,10 @@ def improve_sections_with_llm(
             "repairReason": "llm_section_rewrite_skipped_non_llm_generation",
             "warnings": ["LLM 섹션 개선은 LLM으로 생성된 보고서에만 적용했습니다."],
         }
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     if not cfg.get("enabled"):
         return {"artifact": artifact, "repairApplied": False, "repairReason": "llm_disabled", "warnings": ["LLM 설정이 꺼져 있어 섹션 개선을 건너뜁니다."]}
-    if not cfg.get("apiKey"):
+    if not cfg.get("enabled"):
         return {"artifact": artifact, "repairApplied": False, "repairReason": f"missing_{cfg.get('provider')}_api_key", "warnings": ["선택한 LLM Provider API 키가 없어 섹션 개선을 건너뜁니다."]}
 
     max_tokens = int(os.environ.get("QUALITY_SECTION_REWRITE_MAX_OUTPUT_TOKENS", "4500"))
@@ -197,7 +197,7 @@ def improve_sections_with_llm(
             return {"artifact": artifact, "repairApplied": False, "repairReason": "shared_repair_budget_exhausted", "warnings": []}
         request_options["timeout_seconds"] = repair_budget.remaining_seconds()
     try:
-        text, response_id, usage = request_llm_text(
+        text, response_id, usage = request_cli_text(
             cfg,
             PROMPT,
             context,

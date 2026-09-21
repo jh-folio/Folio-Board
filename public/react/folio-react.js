@@ -798,7 +798,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		ee.current === e && (H(W), H(ee)), G.current === e && (H(G), Qf._currentValue = R);
 	}
 	var oe, se;
-	function ce(e) {
+	function K(e) {
 		if (oe === void 0) try {
 			throw Error();
 		} catch (e) {
@@ -807,10 +807,10 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		}
 		return "\n" + oe + e + se;
 	}
-	var K = !1;
-	function le(e, t) {
-		if (!e || K) return "";
-		K = !0;
+	var ce = !1;
+	function q(e, t) {
+		if (!e || ce) return "";
+		ce = !0;
 		var n = Error.prepareStackTrace;
 		Error.prepareStackTrace = void 0;
 		try {
@@ -870,40 +870,40 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 				}
 			}
 		} finally {
-			K = !1, Error.prepareStackTrace = n;
+			ce = !1, Error.prepareStackTrace = n;
 		}
-		return (n = e ? e.displayName || e.name : "") ? ce(n) : "";
+		return (n = e ? e.displayName || e.name : "") ? K(n) : "";
 	}
-	function ue(e, t) {
+	function le(e, t) {
 		switch (e.tag) {
 			case 26:
 			case 27:
-			case 5: return ce(e.type);
-			case 16: return ce("Lazy");
-			case 13: return e.child !== t && t !== null ? ce("Suspense Fallback") : ce("Suspense");
-			case 19: return ce("SuspenseList");
+			case 5: return K(e.type);
+			case 16: return K("Lazy");
+			case 13: return e.child !== t && t !== null ? K("Suspense Fallback") : K("Suspense");
+			case 19: return K("SuspenseList");
 			case 0:
-			case 15: return le(e.type, !1);
-			case 11: return le(e.type.render, !1);
-			case 1: return le(e.type, !0);
-			case 31: return ce("Activity");
+			case 15: return q(e.type, !1);
+			case 11: return q(e.type.render, !1);
+			case 1: return q(e.type, !0);
+			case 31: return K("Activity");
 			default: return "";
 		}
 	}
-	function de(e) {
+	function ue(e) {
 		try {
 			var t = "", n = null;
 			do
-				t += ue(e, n), n = e, e = e.return;
+				t += le(e, n), n = e, e = e.return;
 			while (e);
 			return t;
 		} catch (e) {
 			return "\nError generating stack: " + e.message + "\n" + e.stack;
 		}
 	}
-	var fe = Object.prototype.hasOwnProperty, pe = t.unstable_scheduleCallback, me = t.unstable_cancelCallback, he = t.unstable_shouldYield, ge = t.unstable_requestPaint, q = t.unstable_now, _e = t.unstable_getCurrentPriorityLevel, ve = t.unstable_ImmediatePriority, ye = t.unstable_UserBlockingPriority, be = t.unstable_NormalPriority, xe = t.unstable_LowPriority, Se = t.unstable_IdlePriority, Ce = t.log, J = t.unstable_setDisableYieldValue, Y = null, we = null;
+	var de = Object.prototype.hasOwnProperty, fe = t.unstable_scheduleCallback, pe = t.unstable_cancelCallback, me = t.unstable_shouldYield, he = t.unstable_requestPaint, J = t.unstable_now, ge = t.unstable_getCurrentPriorityLevel, _e = t.unstable_ImmediatePriority, ve = t.unstable_UserBlockingPriority, ye = t.unstable_NormalPriority, be = t.unstable_LowPriority, xe = t.unstable_IdlePriority, Se = t.log, Ce = t.unstable_setDisableYieldValue, Y = null, we = null;
 	function Te(e) {
-		if (typeof Ce == "function" && J(e), we && typeof we.setStrictMode == "function") try {
+		if (typeof Se == "function" && Ce(e), we && typeof we.setStrictMode == "function") try {
 			we.setStrictMode(Y, e);
 		} catch {}
 	}
@@ -1143,7 +1143,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	}
 	var ut = RegExp("^[:A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD][:A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD\\-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040]*$"), dt = {}, ft = {};
 	function pt(e) {
-		return fe.call(ft, e) ? !0 : fe.call(dt, e) ? !1 : ut.test(e) ? ft[e] = !0 : (dt[e] = !0, !1);
+		return de.call(ft, e) ? !0 : de.call(dt, e) ? !1 : ut.test(e) ? ft[e] = !0 : (dt[e] = !0, !1);
 	}
 	function mt(e, t, n) {
 		if (pt(t)) if (n === null) e.removeAttribute(t);
@@ -1838,7 +1838,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		if (n.length !== r.length) return !1;
 		for (r = 0; r < n.length; r++) {
 			var i = n[r];
-			if (!fe.call(t, i) || !cr(e[i], t[i])) return !1;
+			if (!de.call(t, i) || !cr(e[i], t[i])) return !1;
 		}
 		return !0;
 	}
@@ -2069,13 +2069,13 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 			return n === void 0 ? (t = {
 				value: e,
 				source: t,
-				stack: de(t)
+				stack: ue(t)
 			}, ri.set(e, t), t) : n;
 		}
 		return {
 			value: e,
 			source: t,
-			stack: de(t)
+			stack: ue(t)
 		};
 	}
 	var ai = [], oi = 0, si = null, ci = 0, li = [], ui = 0, di = null, fi = 1, pi = "";
@@ -2355,7 +2355,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	}
 	var ia = I.S;
 	I.S = function(e, t) {
-		Zl = q(), typeof t == "object" && t && typeof t.then == "function" && ta(e, t), ia !== null && ia(e, t);
+		Zl = J(), typeof t == "object" && t && typeof t.then == "function" && ta(e, t), ia !== null && ia(e, t);
 	};
 	var aa = V(null);
 	function oa() {
@@ -4425,15 +4425,15 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 						}
 						e = e.sibling;
 					}
-					r.tail !== null && q() > Ql && (t.flags |= 128, i = !0, Dc(r, !1), t.lanes = 4194304);
+					r.tail !== null && J() > Ql && (t.flags |= 128, i = !0, Dc(r, !1), t.lanes = 4194304);
 				}
 				else {
 					if (!i) if (e = Za(a), e !== null) {
 						if (t.flags |= 128, i = !0, e = e.updateQueue, t.updateQueue = e, Ec(t, e), Dc(r, !0), r.tail === null && r.tailMode === "hidden" && !a.alternate && !xi) return Oc(t), null;
-					} else 2 * q() - r.renderingStartTime > Ql && n !== 536870912 && (t.flags |= 128, i = !0, Dc(r, !1), t.lanes = 4194304);
+					} else 2 * J() - r.renderingStartTime > Ql && n !== 536870912 && (t.flags |= 128, i = !0, Dc(r, !1), t.lanes = 4194304);
 					r.isBackwards ? (a.sibling = t.child, t.child = a) : (e = r.last, e === null ? t.child = a : e.sibling = a, r.last = a);
 				}
-				return r.tail === null ? (Oc(t), null) : (e = r.tail, r.rendering = e, r.tail = e.sibling, r.renderingStartTime = q(), e.sibling = null, n = Xa.current, U(Xa, i ? n & 1 | 2 : n & 1), xi && mi(t, r.treeForkCount), e);
+				return r.tail === null ? (Oc(t), null) : (e = r.tail, r.rendering = e, r.tail = e.sibling, r.renderingStartTime = J(), e.sibling = null, n = Xa.current, U(Xa, i ? n & 1 | 2 : n & 1), xi && mi(t, r.treeForkCount), e);
 			case 22:
 			case 23: return Ya(t), Ha(), r = t.memoizedState !== null, e === null ? r && (t.flags |= 8192) : e.memoizedState !== null !== r && (t.flags |= 8192), r ? n & 536870912 && !(t.flags & 128) && (Oc(t), t.subtreeFlags & 6 && (t.flags |= 8192)) : Oc(t), n = t.updateQueue, n !== null && Ec(t, n.retryQueue), n = null, e !== null && e.memoizedState !== null && e.memoizedState.cachePool !== null && (n = e.memoizedState.cachePool.pool), r = null, t.memoizedState !== null && t.memoizedState.cachePool !== null && (r = t.memoizedState.cachePool.pool), r !== n && (t.flags |= 2048), e !== null && H(aa), null;
 			case 24: return n = null, e !== null && (n = e.memoizedState.cache), t.memoizedState.cache !== n && (t.flags |= 2048), Ii(Ji), Oc(t), null;
@@ -5039,7 +5039,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 				sl(t, e), ul(e), r & 4 && (r = e.updateQueue, r !== null && (e.updateQueue = null, ol(e, r)));
 				break;
 			case 13:
-				sl(t, e), ul(e), e.child.flags & 8192 && e.memoizedState !== null != (n !== null && n.memoizedState !== null) && (Xl = q()), r & 4 && (r = e.updateQueue, r !== null && (e.updateQueue = null, ol(e, r)));
+				sl(t, e), ul(e), e.child.flags & 8192 && e.memoizedState !== null != (n !== null && n.memoizedState !== null) && (Xl = J()), r & 4 && (r = e.updateQueue, r !== null && (e.updateQueue = null, ol(e, r)));
 				break;
 			case 22:
 				i = e.memoizedState !== null;
@@ -5506,7 +5506,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 					case 5: break;
 					default: throw Error(s(329));
 				}
-				if ((t & 62914560) === t && (i = Xl + 300 - q(), 10 < i)) {
+				if ((t & 62914560) === t && (i = Xl + 300 - J(), 10 < i)) {
 					if (gu(r, t, Gl, !Ll), Me(r, 0, !0) !== 0) break a;
 					iu = t, r.timeoutHandle = Kd(mu.bind(null, r, n, Jl, $l, Yl, t, Gl, Ul, Kl, Ll, a, "Throttled", -0, 0), i);
 					break a;
@@ -5529,7 +5529,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 				waitingForViewTransition: !1,
 				unsuspend: zt
 			}, Cl(t, a, d);
-			var m = (a & 62914560) === a ? Xl - q() : (a & 4194048) === a ? Zl - q() : 0;
+			var m = (a & 62914560) === a ? Xl - J() : (a & 4194048) === a ? Zl - J() : 0;
 			if (m = qf(d, m), m !== null) {
 				iu = a, e.cancelPendingCommit = m(Pu.bind(null, e, t, a, n, r, i, o, s, c, u, d, null, f, p)), gu(e, a, o, !l);
 				return;
@@ -5651,7 +5651,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		var n = jl;
 		jl |= 2;
 		var r = Su(), i = Cu();
-		Ml !== e || Pl !== t ? ($l = null, Ql = q() + 500, yu(e, t)) : Rl = Ne(e, t);
+		Ml !== e || Pl !== t ? ($l = null, Ql = J() + 500, yu(e, t)) : Rl = Ne(e, t);
 		a: do
 			try {
 				if (Fl !== 0 && Nl !== null) {
@@ -5718,7 +5718,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		return Pi = Ni = null, I.H = r, I.A = i, jl = n, Nl === null ? (Ml = null, Pl = 0, Br(), Vl) : 0;
 	}
 	function Ou() {
-		for (; Nl !== null && !he();) ku(Nl);
+		for (; Nl !== null && !me();) ku(Nl);
 	}
 	function ku(e) {
 		var t = Sc(e.alternate, e, Bl);
@@ -5798,7 +5798,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		if (jl & 6) throw Error(s(327));
 		if (t !== null) {
 			if (t === e.current) throw Error(s(177));
-			if (a = t.lanes | t.childLanes, a |= zr, Q(e, n, a, o, c, l), e === Ml && (Nl = Ml = null, Pl = 0), ru = t, nu = e, iu = n, au = a, ou = i, su = r, t.subtreeFlags & 10256 || t.flags & 10256 ? (e.callbackNode = null, e.callbackPriority = 0, Ju(be, function() {
+			if (a = t.lanes | t.childLanes, a |= zr, Q(e, n, a, o, c, l), e === Ml && (Nl = Ml = null, Pl = 0), ru = t, nu = e, iu = n, au = a, ou = i, su = r, t.subtreeFlags & 10256 || t.flags & 10256 ? (e.callbackNode = null, e.callbackPriority = 0, Ju(ye, function() {
 				return Bu(), null;
 			})) : (e.callbackNode = null, e.callbackPriority = 0), r = !!(t.flags & 13878), t.subtreeFlags & 13878 || r) {
 				r = I.T, I.T = null, i = L.p, L.p = 2, o = jl, jl |= 4;
@@ -5880,7 +5880,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	}
 	function Lu() {
 		if (tu === 4 || tu === 3) {
-			tu = 0, ge();
+			tu = 0, he();
 			var e = nu, t = ru, n = iu, r = su;
 			t.subtreeFlags & 10256 || t.flags & 10256 ? tu = 5 : (tu = 0, ru = nu = null, Ru(e, e.pendingLanes));
 			var i = e.pendingLanes;
@@ -5956,7 +5956,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	}
 	function Wu(e, t, n) {
 		var r = e.pingCache;
-		r !== null && r.delete(t), e.pingedLanes |= e.suspendedLanes & n, e.warmLanes &= ~n, Ml === e && (Pl & n) === n && (Vl === 4 || Vl === 3 && (Pl & 62914560) === Pl && 300 > q() - Xl ? !(jl & 2) && yu(e, 0) : Wl |= n, Kl === Pl && (Kl = 0)), td(e);
+		r !== null && r.delete(t), e.pingedLanes |= e.suspendedLanes & n, e.warmLanes &= ~n, Ml === e && (Pl & n) === n && (Vl === 4 || Vl === 3 && (Pl & 62914560) === Pl && 300 > J() - Xl ? !(jl & 2) && yu(e, 0) : Wl |= n, Kl === Pl && (Kl = 0)), td(e);
 	}
 	function Gu(e, t) {
 		t === 0 && (t = Fe()), e = Ur(e, t), e !== null && (Le(e, t), td(e));
@@ -5984,7 +5984,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		r !== null && r.delete(t), Gu(e, n);
 	}
 	function Ju(e, t) {
-		return pe(e, t);
+		return fe(e, t);
 	}
 	var Yu = null, Xu = null, Zu = !1, Qu = !1, $u = !1, ed = 0;
 	function td(e) {
@@ -6017,7 +6017,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 		Qu = Zu = !1;
 		var e = 0;
 		ed !== 0 && Gd() && (e = ed);
-		for (var t = q(), n = null, r = Yu; r !== null;) {
+		for (var t = J(), n = null, r = Yu; r !== null;) {
 			var i = r.next, a = ad(r, t);
 			a === 0 ? (r.next = null, n === null ? Yu = i : n.next = i, i === null && (Xu = n)) : (n = r, (e !== 0 || a & 3) && (Qu = !0)), r = i;
 		}
@@ -6028,32 +6028,32 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 			var o = 31 - Ee(a), s = 1 << o, c = i[o];
 			c === -1 ? ((s & n) === 0 || (s & r) !== 0) && (i[o] = Pe(s, t)) : c <= t && (e.expiredLanes |= s), a &= ~s;
 		}
-		if (t = Ml, n = Pl, n = Me(e, e === t ? n : 0, e.cancelPendingCommit !== null || e.timeoutHandle !== -1), r = e.callbackNode, n === 0 || e === t && (Fl === 2 || Fl === 9) || e.cancelPendingCommit !== null) return r !== null && r !== null && me(r), e.callbackNode = null, e.callbackPriority = 0;
+		if (t = Ml, n = Pl, n = Me(e, e === t ? n : 0, e.cancelPendingCommit !== null || e.timeoutHandle !== -1), r = e.callbackNode, n === 0 || e === t && (Fl === 2 || Fl === 9) || e.cancelPendingCommit !== null) return r !== null && r !== null && pe(r), e.callbackNode = null, e.callbackPriority = 0;
 		if (!(n & 3) || Ne(e, n)) {
 			if (t = n & -n, t === e.callbackPriority) return t;
-			switch (r !== null && me(r), He(n)) {
+			switch (r !== null && pe(r), He(n)) {
 				case 2:
 				case 8:
-					n = ye;
+					n = ve;
 					break;
 				case 32:
-					n = be;
+					n = ye;
 					break;
 				case 268435456:
-					n = Se;
+					n = xe;
 					break;
-				default: n = be;
+				default: n = ye;
 			}
-			return r = od.bind(null, e), n = pe(n, r), e.callbackPriority = t, e.callbackNode = n, t;
+			return r = od.bind(null, e), n = fe(n, r), e.callbackPriority = t, e.callbackNode = n, t;
 		}
-		return r !== null && r !== null && me(r), e.callbackPriority = 2, e.callbackNode = null, 2;
+		return r !== null && r !== null && pe(r), e.callbackPriority = 2, e.callbackNode = null, 2;
 	}
 	function od(e, t) {
 		if (tu !== 0 && tu !== 5) return e.callbackNode = null, e.callbackPriority = 0, null;
 		var n = e.callbackNode;
 		if (zu() && e.callbackNode !== n) return null;
 		var r = Pl;
-		return r = Me(e, e === Ml ? r : 0, e.cancelPendingCommit !== null || e.timeoutHandle !== -1), r === 0 ? null : (pu(e, r, t), ad(e, q()), e.callbackNode != null && e.callbackNode === n ? od.bind(null, e) : null);
+		return r = Me(e, e === Ml ? r : 0, e.cancelPendingCommit !== null || e.timeoutHandle !== -1), r === 0 ? null : (pu(e, r, t), ad(e, J()), e.callbackNode != null && e.callbackNode === n ? od.bind(null, e) : null);
 	}
 	function sd(e, t) {
 		if (zu()) return null;
@@ -6061,7 +6061,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	}
 	function cd() {
 		Yd(function() {
-			jl & 6 ? pe(ve, rd) : id();
+			jl & 6 ? fe(_e, rd) : id();
 		});
 	}
 	function ld() {
@@ -7637,7 +7637,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 										var c = 1 << 31 - Ee(o);
 										s.entanglements[1] |= c, o &= ~c;
 									}
-									td(a), !(jl & 6) && (Ql = q() + 500, nd(0, !1));
+									td(a), !(jl & 6) && (Ql = J() + 500, nd(0, !1));
 								}
 							}
 							break;
@@ -7748,12 +7748,12 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 			case "mouseleave":
 			case "pointerenter":
 			case "pointerleave": return 8;
-			case "message": switch (_e()) {
-				case ve: return 2;
-				case ye: return 8;
-				case be:
-				case xe: return 32;
-				case Se: return 268435456;
+			case "message": switch (ge()) {
+				case _e: return 2;
+				case ve: return 8;
+				case ye:
+				case be: return 32;
+				case xe: return 268435456;
 				default: return 32;
 			}
 			default: return 32;
@@ -8233,17 +8233,17 @@ function se(e) {
 	if (!M(e, ne) || e.version !== 1 || !F.has(e.diagnosticQuality) || !I.has(e.availabilityReason) || !L.has(e.authorityState) || e.runId !== null && typeof e.runId != "string" || e.authorityStatus !== null && typeof e.authorityStatus != "string" || e.record !== null && !oe(e.record) || !Array.isArray(e.warnings) || !e.warnings.every((e) => M(e, G) && typeof e.code == "string" && typeof e.runId == "string")) throw Error("diagnostic_detail_contract_invalid");
 	return e;
 }
-function ce(e) {
+function K(e) {
 	let t = new URLSearchParams({ version: "1" });
 	return e.limit && t.set("limit", String(e.limit)), e.outcome && e.outcome !== "all" && t.set("outcome", e.outcome), e.fallback && e.fallback !== "all" && t.set("fallback", e.fallback), e.from && t.set("from", e.from), e.to && t.set("to", e.to), e.cursor && t.set("cursor", e.cursor), `/api/diagnostics/runs?${t.toString()}`;
 }
-var K = /* @__PURE__ */ new Set([
+var ce = /* @__PURE__ */ new Set([
 	"failed",
 	"succeeded",
 	"cancelled",
 	"running",
 	"unknown"
-]), le = [
+]), q = [
 	"runId",
 	"createdAt",
 	"finishedAt",
@@ -8266,12 +8266,12 @@ var K = /* @__PURE__ */ new Set([
 	"fallbackObserved",
 	"failureReasonCode",
 	"failureStageCode"
-], ue = [
+], le = [
 	"entriesScanned",
 	"runsScanned",
 	"complete",
 	"deadlineMs"
-], de = [
+], ue = [
 	"version",
 	"snapshotAt",
 	"items",
@@ -8279,23 +8279,23 @@ var K = /* @__PURE__ */ new Set([
 	"truncated",
 	"scan",
 	"errors"
-], fe = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
-function pe(e) {
-	return typeof e == "string" && fe.test(e);
+], de = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
+function fe(e) {
+	return typeof e == "string" && de.test(e);
 }
-function me(e) {
+function pe(e) {
 	return typeof e == "string" && j.test(e);
 }
-function he(e) {
-	if (!M(e, le)) return !1;
-	let t = (e) => e === null || pe(e);
-	return Ce(e.runId) !== null && me(e.createdAt) && (e.finishedAt === null || me(e.finishedAt)) && pe(e.observedStatus) && K.has(e.observedOutcome) && ((e) => e === null || typeof e == "string" && K.has(e))(e.outcome) && (e.outcome === null || e.authorityState === "matched") && pe(e.featureCode) && pe(e.routeCode) && R.has(e.authorityKind) && L.has(e.authorityState) && t(e.authorityStatus) && t(e.taskType) && t(e.jobId) && t(e.workLogId) && z.has(e.diagnosticQuality) && t(e.adapter) && t(e.attemptedEngine) && t(e.finalEngine) && t(e.fallbackReason) && (e.fallbackObserved === null || typeof e.fallbackObserved == "boolean") && t(e.failureReasonCode) && t(e.failureStageCode);
+function me(e) {
+	if (!M(e, q)) return !1;
+	let t = (e) => e === null || fe(e);
+	return Se(e.runId) !== null && pe(e.createdAt) && (e.finishedAt === null || pe(e.finishedAt)) && fe(e.observedStatus) && ce.has(e.observedOutcome) && ((e) => e === null || typeof e == "string" && ce.has(e))(e.outcome) && (e.outcome === null || e.authorityState === "matched") && fe(e.featureCode) && fe(e.routeCode) && R.has(e.authorityKind) && L.has(e.authorityState) && t(e.authorityStatus) && t(e.taskType) && t(e.jobId) && t(e.workLogId) && z.has(e.diagnosticQuality) && t(e.adapter) && t(e.attemptedEngine) && t(e.finalEngine) && t(e.fallbackReason) && (e.fallbackObserved === null || typeof e.fallbackObserved == "boolean") && t(e.failureReasonCode) && t(e.failureStageCode);
 }
-function ge(e) {
-	if (!M(e, de) || e.version !== 1 || !me(e.snapshotAt) || !Array.isArray(e.items) || !e.items.every(he) || e.nextCursor !== null && (typeof e.nextCursor != "string" || e.nextCursor.length === 0 || e.nextCursor.length > 4096) || typeof e.truncated != "boolean" || !M(e.scan, ue) || !Number.isInteger(e.scan.entriesScanned) || e.scan.entriesScanned < 0 || !Number.isInteger(e.scan.runsScanned) || e.scan.runsScanned < 0 || typeof e.scan.complete != "boolean" || !Number.isInteger(e.scan.deadlineMs) || e.scan.deadlineMs < 0 || e.truncated !== !e.scan.complete || e.truncated && e.nextCursor !== null || !Array.isArray(e.errors) || !e.errors.every((e) => M(e, ["code"]) && pe(e.code))) throw Error("diagnostic_list_contract_invalid");
+function he(e) {
+	if (!M(e, ue) || e.version !== 1 || !pe(e.snapshotAt) || !Array.isArray(e.items) || !e.items.every(me) || e.nextCursor !== null && (typeof e.nextCursor != "string" || e.nextCursor.length === 0 || e.nextCursor.length > 4096) || typeof e.truncated != "boolean" || !M(e.scan, le) || !Number.isInteger(e.scan.entriesScanned) || e.scan.entriesScanned < 0 || !Number.isInteger(e.scan.runsScanned) || e.scan.runsScanned < 0 || typeof e.scan.complete != "boolean" || !Number.isInteger(e.scan.deadlineMs) || e.scan.deadlineMs < 0 || e.truncated !== !e.scan.complete || e.truncated && e.nextCursor !== null || !Array.isArray(e.errors) || !e.errors.every((e) => M(e, ["code"]) && fe(e.code))) throw Error("diagnostic_list_contract_invalid");
 	return e;
 }
-var q = class extends Error {
+var J = class extends Error {
 	path;
 	status;
 	code;
@@ -8304,26 +8304,26 @@ var q = class extends Error {
 	requestId;
 	runId;
 	constructor(e, t, n, r, i = null, a = null) {
-		super(`${e} failed: ${t}${n ? ` (${n})` : ""}`), this.path = e, this.status = t, this.code = n, this.payload = r, this.requestId = Se(i), this.runId = Ce(a);
+		super(`${e} failed: ${t}${n ? ` (${n})` : ""}`), this.path = e, this.status = t, this.code = n, this.payload = r, this.requestId = xe(i), this.runId = Se(a);
 	}
-}, _e = class extends Error {
+}, ge = class extends Error {
 	name = "ApiTransportError";
 	constructor() {
 		super("서버 처리 결과를 확인할 수 없습니다.");
 	}
-}, ve = class extends Error {
+}, _e = class extends Error {
 	name = "ApiResponseReadError";
 	constructor() {
 		super("서버 처리 결과를 확인할 수 없습니다.");
 	}
-}, ye = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", be = RegExp(`^req_${ye}$`), xe = RegExp(`^run_${ye}$`);
+}, ve = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", ye = RegExp(`^req_${ve}$`), be = RegExp(`^run_${ve}$`);
+function xe(e) {
+	return typeof e == "string" && e.length === 40 && ye.test(e) ? e : null;
+}
 function Se(e) {
 	return typeof e == "string" && e.length === 40 && be.test(e) ? e : null;
 }
-function Ce(e) {
-	return typeof e == "string" && e.length === 40 && xe.test(e) ? e : null;
-}
-function J(e, t) {
+function Ce(e, t) {
 	return !!(t?.aborted || e instanceof Error && e.name === "AbortError");
 }
 function Y(e) {
@@ -8337,7 +8337,7 @@ async function Ee(e, t) {
 	try {
 		return await e.json();
 	} catch (e) {
-		if (J(e, t)) throw e;
+		if (Ce(e, t)) throw e;
 		return e instanceof SyntaxError ? null : Te;
 	}
 }
@@ -8346,14 +8346,14 @@ async function De(e, t) {
 	try {
 		n = await fetch(e, t);
 	} catch (e) {
-		throw J(e, t.signal) ? e : new _e();
+		throw Ce(e, t.signal) ? e : new ge();
 	}
 	let r = await Ee(n, t.signal);
-	if (r === Te && n.ok) throw new ve();
+	if (r === Te && n.ok) throw new _e();
 	let i = r === Te ? null : r;
 	if (!n.ok) {
 		let t = we(i) ? i : null, r = we(t?.detail) ? t.detail : null, a = t?.error ?? r?.code, o = typeof a == "string" ? a : "request_failed", s = n.headers;
-		throw new q(e, n.status, o, t, Se(s?.get("X-Folio-Request-Id")), Ce(s?.get("X-Folio-Run-Id")));
+		throw new J(e, n.status, o, t, xe(s?.get("X-Folio-Request-Id")), Se(s?.get("X-Folio-Run-Id")));
 	}
 	if (i === null) throw Error(`${e} returned an empty response`);
 	return i;
@@ -8410,7 +8410,7 @@ async function Ie(e, t, n = {}) {
 	});
 }
 //#endregion
-//#region node_modules/react/cjs/react-jsx-runtime.production.js
+//#region D:/Project/Personal/FolioBoard_Public/web/node_modules/react/cjs/react-jsx-runtime.production.js
 var Le = /* @__PURE__ */ e(((e) => {
 	var t = Symbol.for("react.transitional.element"), n = Symbol.for("react.fragment");
 	function r(e, n, r) {
@@ -8762,7 +8762,7 @@ async function vt(e, t, n) {
 	try {
 		return _t(await n.post(r, { action: t }), t);
 	} catch (e) {
-		if (!(e instanceof q) || e.status >= 200 && e.status < 300) throw e;
+		if (!(e instanceof J) || e.status >= 200 && e.status < 300) throw e;
 		let t;
 		try {
 			t = gt(await n.get(r), !0);
@@ -9866,7 +9866,7 @@ var jr = (e, t, n) => Z(`/api/diagnostics/runs/${encodeURIComponent(e)}/export-p
 //#endregion
 //#region src/app/DiagnosticExport.tsx
 function Lr(e) {
-	return e instanceof q ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_.-]+$/.test(e.message) ? e.message : "request_failed";
+	return e instanceof J ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_.-]+$/.test(e.message) ? e.message : "request_failed";
 }
 function Rr(e) {
 	return e < 1024 ? `${e}B` : e < 1048576 ? `${Math.round(e / 1024)}KiB` : `${(e / 1048576).toFixed(2)}MiB`;
@@ -10026,7 +10026,7 @@ function Br({ jobId: e, runId: t, revision: n = null, refreshKey: r = 0 }) {
 			s(se(n)), a("loaded");
 		} catch (n) {
 			if (e !== f.current || g.current !== h || t.signal.aborted) return;
-			u(n instanceof q ? n.code || `http_${n.status}` : "request_failed"), a("error");
+			u(n instanceof J ? n.code || `http_${n.status}` : "request_failed"), a("error");
 		} finally {
 			e === f.current && (p.current = null);
 		}
@@ -10213,13 +10213,13 @@ function Hr({ record: e }) {
 //#region src/app/reportErrorDiagnostic.tsx
 var Ur = "서버 처리 결과를 확인할 수 없습니다.";
 function Wr(e) {
-	return e instanceof _e || e instanceof ve;
+	return e instanceof ge || e instanceof _e;
 }
 function Gr(e, t) {
-	return Wr(e) ? Ur : J(e) ? "" : e instanceof Error && e.message ? e.message : t;
+	return Wr(e) ? Ur : Ce(e) ? "" : e instanceof Error && e.message ? e.message : t;
 }
 function Kr(e) {
-	return !(e instanceof q) || !e.requestId && !e.runId ? null : {
+	return !(e instanceof J) || !e.requestId && !e.runId ? null : {
 		requestId: e.requestId,
 		runId: e.runId
 	};
@@ -10277,7 +10277,7 @@ function Xr(e) {
 	};
 }
 function Zr(e) {
-	return e instanceof q ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_]+$/.test(e.message) ? e.message : "request_failed";
+	return e instanceof J ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_]+$/.test(e.message) ? e.message : "request_failed";
 }
 function Qr(e) {
 	let t = new Date(e);
@@ -10287,14 +10287,14 @@ function Qr(e) {
 	}).format(t);
 }
 function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey: r = 0, collapsible: i = !1 }) {
-	let [a, o] = (0, l.useState)(n), [s, c] = (0, l.useState)(0), [u, d] = (0, l.useState)(null), [f, p] = (0, l.useState)(!0), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(null), [v, y] = (0, l.useState)(null), [b, x] = (0, l.useState)(null), [S, C] = (0, l.useState)(!1), [w, T] = (0, l.useState)(""), [E, D] = (0, l.useState)(null), [O, k] = (0, l.useState)(!1), [A, j] = (0, l.useState)(""), [M, N] = (0, l.useState)(null), [F, I] = (0, l.useState)(""), [L, R] = (0, l.useState)(""), [z, B] = (0, l.useState)(null), [V, H] = (0, l.useState)(0), [U, W] = (0, l.useState)(!1), [ee, te] = (0, l.useState)(!1), [G, ne] = (0, l.useState)("all"), [re, ie] = (0, l.useState)([]), [ae, oe] = (0, l.useState)(""), [se, K] = (0, l.useState)(null), [le, ue] = (0, l.useState)(!1), [de, fe] = (0, l.useState)(!0), [pe, me] = (0, l.useState)([]), [he, _e] = (0, l.useState)(!1), [ve, ye] = (0, l.useState)(!1), [be, xe] = (0, l.useState)(""), [Se, Ce] = (0, l.useState)(null), [Y, we] = (0, l.useState)(!1), [Te, Ee] = (0, l.useState)(null), [De, Oe] = (0, l.useState)(""), ke = (0, l.useRef)(0), Ae = (0, l.useRef)(null), je = (0, l.useRef)(0), Me = (0, l.useRef)(null), Ne = (0, l.useRef)(!1), Pe = (0, l.useRef)(void 0), Fe = (0, l.useRef)(!1), Le = (0, l.useRef)(0), Re = (0, l.useRef)(null), ze = (0, l.useRef)(!1), Be = (0, l.useRef)(0), Ve = (0, l.useRef)(null), He = (0, l.useRef)(!0), Ue = (0, l.useRef)(null), Ge = (0, l.useRef)(null);
+	let [a, o] = (0, l.useState)(n), [s, c] = (0, l.useState)(0), [u, d] = (0, l.useState)(null), [f, p] = (0, l.useState)(!0), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(null), [v, y] = (0, l.useState)(null), [b, x] = (0, l.useState)(null), [S, C] = (0, l.useState)(!1), [w, T] = (0, l.useState)(""), [E, D] = (0, l.useState)(null), [O, k] = (0, l.useState)(!1), [A, j] = (0, l.useState)(""), [M, N] = (0, l.useState)(null), [F, I] = (0, l.useState)(""), [L, R] = (0, l.useState)(""), [z, B] = (0, l.useState)(null), [V, H] = (0, l.useState)(0), [U, W] = (0, l.useState)(!1), [ee, te] = (0, l.useState)(!1), [G, ne] = (0, l.useState)("all"), [re, ie] = (0, l.useState)([]), [ae, oe] = (0, l.useState)(""), [se, ce] = (0, l.useState)(null), [q, le] = (0, l.useState)(!1), [ue, de] = (0, l.useState)(!0), [fe, pe] = (0, l.useState)([]), [me, ge] = (0, l.useState)(!1), [_e, ve] = (0, l.useState)(!1), [ye, be] = (0, l.useState)(""), [xe, Se] = (0, l.useState)(null), [Y, we] = (0, l.useState)(!1), [Te, Ee] = (0, l.useState)(null), [De, Oe] = (0, l.useState)(""), ke = (0, l.useRef)(0), Ae = (0, l.useRef)(null), je = (0, l.useRef)(0), Me = (0, l.useRef)(null), Ne = (0, l.useRef)(!1), Pe = (0, l.useRef)(void 0), Fe = (0, l.useRef)(!1), Le = (0, l.useRef)(0), Re = (0, l.useRef)(null), ze = (0, l.useRef)(!1), Be = (0, l.useRef)(0), Ve = (0, l.useRef)(null), He = (0, l.useRef)(!0), Ue = (0, l.useRef)(null), Ge = (0, l.useRef)(null);
 	(0, l.useEffect)(() => (He.current = !0, () => {
 		He.current = !1, Le.current += 1, Re.current?.abort(), Be.current += 1, Ve.current?.abort();
 	}), []);
 	let Ke = (0, l.useCallback)(() => {
 		ke.current += 1, Ae.current?.abort(), Ae.current = null;
 	}, []), qe = (0, l.useCallback)((e = !0) => {
-		je.current += 1, Me.current?.abort(), Me.current = null, Ne.current = !1, Pe.current = void 0, K(null), e && (ie([]), oe(""), ue(!1), fe(!1), me([])), _e(!1), ye(!1), xe(""), Ce(null);
+		je.current += 1, Me.current?.abort(), Me.current = null, Ne.current = !1, Pe.current = void 0, ce(null), e && (ie([]), oe(""), le(!1), de(!1), pe([])), ge(!1), ve(!1), be(""), Se(null);
 	}, []), Je = (0, l.useCallback)(async () => {
 		let e = ++ke.current;
 		Ae.current?.abort();
@@ -10305,7 +10305,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 			if (e !== ke.current) return;
 			d(r);
 		} catch (t) {
-			if (J(t, n.signal) || e !== ke.current) return;
+			if (Ce(t, n.signal) || e !== ke.current) return;
 			h(Zr(t)), _(qr(t, e));
 		} finally {
 			e === ke.current && (Ae.current = null, p(!1));
@@ -10325,7 +10325,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 		if (!e && (Ne.current || !se)) return;
 		e && Me.current?.abort();
 		let i = ++je.current, a = e ? Yr(G) : Pe.current;
-		e ? (Pe.current = a, K(null), r || (ie([]), oe(""), ue(!1), fe(!1), me([])), xe(""), Ce(null), _e(!0), ye(!1)) : (ye(!0), xe(""), Ce(null)), Ne.current = !0;
+		e ? (Pe.current = a, ce(null), r || (ie([]), oe(""), le(!1), de(!1), pe([])), be(""), Se(null), ge(!0), ve(!1)) : (ve(!0), be(""), Se(null)), Ne.current = !0;
 		let o = new AbortController();
 		Me.current = o;
 		let s = {
@@ -10336,22 +10336,22 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 			cursor: e ? void 0 : se || void 0
 		};
 		try {
-			let t = ge(await X(ce(s), { signal: o.signal }));
+			let t = he(await X(K(s), { signal: o.signal }));
 			if (i !== je.current || o.signal.aborted) return;
 			if (!e && ae && t.snapshotAt !== ae) {
-				ie([]), oe(""), K(null), ue(!1), fe(!1), xe("diagnostic_snapshot_changed"), Ce(null);
+				ie([]), oe(""), ce(null), le(!1), de(!1), be("diagnostic_snapshot_changed"), Se(null);
 				return;
 			}
-			ie((n) => e ? t.items : [...n, ...t.items]), oe(t.snapshotAt), K(t.nextCursor), ue(t.truncated), fe(t.scan.complete), me(t.errors);
+			ie((n) => e ? t.items : [...n, ...t.items]), oe(t.snapshotAt), ce(t.nextCursor), le(t.truncated), de(t.scan.complete), pe(t.errors);
 		} catch (t) {
-			if (J(t, o.signal) || i !== je.current) return;
-			if (!e && !n && t instanceof q && t.status === 409) {
+			if (Ce(t, o.signal) || i !== je.current) return;
+			if (!e && !n && t instanceof J && t.status === 409) {
 				qe(!1), Ye(!0, !0, !0);
 				return;
 			}
-			xe(Zr(t)), Ce(qr(t, i));
+			be(Zr(t)), Se(qr(t, i));
 		} finally {
-			i === je.current && (Ne.current = !1, Me.current = null, _e(!1), ye(!1));
+			i === je.current && (Ne.current = !1, Me.current = null, ge(!1), ve(!1));
 		}
 	}, [
 		U,
@@ -10432,7 +10432,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 			if (!He.current || n.signal.aborted || t !== Le.current) return;
 			x(e), y("clear");
 		} catch (e) {
-			if (!He.current || J(e, n.signal) || t !== Le.current) return;
+			if (!He.current || Ce(e, n.signal) || t !== Le.current) return;
 			T(Zr(e)), D(qr(e, t)), k(Wr(e));
 		} finally {
 			t === Le.current && (Re.current = null, Fe.current = !1, He.current && C(!1));
@@ -10451,7 +10451,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 			if (!He.current || t.signal.aborted || e !== Le.current) return;
 			j(`${n.hiddenCount}건을 목록에서 숨겼습니다.`), et(), c(0), await Je();
 		} catch (n) {
-			if (!He.current || J(n, t.signal) || e !== Le.current) return;
+			if (!He.current || Ce(n, t.signal) || e !== Le.current) return;
 			x(null), T(Zr(n)), D(qr(n, e)), k(Wr(n));
 		} finally {
 			e === Le.current && (Re.current = null, Fe.current = !1, He.current && C(!1));
@@ -10469,7 +10469,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 			if (r.status !== "pending" && r.status !== "applying") throw Error("proposal_not_active");
 			N(r);
 		} catch (e) {
-			if (!He.current || J(e, n.signal) || t !== Be.current) return;
+			if (!He.current || Ce(e, n.signal) || t !== Be.current) return;
 			R(Zr(e)), B(qr(e, t)), await Je();
 		} finally {
 			t === Be.current && (Ve.current = null, ze.current = !1, He.current && I(""));
@@ -10518,7 +10518,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 				className: "btn btn--icon",
 				type: "button",
 				"data-qa": "work-log-refresh",
-				disabled: Y ? he || ve : f,
+				disabled: Y ? me || _e : f,
 				onClick: () => void $e(),
 				"aria-label": "작업 기록 새로고침",
 				"data-tooltip": "새로고침",
@@ -10784,19 +10784,19 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 				})]
 			})]
 		}),
-		Y && he && /* @__PURE__ */ (0, Q.jsx)("p", {
+		Y && me && /* @__PURE__ */ (0, Q.jsx)("p", {
 			"data-qa": "work-log-diag-loading",
 			role: "status",
 			children: "진단 목록을 불러오는 중입니다."
 		}),
-		Y && be && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("p", {
+		Y && ye && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("p", {
 			className: "react-dashboard-error",
 			"data-qa": "work-log-diag-error",
-			"data-error-code": be,
+			"data-error-code": ye,
 			role: "alert",
 			children: [
 				"진단 목록을 불러오지 못했습니다. (",
-				be,
+				ye,
 				") ",
 				/* @__PURE__ */ (0, Q.jsx)("button", {
 					type: "button",
@@ -10806,19 +10806,19 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 					children: "다시 시도"
 				})
 			]
-		}), Se && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: Se })] }),
-		Y && pe.length > 0 && /* @__PURE__ */ (0, Q.jsxs)("p", {
+		}), xe && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: xe })] }),
+		Y && fe.length > 0 && /* @__PURE__ */ (0, Q.jsxs)("p", {
 			className: "react-dashboard-warning",
 			"data-qa": "work-log-diag-partial",
 			role: "status",
 			children: [
 				"일부 실행을 확인하지 못했습니다(",
-				pe.length,
+				fe.length,
 				"건). ",
 				re.length === 0 ? "조건에 맞는 실행이 없다고 확정할 수 없습니다." : "확인된 실행은 그대로 표시합니다."
 			]
 		}),
-		Y && !he && !be && re.length === 0 && de && !le && pe.length === 0 && /* @__PURE__ */ (0, Q.jsx)("p", {
+		Y && !me && !ye && re.length === 0 && ue && !q && fe.length === 0 && /* @__PURE__ */ (0, Q.jsx)("p", {
 			className: "work-log-empty",
 			"data-qa": "work-log-diag-empty",
 			children: "조건에 맞는 실행이 없습니다."
@@ -10832,7 +10832,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 				onReturnToWorkLog: ct
 			}, e.runId))
 		}),
-		Y && (re.length > 0 || ae || le || se || pe.length > 0) && /* @__PURE__ */ (0, Q.jsxs)("footer", {
+		Y && (re.length > 0 || ae || q || se || fe.length > 0) && /* @__PURE__ */ (0, Q.jsxs)("footer", {
 			className: "work-log-footer work-log-diag-footer",
 			children: [/* @__PURE__ */ (0, Q.jsxs)("div", {
 				className: "work-log-footer-note",
@@ -10841,7 +10841,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 						"data-qa": "work-log-diag-snapshot",
 						children: [Qr(ae), " 기준 목록입니다. 지금 상태와 다를 수 있습니다."]
 					}),
-					le && /* @__PURE__ */ (0, Q.jsx)("p", {
+					q && /* @__PURE__ */ (0, Q.jsx)("p", {
 						"data-qa": "work-log-diag-progress",
 						role: "status",
 						children: "서버가 아직 전체 실행 기록을 다 확인하지 못했습니다. 계속 확인하면 다음 구간을 읽습니다."
@@ -10850,20 +10850,20 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 				]
 			}), /* @__PURE__ */ (0, Q.jsx)("div", {
 				className: "work-log-footer-actions",
-				children: le ? /* @__PURE__ */ (0, Q.jsx)("button", {
+				children: q ? /* @__PURE__ */ (0, Q.jsx)("button", {
 					type: "button",
 					className: "btn",
 					"data-qa": "work-log-diag-continue",
-					disabled: he || ve,
+					disabled: me || _e,
 					onClick: () => void Ye(!0),
 					children: "계속 확인하기"
 				}) : se && /* @__PURE__ */ (0, Q.jsx)("button", {
 					type: "button",
 					className: "btn",
 					"data-qa": "work-log-diag-more",
-					disabled: he || ve,
+					disabled: me || _e,
 					onClick: () => void Ye(!1),
-					children: ve ? "불러오는 중" : "더 불러오기"
+					children: _e ? "불러오는 중" : "더 불러오기"
 				})
 			})]
 		}),
@@ -10934,7 +10934,7 @@ function $r({ surface: e, pageSize: t = 20, defaultFilter: n = "all", refreshKey
 	return /* @__PURE__ */ (0, Q.jsx)("section", {
 		className: `work-log work-log-${e}${i ? " work-log-collapsible" : ""}`,
 		"data-qa": "work-log",
-		"aria-busy": Y ? he || ve : f,
+		"aria-busy": Y ? me || _e : f,
 		children: i ? /* @__PURE__ */ (0, Q.jsxs)("details", {
 			className: "work-log-collapse",
 			children: [/* @__PURE__ */ (0, Q.jsxs)("summary", { children: [
@@ -13024,17 +13024,17 @@ function go() {
 			return n.length ? Ia.filter((e) => n.includes(e)) : t;
 		});
 	}
-	let [te, G] = (0, l.useState)("default"), [ne, re] = (0, l.useState)("daily"), [ie, ae] = (0, l.useState)(() => Ja()), [oe, se] = (0, l.useState)(""), [ce, K] = (0, l.useState)("all"), [le, ue] = (0, l.useState)("all"), [de, fe] = (0, l.useState)("all"), [pe, me] = (0, l.useState)(""), [he, ge] = (0, l.useState)(""), [q, _e] = (0, l.useState)("recent"), [ve, ye] = (0, l.useState)(0);
-	function be() {
+	let [te, G] = (0, l.useState)("default"), [ne, re] = (0, l.useState)("daily"), [ie, ae] = (0, l.useState)(() => Ja()), [oe, se] = (0, l.useState)(""), [K, ce] = (0, l.useState)("all"), [q, le] = (0, l.useState)("all"), [ue, de] = (0, l.useState)("all"), [fe, pe] = (0, l.useState)(""), [me, he] = (0, l.useState)(""), [J, ge] = (0, l.useState)("recent"), [_e, ve] = (0, l.useState)(0);
+	function ye() {
 		h(null), _("");
 	}
+	function be() {
+		return v.current += 1, ye(), v.current;
+	}
 	function xe() {
-		return v.current += 1, be(), v.current;
+		v.current += 1, ye();
 	}
 	function Se() {
-		v.current += 1, be();
-	}
-	function Ce() {
 		F.current?.abort();
 		let e = ++P.current, t = new AbortController();
 		return F.current = t, O(""), A(null), {
@@ -13058,11 +13058,11 @@ function go() {
 				offset: "0",
 				limit: "100",
 				q: oe,
-				marketScope: ce,
-				briefingType: le,
-				kind: de,
-				dateFrom: pe,
-				dateTo: he
+				marketScope: K,
+				briefingType: q,
+				kind: ue,
+				dateFrom: fe,
+				dateTo: me
 			})}`, { signal: t.signal });
 			if (t.signal.aborted || e !== j.current) return;
 			n(r), Lt("briefing", {
@@ -13072,19 +13072,19 @@ function go() {
 				reportId: ""
 			});
 		} catch (n) {
-			if (J(n, t.signal) || e !== j.current) return;
+			if (Ce(n, t.signal) || e !== j.current) return;
 			let r = Gr(n, "브리핑 목록을 불러오지 못했습니다.");
 			b(r), S(qr(n, e));
 		} finally {
 			e === j.current && (M.current = null, c(!1));
 		}
 	}, [
-		he,
-		de,
-		ce,
+		me,
+		ue,
+		K,
 		oe,
-		pe,
-		le
+		fe,
+		q
 	]);
 	(0, l.useEffect)(() => {
 		Te();
@@ -13096,14 +13096,14 @@ function go() {
 	}, []), (0, l.useEffect)(() => {
 		let e = (e) => {
 			let t = e.detail;
-			xt(t, window.FolioAgent?.currentContext) && ye((e) => e + 1);
+			xt(t, window.FolioAgent?.currentContext) && ve((e) => e + 1);
 		};
 		return window.addEventListener(We, e), () => window.removeEventListener(We, e);
 	}, []), (0, l.useEffect)(() => {
 		let e = !0, t = null;
 		async function n(n, r, i) {
 			let a = ++N.current, s = new AbortController();
-			t = s, c(!0), Se(), w(""), E(null), p("");
+			t = s, c(!0), xe(), w(""), E(null), p("");
 			try {
 				let t = await X(`/api/briefings/${encodeURIComponent(n)}?includePersonal=true&marketScope=${encodeURIComponent(r)}&kind=${encodeURIComponent(i)}`, { signal: s.signal });
 				if (!e || s.signal.aborted || a !== N.current) return;
@@ -13115,7 +13115,7 @@ function go() {
 					marketScope: r
 				});
 			} catch (t) {
-				if (!e || J(t, s.signal) || a !== N.current) return;
+				if (!e || Ce(t, s.signal) || a !== N.current) return;
 				let n = Gr(t, "브리핑을 불러오지 못했습니다.");
 				w(n), E(qr(t, a)), o(null), p(n);
 			} finally {
@@ -13130,11 +13130,11 @@ function go() {
 		})), () => {
 			e = !1, t?.abort(), N.current += 1;
 		};
-	}, [r, ve]);
+	}, [r, _e]);
 	async function Ee(e) {
 		let t = a?.date || r?.date || "", n = Qa(a?.marketScope || r?.scope), i = $a(a?.kind || r?.kind);
 		if (!t) return;
-		let o = Ce();
+		let o = Se();
 		z(e), L(e === "notion" ? "Notion에 내보내는 중..." : "Obsidian에 내보내는 중...");
 		try {
 			let r = `marketScope=${encodeURIComponent(n)}&kind=${encodeURIComponent(i)}`, a = e === "notion" ? await Z(`/api/briefings/${encodeURIComponent(t)}/export-notion?${r}`, {
@@ -13147,7 +13147,7 @@ function go() {
 			if (!Y(o.id, o.controller)) return;
 			L(e === "notion" ? a.notionUrl ? `Notion 내보냄: ${a.title || a.notionUrl}` : "Notion에 내보냈습니다." : `Obsidian 내보냄: ${a.filename || t}`);
 		} catch (e) {
-			if (!Y(o.id, o.controller) || J(e, o.controller.signal)) return;
+			if (!Y(o.id, o.controller) || Ce(e, o.controller.signal)) return;
 			A(qr(e, o.id));
 			let t = Gr(e, "내보내기에 실패했습니다.");
 			O(t), L(t);
@@ -13176,8 +13176,8 @@ function go() {
 	}
 	async function Oe(e, t, n = "daily") {
 		if (!e || !window.confirm(`${e} ${Ba[t]} ${Wa[n]} 브리핑을 삭제할까요?`)) return;
-		let r = Ce();
-		z(`delete-${e}-${t}-${n}`), Se();
+		let r = Se();
+		z(`delete-${e}-${t}-${n}`), xe();
 		try {
 			let i = t === "both" || t === "all" || t === "multi", a = new URLSearchParams({ kind: n });
 			i || a.set("market", t);
@@ -13186,7 +13186,7 @@ function go() {
 			if (!Y(r.id, r.controller)) return;
 			await Te();
 		} catch (e) {
-			if (!Y(r.id, r.controller) || J(e, r.controller.signal)) return;
+			if (!Y(r.id, r.controller) || Ce(e, r.controller.signal)) return;
 			A(qr(e, r.id));
 			let t = Gr(e, "브리핑 삭제에 실패했습니다.");
 			O(t), p(t);
@@ -13196,7 +13196,7 @@ function go() {
 	}
 	async function ke(e) {
 		d(!0);
-		let t = xe();
+		let t = be();
 		p("");
 		try {
 			let t = await Z("/api/briefings", {
@@ -13228,7 +13228,7 @@ function go() {
 			let i = t.date || e || "";
 			await Te(), i && ro(i, eo(t.marketScope || W, B), ne);
 		} catch (e) {
-			if (J(e) || t !== v.current) return;
+			if (Ce(e) || t !== v.current) return;
 			h(qr(e, t));
 			let n = Gr(e, "브리핑 생성에 실패했습니다.");
 			_(n), p(n);
@@ -13238,24 +13238,24 @@ function go() {
 	}
 	let Ae = t?.items || [], je = (0, l.useMemo)(() => Ae.filter((e) => {
 		let t = oo(e), n = e.briefingType || "default";
-		if (ce === "aggregate") {
+		if (K === "aggregate") {
 			if (t !== "all" && t !== "both" && t !== "multi") return !1;
-		} else if (ce !== "all" && t !== ce) return !1;
-		return le !== "all" && n !== le || de !== "all" && so(e) !== de ? !1 : co(e, pe, he);
+		} else if (K !== "all" && t !== K) return !1;
+		return q !== "all" && n !== q || ue !== "all" && so(e) !== ue ? !1 : co(e, fe, me);
 	}), [
-		he,
-		de,
-		ce,
-		pe,
-		le,
+		me,
+		ue,
+		K,
+		fe,
+		q,
 		Ae
 	]), Me = (0, l.useMemo)(() => {
 		let e = [...je].sort((e, t) => String(ao(t) || t.generatedAt || "").localeCompare(String(ao(e) || e.generatedAt || "")));
-		if (q === "recent") return e.length ? [{
+		if (J === "recent") return e.length ? [{
 			label: "최근 브리핑",
 			rows: e.slice(0, Ga)
 		}] : [];
-		if (q === "month") {
+		if (J === "month") {
 			let t = /* @__PURE__ */ new Map();
 			for (let n of e) {
 				let e = qa(ao(n));
@@ -13276,7 +13276,7 @@ function go() {
 			label: `${Ba[t]} 시장`,
 			rows: e.filter((e) => oo(e) === t)
 		})).filter((e) => e.rows.length > 0);
-	}, [q, je]), Ne = (0, l.useMemo)(() => io(a?.markdown || "", a?.title || "시장 브리핑"), [a?.markdown, a?.title]), Pe = a?.title || Ne.title, Fe = a?.publicationDate || a?.date || r?.date || "";
+	}, [J, je]), Ne = (0, l.useMemo)(() => io(a?.markdown || "", a?.title || "시장 브리핑"), [a?.markdown, a?.title]), Pe = a?.title || Ne.title, Fe = a?.publicationDate || a?.date || r?.date || "";
 	return r && a ? /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "react-briefing-route",
 		"data-briefing-route": !0,
@@ -13508,8 +13508,8 @@ function go() {
 						className: "find-bar__field",
 						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "시장" }), /* @__PURE__ */ (0, Q.jsxs)("select", {
 							"aria-label": "브리핑 시장",
-							value: ce,
-							onChange: (e) => K(e.currentTarget.value),
+							value: K,
+							onChange: (e) => ce(e.currentTarget.value),
 							children: [
 								/* @__PURE__ */ (0, Q.jsx)("option", {
 									value: "all",
@@ -13542,8 +13542,8 @@ function go() {
 						className: "find-bar__field",
 						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "종류" }), /* @__PURE__ */ (0, Q.jsxs)("select", {
 							"aria-label": "브리핑 종류",
-							value: de,
-							onChange: (e) => fe(e.currentTarget.value),
+							value: ue,
+							onChange: (e) => de(e.currentTarget.value),
 							children: [/* @__PURE__ */ (0, Q.jsx)("option", {
 								value: "all",
 								children: "전체"
@@ -13557,8 +13557,8 @@ function go() {
 						className: "find-bar__field",
 						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "유형" }), /* @__PURE__ */ (0, Q.jsxs)("select", {
 							"aria-label": "브리핑 유형",
-							value: le,
-							onChange: (e) => ue(e.currentTarget.value),
+							value: q,
+							onChange: (e) => le(e.currentTarget.value),
 							children: [/* @__PURE__ */ (0, Q.jsx)("option", {
 								value: "all",
 								children: "전체"
@@ -13575,14 +13575,14 @@ function go() {
 							/* @__PURE__ */ (0, Q.jsx)("input", {
 								type: "date",
 								"aria-label": "시작일",
-								value: pe,
-								onChange: (e) => me(e.currentTarget.value)
+								value: fe,
+								onChange: (e) => pe(e.currentTarget.value)
 							}),
 							/* @__PURE__ */ (0, Q.jsx)("input", {
 								type: "date",
 								"aria-label": "종료일",
-								value: he,
-								onChange: (e) => ge(e.currentTarget.value)
+								value: me,
+								onChange: (e) => he(e.currentTarget.value)
 							})
 						]
 					}),
@@ -13590,8 +13590,8 @@ function go() {
 						className: "find-bar__field",
 						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "보기" }), /* @__PURE__ */ (0, Q.jsxs)("select", {
 							"aria-label": "브리핑 보기 방식",
-							value: q,
-							onChange: (e) => _e(e.currentTarget.value),
+							value: J,
+							onChange: (e) => ge(e.currentTarget.value),
 							children: [
 								/* @__PURE__ */ (0, Q.jsx)("option", {
 									value: "recent",
@@ -13612,7 +13612,7 @@ function go() {
 						className: "btn btn--text find-bar__reset",
 						type: "button",
 						onClick: () => {
-							se(""), K("all"), ue("all"), fe("all"), me(""), ge(""), _e("recent");
+							se(""), ce("all"), le("all"), de("all"), pe(""), he(""), ge("recent");
 						},
 						children: "초기화"
 					})
@@ -15107,31 +15107,31 @@ function oc() {
 			return `${h.name}는 ${e} 거래소에만 상장되어 있어 아직 분석할 수 없습니다. 미국에도 상장된 기업은 그 티커로 적어 보세요.`;
 		}
 		return f ? `${f.name} (${f.ticker})으로 분석합니다.` : d ? "확인 중…" : u ? u.status === "confident" && u.match ? `${u.match.name} (${u.match.ticker})으로 분석합니다.` : u.status === "ambiguous" ? "여러 기업이 맞습니다. 아래에서 고르세요." : "아는 기업이 없습니다. 티커로 적어 보세요. 이대로 진행하면 자료가 거의 없는 보고서가 나옵니다." : "";
-	})(), [y, b] = (0, l.useState)("beginner"), [x, S] = (0, l.useState)(""), [C, w] = (0, l.useState)("recent"), [T, E] = (0, l.useState)(!1), [D, O] = (0, l.useState)(!1), [k, A] = (0, l.useState)(""), [j, M] = (0, l.useState)(""), [N, P] = (0, l.useState)(null), [F, I] = (0, l.useState)(""), L = (0, l.useRef)(0), [R, z] = (0, l.useState)(""), [B, V] = (0, l.useState)(null), [H, U] = (0, l.useState)(""), [W, ee] = (0, l.useState)(null), [te, G] = (0, l.useState)(""), [ne, re] = (0, l.useState)(null), ie = (0, l.useRef)(0), ae = (0, l.useRef)(null), oe = (0, l.useRef)(0), se = (0, l.useRef)(0), ce = (0, l.useRef)(null), [K, le] = (0, l.useState)(""), [ue, de] = (0, l.useState)(0);
-	function fe() {
+	})(), [y, b] = (0, l.useState)("beginner"), [x, S] = (0, l.useState)(""), [C, w] = (0, l.useState)("recent"), [T, E] = (0, l.useState)(!1), [D, O] = (0, l.useState)(!1), [k, A] = (0, l.useState)(""), [j, M] = (0, l.useState)(""), [N, P] = (0, l.useState)(null), [F, I] = (0, l.useState)(""), L = (0, l.useRef)(0), [R, z] = (0, l.useState)(""), [B, V] = (0, l.useState)(null), [H, U] = (0, l.useState)(""), [W, ee] = (0, l.useState)(null), [te, G] = (0, l.useState)(""), [ne, re] = (0, l.useState)(null), ie = (0, l.useRef)(0), ae = (0, l.useRef)(null), oe = (0, l.useRef)(0), se = (0, l.useRef)(0), K = (0, l.useRef)(null), [ce, q] = (0, l.useState)(""), [le, ue] = (0, l.useState)(0);
+	function de() {
 		P(null), I("");
 	}
+	function fe() {
+		return L.current += 1, de(), L.current;
+	}
 	function pe() {
-		return L.current += 1, fe(), L.current;
+		L.current += 1, de();
 	}
 	function me() {
-		L.current += 1, fe();
-	}
-	function he() {
-		ce.current?.abort();
+		K.current?.abort();
 		let e = ++se.current, t = new AbortController();
-		return ce.current = t, G(""), re(null), {
+		return K.current = t, G(""), re(null), {
 			id: e,
 			controller: t
 		};
 	}
-	function ge(e, t) {
-		return e === se.current && ce.current === t && !t.signal.aborted;
+	function he(e, t) {
+		return e === se.current && K.current === t && !t.signal.aborted;
 	}
-	function q() {
-		se.current += 1, ce.current?.abort(), ce.current = null, G(""), re(null), A("");
+	function J() {
+		se.current += 1, K.current?.abort(), K.current = null, G(""), re(null), A("");
 	}
-	let _e = (0, l.useCallback)(async () => {
+	let ge = (0, l.useCallback)(async () => {
 		let e = ++ie.current;
 		ae.current?.abort();
 		let t = new AbortController();
@@ -15146,7 +15146,7 @@ function oc() {
 				reportId: ""
 			});
 		} catch (n) {
-			if (J(n, t.signal) || e !== ie.current) return;
+			if (Ce(n, t.signal) || e !== ie.current) return;
 			let r = Gr(n, "기업 분석 목록을 불러오지 못했습니다.");
 			z(r), V(qr(n, e));
 		} finally {
@@ -15154,8 +15154,8 @@ function oc() {
 		}
 	}, []);
 	(0, l.useEffect)(() => {
-		_e();
-	}, [_e, e]), (0, l.useEffect)(() => {
+		ge();
+	}, [ge, e]), (0, l.useEffect)(() => {
 		let e = () => {
 			if (ac()) {
 				o(ic());
@@ -15169,14 +15169,14 @@ function oc() {
 	}, []), (0, l.useEffect)(() => {
 		let e = (e) => {
 			let t = e.detail;
-			xt(t, window.FolioAgent?.currentContext) && de((e) => e + 1);
+			xt(t, window.FolioAgent?.currentContext) && ue((e) => e + 1);
 		};
 		return window.addEventListener(We, e), () => window.removeEventListener(We, e);
 	}, []), (0, l.useEffect)(() => {
 		let e = !0, t = null;
 		async function n(n) {
 			let r = ++oe.current, a = new AbortController();
-			t = a, E(!0), me(), q(), U(""), ee(null), M("");
+			t = a, E(!0), pe(), J(), U(""), ee(null), M("");
 			try {
 				let t = await X(`/api/analysis-reports/${encodeURIComponent(n)}?includePersonal=true`, { signal: a.signal });
 				if (!e || a.signal.aborted || r !== oe.current) return;
@@ -15188,14 +15188,14 @@ function oc() {
 					ticker: Hs(t)
 				});
 			} catch (t) {
-				if (!e || J(t, a.signal) || r !== oe.current) return;
+				if (!e || Ce(t, a.signal) || r !== oe.current) return;
 				let n = Gr(t, "저장된 기업 분석 보고서를 열지 못했습니다.");
 				U(n), ee(qr(t, r)), i(null), M(n);
 			} finally {
 				e && r === oe.current && !a.signal.aborted && E(!1);
 			}
 		}
-		return a ? n(a) : (q(), oe.current += 1, U(""), ee(null), i(null), Lt("analysis", {
+		return a ? n(a) : (J(), oe.current += 1, U(""), ee(null), i(null), Lt("analysis", {
 			surface: "analysis",
 			viewId: "analysis",
 			reportKind: "",
@@ -15203,14 +15203,14 @@ function oc() {
 		})), () => {
 			e = !1, t?.abort(), oe.current += 1;
 		};
-	}, [a, ue]);
-	async function ve(e) {
+	}, [a, le]);
+	async function _e(e) {
 		e.preventDefault();
 		let t = s.trim();
 		if (!t) return;
 		O(!0);
-		let n = pe();
-		M(""), le("기업 자료를 읽고 분석 보고서를 생성하는 중입니다.");
+		let n = fe();
+		M(""), q("기업 자료를 읽고 분석 보고서를 생성하는 중입니다.");
 		try {
 			let e = await X(`/api/analyze?${new URLSearchParams({
 				q: m?.ticker || t,
@@ -15225,69 +15225,69 @@ function oc() {
 			let r = n.saved === !0;
 			r && n.id && rc(n.id);
 			try {
-				await _e();
+				await ge();
 			} catch {}
-			le(r ? "기업 분석 보고서를 생성하고 자동 저장했습니다." : "기업 분석 보고서는 생성했지만 저장 여부를 확인하지 못했습니다.");
+			q(r ? "기업 분석 보고서를 생성하고 자동 저장했습니다." : "기업 분석 보고서는 생성했지만 저장 여부를 확인하지 못했습니다.");
 		} catch (e) {
-			if (J(e) || n !== L.current) return;
+			if (Ce(e) || n !== L.current) return;
 			P(qr(e, n));
 			let t = Gr(e, "기업 분석 생성에 실패했습니다.");
-			I(t), M(t), le("");
+			I(t), M(t), q("");
 		} finally {
 			O(!1);
 		}
 	}
-	async function ye(e) {
+	async function ve(e) {
 		e && rc(e);
 	}
-	function be() {
+	function ye() {
 		i(null), rc();
 	}
-	async function xe(e) {
+	async function be(e) {
 		if (!e.id || !window.confirm(`${Ws(e)} 보고서를 삭제할까요?`)) return;
-		let t = he();
-		A(`delete-${e.id}`), me(), M("");
+		let t = me();
+		A(`delete-${e.id}`), pe(), M("");
 		try {
 			let n = await Ie(`/api/analysis-reports/${encodeURIComponent(e.id)}`, {}, { signal: t.controller.signal });
 			if (!n || n.deleted !== !0) throw Error("기업 분석 삭제 결과를 확인하지 못했습니다.");
-			if (!ge(t.id, t.controller)) return;
-			r?.id === e.id && rc(), await _e(), le("저장된 기업 분석 보고서를 삭제했습니다.");
+			if (!he(t.id, t.controller)) return;
+			r?.id === e.id && rc(), await ge(), q("저장된 기업 분석 보고서를 삭제했습니다.");
 		} catch (e) {
-			if (!ge(t.id, t.controller) || J(e, t.controller.signal)) return;
+			if (!he(t.id, t.controller) || Ce(e, t.controller.signal)) return;
 			re(qr(e, t.id));
 			let n = Gr(e, "보고서 삭제에 실패했습니다.");
 			G(n), M(n);
 		} finally {
-			ge(t.id, t.controller) && (ce.current = null, A(""));
+			he(t.id, t.controller) && (K.current = null, A(""));
 		}
 	}
-	async function Se(e) {
+	async function xe(e) {
 		if (!r) return;
-		let t = he();
-		A(e), le(e === "notion" ? "Notion으로 내보내는 중..." : "Obsidian으로 내보내는 중...");
+		let t = me();
+		A(e), q(e === "notion" ? "Notion으로 내보내는 중..." : "Obsidian으로 내보내는 중...");
 		try {
 			let n = e === "notion" ? await Z("/api/export-notion/analysis", r, { signal: t.controller.signal }) : await Z("/api/export-obsidian/analysis", r, { signal: t.controller.signal });
-			if (!ge(t.id, t.controller)) return;
-			le(e === "notion" ? `Notion으로 내보냈습니다${n.title ? `: ${n.title}` : ""}` : `Obsidian으로 내보냈습니다${n.company || n.filename ? `: ${n.company || n.filename}` : ""}`);
+			if (!he(t.id, t.controller)) return;
+			q(e === "notion" ? `Notion으로 내보냈습니다${n.title ? `: ${n.title}` : ""}` : `Obsidian으로 내보냈습니다${n.company || n.filename ? `: ${n.company || n.filename}` : ""}`);
 		} catch (e) {
-			if (!ge(t.id, t.controller) || J(e, t.controller.signal)) return;
+			if (!he(t.id, t.controller) || Ce(e, t.controller.signal)) return;
 			re(qr(e, t.id));
 			let n = Gr(e, "내보내기에 실패했습니다.");
-			G(n), le(n);
+			G(n), q(n);
 		} finally {
-			ge(t.id, t.controller) && (ce.current = null, A(""));
+			he(t.id, t.controller) && (K.current = null, A(""));
 		}
 	}
-	async function Ce() {
+	async function Se() {
 		if (r?.id) {
-			A("overlay"), le("내 노트와 연결하는 중...");
+			A("overlay"), q("내 노트와 연결하는 중...");
 			try {
 				let e = await Z(`/api/analysis-reports/${encodeURIComponent(r.id)}/personal-overlay`, {});
 				zs(e) && await Bs(e);
 				let t = await X(`/api/analysis-reports/${encodeURIComponent(r.id)}?includePersonal=true`);
-				i(t), le("내 노트와 연결했습니다.");
+				i(t), q("내 노트와 연결했습니다.");
 			} catch (e) {
-				le(e instanceof Error ? e.message : "내 노트 연결에 실패했습니다.");
+				q(e instanceof Error ? e.message : "내 노트 연결에 실패했습니다.");
 			} finally {
 				A("");
 			}
@@ -15360,10 +15360,10 @@ function oc() {
 				},
 				breadcrumb: /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 					type: "button",
-					onClick: be,
+					onClick: ye,
 					children: "기업 분석"
 				}), /* @__PURE__ */ (0, Q.jsx)("span", { children: Ee.title })] }),
-				onClose: be,
+				onClose: ye,
 				actionSlot: /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
 					/* @__PURE__ */ (0, Q.jsx)(xi, {
 						title: "AI",
@@ -15385,7 +15385,7 @@ function oc() {
 						children: /* @__PURE__ */ (0, Q.jsx)(Si, {
 							icon: "link",
 							disabled: k === "overlay" || !r.id,
-							onClick: Ce,
+							onClick: Se,
 							children: k === "overlay" ? "연결 중" : "내 노트와 연결"
 						})
 					}),
@@ -15394,12 +15394,12 @@ function oc() {
 						children: [/* @__PURE__ */ (0, Q.jsx)(Si, {
 							icon: "notion",
 							disabled: k === "notion",
-							onClick: () => Se("notion"),
+							onClick: () => xe("notion"),
 							children: k === "notion" ? "내보내는 중" : "Notion으로 내보내기"
 						}), /* @__PURE__ */ (0, Q.jsx)(Si, {
 							icon: "obsidian",
 							disabled: k === "obsidian",
-							onClick: () => Se("obsidian"),
+							onClick: () => xe("obsidian"),
 							children: k === "obsidian" ? "내보내는 중" : "Obsidian으로 내보내기"
 						})]
 					}),
@@ -15421,9 +15421,9 @@ function oc() {
 						className: "react-reader-status",
 						children: r.generation.message
 					}),
-					K && /* @__PURE__ */ (0, Q.jsx)("p", {
+					ce && /* @__PURE__ */ (0, Q.jsx)("p", {
 						className: "react-reader-status",
-						children: K
+						children: ce
 					}),
 					te && /* @__PURE__ */ (0, Q.jsx)("p", {
 						className: "react-reader-status react-dashboard-error",
@@ -15475,14 +15475,14 @@ function oc() {
 				actions: /* @__PURE__ */ (0, Q.jsx)("button", {
 					className: "btn",
 					type: "button",
-					onClick: _e,
+					onClick: ge,
 					disabled: T,
 					children: T ? "불러오는 중" : "새로고침"
 				})
 			}),
 			/* @__PURE__ */ (0, Q.jsxs)("form", {
 				className: "react-analysis-form",
-				onSubmit: ve,
+				onSubmit: _e,
 				children: [
 					/* @__PURE__ */ (0, Q.jsxs)("div", {
 						className: "react-analysis-api-note",
@@ -15569,9 +15569,9 @@ function oc() {
 				className: "react-dashboard-error",
 				children: j
 			}),
-			K && /* @__PURE__ */ (0, Q.jsx)("p", {
+			ce && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "react-dashboard-warning",
-				children: K
+				children: ce
 			}),
 			/* @__PURE__ */ (0, Q.jsxs)("section", {
 				className: "find-bar",
@@ -15649,7 +15649,7 @@ function oc() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("button", {
 									className: "report-feed-card is-analysis",
 									type: "button",
-									onClick: () => ye(e.id),
+									onClick: () => ve(e.id),
 									children: [
 										/* @__PURE__ */ (0, Q.jsxs)("span", {
 											className: "report-feed-card-meta",
@@ -15671,7 +15671,7 @@ function oc() {
 									type: "button",
 									className: "btn btn--icon report-feed-card-delete",
 									disabled: t,
-									onClick: () => xe(e),
+									onClick: () => be(e),
 									"aria-label": `${Ws(e)} 삭제`,
 									"data-tooltip": "삭제",
 									"data-tooltip-pos": "bottom",
@@ -16748,29 +16748,29 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 		unavailable: "사용할 수 없음",
 		pending: "연결 대기",
 		loading: "불러오는 중"
-	}, ae = el(u?.provider, U?.provider), oe = U?.asOf || u?.asOf || "", se = typeof window < "u" && !!window.LightweightCharts, ce = t || e, K = Ic(r, W), le = (0, l.useMemo)(() => Rc({
-		name: ce,
+	}, ae = el(u?.provider, U?.provider), oe = U?.asOf || u?.asOf || "", se = typeof window < "u" && !!window.LightweightCharts, K = t || e, ce = Ic(r, W), q = (0, l.useMemo)(() => Rc({
+		name: K,
 		rangeLabel: Wc[n] || n,
 		style: r,
 		rows: W,
 		intraday: te
 	}), [
-		ce,
+		K,
 		n,
 		r,
 		W,
 		te
-	]), ue = K ? [
+	]), le = ce ? [
 		te ? "시각" : "날짜",
 		"시가",
 		"고가",
 		"저가",
 		"종가"
-	] : [te ? "시각" : "날짜", "종가"], de = (0, l.useMemo)(() => {
+	] : [te ? "시각" : "날짜", "종가"], ue = (0, l.useMemo)(() => {
 		let e = (e) => e == null ? "-" : e.toLocaleString("ko-KR", { maximumFractionDigits: 2 });
 		return W.map((t) => {
 			let n = Pc(t.time, te);
-			return K ? [
+			return ce ? [
 				n,
 				e(t.open),
 				e(t.high),
@@ -16780,17 +16780,17 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 		});
 	}, [
 		W,
-		K,
+		ce,
 		te
-	]), fe = () => E.current.length ? E.current : W, pe = (e) => {
-		let t = fe(), n = t[e];
+	]), de = () => E.current.length ? E.current : W, fe = (e) => {
+		let t = de(), n = t[e];
 		n && (L(e), z(zc({
 			rows: t,
 			index: e,
 			intraday: te,
-			candle: K
+			candle: ce
 		})), N.current?.setCrosshairPosition?.(n.close, rl(n.time, te), T.current), P.current?.(n));
-	}, me = () => {
+	}, pe = () => {
 		N.current?.clearCrosshairPosition?.(), F.current = !1;
 		let e = w.current?.querySelector(".market-chart-tooltip");
 		e && (e.hidden = !0), L(null);
@@ -16887,23 +16887,23 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 			...se && W.length > 0 ? {
 				role: "group",
 				"aria-roledescription": "차트",
-				"aria-label": le,
+				"aria-label": q,
 				tabIndex: 0,
 				onKeyDown: (e) => {
 					if (e.key === "Escape") {
 						if (I === null) return;
-						me(), z(""), e.preventDefault();
+						pe(), z(""), e.preventDefault();
 						return;
 					}
 					let t = Ac({
 						key: e.key,
 						current: I,
-						length: fe().length
+						length: de().length
 					});
-					t !== null && (e.preventDefault(), pe(t));
+					t !== null && (e.preventDefault(), fe(t));
 				},
 				onBlur: () => {
-					I !== null && me();
+					I !== null && pe();
 				}
 			} : {},
 			children: !se && /* @__PURE__ */ (0, Q.jsx)("p", { children: "차트 라이브러리를 사용할 수 없습니다." })
@@ -16914,10 +16914,10 @@ function sl({ symbol: e, label: t, range: n, style: r, onRange: i, onStyle: a, s
 			children: R
 		}),
 		/* @__PURE__ */ (0, Q.jsx)(jc, {
-			title: `${ce} 가격`,
+			title: `${K} 가격`,
 			unit: "봉",
-			columns: ue,
-			rows: de
+			columns: le,
+			rows: ue
 		}),
 		o && f && /* @__PURE__ */ (0, Q.jsxs)("p", {
 			className: "chart-next",
@@ -17546,7 +17546,7 @@ function jl(e) {
 	].filter(Boolean).join(" · ") || "필터 없음";
 }
 function Ml(e) {
-	return e instanceof q ? e.code === "validation_error" ? "필터 형식을 확인하세요. 이름과 하나 이상의 검색 조건이 필요하며 각 목록은 최대 20개입니다." : e.code === "collection_store_unavailable" ? "저장된 컬렉션을 읽을 수 없습니다. 저장소 상태를 확인한 뒤 다시 불러오세요." : e.code === "collection_snapshot_unavailable" ? "최근 새로고침 기록을 읽을 수 없습니다. 저장 상태를 확인한 뒤 다시 시도하세요." : e.code === "collection_source_unavailable" ? "현재 외부 자료 인덱스를 읽을 수 없습니다. 자료 상태를 확인한 뒤 다시 시도하세요." : e.code === "collection_not_found" ? "컬렉션이 더 이상 존재하지 않습니다. 목록으로 돌아가세요." : `컬렉션 요청을 완료하지 못했습니다 (${e.code || "request_failed"}).` : "컬렉션 요청을 완료하지 못했습니다. 연결을 확인하고 다시 시도하세요.";
+	return e instanceof J ? e.code === "validation_error" ? "필터 형식을 확인하세요. 이름과 하나 이상의 검색 조건이 필요하며 각 목록은 최대 20개입니다." : e.code === "collection_store_unavailable" ? "저장된 컬렉션을 읽을 수 없습니다. 저장소 상태를 확인한 뒤 다시 불러오세요." : e.code === "collection_snapshot_unavailable" ? "최근 새로고침 기록을 읽을 수 없습니다. 저장 상태를 확인한 뒤 다시 시도하세요." : e.code === "collection_source_unavailable" ? "현재 외부 자료 인덱스를 읽을 수 없습니다. 자료 상태를 확인한 뒤 다시 시도하세요." : e.code === "collection_not_found" ? "컬렉션이 더 이상 존재하지 않습니다. 목록으로 돌아가세요." : `컬렉션 요청을 완료하지 못했습니다 (${e.code || "request_failed"}).` : "컬렉션 요청을 완료하지 못했습니다. 연결을 확인하고 다시 시도하세요.";
 }
 function Nl(e) {
 	let t = e.payload?.currentRevision;
@@ -17639,7 +17639,7 @@ function Il({ selectedRef: e, onSelectedRef: t, onBusyChange: n, onOpenDetail: r
 			});
 		} catch (e) {
 			if (e instanceof DOMException && e.name === "AbortError" || r !== j.current) return;
-			e instanceof q && e.status === 409 && (e.code === "revision_conflict" || e.code === "duplicate_name") ? (k({
+			e instanceof J && e.status === 409 && (e.code === "revision_conflict" || e.code === "duplicate_name") ? (k({
 				code: e.code,
 				currentRevision: Nl(e)
 			}), t(null)) : D(Ml(e));
@@ -17672,7 +17672,7 @@ function Il({ selectedRef: e, onSelectedRef: t, onBusyChange: n, onOpenDetail: r
 			} else t = await Z("/api/smart-collections", e);
 			o((e) => [t.collection, ...e.filter((e) => e.id !== t.collection.id)]), c((e) => f === "create" ? e + 1 : e), p(null), h(""), _(null), await L(t.collection);
 		} catch (e) {
-			e instanceof q && e.status === 409 && (e.code === "revision_conflict" || e.code === "duplicate_name") ? (k({
+			e instanceof J && e.status === 409 && (e.code === "revision_conflict" || e.code === "duplicate_name") ? (k({
 				code: e.code,
 				currentRevision: Nl(e)
 			}), e.code === "revision_conflict" && t(null)) : D(Ml(e));
@@ -17686,7 +17686,7 @@ function Il({ selectedRef: e, onSelectedRef: t, onBusyChange: n, onOpenDetail: r
 		try {
 			await Ie(`/api/smart-collections/${encodeURIComponent(F.id)}`, e), o((e) => e.filter((e) => e.id !== F.id)), c((e) => Math.max(0, e - 1)), x(null), t(null);
 		} catch (e) {
-			e instanceof q && e.status === 409 && (e.code === "revision_conflict" || e.code === "duplicate_name") ? (k({
+			e instanceof J && e.status === 409 && (e.code === "revision_conflict" || e.code === "duplicate_name") ? (k({
 				code: e.code,
 				currentRevision: Nl(e)
 			}), t(null)) : D(Ml(e));
@@ -17907,7 +17907,7 @@ function Ll({ collectionId: e, onBack: t, onStartResearch: n }) {
 			i(r), o(a);
 		} catch (e) {
 			if (e instanceof DOMException && e.name === "AbortError") return;
-			e instanceof q && e.code === "collection_not_found" ? p("deleted") : e instanceof q && e.code === "collection_source_unavailable" ? p("source") : p("other"), h(Ml(e));
+			e instanceof J && e.code === "collection_not_found" ? p("deleted") : e instanceof J && e.code === "collection_source_unavailable" ? p("source") : p("other"), h(Ml(e));
 		} finally {
 			n.signal.aborted || c(!1);
 		}
@@ -17920,7 +17920,7 @@ function Ll({ collectionId: e, onBack: t, onStartResearch: n }) {
 		try {
 			await Z(`/api/smart-collections/${encodeURIComponent(e)}/refresh`, t), await _();
 		} catch (e) {
-			e instanceof q && e.status === 409 ? (h("다른 탭에서 정의가 변경되었습니다. 최신 revision을 다시 불러왔습니다."), await _({ preserveMessage: !0 })) : e instanceof q && e.code === "collection_not_found" ? (p("deleted"), h(Ml(e))) : (e instanceof q && e.code === "collection_source_unavailable" && p("source"), h(Ml(e)));
+			e instanceof J && e.status === 409 ? (h("다른 탭에서 정의가 변경되었습니다. 최신 revision을 다시 불러왔습니다."), await _({ preserveMessage: !0 })) : e instanceof J && e.code === "collection_not_found" ? (p("deleted"), h(Ml(e))) : (e instanceof J && e.code === "collection_source_unavailable" && p("source"), h(Ml(e)));
 		} finally {
 			d(!1);
 		}
@@ -18669,7 +18669,7 @@ function hu() {
 	return window.location.hash.replace(/^#\/?/, "").split("/")[0] === "deep-research";
 }
 function gu(e) {
-	return e instanceof q ? e.code : e instanceof au ? e.job.errorCode || e.job.status : e instanceof Error ? e.name : "request_failed";
+	return e instanceof J ? e.code : e instanceof au ? e.job.errorCode || e.job.status : e instanceof Error ? e.name : "request_failed";
 }
 function _u(e, t) {
 	let n = gu(t);
@@ -18937,7 +18937,7 @@ function Cu({ envelope: e, onContinue: t, onEdit: n, degradedConfirming: r, onCo
 function wu() {
 	let e = pi("topicReport"), [t, n] = (0, l.useState)([]), [r, i] = (0, l.useState)(null), a = (0, l.useMemo)(() => sa(window.location.hash), []), [o, s] = (0, l.useState)(a.kind === "report" ? a.id : ""), [c, u] = (0, l.useState)(a.kind === "collection" ? a.id : ""), [d, f] = (0, l.useState)(a.malformed), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(""), [v, y] = (0, l.useState)("include_current"), [b, x] = (0, l.useState)("AUTO"), [S, C] = (0, l.useState)(null), [w, T] = (0, l.useState)(!1), [E, D] = (0, l.useState)("readiness"), [O, k] = (0, l.useState)(null), [A, j] = (0, l.useState)(!1), [M, N] = (0, l.useState)(!1), [P, F] = (0, l.useState)(""), [I, L] = (0, l.useState)(null), R = (0, l.useRef)(0), z = (0, l.useRef)(null);
 	z.current = I;
-	let [B, V] = (0, l.useState)(""), [H, U] = (0, l.useState)(null), [W, ee] = (0, l.useState)(null), [te, G] = (0, l.useState)(""), [ne, re] = (0, l.useState)(null), [ie, ae] = (0, l.useState)(null), [oe, se] = (0, l.useState)(""), [ce, K] = (0, l.useState)(null), [le, ue] = (0, l.useState)(""), [de, fe] = (0, l.useState)(""), [pe, me] = (0, l.useState)(0), [he, ge] = (0, l.useState)("auto"), [_e, ve] = (0, l.useState)(!1), [ye, be] = (0, l.useState)(!1), [xe, Se] = (0, l.useState)(!1), [Ce, Y] = (0, l.useState)(""), [we, Te] = (0, l.useState)("recent"), Ee = (0, l.useRef)(0), De = (0, l.useRef)(null), Oe = (0, l.useRef)(0), ke = (0, l.useRef)(null), Ae = (0, l.useRef)(0), je = (0, l.useRef)(null), Me = (0, l.useRef)(E);
+	let [B, V] = (0, l.useState)(""), [H, U] = (0, l.useState)(null), [W, ee] = (0, l.useState)(null), [te, G] = (0, l.useState)(""), [ne, re] = (0, l.useState)(null), [ie, ae] = (0, l.useState)(null), [oe, se] = (0, l.useState)(""), [K, ce] = (0, l.useState)(null), [q, le] = (0, l.useState)(""), [ue, de] = (0, l.useState)(""), [fe, pe] = (0, l.useState)(0), [me, he] = (0, l.useState)("auto"), [ge, _e] = (0, l.useState)(!1), [ve, ye] = (0, l.useState)(!1), [be, xe] = (0, l.useState)(!1), [Se, Y] = (0, l.useState)(""), [we, Te] = (0, l.useState)("recent"), Ee = (0, l.useRef)(0), De = (0, l.useRef)(null), Oe = (0, l.useRef)(0), ke = (0, l.useRef)(null), Ae = (0, l.useRef)(0), je = (0, l.useRef)(null), Me = (0, l.useRef)(E);
 	Me.current = E;
 	let Ne = (0, l.useRef)(null), Pe = (0, l.useRef)(""), Fe = (0, l.useRef)(!1), Le = (0, l.useCallback)(() => {
 		L(null);
@@ -18963,7 +18963,7 @@ function wu() {
 		return e === Ae.current && je.current === t && !t.signal.aborted;
 	}
 	function qe() {
-		Ae.current += 1, je.current?.abort(), je.current = null, G(""), re(null), fe("");
+		Ae.current += 1, je.current?.abort(), je.current = null, G(""), re(null), de("");
 	}
 	let Je = (0, l.useCallback)(async () => {
 		let e = ++Oe.current;
@@ -18973,7 +18973,7 @@ function wu() {
 		try {
 			let r = await X("/api/topic-reports", { signal: t.signal });
 			if (t.signal.aborted || e !== Oe.current) return;
-			n(Ma(r)), K(null), D((e) => e === "readiness" ? "draft" : e), Lt("deep-research", {
+			n(Ma(r)), ce(null), D((e) => e === "readiness" ? "draft" : e), Lt("deep-research", {
 				surface: "topic_report",
 				viewId: "topicrpt",
 				reportKind: "",
@@ -18982,11 +18982,11 @@ function wu() {
 				collectionRevision: null
 			});
 		} catch (n) {
-			if (J(n, t.signal) || e !== Oe.current) return;
+			if (Ce(n, t.signal) || e !== Oe.current) return;
 			let r = _u("readiness", n);
 			V(r), U(qr(n, e));
 			let i = gu(n);
-			!z.current && Me.current === "readiness" && (F(r), ae("readiness"), se(i), K(i === "no_index" || i === "index_unavailable" ? "no-index" : i === "rss_unavailable" ? "rss" : "api"), D("recoverable-error"));
+			!z.current && Me.current === "readiness" && (F(r), ae("readiness"), se(i), ce(i === "no_index" || i === "index_unavailable" ? "no-index" : i === "rss_unavailable" ? "rss" : "api"), D("recoverable-error"));
 		} finally {
 			e === Oe.current && (ke.current = null, N(!1));
 		}
@@ -18999,14 +18999,14 @@ function wu() {
 			let a = await Kl((t) => X(`/api/jobs/${encodeURIComponent(t)}`, { signal: e.signal }));
 			if (!(!t || a.kind === "none")) {
 				if (a.kind === "unavailable") {
-					ue("이전에 시작한 딥 리서치 작업이 있습니다. 서버 연결이 돌아오면 다시 확인합니다.");
+					le("이전에 시작한 딥 리서치 작업이 있습니다. 서버 연결이 돌아오면 다시 확인합니다.");
 					return;
 				}
 				if (a.kind === "invalid") {
 					F("저장된 딥 리서치 작업 정보를 확인할 수 없어 안전하게 제거했습니다.");
 					return;
 				}
-				D("generation"), ue(a.kind === "active" ? "이전에 시작한 딥 리서치 작업에 다시 연결했습니다." : "완료된 딥 리서치 결과를 불러오는 중입니다.");
+				D("generation"), le(a.kind === "active" ? "이전에 시작한 딥 리서치 작업에 다시 연결했습니다." : "완료된 딥 리서치 결과를 불러오는 중입니다.");
 				try {
 					let r = a.kind === "active" ? await ou(a.job, e.signal) : a.job;
 					if (!t) return;
@@ -19020,10 +19020,10 @@ function wu() {
 					if (!o) throw Error("완료된 보고서 ID를 확인하지 못했습니다.");
 					let s = ja(await X(`/api/topic-reports/${encodeURIComponent(o)}?includePersonal=true`, { signal: e.signal }));
 					if (!t) return;
-					n((e) => [s, ...e.filter((e) => e.id !== s.id)]), i(s), D("report"), ue("딥 리서치를 생성하고 자동 저장했습니다."), mu(s.id);
+					n((e) => [s, ...e.filter((e) => e.id !== s.id)]), i(s), D("report"), le("딥 리서치를 생성하고 자동 저장했습니다."), mu(s.id);
 				} catch (n) {
-					if (!t || J(n, e.signal) || r !== R.current) return;
-					n instanceof au && Ul(), L(qr(n, r)), F(_u("generation", n)), ae("generation"), D("recoverable-error"), ue("");
+					if (!t || Ce(n, e.signal) || r !== R.current) return;
+					n instanceof au && Ul(), L(qr(n, r)), F(_u("generation", n)), ae("generation"), D("recoverable-error"), le("");
 				}
 			}
 		})(), () => {
@@ -19064,7 +19064,7 @@ function wu() {
 	]), (0, l.useEffect)(() => {
 		let e = (e) => {
 			let t = e.detail;
-			xt(t, window.FolioAgent?.currentContext) && me((e) => e + 1);
+			xt(t, window.FolioAgent?.currentContext) && pe((e) => e + 1);
 		};
 		return window.addEventListener(We, e), () => window.removeEventListener(We, e);
 	}, []), (0, l.useEffect)(() => {
@@ -19087,7 +19087,7 @@ function wu() {
 					collectionRevision: S?.revision || null
 				});
 			} catch (n) {
-				if (J(n, e.signal) || e.signal.aborted || Ee.current !== t) return;
+				if (Ce(n, e.signal) || e.signal.aborted || Ee.current !== t) return;
 				Le(), ee(qr(n, t)), i(null), F(_u("report", n)), ae("report"), se(gu(n)), D("recoverable-error");
 			} finally {
 				!e.signal.aborted && Ee.current === t && N(!1);
@@ -19107,7 +19107,7 @@ function wu() {
 		o,
 		ze,
 		d,
-		pe
+		fe
 	]);
 	let Xe = async (e) => {
 		e.preventDefault();
@@ -19117,11 +19117,11 @@ function wu() {
 			return;
 		}
 		let n = He();
-		D("plan-loading"), k(null), j(!1), F(""), ae(null), se(""), ue(he === "rules" ? "질문을 실행 계획으로 바꾸는 중입니다." : "AI가 리서치 계획을 쓰는 중입니다. 30초 이상 걸릴 수 있습니다.");
+		D("plan-loading"), k(null), j(!1), F(""), ae(null), se(""), le(me === "rules" ? "질문을 실행 계획으로 바꾸는 중입니다." : "AI가 리서치 계획을 쓰는 중입니다. 30초 이상 걸릴 수 있습니다.");
 		let r = {
 			question: t,
 			userContext: g.normalize("NFKC").trim(),
-			plannerEngine: he,
+			plannerEngine: me,
 			deepResearch: !0,
 			customTickers: {},
 			marketStatePolicy: v,
@@ -19131,14 +19131,14 @@ function wu() {
 		try {
 			let e = await Z("/api/topic-reports/plan", r, { signal: n.signal });
 			if (!Ue(n.id)) return;
-			k(e), D("plan-review"), ue("실행 계획을 확인하세요.");
+			k(e), D("plan-review"), le("실행 계획을 확인하세요.");
 		} catch (e) {
-			if (J(e, n.signal) || !Ue(n.id)) return;
-			F(_u("plan", e)), ae("plan"), se(gu(e)), K(gu(e) === "no_index" || gu(e) === "index_unavailable" ? "no-index" : gu(e) === "rss_unavailable" ? "rss" : null), D("recoverable-error"), ue("");
+			if (Ce(e, n.signal) || !Ue(n.id)) return;
+			F(_u("plan", e)), ae("plan"), se(gu(e)), ce(gu(e) === "no_index" || gu(e) === "index_unavailable" ? "no-index" : gu(e) === "rss_unavailable" ? "rss" : null), D("recoverable-error"), le("");
 		}
 	}, Ze = async (e) => {
 		let t = He(), r = R.current;
-		D("generation"), F(""), ae(null), se(""), ue("승인된 계획으로 리서치를 생성하는 중입니다.");
+		D("generation"), F(""), ae(null), se(""), le("승인된 계획으로 리서치를 생성하는 중입니다.");
 		let a = {
 			mode: "auto",
 			adapter: "auto",
@@ -19159,7 +19159,7 @@ function wu() {
 			Ul();
 			let c = ja(await X(`/api/topic-reports/${encodeURIComponent(s)}?includePersonal=true`, { signal: t.signal }));
 			if (!Ue(t.id)) return;
-			n((e) => [c, ...e.filter((e) => e.id !== c.id)]), i(c), D("report"), ue("딥 리서치를 생성하고 자동 저장했습니다."), mu(c.id), Lt("deep-research", {
+			n((e) => [c, ...e.filter((e) => e.id !== c.id)]), i(c), D("report"), le("딥 리서치를 생성하고 자동 저장했습니다."), mu(c.id), Lt("deep-research", {
 				surface: "topic_report_reader",
 				viewId: "topicrpt",
 				reportKind: "topic_report",
@@ -19168,11 +19168,11 @@ function wu() {
 				collectionRevision: S?.revision || null
 			});
 		} catch (e) {
-			if (J(e, t.signal) || !Ue(t.id)) return;
+			if (Ce(e, t.signal) || !Ue(t.id)) return;
 			e instanceof au && Ul();
-			let n = e instanceof q && (e.code === "evidence_confirmation_required" || e.code === "resolution_changed");
+			let n = e instanceof J && (e.code === "evidence_confirmation_required" || e.code === "resolution_changed");
 			if (r !== R.current) return;
-			n || L(qr(e, r)), F(_u("generation", e)), ae(n ? "degraded" : "generation"), se(gu(e)), D("recoverable-error"), ue("");
+			n || L(qr(e, r)), F(_u("generation", e)), ae(n ? "degraded" : "generation"), se(gu(e)), D("recoverable-error"), le("");
 		}
 	}, Qe = () => {
 		if (O) {
@@ -19181,7 +19181,7 @@ function wu() {
 					ze(), F("근거 부족 확인 정보가 없어 실행을 중단했습니다. 계획을 다시 미리보세요."), ae("degraded"), se("invalid_zero_evidence"), D("recoverable-error");
 					return;
 				}
-				j(!0), ue("근거 부족 확인을 검토하세요.");
+				j(!0), le("근거 부족 확인을 검토하세요.");
 				return;
 			}
 			Ze(O);
@@ -19189,7 +19189,7 @@ function wu() {
 	}, $e = async (e) => {
 		if (!O) return;
 		let t = He(), n = e.length > 0;
-		n ? be(!0) : Se(!0), F(""), ae(null), se(""), ue(n ? "요청하신 대로 계획을 고치는 중입니다. 30초 이상 걸릴 수 있습니다." : "AI가 리서치 계획을 다시 쓰는 중입니다. 30초 이상 걸릴 수 있습니다.");
+		n ? ye(!0) : xe(!0), F(""), ae(null), se(""), le(n ? "요청하신 대로 계획을 고치는 중입니다. 30초 이상 걸릴 수 있습니다." : "AI가 리서치 계획을 다시 쓰는 중입니다. 30초 이상 걸릴 수 있습니다.");
 		let r = {
 			approvedRequest: O.approvedRequest,
 			approval: yu(O),
@@ -19198,12 +19198,12 @@ function wu() {
 		try {
 			let e = await Z("/api/topic-reports/plan/replan", r, { signal: t.signal });
 			if (!Ue(t.id)) return;
-			k(e), ve(!1), j(!1), ue(e.approvedRequest.topicPlan.plannerMode === "llm" ? n ? "요청하신 대로 계획을 고쳤습니다." : "AI가 계획을 다시 썼습니다." : "AI 엔진을 쓸 수 없어 계획을 그대로 두었습니다.");
+			k(e), _e(!1), j(!1), le(e.approvedRequest.topicPlan.plannerMode === "llm" ? n ? "요청하신 대로 계획을 고쳤습니다." : "AI가 계획을 다시 썼습니다." : "AI 엔진을 쓸 수 없어 계획을 그대로 두었습니다.");
 		} catch (e) {
-			if (J(e, t.signal) || !Ue(t.id)) return;
-			F(_u("plan", e)), ae("plan"), se(gu(e)), D("recoverable-error"), ue("");
+			if (Ce(e, t.signal) || !Ue(t.id)) return;
+			F(_u("plan", e)), ae("plan"), se(gu(e)), D("recoverable-error"), le("");
 		} finally {
-			Ue(t.id) && (Se(!1), be(!1));
+			Ue(t.id) && (xe(!1), ye(!1));
 		}
 	}, et = async (e) => {
 		await $e(e);
@@ -19212,7 +19212,7 @@ function wu() {
 		let e = O.preview.zeroEvidence;
 		if (!e.required || !e.reasonCode || !e.resolutionFingerprint) return;
 		let t = He();
-		F(""), ae(null), se(""), ue("근거 부족 확인을 저장하는 중입니다.");
+		F(""), ae(null), se(""), le("근거 부족 확인을 저장하는 중입니다.");
 		let n = {
 			approvedRequest: O.approvedRequest,
 			approval: yu(O),
@@ -19225,60 +19225,60 @@ function wu() {
 			if (!Ue(t.id)) return;
 			k(e), j(!1), await Ze(e);
 		} catch (e) {
-			if (J(e, t.signal) || !Ue(t.id)) return;
-			F(_u("degraded", e)), ae("degraded"), se(gu(e)), D("recoverable-error"), ue("");
+			if (Ce(e, t.signal) || !Ue(t.id)) return;
+			F(_u("degraded", e)), ae("degraded"), se(gu(e)), D("recoverable-error"), le("");
 		}
 	};
 	async function nt(e) {
 		if (!e.id || !window.confirm(`${cu(e)} 보고서를 삭제할까요?`)) return;
 		let t = Ge();
-		fe(`delete-${e.id}`), ze(), F("");
+		de(`delete-${e.id}`), ze(), F("");
 		try {
 			let i = await Ie(`/api/topic-reports/${encodeURIComponent(e.id)}`, {}, { signal: t.controller.signal });
 			if (!i || i.deleted !== !0) throw Error("딥 리서치 삭제 결과를 확인하지 못했습니다.");
 			if (!Ke(t.id, t.controller)) return;
-			r?.id === e.id && mu(), n((t) => t.filter((t) => t.id !== e.id)), ue("저장된 딥 리서치를 삭제했습니다.");
+			r?.id === e.id && mu(), n((t) => t.filter((t) => t.id !== e.id)), le("저장된 딥 리서치를 삭제했습니다.");
 		} catch (e) {
-			if (!Ke(t.id, t.controller) || J(e, t.controller.signal)) return;
+			if (!Ke(t.id, t.controller) || Ce(e, t.controller.signal)) return;
 			re(Wr(e) ? null : qr(e, t.id)), G(vu(e, "보고서 삭제에 실패했습니다."));
 		} finally {
-			Ke(t.id, t.controller) && (je.current = null, fe(""));
+			Ke(t.id, t.controller) && (je.current = null, de(""));
 		}
 	}
 	async function rt(e) {
 		if (!r) return;
 		let t = Ge();
-		fe(e), ue(e === "notion" ? "Notion으로 내보내는 중..." : "Obsidian으로 내보내는 중...");
+		de(e), le(e === "notion" ? "Notion으로 내보내는 중..." : "Obsidian으로 내보내는 중...");
 		try {
 			let n = e === "notion" ? await Z("/api/export-notion/topic-report", r, { signal: t.controller.signal }) : await Z("/api/export-obsidian/topic-report", r, { signal: t.controller.signal });
 			if (!Ke(t.id, t.controller)) return;
-			ue(e === "notion" ? `Notion으로 내보냈습니다${n.title ? `: ${n.title}` : ""}` : `Obsidian으로 내보냈습니다${n.topic || n.filename ? `: ${n.topic || n.filename}` : ""}`);
+			le(e === "notion" ? `Notion으로 내보냈습니다${n.title ? `: ${n.title}` : ""}` : `Obsidian으로 내보냈습니다${n.topic || n.filename ? `: ${n.topic || n.filename}` : ""}`);
 		} catch (e) {
-			if (!Ke(t.id, t.controller) || J(e, t.controller.signal)) return;
+			if (!Ke(t.id, t.controller) || Ce(e, t.controller.signal)) return;
 			re(qr(e, t.id));
 			let n = Gr(e, "내보내기에 실패했습니다.");
-			G(n), ue(n);
+			G(n), le(n);
 		} finally {
-			Ke(t.id, t.controller) && (je.current = null, fe(""));
+			Ke(t.id, t.controller) && (je.current = null, de(""));
 		}
 	}
 	async function it() {
 		if (r?.id) {
-			fe("overlay"), ue("내 노트와 연결하는 중...");
+			de("overlay"), le("내 노트와 연결하는 중...");
 			try {
 				let e = await Z(`/api/topic-reports/${encodeURIComponent(r.id)}/personal-overlay`, {});
 				ru(e) && await ou(e, new AbortController().signal);
 				let t = ja(await X(`/api/topic-reports/${encodeURIComponent(r.id)}?includePersonal=true`));
-				i(t), ue("내 노트와 연결했습니다.");
+				i(t), le("내 노트와 연결했습니다.");
 			} catch (e) {
-				ue(e instanceof Error ? e.message : "내 노트 연결에 실패했습니다.");
+				le(e instanceof Error ? e.message : "내 노트 연결에 실패했습니다.");
 			} finally {
-				fe("");
+				de("");
 			}
 		}
 	}
 	let at = (0, l.useMemo)(() => {
-		let e = fu(Ce);
+		let e = fu(Se);
 		return e ? t.filter((t) => fu([
 			cu(t),
 			lu(t),
@@ -19287,7 +19287,7 @@ function wu() {
 			t.engineDetail,
 			uu(t.generatedAt || t.date)
 		].filter(Boolean).join(" ")).includes(e)) : t;
-	}, [Ce, t]), ot = (0, l.useMemo)(() => {
+	}, [Se, t]), ot = (0, l.useMemo)(() => {
 		let e = (e) => String(e.generatedAt || e.date || ""), t = [...at].sort((t, n) => e(n).localeCompare(e(t)));
 		if (we === "recent") return t.length ? [{
 			key: `최근 리서치 ${Math.min(t.length, pu)}건`,
@@ -19431,32 +19431,32 @@ function wu() {
 						children: /* @__PURE__ */ (0, Q.jsx)(Si, {
 							icon: "link",
 							"data-qa": "dr-overlay-generate",
-							disabled: de === "overlay" || !r.id,
+							disabled: ue === "overlay" || !r.id,
 							onClick: it,
-							children: de === "overlay" ? "연결 중" : "내 노트와 연결"
+							children: ue === "overlay" ? "연결 중" : "내 노트와 연결"
 						})
 					}),
 					/* @__PURE__ */ (0, Q.jsxs)(xi, {
 						title: "내보내기",
 						children: [/* @__PURE__ */ (0, Q.jsx)(Si, {
 							icon: "notion",
-							disabled: de === "notion",
+							disabled: ue === "notion",
 							onClick: () => rt("notion"),
-							children: de === "notion" ? "내보내는 중" : "Notion으로 내보내기"
+							children: ue === "notion" ? "내보내는 중" : "Notion으로 내보내기"
 						}), /* @__PURE__ */ (0, Q.jsx)(Si, {
 							icon: "obsidian",
-							disabled: de === "obsidian",
+							disabled: ue === "obsidian",
 							onClick: () => rt("obsidian"),
-							children: de === "obsidian" ? "내보내는 중" : "Obsidian으로 내보내기"
+							children: ue === "obsidian" ? "내보내는 중" : "Obsidian으로 내보내기"
 						})]
 					}),
 					r.generation?.message && /* @__PURE__ */ (0, Q.jsx)("p", {
 						className: "react-reader-status",
 						children: r.generation.message
 					}),
-					le && /* @__PURE__ */ (0, Q.jsx)("p", {
+					q && /* @__PURE__ */ (0, Q.jsx)("p", {
 						className: "react-reader-status",
-						children: le
+						children: q
 					}),
 					te && /* @__PURE__ */ (0, Q.jsx)("p", {
 						className: "react-reader-status react-dashboard-error",
@@ -19507,12 +19507,12 @@ function wu() {
 				role: "status",
 				children: "저장된 리서치와 자료 상태를 확인하는 중입니다."
 			}),
-			ce && E === "recoverable-error" && /* @__PURE__ */ (0, Q.jsx)("p", {
+			K && E === "recoverable-error" && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "react-dashboard-error",
-				"data-qa": `dr-readiness-${ce}`,
+				"data-qa": `dr-readiness-${K}`,
 				children: P
 			}),
-			B && !(ce && E === "recoverable-error") && /* @__PURE__ */ (0, Q.jsx)("p", {
+			B && !(K && E === "recoverable-error") && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "react-dashboard-error",
 				"data-qa": "dr-report-list-error",
 				role: "alert",
@@ -19677,10 +19677,10 @@ function wu() {
 									"aria-labelledby": "dr-planner-engine-label",
 									children: ql.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
 										type: "button",
-										"aria-pressed": he === e.value,
+										"aria-pressed": me === e.value,
 										disabled: ut,
 										"data-tooltip": e.hint,
-										onClick: () => ge(e.value),
+										onClick: () => he(e.value),
 										children: e.label
 									}, e.value))
 								})]
@@ -19690,7 +19690,7 @@ function wu() {
 								type: "submit",
 								"data-qa": "dr-preview",
 								disabled: ut,
-								children: E === "plan-loading" ? he === "rules" ? "계획 준비 중" : "AI가 계획을 쓰는 중" : "계획 미리보기"
+								children: E === "plan-loading" ? me === "rules" ? "계획 준비 중" : "AI가 계획을 쓰는 중" : "계획 미리보기"
 							})
 						]
 					}),
@@ -19713,15 +19713,15 @@ function wu() {
 				envelope: O,
 				onContinue: Qe,
 				onEdit: () => {
-					D("draft"), ve(!1), ue("");
+					D("draft"), _e(!1), le("");
 				},
-				editing: _e,
-				revising: ye,
-				replanning: xe,
+				editing: ge,
+				revising: ve,
+				replanning: be,
 				onReplan: () => void $e(""),
-				onEditPlan: () => ve(!0),
+				onEditPlan: () => _e(!0),
 				onRevise: (e) => void et(e),
-				onCancelEdit: () => ve(!1),
+				onCancelEdit: () => _e(!1),
 				degradedConfirming: A,
 				onConfirmDegraded: () => void tt(),
 				onCancelDegraded: () => j(!1)
@@ -19738,15 +19738,15 @@ function wu() {
 					/* @__PURE__ */ (0, Q.jsx)("h2", { children: "승인한 계획을 실행하는 중입니다" }),
 					/* @__PURE__ */ (0, Q.jsx)("p", {
 						"data-qa": "dr-generation-status",
-						children: le || "작업 상태를 확인하는 중입니다."
+						children: q || "작업 상태를 확인하는 중입니다."
 					})
 				]
 			}),
-			le && E !== "generation" && E !== "report" && /* @__PURE__ */ (0, Q.jsx)("p", {
+			q && E !== "generation" && E !== "report" && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "react-dashboard-warning",
 				"data-qa": "dr-status",
 				role: "status",
-				children: le
+				children: q
 			}),
 			/* @__PURE__ */ (0, Q.jsxs)("section", {
 				className: "find-bar",
@@ -19755,7 +19755,7 @@ function wu() {
 					/* @__PURE__ */ (0, Q.jsx)("input", {
 						className: "find-bar__search",
 						type: "search",
-						value: Ce,
+						value: Se,
 						onChange: (e) => Y(e.currentTarget.value),
 						placeholder: "주제·질문·모델 검색",
 						"aria-label": "저장된 리서치 검색"
@@ -19806,7 +19806,7 @@ function wu() {
 						children: "저장된 리서치"
 					})] }), /* @__PURE__ */ (0, Q.jsx)("span", {
 						"aria-live": "polite",
-						children: `${at.length}건${Ce ? " · 검색 결과" : ""}`
+						children: `${at.length}건${Se ? " · 검색 결과" : ""}`
 					})]
 				}), ot.length ? ot.map((e) => /* @__PURE__ */ (0, Q.jsxs)("section", {
 					className: "report-feed-group",
@@ -19822,7 +19822,7 @@ function wu() {
 					}), /* @__PURE__ */ (0, Q.jsx)("div", {
 						className: "report-feed-group-cards",
 						children: e.rows.map((e) => {
-							let t = de === `delete-${e.id}`;
+							let t = ue === `delete-${e.id}`;
 							return /* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "report-feed-card-wrap",
 								children: [/* @__PURE__ */ (0, Q.jsxs)("button", {
@@ -19873,7 +19873,7 @@ function wu() {
 				}, e.key)) : /* @__PURE__ */ (0, Q.jsx)("div", {
 					className: "report-feed-empty",
 					"data-qa": "dr-report-list-empty",
-					children: Ce ? "검색 결과가 없습니다." : "저장된 딥 리서치가 없습니다. 질문을 입력해 실행 계획을 미리보세요."
+					children: Se ? "검색 결과가 없습니다." : "저장된 딥 리서치가 없습니다. 질문을 입력해 실행 계획을 미리보세요."
 				})]
 			})
 		]
@@ -21211,7 +21211,7 @@ function qd({ portfolio: e, dirty: t, onCommitted: n, onBusyChange: r, externalB
 		return !Vd(y.current) && (d(null), c(""), _(Rd("draft_unsaved")), window.setTimeout(() => v.current?.focus(), 0), !0);
 	}
 	function C(e) {
-		let t = e instanceof q ? e.code : "provider_unavailable";
+		let t = e instanceof J ? e.code : "provider_unavailable";
 		_(Rd(t)), window.setTimeout(() => v.current?.focus(), 0);
 	}
 	async function w() {
@@ -21257,7 +21257,7 @@ function qd({ portfolio: e, dirty: t, onCommitted: n, onBusyChange: r, externalB
 				if (S()) return;
 				n(e.portfolio), h(e.metadataStatus === "recovery_pending" ? Rd("recovery_pending") : e.idempotent ? "이미 반영된 가져오기입니다." : "보유 내역을 반영했습니다."), d(null), c("");
 			} catch (e) {
-				e instanceof q && Hd.has(e.code) && d(null), C(e);
+				e instanceof J && Hd.has(e.code) && d(null), C(e);
 			} finally {
 				p("");
 			}
@@ -22530,7 +22530,7 @@ function bf({ result: e, title: t, tone: n = "portfolio" }) {
 //#endregion
 //#region src/app/portfolio/backtestUi.ts
 function xf(e, t) {
-	if (!(e instanceof q)) return e instanceof Error && e.message ? e.message : t;
+	if (!(e instanceof J)) return e instanceof Error && e.message ? e.message : t;
 	let n = e.payload;
 	if (n && typeof n == "object") {
 		let e = n.detail;
@@ -23391,7 +23391,7 @@ function tp(e, t) {
 //#endregion
 //#region src/app/portfolio/PortfolioTargets.tsx
 function np(e) {
-	return !(e instanceof q) || !e.payload || typeof e.payload.detail != "object" || e.payload.detail === null ? null : e.payload.detail;
+	return !(e instanceof J) || !e.payload || typeof e.payload.detail != "object" || e.payload.detail === null ? null : e.payload.detail;
 }
 function rp(e) {
 	return e ? e.slice(0, 10) : "저장일 정보 없음";
@@ -23513,7 +23513,7 @@ function ip({ revision: e, onChanged: t, onDirtyChange: n }) {
 		window.setTimeout(() => F.current[t]?.focus(), 0);
 	}, se = (e) => {
 		let t = np(e);
-		if (!(e instanceof q) || e.status !== 422 || t?.code !== "preset_validation_failed" || !Array.isArray(t.errors)) return null;
+		if (!(e instanceof J) || e.status !== 422 || t?.code !== "preset_validation_failed" || !Array.isArray(t.errors)) return null;
 		let n = {};
 		for (let e of t.errors) {
 			if (!e || typeof e != "object") continue;
@@ -23521,7 +23521,7 @@ function ip({ revision: e, onChanged: t, onDirtyChange: n }) {
 			n[t === null ? r || "total" : `row-${t}-${r === "weightPercent" || r === "weight" ? "weight" : "ticker"}`] = i;
 		}
 		return n;
-	}, ce = async (e) => {
+	}, K = async (e) => {
 		if (!(!b || !R)) {
 			if (!e && b.id && !L) {
 				_("변경된 내용이 없습니다.");
@@ -23544,22 +23544,22 @@ function ip({ revision: e, onChanged: t, onDirtyChange: n }) {
 				if (t) D(t), y("입력 오류가 있어 저장하지 않았습니다."), oe(t);
 				else {
 					let t = np(e);
-					e instanceof q && e.status === 409 && t?.code === "preset_revision_conflict" ? (j({ latest: t.latest && typeof t.latest == "object" ? t.latest : null }), y("다른 화면에서 이 프리셋이 바뀌었습니다. 현재 편집 내용은 그대로 보존했습니다.")) : y(e instanceof Error ? e.message : "프리셋을 저장하지 못했습니다.");
+					e instanceof J && e.status === 409 && t?.code === "preset_revision_conflict" ? (j({ latest: t.latest && typeof t.latest == "object" ? t.latest : null }), y("다른 화면에서 이 프리셋이 바뀌었습니다. 현재 편집 내용은 그대로 보존했습니다.")) : y(e instanceof Error ? e.message : "프리셋을 저장하지 못했습니다.");
 				}
 			} finally {
 				h("");
 			}
 		}
-	}, K = () => {
+	}, ce = () => {
 		!A?.latest || !window.confirm("현재 편집 내용을 버리고 최신 저장본을 불러올까요?") || (B(Xf(A.latest)), _("최신 저장본을 불러왔습니다."));
-	}, le = async (e) => {
+	}, q = async (e) => {
 		if (z("저장하지 않은 프리셋 변경이 있습니다. 삭제 전에 이 변경은 사라집니다. 계속할까요?") && window.confirm(`${e.name}을(를) 삭제할까요? 이 작업은 되돌릴 수 없습니다.`)) {
 			h(`delete:${e.id}`), y("");
 			try {
 				await Ie(`/api/portfolio/presets/${encodeURIComponent(e.id)}`, { expectedRevision: e.revision }), u === e.id && (d(""), o(null)), b?.id === e.id && (x(null), C(null), T(!1)), c((e) => e + 1), await I(), t?.(), _(`${e.name}을(를) 삭제했습니다.`);
 			} catch (e) {
 				let t = np(e);
-				y(e instanceof q && e.status === 409 && t?.code === "preset_revision_conflict" ? "다른 화면에서 프리셋이 바뀌었거나 삭제되었습니다. 목록을 다시 확인하세요." : e instanceof Error ? e.message : "프리셋을 삭제하지 못했습니다.");
+				y(e instanceof J && e.status === 409 && t?.code === "preset_revision_conflict" ? "다른 화면에서 프리셋이 바뀌었거나 삭제되었습니다. 목록을 다시 확인하세요." : e instanceof Error ? e.message : "프리셋을 삭제하지 못했습니다.");
 			} finally {
 				h("");
 			}
@@ -23755,14 +23755,14 @@ function ip({ revision: e, onChanged: t, onDirtyChange: n }) {
 										className: "btn",
 										type: "button",
 										disabled: !!m,
-										onClick: () => void ce(!0),
+										onClick: () => void K(!0),
 										children: m === "save-as" ? "저장 중" : "다른 이름으로 저장"
 									}),
 									/* @__PURE__ */ (0, Q.jsx)("button", {
 										className: `btn${L || !b.id ? " btn--primary" : ""}`,
 										type: "button",
 										disabled: !!m,
-										onClick: () => void ce(!1),
+										onClick: () => void K(!1),
 										children: m === "save" ? "저장 중" : "프리셋 저장"
 									})
 								]
@@ -23774,13 +23774,13 @@ function ip({ revision: e, onChanged: t, onDirtyChange: n }) {
 									className: "btn",
 									type: "button",
 									disabled: !!m,
-									onClick: K,
+									onClick: ce,
 									children: "최신 저장본 불러오기"
 								}), /* @__PURE__ */ (0, Q.jsx)("button", {
 									className: "btn",
 									type: "button",
 									disabled: !!m,
-									onClick: () => void ce(!0),
+									onClick: () => void K(!0),
 									children: "다른 이름으로 저장"
 								})] })]
 							})
@@ -23854,7 +23854,7 @@ function ip({ revision: e, onChanged: t, onDirtyChange: n }) {
 										type: "button",
 										"aria-label": `삭제 ${e.name}`,
 										disabled: !!m,
-										onClick: () => void le(e),
+										onClick: () => void q(e),
 										children: m === `delete:${e.id}` ? "삭제 중" : "삭제"
 									})
 								]
@@ -24218,7 +24218,7 @@ function Mp({ onGenerated: e, onNavigateHoldings: t, hasSavedHoldings: n = !1 })
 				let e = await Z(`/api/investment-review/${encodeURIComponent(r.date)}/reviewed`, { expectedReviewRevision: r.reviewRevision });
 				i(e), h("이 리뷰를 검토 완료로 기록했습니다."), await y(e.date);
 			} catch (e) {
-				e instanceof q && e.status === 409 ? (await y(r.date), _("리뷰 기준이 바뀌었거나 이미 오래되었습니다. 최신 리뷰를 확인한 뒤 다시 시도하세요.")) : _(e instanceof Error ? e.message : "검토 완료 기록에 실패했습니다.");
+				e instanceof J && e.status === 409 ? (await y(r.date), _("리뷰 기준이 바뀌었거나 이미 오래되었습니다. 최신 리뷰를 확인한 뒤 다시 시도하세요.")) : _(e instanceof Error ? e.message : "검토 완료 기록에 실패했습니다.");
 			} finally {
 				p("");
 			}
@@ -24715,11 +24715,11 @@ function zp() {
 			});
 			i === k.current && t(o), N(), r([]), a(!1), b([]), S(null), g("보유 변경을 저장했습니다."), F();
 		} catch (e) {
-			let t = e instanceof q && e.payload && typeof e.payload.detail == "object" && e.payload.detail !== null ? e.payload.detail : null;
-			if (e instanceof q && e.status === 422 && e.code === "portfolio_validation_failed" && Array.isArray(t?.errors)) {
+			let t = e instanceof J && e.payload && typeof e.payload.detail == "object" && e.payload.detail !== null ? e.payload.detail : null;
+			if (e instanceof J && e.status === 422 && e.code === "portfolio_validation_failed" && Array.isArray(t?.errors)) {
 				let e = t.errors.filter((e) => !!e && typeof e == "object" && typeof e.row == "number" && typeof e.field == "string" && typeof e.code == "string");
 				b(e), v("입력 오류가 있어 전체 변경을 저장하지 않았습니다.");
-			} else e instanceof q && e.status === 409 ? (S({ active: !0 }), v("다른 화면에서 보유 내역이 먼저 바뀌었습니다. 현재 편집 내용은 보존했습니다.")) : v(e instanceof Error ? e.message : "Portfolio 저장에 실패했습니다.");
+			} else e instanceof J && e.status === 409 ? (S({ active: !0 }), v("다른 화면에서 보유 내역이 먼저 바뀌었습니다. 현재 편집 내용은 보존했습니다.")) : v(e instanceof Error ? e.message : "Portfolio 저장에 실패했습니다.");
 		} finally {
 			u(!1);
 		}
@@ -25754,7 +25754,7 @@ function Dm({ surface: e, open: t, onOpen: n, onClose: r }) {
 			createdAt: (/* @__PURE__ */ new Date()).toISOString()
 		}]), g(""), M(""), p.setThreadId(""), p.setPending(null), f(!1);
 	}
-	async function ce(e) {
+	async function K(e) {
 		M("");
 		try {
 			u(await p.openThread(e)), f(!1);
@@ -25762,13 +25762,13 @@ function Dm({ surface: e, open: t, onOpen: n, onClose: r }) {
 			M(e instanceof Error ? e.message : "대화를 불러오지 못했습니다.");
 		}
 	}
-	function K(e) {
+	function ce(e) {
 		e === p.threadId && (p.setThreadId(""), p.setScope(null), u([{
 			...Jp,
 			createdAt: (/* @__PURE__ */ new Date()).toISOString()
 		}]));
 	}
-	async function le(e) {
+	async function q(e) {
 		if (v(e), !(y || !V?.id || !e)) try {
 			let t = Object.fromEntries((i?.adapters || []).map((e) => [e.id, e.model || ""]));
 			t[V.id] = e;
@@ -25781,7 +25781,7 @@ function Dm({ surface: e, open: t, onOpen: n, onClose: r }) {
 			M(e instanceof Error ? e.message : "모델 설정 저장에 실패했습니다.");
 		}
 	}
-	async function ue(e, t, n) {
+	async function le(e, t, n) {
 		try {
 			let r = await yt(t, n);
 			u((t) => t.map((t) => t.id === e ? {
@@ -25876,8 +25876,8 @@ function Dm({ surface: e, open: t, onOpen: n, onClose: r }) {
 					d && /* @__PURE__ */ (0, Q.jsx)(Up, {
 						activeId: p.threadId,
 						refreshKey: p.refreshKey,
-						onSelect: (e) => void ce(e),
-						onDeleted: K
+						onSelect: (e) => void K(e),
+						onDeleted: ce
 					}),
 					m && /* @__PURE__ */ (0, Q.jsxs)("p", {
 						className: "react-agent-scope",
@@ -25977,12 +25977,12 @@ function Dm({ surface: e, open: t, onOpen: n, onClose: r }) {
 											children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 												type: "button",
 												"data-qa": "proposal-approve",
-												onClick: () => ue(e.id, e.proposal.id, "approve"),
+												onClick: () => le(e.id, e.proposal.id, "approve"),
 												children: "승인"
 											}), /* @__PURE__ */ (0, Q.jsx)("button", {
 												type: "button",
 												"data-qa": "proposal-reject",
-												onClick: () => ue(e.id, e.proposal.id, "reject"),
+												onClick: () => le(e.id, e.proposal.id, "reject"),
 												children: "거절"
 											})]
 										}) : /* @__PURE__ */ (0, Q.jsxs)("p", {
@@ -26072,7 +26072,7 @@ function Dm({ surface: e, open: t, onOpen: n, onClose: r }) {
 									] }),
 									/* @__PURE__ */ (0, Q.jsxs)("label", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "모델 버전" }), /* @__PURE__ */ (0, Q.jsx)("select", {
 										value: _,
-										onChange: (e) => le(e.currentTarget.value),
+										onChange: (e) => q(e.currentTarget.value),
 										children: ee.length ? ee.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 											value: e.value,
 											children: e.label
@@ -26617,17 +26617,10 @@ function Km(e) {
 		docs: !1
 	};
 }
-function qm(e) {
-	if (!e) return "";
-	let t = new Date(e);
-	if (Number.isNaN(t.getTime())) return "";
-	let n = (e) => String(e).padStart(2, "0");
-	return `${n(t.getMonth() + 1)}.${n(t.getDate())} ${n(t.getHours())}:${n(t.getMinutes())}`;
-}
 //#endregion
 //#region src/app/AgentCliSetup.tsx
-var Jm = 62e4;
-function Ym({ adapters: e, onSettings: t, disabled: n = !1 }) {
+var qm = 62e4;
+function Jm({ adapters: e, onSettings: t, disabled: n = !1 }) {
 	let [r, i] = (0, l.useState)(""), [a, o] = (0, l.useState)(""), [s, c] = (0, l.useState)(""), u = (0, l.useRef)(null);
 	function d(e) {
 		t(e), window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: e }));
@@ -26649,7 +26642,7 @@ function Ym({ adapters: e, onSettings: t, disabled: n = !1 }) {
 		try {
 			await Yt(await Z(`/api/agent-bridge/install/${encodeURIComponent(e.id)}`, {}), {
 				signal: t.signal,
-				timeoutMs: Jm,
+				timeoutMs: qm,
 				onUpdate: (e) => c(e.message || "")
 			}), d(await X("/api/agent-bridge/settings?refresh=true")), o(`${e.label || e.id} 설치가 끝났습니다. 이어서 로그인하세요.`);
 		} catch (e) {
@@ -26756,7 +26749,7 @@ function Ym({ adapters: e, onSettings: t, disabled: n = !1 }) {
 }
 //#endregion
 //#region src/app/homePreference.ts
-var Xm = "folio.homePreference.v1", Zm = "folio.agentCharacter.v1", Qm = "folio.motionPreference.v1", $m = "folio:ui-preferences-updated", eh = {
+var Ym = "folio.homePreference.v1", Xm = "folio.agentCharacter.v1", Zm = "folio.motionPreference.v1", Qm = "folio:ui-preferences-updated", $m = {
 	home: {
 		mode: "home",
 		choiceSeen: !0
@@ -26767,7 +26760,7 @@ var Xm = "folio.homePreference.v1", Zm = "folio.agentCharacter.v1", Qm = "folio.
 	},
 	motion: "system"
 };
-function th(e) {
+function eh(e) {
 	if (typeof window > "u") return "";
 	try {
 		return window.localStorage.getItem(e) || "";
@@ -26775,7 +26768,7 @@ function th(e) {
 		return "";
 	}
 }
-function nh(e) {
+function th(e) {
 	if (!e) return {};
 	try {
 		let t = JSON.parse(e);
@@ -26784,8 +26777,8 @@ function nh(e) {
 		return {};
 	}
 }
-function rh() {
-	let e = nh(th(Xm)), t = nh(th(Zm)), n = th(Qm);
+function nh() {
+	let e = th(eh(Ym)), t = th(eh(Xm)), n = eh(Zm);
 	return {
 		home: {
 			mode: e.mode === "home" ? "home" : "office",
@@ -26798,40 +26791,40 @@ function rh() {
 		motion: n === "reduced" ? "reduced" : "system"
 	};
 }
-function ih(e, t) {
+function rh(e, t) {
 	if (!(typeof window > "u")) try {
 		window.localStorage.setItem(e, typeof t == "string" ? t : JSON.stringify(t));
 	} catch {}
 }
+function ih(e) {
+	typeof window > "u" || window.dispatchEvent(new CustomEvent(Qm, { detail: e }));
+}
 function ah(e) {
-	typeof window > "u" || window.dispatchEvent(new CustomEvent($m, { detail: e }));
+	return rh(Ym, e.home), rh(Xm, e.character), rh(Zm, e.motion), ih(e), e;
 }
-function oh(e) {
-	return ih(Xm, e.home), ih(Zm, e.character), ih(Qm, e.motion), ah(e), e;
-}
-function sh() {
+function oh() {
 	if (typeof window < "u") try {
-		window.localStorage.removeItem(Xm), window.localStorage.removeItem(Zm), window.localStorage.removeItem(Qm);
+		window.localStorage.removeItem(Ym), window.localStorage.removeItem(Xm), window.localStorage.removeItem(Zm);
 	} catch {}
-	let e = structuredClone(eh);
-	return ah(e), e;
+	let e = structuredClone($m);
+	return ih(e), e;
 }
-function ch(e = rh()) {
+function sh(e = nh()) {
 	return "home";
 }
-function lh() {
-	let [e, t] = (0, l.useState)(() => rh());
+function ch() {
+	let [e, t] = (0, l.useState)(() => nh());
 	(0, l.useEffect)(() => {
 		let e = (e) => {
 			let n = e.detail;
-			t(n || rh());
-		}, n = () => t(rh());
-		return window.addEventListener($m, e), window.addEventListener("storage", n), () => {
-			window.removeEventListener($m, e), window.removeEventListener("storage", n);
+			t(n || nh());
+		}, n = () => t(nh());
+		return window.addEventListener(Qm, e), window.addEventListener("storage", n), () => {
+			window.removeEventListener(Qm, e), window.removeEventListener("storage", n);
 		};
 	}, []);
 	function n(e) {
-		t(e), oh(e);
+		t(e), ah(e);
 	}
 	return {
 		preferences: e,
@@ -26860,35 +26853,35 @@ function lh() {
 			});
 		},
 		reset() {
-			let e = sh();
+			let e = oh();
 			t(e);
 		}
 	};
 }
 //#endregion
 //#region src/app/themePreference.ts
-function uh(e) {
+function lh(e) {
 	return e === "light" || e === "dark" || e === "system";
 }
-function dh(e) {
+function uh(e) {
 	return e === "light" || e === "dark";
 }
-function fh() {
+function dh() {
 	return {
-		preference: uh(window.FolioTheme?.preference) ? window.FolioTheme.preference : "system",
-		resolved: dh(window.FolioTheme?.resolved) ? window.FolioTheme.resolved : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+		preference: lh(window.FolioTheme?.preference) ? window.FolioTheme.preference : "system",
+		resolved: uh(window.FolioTheme?.resolved) ? window.FolioTheme.resolved : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 	};
 }
-function ph() {
-	let [e, t] = (0, l.useState)(fh);
+function fh() {
+	let [e, t] = (0, l.useState)(dh);
 	return (0, l.useEffect)(() => {
 		let e = (e) => {
 			let n = e?.detail;
-			if (n && uh(n.preference) && dh(n.resolved)) {
+			if (n && lh(n.preference) && uh(n.resolved)) {
 				t(n);
 				return;
 			}
-			t(fh());
+			t(dh());
 		};
 		return window.addEventListener("folio:theme-changed", e), e(), () => window.removeEventListener("folio:theme-changed", e);
 	}, []), {
@@ -26897,24 +26890,24 @@ function ph() {
 			let n = window.FolioTheme?.setPreference(e);
 			t(n || {
 				preference: e,
-				resolved: e === "system" ? fh().resolved : e
+				resolved: e === "system" ? dh().resolved : e
 			});
 		}
 	};
 }
 //#endregion
 //#region src/app/WorkLogMigration.tsx
-function mh(e) {
-	return e instanceof q ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_]+$/.test(e.message) ? e.message : "request_failed";
+function ph(e) {
+	return e instanceof J ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_]+$/.test(e.message) ? e.message : "request_failed";
 }
-function hh(e) {
+function mh(e) {
 	let t = new Date(e);
 	return Number.isNaN(t.getTime()) ? "시간 확인 불가" : new Intl.DateTimeFormat("ko-KR", {
 		dateStyle: "short",
 		timeStyle: "short"
 	}).format(t);
 }
-function gh() {
+function hh() {
 	let [e, t] = (0, l.useState)(null), [n, r] = (0, l.useState)("migrate_keep_original"), [i, a] = (0, l.useState)(!1), [o, s] = (0, l.useState)(""), [c, u] = (0, l.useState)(""), d = (0, l.useRef)(!1), f = (0, l.useRef)(null), p = (0, l.useRef)(null);
 	(0, l.useEffect)(() => {
 		if (!e) return;
@@ -26938,7 +26931,7 @@ function gh() {
 				let e = await Z("/api/agent/work-log/migration-preview", {});
 				t(e), r("migrate_keep_original");
 			} catch (e) {
-				s(mh(e));
+				s(ph(e));
 			} finally {
 				d.current = !1, a(!1);
 			}
@@ -26954,7 +26947,7 @@ function gh() {
 				});
 				u(`${t.migratedJobs}건을 가져왔습니다.`), m();
 			} catch (e) {
-				t(null), s(mh(e));
+				t(null), s(ph(e));
 			} finally {
 				d.current = !1, a(!1);
 			}
@@ -27012,7 +27005,7 @@ function gh() {
 								"건 · 가져올 수 있음 ",
 								e.migratableJobs,
 								"건 · ",
-								hh(e.expiresAt),
+								mh(e.expiresAt),
 								"까지"
 							]
 						}),
@@ -27062,10 +27055,10 @@ function gh() {
 }
 //#endregion
 //#region src/app/DiagnosticRetention.tsx
-function _h(e) {
-	return e instanceof q ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_.-]+$/.test(e.message) ? e.message : "request_failed";
+function gh(e) {
+	return e instanceof J ? e.code || `http_${e.status}` : e instanceof Error && /^[a-z0-9_.-]+$/.test(e.message) ? e.message : "request_failed";
 }
-function vh(e) {
+function _h(e) {
 	if (!e) return "없음";
 	let t = new Date(e);
 	return Number.isNaN(t.getTime()) ? "시간 확인 불가" : new Intl.DateTimeFormat("ko-KR", {
@@ -27073,16 +27066,16 @@ function vh(e) {
 		timeStyle: "short"
 	}).format(t);
 }
-function yh(e) {
+function vh(e) {
 	return e < 1024 ? `${e}B` : e < 1048576 ? `${Math.round(e / 1024)}KiB` : `${(e / 1048576).toFixed(2)}MiB`;
 }
-var bh = {
+var yh = {
 	7: "7일",
 	30: "30일",
 	90: "90일",
 	180: "180일",
 	365: "365일"
-}, xh = {
+}, bh = {
 	running: "실행 중",
 	unknown: "상태 미확인",
 	recovery: "복구 중",
@@ -27092,7 +27085,7 @@ var bh = {
 	deleteFailed: "삭제 실패",
 	other: "기타"
 };
-function Sh() {
+function xh() {
 	let [e, t] = (0, l.useState)(null), [n, r] = (0, l.useState)(30), [i, a] = (0, l.useState)(!1), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(null), [d, f] = (0, l.useState)("load"), [p, m] = (0, l.useState)(""), [h, g] = (0, l.useState)("");
 	async function _() {
 		s(null), u(null), f("load"), m("");
@@ -27100,7 +27093,7 @@ function Sh() {
 			let e = await Mr();
 			t(e), r(e.settings.retentionDays), a(e.settings.autoDelete);
 		} catch (e) {
-			m(_h(e));
+			m(gh(e));
 		} finally {
 			f("");
 		}
@@ -27113,7 +27106,7 @@ function Sh() {
 		try {
 			s(await Nr(n));
 		} catch (e) {
-			m(_h(e));
+			m(gh(e));
 		} finally {
 			f("");
 		}
@@ -27122,10 +27115,10 @@ function Sh() {
 		if (!(!o || d || o.status !== "ready")) {
 			f("delete-confirm"), m("");
 			try {
-				let e = await Pr(o.previewToken), t = Object.entries(e.skippedCounts || {}).filter(([, e]) => e > 0).map(([e, t]) => `${xh[e] || "기타"} ${t}건`).join(" · ");
-				g(`진단 상세 ${e.deletedCount}건(${yh(e.deletedBytes)})을 ${e.status === "partial" ? "일부 정리했습니다" : "정리했습니다"}.${t ? ` 제외된 항목: ${t}.` : ""} 작업 요약은 유지되고 진단 상세만 정리했습니다.`), s(null), u(null), await _();
+				let e = await Pr(o.previewToken), t = Object.entries(e.skippedCounts || {}).filter(([, e]) => e > 0).map(([e, t]) => `${bh[e] || "기타"} ${t}건`).join(" · ");
+				g(`진단 상세 ${e.deletedCount}건(${vh(e.deletedBytes)})을 ${e.status === "partial" ? "일부 정리했습니다" : "정리했습니다"}.${t ? ` 제외된 항목: ${t}.` : ""} 작업 요약은 유지되고 진단 상세만 정리했습니다.`), s(null), u(null), await _();
 			} catch (e) {
-				m(_h(e)), s(null), f("");
+				m(gh(e)), s(null), f("");
 			}
 		}
 	}
@@ -27134,7 +27127,7 @@ function Sh() {
 		try {
 			u(await Fr(n, i));
 		} catch (e) {
-			m(_h(e));
+			m(gh(e));
 		} finally {
 			f("");
 		}
@@ -27146,7 +27139,7 @@ function Sh() {
 				let e = await Ir(c.previewToken);
 				r(e.retentionDays), a(e.autoDelete), u(null), s(null), g(e.autoDelete ? "보존 설정을 저장했습니다. 자동 삭제는 다음 대상부터 적용됩니다." : "보존 설정을 저장했습니다. 자동 삭제는 꺼져 있습니다."), await _();
 			} catch (e) {
-				m(_h(e)), u(null), f("");
+				m(gh(e)), u(null), f("");
 			}
 		}
 	}
@@ -27186,14 +27179,14 @@ function Sh() {
 					className: "diagnostic-retention-usage surface surface--group",
 					"data-qa": "diagnostic-retention-usage",
 					children: [
-						/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "사용량" }), /* @__PURE__ */ (0, Q.jsx)("strong", { children: yh(e.usage.bytesUsed) })] }),
+						/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "사용량" }), /* @__PURE__ */ (0, Q.jsx)("strong", { children: vh(e.usage.bytesUsed) })] }),
 						/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "실행 파일" }), /* @__PURE__ */ (0, Q.jsxs)("strong", { children: [
 							e.usage.runFiles,
 							" / ",
 							e.limits.maxRunFiles
 						] })] }),
 						/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "기록 항목" }), /* @__PURE__ */ (0, Q.jsx)("strong", { children: e.usage.entries })] }),
-						/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "상한" }), /* @__PURE__ */ (0, Q.jsx)("strong", { children: yh(e.limits.maxBytes) })] })
+						/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "상한" }), /* @__PURE__ */ (0, Q.jsx)("strong", { children: vh(e.limits.maxBytes) })] })
 					]
 				}),
 				S && /* @__PURE__ */ (0, Q.jsx)("p", {
@@ -27216,7 +27209,7 @@ function Sh() {
 									disabled: !!S || d !== "",
 									children: yr.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 										value: e,
-										children: bh[e]
+										children: yh[e]
 									}, e))
 								})]
 							}), /* @__PURE__ */ (0, Q.jsxs)("label", {
@@ -27235,7 +27228,7 @@ function Sh() {
 							className: "settings-hint",
 							children: [
 								"현재 ",
-								bh[e.settings.retentionDays],
+								yh[e.settings.retentionDays],
 								" · 자동 삭제 ",
 								e.settings.autoDelete ? "켜짐" : "꺼짐",
 								". 실행 중 기록과 기존 사용자 자료는 대상에서 제외됩니다."
@@ -27249,7 +27242,7 @@ function Sh() {
 							onClick: () => void b(),
 							children: "설정 변경 미리보기"
 						}),
-						c && /* @__PURE__ */ (0, Q.jsx)(Ch, {
+						c && /* @__PURE__ */ (0, Q.jsx)(Sh, {
 							preview: c,
 							busy: d !== "",
 							onConfirm: () => void x(),
@@ -27276,7 +27269,7 @@ function Sh() {
 							onClick: () => void v(),
 							children: "삭제 대상 미리보기"
 						}),
-						o && /* @__PURE__ */ (0, Q.jsx)(wh, {
+						o && /* @__PURE__ */ (0, Q.jsx)(Ch, {
 							preview: o,
 							busy: d !== "",
 							onConfirm: () => void y(),
@@ -27294,7 +27287,7 @@ function Sh() {
 		]
 	});
 }
-function Ch({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
+function Sh({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 	let i = e.status === "ready";
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "diagnostic-retention-preview surface surface--inset",
@@ -27302,7 +27295,7 @@ function Ch({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 		children: [
 			/* @__PURE__ */ (0, Q.jsx)("strong", { children: "설정 변경 미리보기" }),
 			/* @__PURE__ */ (0, Q.jsxs)("p", { children: [
-				bh[e.retentionDays],
+				yh[e.retentionDays],
 				" · 자동 삭제 ",
 				e.autoDelete ? "켜짐" : "꺼짐",
 				" · ",
@@ -27311,7 +27304,7 @@ function Ch({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 			/* @__PURE__ */ (0, Q.jsxs)("p", {
 				className: "settings-hint",
 				children: [
-					vh(e.expiresAt),
+					_h(e.expiresAt),
 					"까지 확인할 수 있습니다.",
 					i ? "" : " 현재 저장할 수 없는 상태입니다."
 				]
@@ -27337,8 +27330,8 @@ function Ch({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 		]
 	});
 }
-function wh({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
-	let i = Object.entries(e.excludedCounts).filter(([, e]) => e > 0).map(([e, t]) => `${xh[e] || "기타"} ${t}건`).join(" · ") || "없음", a = e.status === "ready";
+function Ch({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
+	let i = Object.entries(e.excludedCounts).filter(([, e]) => e > 0).map(([e, t]) => `${bh[e] || "기타"} ${t}건`).join(" · ") || "없음", a = e.status === "ready";
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "diagnostic-retention-preview surface surface--inset",
 		"data-qa": "diagnostic-retention-preview-panel",
@@ -27347,11 +27340,11 @@ function wh({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 			/* @__PURE__ */ (0, Q.jsxs)("p", { children: [
 				e.eligibleCount,
 				"건 · ",
-				yh(e.eligibleBytes),
+				vh(e.eligibleBytes),
 				" · ",
-				vh(e.oldestCreatedAt),
+				_h(e.oldestCreatedAt),
 				" ~ ",
-				vh(e.newestCreatedAt)
+				_h(e.newestCreatedAt)
 			] }),
 			/* @__PURE__ */ (0, Q.jsxs)("p", {
 				className: "settings-hint",
@@ -27360,7 +27353,7 @@ function wh({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 			/* @__PURE__ */ (0, Q.jsxs)("p", {
 				className: "settings-hint",
 				children: [
-					vh(e.expiresAt),
+					_h(e.expiresAt),
 					"까지 유효합니다. 실행 중 기록과 권한이 확인되지 않은 기록은 삭제하지 않습니다.",
 					a ? "" : " 현재 삭제할 수 없는 상태입니다."
 				]
@@ -27388,7 +27381,7 @@ function wh({ preview: e, busy: t, onConfirm: n, onCancel: r }) {
 }
 //#endregion
 //#region src/app/SettingsRoute.tsx
-var Th = [
+var wh = [
 	{
 		id: "ai",
 		label: "AI"
@@ -27401,42 +27394,19 @@ var Th = [
 		id: "integrations",
 		label: "연동"
 	}
-], Eh = [
-	"openai",
-	"gemini",
-	"claude"
-], Dh = {
-	openai: {
-		name: "OpenAI",
-		key: "sk-...",
-		model: "gpt-5.6-sol"
-	},
-	gemini: {
-		name: "Gemini",
-		key: "AIza...",
-		model: "gemini-3.5-flash"
-	},
-	claude: {
-		name: "Claude",
-		key: "sk-ant-...",
-		model: "claude-sonnet-5"
-	}
-};
-function Oh(e) {
-	return Eh.includes(e) ? e : "openai";
-}
-function kh(e, t) {
+];
+function Th(e, t) {
 	let n = t || [];
 	return n.some((t) => t.value === e) ? String(e || "") : n[0]?.value || "";
 }
-function Ah(e, t, n, r) {
+function Eh(e, t, n, r) {
 	return e ? `${r} 저장됨: ${t || "저장됨"}` : n;
 }
-function jh(e, t) {
+function Dh(e, t) {
 	let n = !!((e?.hasClientId || t.clientId.trim()) && (e?.hasClientSecret || t.clientSecret.trim()));
 	return t.enabled === !!e?.enabled ? t.enabled ? n ? e?.ready ? `사용 준비됨 · ${e.clientIdMasked || "Client ID 저장됨"}` : "사용 상태를 확인할 수 없습니다. 설정을 다시 저장해 보세요." : "설정 필요 · Client ID와 Client Secret을 모두 저장하세요." : n ? "사용 안 함 · 자격 증명은 이 PC에 저장되어 있습니다." : "사용 안 함 · Client ID와 Client Secret을 입력해 켤 수 있습니다." : t.enabled ? n ? "사용 설정은 API 설정을 저장한 뒤 적용됩니다." : "사용하려면 Client ID와 Client Secret을 모두 입력한 뒤 API 설정을 저장하세요." : "사용 해제는 API 설정을 저장한 뒤 적용됩니다.";
 }
-function Mh({ checked: e, onChange: t, label: n, ariaLabel: r, compact: i = !1, disabled: a = !1, title: o }) {
+function Oh({ checked: e, onChange: t, label: n, ariaLabel: r, compact: i = !1, disabled: a = !1, title: o }) {
 	return /* @__PURE__ */ (0, Q.jsxs)("label", {
 		className: `settings-switch${i ? " settings-switch-compact" : ""}${e ? " is-on" : ""}${a ? " is-disabled" : ""}`,
 		title: o,
@@ -27464,7 +27434,7 @@ function Mh({ checked: e, onChange: t, label: n, ariaLabel: r, compact: i = !1, 
 		]
 	});
 }
-var Nh = [
+var kh = [
 	"daily_briefing",
 	"company_analysis",
 	"topic_report",
@@ -27472,23 +27442,19 @@ var Nh = [
 	"thesis_review",
 	"investment_review",
 	"personal_overlay"
-], Ph = [
+], Ah = [
 	"daily_briefing",
 	"company_analysis",
 	"topic_report",
 	"market_memory"
-], Fh = new Set(Ph), Ih = [
-	"openai",
-	"gemini",
-	"claude"
-], Lh = [
+], jh = new Set(Ah), Mh = [
 	"codex",
 	"claude",
 	"antigravity"
-], Rh = {
+], Nh = {
 	value: "provider_default",
 	label: "제공자 기본값"
-}, zh = {
+}, Ph = {
 	daily_briefing: "브리핑",
 	company_analysis: "기업분석",
 	topic_report: "딥 리서치",
@@ -27497,24 +27463,24 @@ var Nh = [
 	investment_review: "투자 리뷰",
 	personal_overlay: "Personal Overlay"
 };
-function Bh() {
+function Fh() {
 	return {
 		schemaVersion: 1,
 		revision: 0,
-		tasks: Object.fromEntries(Nh.map((e) => [e, {
-			label: zh[e],
+		tasks: Object.fromEntries(kh.map((e) => [e, {
+			label: Ph[e],
 			enabled: !1,
 			config: null
 		}])),
-		reasoningChoices: [Rh]
+		reasoningChoices: [Nh]
 	};
 }
-function Vh(e) {
-	let t = Object.fromEntries(Nh.map((t) => {
+function Ih(e) {
+	let t = Object.fromEntries(kh.map((t) => {
 		let n = e.tasks?.[t] || {};
 		return [t, {
 			...n,
-			enabled: Fh.has(t) && n.enabled === !0,
+			enabled: jh.has(t) && n.enabled === !0,
 			config: n.config || null
 		}];
 	}));
@@ -27523,10 +27489,10 @@ function Vh(e) {
 		tasks: t
 	};
 }
-function Hh(e) {
+function Lh(e) {
 	return JSON.stringify({
 		revision: Number(e.revision || 0),
-		tasks: Nh.map((t) => {
+		tasks: kh.map((t) => {
 			let n = e.tasks?.[t] || {};
 			return [
 				t,
@@ -27536,11 +27502,11 @@ function Hh(e) {
 		})
 	});
 }
-function Uh(e) {
-	let t = Object.fromEntries(Nh.map((t) => {
+function Rh(e) {
+	let t = Object.fromEntries(kh.map((t) => {
 		let n = e.tasks?.[t] || {};
 		return [t, {
-			enabled: Fh.has(t) && n.enabled === !0,
+			enabled: jh.has(t) && n.enabled === !0,
 			config: n.config || null
 		}];
 	}));
@@ -27549,113 +27515,105 @@ function Uh(e) {
 		tasks: t
 	};
 }
-function Wh(e, t, n) {
-	return e.mode === "api" ? t[e.provider]?.label || {
-		openai: "GPT / OpenAI",
-		gemini: "Gemini / Google",
-		claude: "Claude / Anthropic"
-	}[e.provider] || e.provider : n.find((t) => t.id === e.provider)?.label || {
+function zh(e, t) {
+	return t.find((t) => t.id === e.provider)?.label || {
 		codex: "Codex CLI",
 		claude: "Claude Code CLI",
 		antigravity: "Antigravity CLI"
 	}[e.provider] || e.provider;
 }
-function Gh(e, t, n) {
-	return (e.mode === "api" ? t[e.provider]?.modelChoices || [] : n.find((t) => t.id === e.provider)?.modelChoices || []).find((t) => t.value === e.model)?.label || e.model;
+function Bh(e, t) {
+	return (t.find((t) => t.id === e.provider)?.modelChoices || []).find((t) => t.value === e.model)?.label || e.model;
 }
-function Kh(e, t, n) {
-	return e ? `${e.mode === "cli" ? "LLM CLI" : "LLM API"} · ${Wh(e, t, n)} · ${Gh(e, t, n) || "모델 없음"}` : "별도 설정을 선택하세요.";
+function Vh(e, t) {
+	return e ? e.mode === "cli" ? `LLM CLI · ${zh(e, t)} · ${Bh(e, t) || "모델 없음"}` : "이전 API 설정 · CLI 전환 필요" : "별도 설정을 선택하세요.";
 }
-function qh(e, t, n) {
-	let r = e.mode === "api" ? t[e.provider]?.modelChoices || [] : n.find((t) => t.id === e.provider)?.modelChoices || [];
-	return e.model && !r.some((t) => t.value === e.model) ? [{
+function Hh(e, t) {
+	let n = t.find((t) => t.id === e.provider)?.modelChoices || [];
+	return e.model && !n.some((t) => t.value === e.model) ? [{
 		value: e.model,
 		label: `${e.model} (저장된 값)`
-	}, ...r] : r;
+	}, ...n] : n;
 }
-function Jh(e, t, n = "") {
-	let r = e?.reasoningByModel?.[t] || [], i = (r.length ? r : e?.reasoningChoices || []).filter((e, t, n) => !!e?.value && n.findIndex((t) => t.value === e.value) === t), a = i.length ? i : [Rh];
+function Uh(e, t, n = "") {
+	let r = e?.reasoningByModel?.[t] || [], i = (r.length ? r : e?.reasoningChoices || []).filter((e, t, n) => !!e?.value && n.findIndex((t) => t.value === e.value) === t), a = i.length ? i : [Nh];
 	return n && !a.some((e) => e.value === n) ? [{
 		value: n,
 		label: `${n} (지원 확인 필요)`
 	}, ...a] : a;
 }
-function Yh(e, t, n) {
-	return Jh(e.mode === "api" ? t[e.provider] : n.find((t) => t.id === e.provider), e.model, e.reasoningEffort);
+function Wh(e, t) {
+	return Uh(t.find((t) => t.id === e.provider), e.model, e.reasoningEffort);
 }
-function Xh(e, t, n) {
-	return Yh(e, t, n).length <= 1 ? "현재 연결된 모델에서는 제공자 기본값만 확인할 수 있습니다." : "";
+function Gh(e, t) {
+	return Wh(e, t).length <= 1 ? "현재 연결된 모델에서는 제공자 기본값만 확인할 수 있습니다." : "";
 }
-function Zh(e, t = {}, n = []) {
+function Kh(e, t = []) {
 	if (!e) return "실행 방식·제공자·모델·추론 강도를 모두 입력하세요.";
-	if (e.mode !== "api" && e.mode !== "cli") return "실행 방식은 LLM API 또는 LLM CLI 중 하나를 선택하세요.";
+	if (e.mode !== "cli") return "이전 API 설정입니다. CLI로 전환해 저장하세요.";
 	if (!e.provider || !e.model) return "실행 방식·제공자·모델을 모두 입력하세요.";
-	if (e.mode === "api" && !Ih.includes(e.provider)) return "LLM API에서는 GPT / OpenAI, Gemini / Google, Claude / Anthropic 중 하나를 선택하세요.";
-	if (e.mode === "cli" && !Lh.includes(e.provider)) return "LLM CLI에서는 설치된 CLI 제공자를 선택하세요.";
-	let r = Jh(e.mode === "api" ? t[e.provider] : n.find((t) => t.id === e.provider), e.model).some((t) => t.value === e.reasoningEffort);
-	return (e.reasoningEffort || "provider_default") !== "provider_default" && !r ? "선택한 조합은 제공자 기본값만 지원합니다." : "";
+	if (!Mh.includes(e.provider)) return "LLM CLI에서는 설치된 CLI 제공자를 선택하세요.";
+	let n = Uh(t.find((t) => t.id === e.provider), e.model).some((t) => t.value === e.reasoningEffort);
+	return (e.reasoningEffort || "provider_default") !== "provider_default" && !n ? "선택한 조합은 제공자 기본값만 지원합니다." : "";
 }
-function Qh(e, t, n, r) {
-	let i = t === "api" ? Ih.map((e) => ({
-		value: e,
-		label: e
-	})) : (r.length ? r : Lh.map((e) => ({
+function qh(e, t, n) {
+	let r = (n.length ? n : Mh.map((e) => ({
 		id: e,
 		label: e
 	}))).map((e) => ({
 		value: e.id,
 		label: e.label || e.id
-	})), a = i.some((t) => t.value === e.provider) ? e.provider : i[0]?.value || e.provider, o = t === "api" ? n[a]?.modelChoices || [] : r.find((e) => e.id === a)?.modelChoices || [], s = o.some((t) => t.value === e.model) ? e.model : o[0]?.value || e.model;
+	})), i = r.some((t) => t.value === e.provider) ? e.provider : r[0]?.value || e.provider, a = n.find((e) => e.id === i)?.modelChoices || [], o = a.some((t) => t.value === e.model) ? e.model : a[0]?.value || e.model;
 	return {
 		...e,
 		mode: t,
-		provider: a,
-		model: s
+		provider: i,
+		model: o
 	};
 }
-function $h(e, t, n, r) {
-	let i = e.mode === "api" ? n[t]?.modelChoices || [] : r.find((e) => e.id === t)?.modelChoices || [], a = i.some((t) => t.value === e.model) ? e.model : i[0]?.value || e.model;
+function Jh(e, t, n) {
+	let r = n.find((e) => e.id === t)?.modelChoices || [], i = r.some((t) => t.value === e.model) ? e.model : r[0]?.value || e.model;
 	return {
 		...e,
 		provider: t,
-		model: a
+		model: i
 	};
 }
-function eg({ policy: e, globalEnabled: t, globalConfig: n, providers: r, adapters: i, onChange: a, onSave: o, onCancel: s, canCancel: c, canSave: u, dirty: d, busy: f, note: p }) {
-	let m = e.tasks || {}, [h, g] = (0, l.useState)(""), [_, v] = (0, l.useState)({}), [y, b] = (0, l.useState)({});
+function Yh({ policy: e, globalEnabled: t, globalConfig: n, adapters: r, onChange: i, onSave: a, onCancel: o, canCancel: s, canSave: c, dirty: u, busy: d, note: f }) {
+	let p = e.tasks || {}, [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)({}), [v, y] = (0, l.useState)({});
 	(0, l.useEffect)(() => {
-		b({}), v({});
+		y({}), _({});
 	}, [e.revision]);
-	let x = (t, n) => {
-		let r = m[t] || {};
-		v((e) => {
+	let b = (t, n) => {
+		let r = p[t] || {};
+		_((e) => {
 			let n = { ...e };
 			return delete n[t], n;
-		}), a({
+		}), i({
 			...e,
 			tasks: {
-				...m,
+				...p,
 				[t]: {
 					...r,
 					...n
 				}
 			}
 		});
-	}, S = (e, t, n = "") => {
-		n && b((t) => ({
+	}, x = (e, t, n = "") => {
+		n && y((t) => ({
 			...t,
 			[e]: n
-		})), x(e, { config: t });
-	}, C = (e, t) => {
-		let r = m[e] || {}, i = t && !r.config && n ? { ...n } : r.config;
-		x(e, {
+		})), b(e, { config: t });
+	}, S = (e, t) => {
+		let r = p[e] || {}, i = t && !r.config && n ? { ...n } : r.config;
+		b(e, {
 			enabled: t,
 			...i ? { config: i } : {}
 		});
-	}, w = async (e, t) => {
-		let n = Zh(t, r, i);
+	}, C = async (e, t) => {
+		let n = Kh(t, r);
 		if (n || !t) {
-			v((t) => ({
+			_((t) => ({
 				...t,
 				[e]: {
 					status: "invalid",
@@ -27665,24 +27623,24 @@ function eg({ policy: e, globalEnabled: t, globalConfig: n, providers: r, adapte
 			}));
 			return;
 		}
-		g(e);
+		h(e);
 		try {
 			let n = await Z("/api/settings/task-policies/check", { config: t });
-			v((t) => ({
+			_((t) => ({
 				...t,
 				[e]: n
 			}));
 		} catch (t) {
-			v((n) => ({
+			_((n) => ({
 				...n,
 				[e]: {
 					status: "error",
 					available: !1,
-					message: _g(t, "연결 확인에 실패했습니다.")
+					message: fg(t, "연결 확인에 실패했습니다.")
 				}
 			}));
 		} finally {
-			g((t) => t === e ? "" : t);
+			h((t) => t === e ? "" : t);
 		}
 	};
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
@@ -27703,104 +27661,92 @@ function eg({ policy: e, globalEnabled: t, globalConfig: n, providers: r, adapte
 			}),
 			/* @__PURE__ */ (0, Q.jsx)("div", {
 				className: "task-policy-list",
-				children: Ph.map((e) => {
-					let t = m[e] || {}, a = t.enabled === !0, o = t.config || (a ? n : null), s = zh[e] || t.label || e, c = o ? qh(o, r, i) : [], l = o ? Yh(o, r, i) : [], u = a ? Zh(o, r, i) : "", d = _[e], f = [
-						{
-							value: "openai",
-							label: "GPT / OpenAI"
-						},
-						{
-							value: "gemini",
-							label: "Gemini / Google"
-						},
-						{
-							value: "claude",
-							label: "Claude / Anthropic"
-						}
-					], p = i.length ? i.map((e) => ({
+				children: Ah.map((e) => {
+					let t = p[e] || {}, i = t.enabled === !0, a = t.config || (i ? n : null), o = Ph[e] || t.label || e, s = a ? Hh(a, r) : [], c = a ? Wh(a, r) : [], l = i ? Kh(a, r) : "", u = g[e], d = r.length ? r.map((e) => ({
 						value: e.id,
 						label: e.label || e.id
-					})) : Lh.map((e) => ({
+					})) : Mh.map((e) => ({
 						value: e,
 						label: e
-					})), g = o?.mode === "api" ? f : p;
+					}));
 					return /* @__PURE__ */ (0, Q.jsxs)("div", {
 						className: "task-policy-row",
 						children: [/* @__PURE__ */ (0, Q.jsxs)("div", {
 							className: "task-policy-row-head",
-							children: [/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("strong", { children: s }), /* @__PURE__ */ (0, Q.jsx)("p", {
+							children: [/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("strong", { children: o }), /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "task-policy-summary",
-								children: a ? Kh(o, r, i) : `전역 공통 설정 · ${Kh(n, r, i)}`
-							})] }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
-								ariaLabel: `${s} 별도 설정 사용`,
-								checked: a,
-								onChange: (t) => C(e, t),
+								children: i ? Vh(a, r) : `전역 공통 설정 · ${Vh(n, r)}`
+							})] }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
+								ariaLabel: `${o} 별도 설정 사용`,
+								checked: i,
+								onChange: (t) => S(e, t),
 								compact: !0
 							})]
-						}), a && (o ? /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
+						}), i && (a ? /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "task-policy-fields",
 								children: [
 									/* @__PURE__ */ (0, Q.jsxs)("label", {
 										className: "field",
 										children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "실행 방식" }), /* @__PURE__ */ (0, Q.jsxs)("select", {
-											value: o.mode,
+											value: a.mode,
 											onChange: (t) => {
-												let n = t.currentTarget.value, a = Qh(o, n, r, i), s = a.provider !== o.provider || a.model !== o.model;
-												S(e, a, s ? "실행 방식에 맞춰 제공자와 모델을 선택지에 맞췄습니다. 추론 강도를 확인하세요." : "");
+												let n = t.currentTarget.value, i = qh(a, n, r), o = i.provider !== a.provider || i.model !== a.model;
+												x(e, i, o ? "실행 방식에 맞춰 제공자와 모델을 선택지에 맞췄습니다. 추론 강도를 확인하세요." : "");
 											},
 											children: [/* @__PURE__ */ (0, Q.jsx)("option", {
 												value: "cli",
 												children: "LLM CLI"
-											}), /* @__PURE__ */ (0, Q.jsx)("option", {
+											}), a.mode !== "cli" && /* @__PURE__ */ (0, Q.jsx)("option", {
 												value: "api",
-												children: "LLM API"
+												disabled: !0,
+												children: "CLI 전환 필요"
 											})]
 										})]
 									}),
 									/* @__PURE__ */ (0, Q.jsxs)("label", {
 										className: "field",
 										children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "제공자" }), /* @__PURE__ */ (0, Q.jsxs)("select", {
-											value: o.provider,
+											value: a.provider,
 											onChange: (t) => {
-												let n = t.currentTarget.value, a = $h(o, n, r, i);
-												S(e, a, a.model === o.model ? "" : "제공자에 맞춰 모델을 선택지의 첫 값으로 맞췄습니다.");
+												let n = t.currentTarget.value, i = Jh(a, n, r);
+												x(e, i, i.model === a.model ? "" : "제공자에 맞춰 모델을 선택지의 첫 값으로 맞췄습니다.");
 											},
-											children: [g.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+											children: [d.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 												value: e.value,
 												children: e.label
-											}, e.value)), !g.some((e) => e.value === o.provider) && /* @__PURE__ */ (0, Q.jsxs)("option", {
-												value: o.provider,
-												children: [o.provider, " (지원하지 않음)"]
+											}, e.value)), !d.some((e) => e.value === a.provider) && /* @__PURE__ */ (0, Q.jsxs)("option", {
+												value: a.provider,
+												children: [a.provider, " (지원하지 않음)"]
 											})]
 										})]
 									}),
 									/* @__PURE__ */ (0, Q.jsxs)("label", {
 										className: "field",
 										children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "모델" }), /* @__PURE__ */ (0, Q.jsx)("select", {
-											value: o.model,
-											onChange: (t) => S(e, {
-												...o,
+											value: a.model,
+											onChange: (t) => x(e, {
+												...a,
 												model: t.currentTarget.value
 											}),
-											children: c.length ? c.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+											children: s.length ? s.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 												value: e.value,
 												children: e.label
 											}, e.value)) : /* @__PURE__ */ (0, Q.jsx)("option", {
-												value: o.model,
-												children: o.model || "모델 목록 없음"
+												value: a.model,
+												children: a.model || "모델 목록 없음"
 											})
 										})]
 									}),
 									/* @__PURE__ */ (0, Q.jsxs)("label", {
 										className: "field",
 										children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "추론 강도" }), /* @__PURE__ */ (0, Q.jsx)("select", {
-											value: o.reasoningEffort || "provider_default",
-											onChange: (t) => S(e, {
-												...o,
+											value: a.reasoningEffort || "provider_default",
+											onChange: (t) => x(e, {
+												...a,
 												reasoningEffort: t.currentTarget.value
 											}),
-											children: l.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+											children: c.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 												value: e.value,
 												children: e.label
 											}, e.value))
@@ -27808,38 +27754,38 @@ function eg({ policy: e, globalEnabled: t, globalConfig: n, providers: r, adapte
 									})
 								]
 							}),
-							Xh(o, r, i) && /* @__PURE__ */ (0, Q.jsx)("p", {
+							Gh(a, r) && /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "settings-hint",
-								children: Xh(o, r, i)
+								children: Gh(a, r)
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "automation-card-actions task-policy-check-actions",
 								children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 									className: "btn",
 									type: "button",
-									onClick: () => void w(e, o),
-									disabled: h === e,
-									children: h === e ? "확인 중" : "연결 확인"
+									onClick: () => void C(e, a),
+									disabled: m === e,
+									children: m === e ? "확인 중" : "연결 확인"
 								}), /* @__PURE__ */ (0, Q.jsx)("span", {
 									className: "settings-hint",
-									children: "API는 모델 조회만, CLI는 설치·로그인 상태만 확인합니다."
+									children: "CLI 설치·로그인 상태만 확인합니다."
 								})]
 							}),
-							y[e] && /* @__PURE__ */ (0, Q.jsx)("p", {
+							v[e] && /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "settings-hint task-policy-adjustment",
 								role: "status",
-								children: y[e]
+								children: v[e]
 							}),
-							u && /* @__PURE__ */ (0, Q.jsx)("p", {
+							l && /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "react-dashboard-error",
 								role: "alert",
-								children: u
+								children: l
 							}),
-							d && /* @__PURE__ */ (0, Q.jsx)("p", {
-								className: `settings-hint task-policy-check-result${d.available ? " is-ready" : " is-warning"}`,
+							u && /* @__PURE__ */ (0, Q.jsx)("p", {
+								className: `settings-hint task-policy-check-result${u.available ? " is-ready" : " is-warning"}`,
 								"data-qa": `task-policy-check-result-${e}`,
 								role: "status",
-								children: d.message || "연결 확인 결과를 받았습니다."
+								children: u.message || "연결 확인 결과를 받았습니다."
 							})
 						] }) : /* @__PURE__ */ (0, Q.jsx)("p", {
 							className: "react-dashboard-error",
@@ -27852,48 +27798,35 @@ function eg({ policy: e, globalEnabled: t, globalConfig: n, providers: r, adapte
 			/* @__PURE__ */ (0, Q.jsxs)("div", {
 				className: "filter-actions settings-actions task-policy-actions",
 				children: [
-					d && !f && /* @__PURE__ */ (0, Q.jsx)("span", {
+					u && !d && /* @__PURE__ */ (0, Q.jsx)("span", {
 						className: "settings-dirty-hint",
 						children: "저장 안 된 변경"
 					}),
 					/* @__PURE__ */ (0, Q.jsx)("button", {
-						className: u ? "btn btn--primary" : "btn",
+						className: c ? "btn btn--primary" : "btn",
 						type: "button",
-						onClick: o,
-						disabled: f,
+						onClick: a,
+						disabled: d,
 						children: "작업별 설정 저장"
 					}),
 					/* @__PURE__ */ (0, Q.jsx)("button", {
 						className: "btn",
 						type: "button",
-						onClick: s,
-						disabled: !c,
+						onClick: o,
+						disabled: !s,
 						children: "작업별 변경 취소"
 					})
 				]
 			}),
-			/* @__PURE__ */ (0, Q.jsx)(gg, {
-				note: p,
+			/* @__PURE__ */ (0, Q.jsx)(dg, {
+				note: f,
 				panel: "task-policy"
 			})
 		]
 	});
 }
-function tg({ mode: e, provider: t, providerModel: n, agentProvider: r, agentModel: i, selectedProvider: a, selectedAgent: o, globalReasoningEffort: s, reasoningChoices: c, onProviderChange: l, onProviderModelChange: u, onAgentProviderChange: d, onAgentModelChange: f, onReasoningChange: p, onSave: m, onCancel: h, canSave: g, canCancel: _, busy: v, note: y }) {
-	let b = [
-		{
-			value: "openai",
-			label: "GPT / OpenAI"
-		},
-		{
-			value: "gemini",
-			label: "Gemini / Google"
-		},
-		{
-			value: "claude",
-			label: "Claude / Anthropic"
-		}
-	], x = [
+function Xh({ agentProvider: e, agentModel: t, selectedAgent: n, globalReasoningEffort: r, reasoningChoices: i, onAgentProviderChange: a, onAgentModelChange: o, onReasoningChange: s, onSave: c, onCancel: l, canSave: u, canCancel: d, busy: f, note: p }) {
+	let m = [
 		{
 			value: "codex",
 			label: "Codex CLI"
@@ -27906,9 +27839,9 @@ function tg({ mode: e, provider: t, providerModel: n, agentProvider: r, agentMod
 			value: "antigravity",
 			label: "Antigravity CLI"
 		}
-	], S = e === "api" ? a.modelChoices || [] : o?.modelChoices || [], C = e === "api" ? n : i, w = S.length ? S : C ? [{
-		value: C,
-		label: `${C} (저장된 값)`
+	], h = n?.modelChoices || [], g = t, _ = h.length ? h : g ? [{
+		value: g,
+		label: `${g} (저장된 값)`
 	}] : [];
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "global-model-section",
@@ -27926,17 +27859,10 @@ function tg({ mode: e, provider: t, providerModel: n, agentProvider: r, agentMod
 				children: [
 					/* @__PURE__ */ (0, Q.jsxs)("label", {
 						className: "field",
-						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: e === "api" ? "API 제공자" : "사용할 CLI" }), e === "api" ? /* @__PURE__ */ (0, Q.jsx)("select", {
-							value: t,
-							onChange: (e) => l(Oh(e.currentTarget.value)),
-							children: b.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
-								value: e.value,
-								children: e.label
-							}, e.value))
-						}) : /* @__PURE__ */ (0, Q.jsx)("select", {
-							value: r,
-							onChange: (e) => d(e.currentTarget.value),
-							children: x.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "사용할 CLI" }), /* @__PURE__ */ (0, Q.jsx)("select", {
+							value: e,
+							onChange: (e) => a(e.currentTarget.value),
+							children: m.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 								value: e.value,
 								children: e.label
 							}, e.value))
@@ -27945,9 +27871,9 @@ function tg({ mode: e, provider: t, providerModel: n, agentProvider: r, agentMod
 					/* @__PURE__ */ (0, Q.jsxs)("label", {
 						className: "field",
 						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "모델" }), /* @__PURE__ */ (0, Q.jsx)("select", {
-							value: C,
-							onChange: (t) => e === "api" ? u(t.currentTarget.value) : f(t.currentTarget.value),
-							children: w.length ? w.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+							value: g,
+							onChange: (e) => o(e.currentTarget.value),
+							children: _.length ? _.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 								value: e.value,
 								children: e.label
 							}, e.value)) : /* @__PURE__ */ (0, Q.jsx)("option", {
@@ -27959,9 +27885,9 @@ function tg({ mode: e, provider: t, providerModel: n, agentProvider: r, agentMod
 					/* @__PURE__ */ (0, Q.jsxs)("label", {
 						className: "field",
 						children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "추론 강도" }), /* @__PURE__ */ (0, Q.jsx)("select", {
-							value: s || "provider_default",
-							onChange: (e) => p(e.currentTarget.value),
-							children: c.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+							value: r || "provider_default",
+							onChange: (e) => s(e.currentTarget.value),
+							children: i.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 								value: e.value,
 								children: e.label
 							}, e.value))
@@ -27969,54 +27895,54 @@ function tg({ mode: e, provider: t, providerModel: n, agentProvider: r, agentMod
 					})
 				]
 			}),
-			c.length <= 1 && /* @__PURE__ */ (0, Q.jsx)("p", {
+			i.length <= 1 && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "settings-hint",
 				children: "현재 연결된 모델에서는 제공자 기본값만 확인할 수 있습니다."
 			}),
 			/* @__PURE__ */ (0, Q.jsxs)("div", {
 				className: "filter-actions settings-actions",
 				children: [
-					g && /* @__PURE__ */ (0, Q.jsx)("span", {
+					u && /* @__PURE__ */ (0, Q.jsx)("span", {
 						className: "settings-dirty-hint",
 						children: "저장 안 된 변경"
 					}),
 					/* @__PURE__ */ (0, Q.jsx)("button", {
-						className: g ? "btn btn--primary" : "btn",
+						className: u ? "btn btn--primary" : "btn",
 						type: "button",
-						onClick: m,
-						disabled: v,
+						onClick: c,
+						disabled: f,
 						children: "전역 모델 설정 저장"
 					}),
 					/* @__PURE__ */ (0, Q.jsx)("button", {
 						className: "btn",
 						type: "button",
-						onClick: h,
-						disabled: !_,
+						onClick: l,
+						disabled: !d,
 						children: "전역 모델 변경 취소"
 					})
 				]
 			}),
-			/* @__PURE__ */ (0, Q.jsx)(gg, {
-				note: y,
+			/* @__PURE__ */ (0, Q.jsx)(dg, {
+				note: p,
 				panel: "agent-model"
 			})
 		]
 	});
 }
-function ng(e) {
+function Zh(e) {
 	return {
 		rss: {
 			enabled: !!e.rss?.enabled,
 			intervalMinutes: e.rss?.intervalMinutes || 60,
 			saveFullText: e.rss?.saveFullText !== !1,
-			retentionDays: e.rss?.retentionDays ?? mg
+			retentionDays: e.rss?.retentionDays ?? lg
 		},
 		marketMemory: {
 			enabled: !!e.marketMemory?.enabled,
 			intervalMinutes: e.marketMemory?.intervalMinutes || 1440,
 			runAfterRss: !!e.marketMemory?.runAfterRss
 		},
-		briefingSchedules: (e.briefingSchedules || []).slice(0, rg).map((e) => ({
+		briefingSchedules: (e.briefingSchedules || []).slice(0, Qh).map((e) => ({
 			id: e.id,
 			enabled: !!e.enabled,
 			time: e.time || "08:00",
@@ -28030,7 +27956,7 @@ function ng(e) {
 		missedRuns: { catchUpHours: e.missedRuns?.catchUpHours ?? 3 }
 	};
 }
-var rg = 5, ig = [
+var Qh = 5, $h = [
 	{
 		id: 0,
 		label: "월"
@@ -28059,11 +27985,11 @@ var rg = 5, ig = [
 		id: 6,
 		label: "일"
 	}
-], ag = ig.map((e) => e.id);
-function og(e) {
-	return e.days ?? ag;
+], eg = $h.map((e) => e.id);
+function tg(e) {
+	return e.days ?? eg;
 }
-var sg = [
+var ng = [
 	{
 		id: "us",
 		label: "US"
@@ -28080,7 +28006,7 @@ var sg = [
 		id: "jp",
 		label: "JP"
 	}
-], cg = Object.fromEntries(sg.flatMap((e) => [[e.id, e.label], [e.id.toUpperCase(), e.label]])), lg = [
+], rg = Object.fromEntries(ng.flatMap((e) => [[e.id, e.label], [e.id.toUpperCase(), e.label]])), ig = [
 	{
 		label: "아침",
 		time: "08:00",
@@ -28106,17 +28032,17 @@ var sg = [
 		kind: "weekly",
 		days: [6]
 	}
-], ug = {
+], ag = {
 	daily: "일간",
 	weekly: "주간 요약"
 };
-function dg(e) {
+function og(e) {
 	return e.kind === "weekly" ? "weekly" : "daily";
 }
-function fg() {
+function sg() {
 	return `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
-var pg = [
+var cg = [
 	{
 		value: "0",
 		label: "정시에만"
@@ -28137,7 +28063,7 @@ var pg = [
 		value: "24",
 		label: "그날 안이면 언제든"
 	}
-], mg = 90, hg = [
+], lg = 90, ug = [
 	{
 		value: "30",
 		label: "30일"
@@ -28163,22 +28089,22 @@ var pg = [
 		label: "계속 보관"
 	}
 ];
-function gg({ note: e, panel: t }) {
+function dg({ note: e, panel: t }) {
 	return !e || e.panel !== t ? null : /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsx)("p", {
 		className: e.tone === "error" ? "react-dashboard-error" : "react-dashboard-warning",
 		role: "status",
 		children: e.text
 	}), e.diagnostic && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: e.diagnostic })] });
 }
-function _g(e, t) {
+function fg(e, t) {
 	if (Wr(e)) return Gr(e, t);
-	if (e instanceof q) {
+	if (e instanceof J) {
 		let n = /^[a-z0-9_]+$/.test(e.code || "") ? e.code : "";
 		return n ? `${t} (${n})` : t;
 	}
 	return t;
 }
-async function vg(e) {
+async function pg(e) {
 	try {
 		return {
 			value: await e,
@@ -28191,14 +28117,14 @@ async function vg(e) {
 		};
 	}
 }
-function yg(e) {
+function mg(e) {
 	return `${Math.max(e / 1e6, 0).toFixed(e >= 1e8 ? 0 : 1)}MB`;
 }
-var bg = 5e7;
-function xg(e) {
-	return (e || 0) >= bg ? `검색 색인에서 약 ${yg(e)}를 돌려받습니다. 그동안 검색이 잠시 멈춥니다.` : "정리 후 검색 색인을 다시 만들고 파일 크기를 줄입니다. 몇 분 걸릴 수 있습니다.";
+var hg = 5e7;
+function gg(e) {
+	return (e || 0) >= hg ? `검색 색인에서 약 ${mg(e)}를 돌려받습니다. 그동안 검색이 잠시 멈춥니다.` : "정리 후 검색 색인을 다시 만들고 파일 크기를 줄입니다. 몇 분 걸릴 수 있습니다.";
 }
-function Sg({ preview: e, days: t, unavailable: n = !1 }) {
+function _g({ preview: e, days: t, unavailable: n = !1 }) {
 	return t <= 0 ? /* @__PURE__ */ (0, Q.jsx)("p", {
 		className: "settings-hint",
 		children: "모든 자료를 계속 보관합니다. 수집이 쌓이는 만큼 검색 색인이 커집니다."
@@ -28217,9 +28143,9 @@ function Sg({ preview: e, days: t, unavailable: n = !1 }) {
 			"이 지워집니다",
 			" ",
 			"(자료 ",
-			yg(e.fileBytes),
+			mg(e.fileBytes),
 			", 검색 색인 약 ",
-			yg(e.estimatedIndexBytes),
+			mg(e.estimatedIndexBytes),
 			")."
 		]
 	}) : /* @__PURE__ */ (0, Q.jsxs)("p", {
@@ -28231,7 +28157,7 @@ function Sg({ preview: e, days: t, unavailable: n = !1 }) {
 		]
 	});
 }
-function Cg(e) {
+function vg(e) {
 	if (!e) return {
 		tone: "",
 		text: "아직 실행된 적 없습니다"
@@ -28257,18 +28183,18 @@ function Cg(e) {
 		text: `${n} 완료`
 	};
 }
-function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onChange: i }) {
+function yg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onChange: i }) {
 	let a = (t, n) => i(e.map((e) => e.id === t ? {
 		...e,
 		...n
 	} : e)), o = (e, t) => {
-		let n = e.markets.includes(t) ? e.markets.filter((e) => e !== t) : sg.map((e) => e.id).filter((n) => n === t || e.markets.includes(n));
+		let n = e.markets.includes(t) ? e.markets.filter((e) => e !== t) : ng.map((e) => e.id).filter((n) => n === t || e.markets.includes(n));
 		a(e.id, {
 			markets: n,
 			...n.length ? {} : { enabled: !1 }
 		});
 	}, s = (e, t) => {
-		let n = og(e), r = n.includes(t) ? n.filter((e) => e !== t) : ag.filter((e) => e === t || n.includes(e));
+		let n = tg(e), r = n.includes(t) ? n.filter((e) => e !== t) : eg.filter((e) => e === t || n.includes(e));
 		a(e.id, {
 			days: r,
 			...r.length ? {} : { enabled: !1 }
@@ -28280,8 +28206,8 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 		3,
 		4
 	]) => {
-		e.length >= rg || i([...e, {
-			id: fg(),
+		e.length >= Qh || i([...e, {
+			id: sg(),
 			enabled: !0,
 			time: n,
 			markets: t,
@@ -28291,7 +28217,7 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 			runPrerequisites: !0,
 			days: [...a]
 		}]);
-	}, l = lg.map((e) => ({
+	}, l = ig.map((e) => ({
 		...e,
 		markets: e.markets.filter((e) => t.includes(e))
 	})).filter((e) => e.markets.length);
@@ -28314,28 +28240,28 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 								}),
 								/* @__PURE__ */ (0, Q.jsx)("select", {
 									"aria-label": "브리핑 종류",
-									value: dg(c),
+									value: og(c),
 									onChange: (e) => a(c.id, { kind: e.currentTarget.value }),
-									children: Object.entries(ug).map(([e, t]) => /* @__PURE__ */ (0, Q.jsx)("option", {
+									children: Object.entries(ag).map(([e, t]) => /* @__PURE__ */ (0, Q.jsx)("option", {
 										value: e,
 										children: t
 									}, e))
 								}),
-								dg(c) === "daily" && /* @__PURE__ */ (0, Q.jsx)("select", {
+								og(c) === "daily" && /* @__PURE__ */ (0, Q.jsx)("select", {
 									"aria-label": "브리핑 유형",
 									value: c.briefingType,
 									onChange: (e) => a(c.id, { briefingType: e.currentTarget.value }),
-									children: Object.entries(Eg).map(([e, t]) => /* @__PURE__ */ (0, Q.jsx)("option", {
+									children: Object.entries(xg).map(([e, t]) => /* @__PURE__ */ (0, Q.jsx)("option", {
 										value: e,
 										children: t
 									}, e))
 								}),
-								/* @__PURE__ */ (0, Q.jsx)(Mh, {
+								/* @__PURE__ */ (0, Q.jsx)(Oh, {
 									ariaLabel: `${c.time} 예약 사용`,
 									checked: c.enabled,
 									onChange: (e) => a(c.id, { enabled: e }),
-									disabled: !c.markets.length || !og(c).length,
-									title: c.markets.length ? og(c).length ? void 0 : "요일을 하나 이상 골라야 켤 수 있습니다." : "시장을 하나 이상 골라야 켤 수 있습니다.",
+									disabled: !c.markets.length || !tg(c).length,
+									title: c.markets.length ? tg(c).length ? void 0 : "요일을 하나 이상 골라야 켤 수 있습니다." : "시장을 하나 이상 골라야 켤 수 있습니다.",
 									compact: !0
 								}),
 								/* @__PURE__ */ (0, Q.jsx)("button", {
@@ -28350,14 +28276,14 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 							className: "settings-theme-options",
 							role: "group",
 							"aria-label": `${c.time} 예약의 시장`,
-							children: sg.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
+							children: ng.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
 								type: "button",
 								"aria-pressed": c.markets.includes(e.id),
 								onClick: () => o(c, e.id),
 								children: e.label
 							}, e.id))
 						}),
-						dg(c) === "weekly" && /* @__PURE__ */ (0, Q.jsx)("p", {
+						og(c) === "weekly" && /* @__PURE__ */ (0, Q.jsx)("p", {
 							className: "settings-hint",
 							children: "고른 요일에 그 날짜까지의 지난 7일을 요약하고 다음주 일정을 붙입니다."
 						}),
@@ -28365,16 +28291,16 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 							className: "settings-theme-options",
 							role: "group",
 							"aria-label": `${c.time} 예약이 도는 요일`,
-							children: ig.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
+							children: $h.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
 								type: "button",
-								"aria-pressed": og(c).includes(e.id),
+								"aria-pressed": tg(c).includes(e.id),
 								onClick: () => s(c, e.id),
 								children: e.label
 							}, e.id))
 						}),
 						/* @__PURE__ */ (0, Q.jsxs)("div", {
 							className: "automation-inline-switch",
-							children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "브리핑 전에 RSS 수집과 시장 메모리 갱신" }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
+							children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "브리핑 전에 RSS 수집과 시장 메모리 갱신" }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
 								ariaLabel: `${c.time} 예약: 브리핑 전 RSS 수집과 시장 메모리 갱신`,
 								checked: c.runPrerequisites !== !1,
 								onChange: (e) => a(c.id, { runPrerequisites: e }),
@@ -28385,11 +28311,11 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 							className: "settings-hint",
 							children: [
 								"관심 시장에서 꺼둔 ",
-								l.map((e) => sg.find((t) => t.id === e)?.label || e).join(" · "),
+								l.map((e) => ng.find((t) => t.id === e)?.label || e).join(" · "),
 								"은(는) 빼고 생성합니다."
 							]
 						}),
-						/* @__PURE__ */ (0, Q.jsx)(Tg, {
+						/* @__PURE__ */ (0, Q.jsx)(bg, {
 							run: n[c.id],
 							unavailable: !r
 						})
@@ -28416,7 +28342,7 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 						" ",
 						e.time,
 						" — ",
-						e.markets.map((e) => sg.find((t) => t.id === e)?.label).join(" · "),
+						e.markets.map((e) => ng.find((t) => t.id === e)?.label).join(" · "),
 						/* @__PURE__ */ (0, Q.jsx)("span", { children: e.hint })
 					]
 				}, `${e.time}-${e.kind || "daily"}`))]
@@ -28426,14 +28352,14 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 				children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 					className: "btn",
 					type: "button",
-					disabled: e.length >= rg,
-					onClick: () => c(t.length ? [...t] : sg.map((e) => e.id), "08:00"),
+					disabled: e.length >= Qh,
+					onClick: () => c(t.length ? [...t] : ng.map((e) => e.id), "08:00"),
 					children: "예약 추가"
-				}), e.length >= rg && /* @__PURE__ */ (0, Q.jsxs)("span", {
+				}), e.length >= Qh && /* @__PURE__ */ (0, Q.jsxs)("span", {
 					className: "settings-hint",
 					children: [
 						"최대 ",
-						rg,
+						Qh,
 						"개까지 만들 수 있습니다."
 					]
 				})]
@@ -28441,11 +28367,11 @@ function wg({ schedules: e, watched: t, runsById: n, runsAvailable: r = !0, onCh
 		]
 	});
 }
-function Tg({ run: e, unavailable: t = !1 }) {
+function bg({ run: e, unavailable: t = !1 }) {
 	let { tone: n, text: r } = t ? {
 		tone: "",
 		text: "실행 기록을 확인할 수 없습니다"
-	} : Cg(e);
+	} : vg(e);
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "automation-last-run-wrap",
 		children: [/* @__PURE__ */ (0, Q.jsxs)("p", {
@@ -28458,12 +28384,12 @@ function Tg({ run: e, unavailable: t = !1 }) {
 		})]
 	});
 }
-var Eg = {
+var xg = {
 	default: "기본",
 	market_focused: "시황 중심",
 	concise: "요약"
 };
-function Dg({ readIssue: e = null }) {
+function Sg({ readIssue: e = null }) {
 	let [t, n] = (0, l.useState)(null), [r, i] = (0, l.useState)([]), [a, o] = (0, l.useState)(!1), [s, c] = (0, l.useState)(""), [u, d] = (0, l.useState)(null), f = (0, l.useRef)(0), p = (0, l.useRef)(null), m = (0, l.useRef)(0), h = (0, l.useRef)(null);
 	if ((0, l.useEffect)(() => {
 		let e = ++f.current;
@@ -28475,8 +28401,8 @@ function Dg({ readIssue: e = null }) {
 				if (t.signal.aborted || e !== f.current) return;
 				n(r), i([...r.selected]), d(null);
 			} catch (n) {
-				if (J(n, t.signal) || e !== f.current) return;
-				c(_g(n, "관심 시장 설정을 불러오지 못했습니다.")), d(qr(n, e));
+				if (Ce(n, t.signal) || e !== f.current) return;
+				c(fg(n, "관심 시장 설정을 불러오지 못했습니다.")), d(qr(n, e));
 			} finally {
 				e === f.current && (p.current = null);
 			}
@@ -28519,8 +28445,8 @@ function Dg({ readIssue: e = null }) {
 			let o = a.newlyEnabled || [];
 			c(o.length ? "저장했습니다. 방금 켠 시장의 자료 수집을 시작했습니다 — 꺼져 있던 기간의 기사는 피드가 아직 내어주는 범위까지만 들어옵니다." : "저장했습니다.");
 		} catch (n) {
-			if (J(n, t.signal) || e !== m.current) return;
-			c(_g(n, "관심 시장 설정을 저장하지 못했습니다.")), d(qr(n, e));
+			if (Ce(n, t.signal) || e !== m.current) return;
+			c(fg(n, "관심 시장 설정을 저장하지 못했습니다.")), d(qr(n, e));
 		} finally {
 			e === m.current && (h.current = null, o(!1));
 		}
@@ -28548,7 +28474,7 @@ function Dg({ readIssue: e = null }) {
 						disabled: a,
 						onClick: () => g(e.id),
 						"aria-label": e.label,
-						children: cg[e.id] || e.label
+						children: rg[e.id] || e.label
 					}, e.id))
 				})]
 			}),
@@ -28574,7 +28500,7 @@ function Dg({ readIssue: e = null }) {
 		]
 	});
 }
-function Og(e) {
+function Cg(e) {
 	let t = [
 		"B",
 		"KB",
@@ -28584,7 +28510,7 @@ function Og(e) {
 	for (; n >= 1024 && r < t.length - 1;) n /= 1024, r += 1;
 	return r === 0 ? `${Math.round(n)} B` : `${n.toFixed(1)} ${t[r]}`;
 }
-function kg() {
+function wg() {
 	let [e, t] = (0, l.useState)(null), [n, r] = (0, l.useState)(""), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(""), d = (0, l.useRef)(0), f = (0, l.useRef)(null), p = (0, l.useRef)(0), m = (0, l.useRef)(null), h = (0, l.useCallback)(async () => {
 		let e = ++d.current;
 		f.current?.abort();
@@ -28594,7 +28520,7 @@ function kg() {
 			let r = await X("/api/workspace", { signal: n.signal });
 			return n.signal.aborted || e !== d.current ? !1 : (t(r), s(null), !0);
 		} catch (t) {
-			return J(t, n.signal) || e !== d.current ? !1 : (a(_g(t, "자료 위치를 읽지 못했습니다.")), s(qr(t, e)), !1);
+			return Ce(t, n.signal) || e !== d.current ? !1 : (a(fg(t, "자료 위치를 읽지 못했습니다.")), s(qr(t, e)), !1);
 		} finally {
 			e === d.current && (f.current = null);
 		}
@@ -28634,8 +28560,8 @@ function kg() {
 			if (i.signal.aborted || n !== p.current || !o) return;
 			a(`자료 ${r.fileCount}개를 ${r.path}(으)로 복사했습니다. 서버를 재시작해야 새 위치를 사용합니다. 원본은 ${r.previousPath}에 그대로 있으니 새 위치에서 자료가 잘 보이는지 확인한 뒤 지우세요. 재시작 전까지는 RSS 수집과 보관 기간 정리가 일시정지됩니다.`);
 		} catch (t) {
-			if (J(t, i.signal) || n !== p.current) return;
-			(t instanceof Error ? t.message : "옮기지 못했습니다.").includes("이미 자료") && u(e), a(_g(t, "자료를 옮기지 못했습니다.")), s(qr(t, n));
+			if (Ce(t, i.signal) || n !== p.current) return;
+			(t instanceof Error ? t.message : "옮기지 못했습니다.").includes("이미 자료") && u(e), a(fg(t, "자료를 옮기지 못했습니다.")), s(qr(t, n));
 		} finally {
 			n === p.current && (m.current = null, r(""));
 		}
@@ -28646,8 +28572,8 @@ function kg() {
 		try {
 			if (await Z("/api/workspace/reveal", {}, { signal: t.signal }), t.signal.aborted || e !== p.current) return;
 		} catch (n) {
-			if (J(n, t.signal) || e !== p.current) return;
-			a(_g(n, "폴더를 열지 못했습니다.")), s(qr(n, e));
+			if (Ce(n, t.signal) || e !== p.current) return;
+			a(fg(n, "폴더를 열지 못했습니다.")), s(qr(n, e));
 		} finally {
 			e === p.current && (m.current = null, r(""));
 		}
@@ -28678,7 +28604,7 @@ function kg() {
 							"자료 ",
 							e.fileCount.toLocaleString(),
 							"개 · ",
-							Og(e.totalBytes),
+							Cg(e.totalBytes),
 							e.outsideAppFolder ? " · 앱 폴더 밖에 있어 새 버전을 받아도 그대로 이어집니다." : " · 앱 폴더 안에 있습니다."
 						]
 					})
@@ -28742,22 +28668,22 @@ function kg() {
 		]
 	});
 }
-function Ag() {
-	let e = ph(), t = lh(), [n, r] = (0, l.useState)("ai"), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(() => Bh()), [d, f] = (0, l.useState)(() => Bh()), [p, m] = (0, l.useState)({}), [h, g] = (0, l.useState)({}), [_, v] = (0, l.useState)([]), [y, b] = (0, l.useState)(null), [x, S] = (0, l.useState)(null), [C, w] = (0, l.useState)(sg.map((e) => e.id)), [T, E] = (0, l.useState)({}), [D, O] = (0, l.useState)(null), [k, A] = (0, l.useState)("openai"), [j, M] = (0, l.useState)(""), [N, P] = (0, l.useState)(""), [F, I] = (0, l.useState)("provider_default"), [L, R] = (0, l.useState)(!0), [z, B] = (0, l.useState)("cli"), [V, H] = (0, l.useState)("codex"), [U, W] = (0, l.useState)(""), [ee, te] = (0, l.useState)({
+function Tg() {
+	let e = fh(), t = ch(), [n, r] = (0, l.useState)("ai"), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), [c, u] = (0, l.useState)(() => Fh()), [d, f] = (0, l.useState)(() => Fh()), [p, m] = (0, l.useState)({}), [h, g] = (0, l.useState)({}), [_, v] = (0, l.useState)([]), [y, b] = (0, l.useState)(null), [x, S] = (0, l.useState)(null), [C, w] = (0, l.useState)(ng.map((e) => e.id)), [T, E] = (0, l.useState)({}), [D, O] = (0, l.useState)(null), [] = (0, l.useState)(""), [] = (0, l.useState)(""), [k, A] = (0, l.useState)("provider_default"), [j, M] = (0, l.useState)(!0), [N, P] = (0, l.useState)("cli"), [F, I] = (0, l.useState)("codex"), [L, R] = (0, l.useState)(""), [z, B] = (0, l.useState)({
 		fred: "",
 		bok: "",
 		dart: ""
-	}), [G, ne] = (0, l.useState)({
+	}), [V, H] = (0, l.useState)({
 		enabled: !1,
 		clientId: "",
 		clientSecret: ""
-	}), [re, ie] = (0, l.useState)({
+	}), [U, W] = (0, l.useState)({
 		token: "",
 		dbId: ""
-	}), [ae, oe] = (0, l.useState)(""), [se, ce] = (0, l.useState)({}), [K, le] = (0, l.useState)(""), [ue, de] = (0, l.useState)(null), fe = (0, l.useRef)(0), pe = (0, l.useRef)(null), me = (e, t) => {
-		pe.current?.abort();
-		let n = ++fe.current, r = new AbortController();
-		return pe.current = r, le(e), de({
+	}), [ee, te] = (0, l.useState)(""), [] = (0, l.useState)({}), [G, ne] = (0, l.useState)(""), [re, ie] = (0, l.useState)(null), ae = (0, l.useRef)(0), oe = (0, l.useRef)(null), se = (e, t) => {
+		oe.current?.abort();
+		let n = ++ae.current, r = new AbortController();
+		return oe.current = r, ne(e), ie({
 			panel: e,
 			text: t,
 			tone: "ok",
@@ -28767,88 +28693,72 @@ function Ag() {
 			operationId: n,
 			controller: r
 		};
-	}, he = (e, t) => e === fe.current && pe.current === t && !t.signal.aborted, ge = (e, t) => {
-		he(e, t) && (pe.current = null, le(""));
+	}, K = (e, t) => e === ae.current && oe.current === t && !t.signal.aborted, ce = (e, t) => {
+		K(e, t) && (oe.current = null, ne(""));
 	}, q = (e, t, n, r, i, a) => {
-		he(t, n) && de({
+		K(t, n) && ie({
 			panel: e,
 			text: r,
 			tone: i,
 			operationId: t,
 			diagnostic: i === "error" && a ? qr(a, t) : null
 		});
-	}, _e = (e, t, n = "ok") => {
-		pe.current?.abort();
-		let r = ++fe.current;
-		pe.current = null, le(""), de({
+	}, le = (e, t, n = "ok") => {
+		oe.current?.abort();
+		let r = ++ae.current;
+		oe.current = null, ne(""), ie({
 			panel: e,
 			text: t,
 			tone: n,
 			operationId: r,
 			diagnostic: null
 		});
-	}, [ve, ye] = (0, l.useState)(""), [be, xe] = (0, l.useState)(null), [Se, Ce] = (0, l.useState)(null), [Y, we] = (0, l.useState)(null), [Te, Ee] = (0, l.useState)(!0), De = (0, l.useRef)(0), Oe = (0, l.useRef)(null), ke = (0, l.useRef)({}), Ae = (0, l.useRef)({}), je = (0, l.useRef)(0), Me = (0, l.useRef)(null), Ne = (0, l.useRef)(null), Pe = i?.llm?.providers || {}, Fe = Pe[k] || {}, Ie = Dh[k], Le = o?.adapters || [], Re = Le.find((e) => e.id === V) || Le[0], ze = z === "api" ? N || String(Fe.model || "") : U || String(Re?.model || ""), Be = Jh(z === "api" ? Fe : Re, ze, F), Ve = (0, l.useMemo)(() => {
-		if (z === "api") {
-			let e = N || String(Fe.model || "");
-			return e ? {
-				mode: "api",
-				provider: k,
-				model: e,
-				reasoningEffort: F
-			} : null;
-		}
-		let e = U || String(Re?.model || "");
+	}, [ue, de] = (0, l.useState)(""), [fe, pe] = (0, l.useState)(null), [me, he] = (0, l.useState)(null), [J, ge] = (0, l.useState)(null), [_e, ve] = (0, l.useState)(!0), ye = (0, l.useRef)(0), be = (0, l.useRef)(null), xe = (0, l.useRef)(0), Se = (0, l.useRef)(null), Y = (0, l.useRef)(null), we = o?.adapters || [], Te = we.find((e) => e.id === F) || we[0], Ee = Uh(Te, L || String(Te?.model || ""), k), De = (0, l.useMemo)(() => {
+		let e = L || String(Te?.model || "");
 		return e ? {
 			mode: "cli",
-			provider: V,
+			provider: F,
 			model: e,
-			reasoningEffort: F
+			reasoningEffort: k
 		} : null;
 	}, [
-		z,
-		k,
-		N,
-		Fe.model,
-		V,
-		U,
-		Re?.model,
-		F
-	]), He = Hh(c) !== Hh(d), Ue = [
+		F,
+		L,
+		Te?.model,
+		k
+	]), Oe = Lh(c) !== Lh(d), ke = [
 		"codex",
 		"claude",
 		"antigravity"
-	].includes(o?.provider || "") ? String(o?.provider) : String(o?.selectedAdapter || Le[0]?.id || "codex"), We = Le.find((e) => e.id === Ue) || Le[0], Ge = Oh(i?.llm?.provider), Ke = Pe[Ge] || {}, qe = Le.find((e) => e.id === Ue) || We, Je = z === "api" ? kh(Ke.model, Ke.modelChoices) : kh(qe?.model, qe?.modelChoices), Ye = String(i?.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default", Xe = z !== (i?.agent?.mode === "api" ? "api" : "cli"), Ze = L !== (i?.agent?.enabled !== !1) || Xe || j.trim() !== "", Qe = z === "api" ? k !== Ge || N !== Je || F !== Ye : V !== Ue || U !== Je || F !== Ye, $e = !!(ee.fred.trim() || ee.bok.trim() || ee.dart.trim() || G.clientId.trim() || G.clientSecret.trim() || G.enabled !== !!i?.toss?.enabled), et = !!re.token.trim() || re.dbId.trim() !== String(i?.notion?.dbId || "").trim(), tt = ae.trim() !== String(T.vaultPath || "").trim(), nt = JSON.stringify(ng(p)) !== JSON.stringify(ng(h));
-	Ne.current = {
-		agentDirty: Ze,
-		agentEnabled: L,
-		agentMode: z,
-		providerApiKey: j,
-		globalModelDirty: Qe,
-		provider: k,
-		providerModel: N,
-		agentProvider: V,
-		agentModel: U,
-		globalReasoningEffort: F,
-		taskPolicyDirty: He,
+	].includes(o?.provider || "") ? String(o?.provider) : String(o?.selectedAdapter || we[0]?.id || "codex"), Ae = we.find((e) => e.id === ke) || we[0], je = we.find((e) => e.id === ke) || Ae, Me = Th(je?.model, je?.modelChoices), Ne = String(i?.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default", Pe = N !== (i?.agent?.mode === "api" ? "api" : "cli"), Fe = j !== (i?.agent?.enabled !== !1) || Pe, Ie = F !== ke || L !== Me || k !== Ne, Le = !!(z.fred.trim() || z.bok.trim() || z.dart.trim() || V.clientId.trim() || V.clientSecret.trim() || V.enabled !== !!i?.toss?.enabled), Re = !!U.token.trim() || U.dbId.trim() !== String(i?.notion?.dbId || "").trim(), ze = ee.trim() !== String(T.vaultPath || "").trim(), Be = JSON.stringify(Zh(p)) !== JSON.stringify(Zh(h));
+	Y.current = {
+		agentDirty: Fe,
+		agentEnabled: j,
+		agentMode: N,
+		globalModelDirty: Ie,
+		agentProvider: F,
+		agentModel: L,
+		globalReasoningEffort: k,
+		taskPolicyDirty: Oe,
 		taskPolicies: c,
-		apiDirty: $e,
-		apiDraft: ee,
-		tossDraft: G,
-		notionDirty: et,
-		notionDraft: re,
-		obsidianDirty: tt,
-		vaultPath: ae,
-		automationDirty: nt,
+		apiDirty: Le,
+		apiDraft: z,
+		tossDraft: V,
+		notionDirty: Re,
+		notionDraft: U,
+		obsidianDirty: ze,
+		vaultPath: ee,
+		automationDirty: Be,
 		automation: p
 	};
-	let rt = (0, l.useMemo)(() => {
+	let Ve = (0, l.useMemo)(() => {
 		let e = {};
 		for (let t of _) {
 			let n = String(t.kind || "");
 			n && !e[n] && (e[n] = t);
 		}
 		return e;
-	}, [_]), it = (0, l.useMemo)(() => {
+	}, [_]), He = (0, l.useMemo)(() => {
 		let e = {};
 		for (let t of _) {
 			if (t.kind !== "briefing") continue;
@@ -28856,372 +28766,302 @@ function Ag() {
 			n && !e[n] && (e[n] = t);
 		}
 		return e;
-	}, [_]), at = (0, l.useCallback)(async (e = !1, t = !1) => {
-		let n = t ? Ne.current : null, r = ++De.current;
-		Oe.current?.abort();
+	}, [_]), Ue = (0, l.useCallback)(async (e = !1, t = !1) => {
+		let n = t ? Y.current : null, r = ++ye.current;
+		be.current?.abort();
 		let i = new AbortController();
-		Oe.current = i, ye(""), xe(null), Ce(null), we(null), le("load");
+		be.current = i, de(""), pe(null), he(null), ge(null), ne("load");
 		try {
 			let [t, o, c, l, d, p] = await Promise.all([
 				X(`/api/settings${e ? "?refresh=true" : ""}`, { signal: i.signal }),
 				X(`/api/agent-bridge/settings${e ? "?refresh=true" : ""}`, { signal: i.signal }),
 				X("/api/automation/settings", { signal: i.signal }),
 				X("/api/obsidian/settings", { signal: i.signal }),
-				vg(X("/api/automation/runs?limit=50", { signal: i.signal })),
-				vg(X("/api/market-scope", { signal: i.signal }))
+				pg(X("/api/automation/runs?limit=50", { signal: i.signal })),
+				pg(X("/api/market-scope", { signal: i.signal }))
 			]);
-			if (i.signal.aborted || r !== De.current) return;
+			if (i.signal.aborted || r !== ye.current) return;
 			if (d.error) {
-				if (J(d.error, i.signal)) return;
-				v([]), Ee(!1), Ce({
+				if (Ce(d.error, i.signal)) return;
+				v([]), ve(!1), he({
 					message: "자동화 실행 기록을 확인할 수 없습니다. 목록이 비어 있다고 확정할 수 없습니다.",
 					diagnostic: qr(d.error, r)
 				});
-			} else Ee(!0), Ce(null), v(d.value?.items || []);
+			} else ve(!0), he(null), v(d.value?.items || []);
 			if (p.error) {
-				if (J(p.error, i.signal)) return;
-				we({
+				if (Ce(p.error, i.signal)) return;
+				ge({
 					message: "관심 시장 설정을 확인할 수 없습니다. 현재 선택을 바꾸지 않았습니다.",
 					diagnostic: qr(p.error, r)
 				});
-			} else p.value?.selected && (we(null), w(p.value.selected.map((e) => String(e).toLowerCase())));
+			} else p.value?.selected && (ge(null), w(p.value.selected.map((e) => String(e).toLowerCase())));
 			a(t);
-			let h = t.taskPolicies || Bh();
-			u(Vh(h)), f(h), R(t.agent?.enabled !== !1), B(t.agent?.mode === "api" ? "api" : "cli"), I(String(t.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default");
-			let _ = Oh(t.llm?.provider);
-			A(_);
-			let y = t.llm?.providers?.[_] || {}, b = y.modelChoices || [];
-			P(b.some((e) => e.value === y.model) ? String(y.model || "") : b[0]?.value || ""), ne({
+			let h = t.taskPolicies || Fh();
+			u(Ih(h)), f(h), M(t.agent?.enabled !== !1), P("cli"), A(String(t.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default"), H({
 				enabled: !!t.toss?.enabled,
 				clientId: "",
 				clientSecret: ""
-			}), ie({
+			}), W({
 				token: "",
 				dbId: t.notion?.dbId || ""
 			}), s(o);
-			let x = [
+			let _ = [
 				"codex",
 				"claude",
 				"antigravity"
-			].includes(o.provider || "") ? String(o.provider) : String(o.selectedAdapter || o.adapters?.[0]?.id || "codex"), S = o.adapters?.find((e) => e.id === x) || o.adapters?.[0];
-			H(x);
-			let C = S?.modelChoices || [];
-			W(C.some((e) => e.value === S?.model) ? String(S?.model || "") : C[0]?.value || ""), window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: o })), m(ng(c)), g(ng(c)), E(l), oe(l.vaultPath || ""), n?.agentDirty && (R(n.agentEnabled), B(n.agentMode), M(n.providerApiKey)), n?.globalModelDirty && (A(n.provider), P(n.providerModel), H(n.agentProvider), W(n.agentModel), I(n.globalReasoningEffort)), n?.taskPolicyDirty && u(n.taskPolicies), n?.apiDirty && (te(n.apiDraft), ne(n.tossDraft)), n?.notionDirty && ie(n.notionDraft), n?.obsidianDirty && oe(n.vaultPath), n?.automationDirty && m(n.automation), Lt("settings", {
+			].includes(o.provider || "") ? String(o.provider) : String(o.selectedAdapter || o.adapters?.[0]?.id || "codex"), y = o.adapters?.find((e) => e.id === _) || o.adapters?.[0];
+			I(_);
+			let b = y?.modelChoices || [];
+			R(b.some((e) => e.value === y?.model) ? String(y?.model || "") : b[0]?.value || ""), window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: o })), m(Zh(c)), g(Zh(c)), E(l), te(l.vaultPath || ""), n?.agentDirty && (M(n.agentEnabled), P(n.agentMode)), n?.globalModelDirty && (I(n.agentProvider), R(n.agentModel), A(n.globalReasoningEffort)), n?.taskPolicyDirty && u(n.taskPolicies), n?.apiDirty && (B(n.apiDraft), H(n.tossDraft)), n?.notionDirty && W(n.notionDraft), n?.obsidianDirty && te(n.vaultPath), n?.automationDirty && m(n.automation), Lt("settings", {
 				surface: "settings",
 				viewId: "settings",
 				reportKind: "",
 				reportId: ""
 			});
 		} catch (e) {
-			if (J(e, i.signal) || r !== De.current) return;
-			ye(_g(e, "설정을 불러오지 못했습니다.")), xe(qr(e, r)), Ee(!1);
+			if (Ce(e, i.signal) || r !== ye.current) return;
+			de(fg(e, "설정을 불러오지 못했습니다.")), pe(qr(e, r)), ve(!1);
 		} finally {
-			r === De.current && (Oe.current = null, le(""));
+			r === ye.current && (be.current = null, ne(""));
 		}
-	}, []), ot = (0, l.useCallback)(async () => {
-		let e = me("cache", "캐시 상태를 불러오는 중입니다.");
+	}, []), We = (0, l.useCallback)(async () => {
+		let e = se("cache", "캐시 상태를 불러오는 중입니다.");
 		try {
 			let t = await X("/api/cache/stats", { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
+			if (!K(e.operationId, e.controller)) return;
 			O(t), q("cache", e.operationId, e.controller, "캐시 상태를 불러왔습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("cache", e.operationId, e.controller, _g(t, "캐시 상태를 불러오지 못했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("cache", e.operationId, e.controller, fg(t, "캐시 상태를 불러오지 못했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}, []);
-	async function st() {
-		let e = me("cache", "오래된 기업 데이터 캐시를 정리하는 중입니다."), t;
+	async function Ge() {
+		let e = se("cache", "오래된 기업 데이터 캐시를 정리하는 중입니다."), t;
 		try {
 			t = await Z("/api/cache/cleanup", {}, { signal: e.controller.signal });
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("cache", e.operationId, e.controller, _g(t, "캐시 정리에 실패했습니다."), "error", t), ge(e.operationId, e.controller);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("cache", e.operationId, e.controller, fg(t, "캐시 정리에 실패했습니다."), "error", t), ce(e.operationId, e.controller);
 			return;
 		}
-		if (he(e.operationId, e.controller)) try {
+		if (K(e.operationId, e.controller)) try {
 			let n = await X("/api/cache/stats", { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
+			if (!K(e.operationId, e.controller)) return;
 			O(n), q("cache", e.operationId, e.controller, t.deleted ? `캐시 정리 완료: ${t.deleted}개 삭제, ${t.freed_mb || 0}MB 확보` : "정리할 오래된 캐시가 없습니다. 보관 기간이 지난 파일만 지웁니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			let n = Wr(t) ? "캐시는 정리했습니다. 최신 상태는 확인할 수 없습니다." : _g(t, "캐시는 정리했지만 최신 상태를 불러오지 못했습니다.");
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			let n = Wr(t) ? "캐시는 정리했습니다. 최신 상태는 확인할 수 없습니다." : fg(t, "캐시는 정리했지만 최신 상태를 불러오지 못했습니다.");
 			q("cache", e.operationId, e.controller, n, "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	let ct = Number(p.rss?.retentionDays ?? mg);
+	let Ke = Number(p.rss?.retentionDays ?? lg);
 	(0, l.useEffect)(() => {
-		let e = ++je.current;
-		if (Me.current?.abort(), ct <= 0) {
-			b(null), S(null), Me.current = null;
+		let e = ++xe.current;
+		if (Se.current?.abort(), Ke <= 0) {
+			b(null), S(null), Se.current = null;
 			return;
 		}
 		let t = new AbortController();
-		return Me.current = t, X(`/api/rss/retention?days=${ct}`, { signal: t.signal }).then((n) => {
-			t.signal.aborted || e !== je.current || (b(n), S(null));
+		return Se.current = t, X(`/api/rss/retention?days=${Ke}`, { signal: t.signal }).then((n) => {
+			t.signal.aborted || e !== xe.current || (b(n), S(null));
 		}).catch((n) => {
-			J(n, t.signal) || e !== je.current || (b(null), S(qr(n, e)));
+			Ce(n, t.signal) || e !== xe.current || (b(null), S(qr(n, e)));
 		}).finally(() => {
-			e === je.current && (Me.current = null);
+			e === xe.current && (Se.current = null);
 		}), () => {
-			je.current += 1, t.abort();
+			xe.current += 1, t.abort();
 		};
-	}, [ct]);
-	async function lt() {
-		let e = me("automation", "정리 작업을 시작하는 중입니다.");
+	}, [Ke]);
+	async function qe() {
+		let e = se("automation", "정리 작업을 시작하는 중입니다.");
 		try {
-			if (await Z("/api/rss/retention/run", {}, { signal: e.controller.signal }), !he(e.operationId, e.controller)) return;
+			if (await Z("/api/rss/retention/run", {}, { signal: e.controller.signal }), !K(e.operationId, e.controller)) return;
 			q("automation", e.operationId, e.controller, "정리 작업을 시작했습니다. 진행 상황은 상단 작업 표시에서 확인합니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("automation", e.operationId, e.controller, _g(t, "정리를 시작하지 못했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("automation", e.operationId, e.controller, fg(t, "정리를 시작하지 못했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	(0, l.useEffect)(() => (at(), () => {
-		De.current += 1, Oe.current?.abort(), fe.current += 1, pe.current?.abort(), je.current += 1, Me.current?.abort(), Object.values(Ae.current).forEach((e) => e?.abort());
-	}), [at]), (0, l.useEffect)(() => {
-		let e = Pe[k] || {}, t = e.modelChoices || [];
-		P((n) => t.some((e) => e.value === n) ? n : t.some((t) => t.value === e.model) ? String(e.model || "") : t[0]?.value || ""), M("");
-	}, [k, Pe]), (0, l.useEffect)(() => {
-		let e = Le.find((e) => e.id === V) || Le[0], t = e?.modelChoices || [];
-		W((n) => t.some((e) => e.value === n) ? n : t.some((t) => t.value === e?.model) ? String(e?.model || "") : t[0]?.value || "");
-	}, [V, Le]);
-	function ut() {
-		let e = i?.agent?.enabled !== !1, t = i?.agent?.mode === "api" ? "api" : "cli";
-		R(e), B(t), M(""), _e("agent", "AI Agent 변경을 취소했습니다.");
+	(0, l.useEffect)(() => (Ue(), () => {
+		ye.current += 1, be.current?.abort(), ae.current += 1, oe.current?.abort(), xe.current += 1, Se.current?.abort();
+	}), [Ue]), (0, l.useEffect)(() => {
+		let e = we.find((e) => e.id === F) || we[0], t = e?.modelChoices || [];
+		R((n) => t.some((e) => e.value === n) ? n : t.some((t) => t.value === e?.model) ? String(e?.model || "") : t[0]?.value || "");
+	}, [F, we]);
+	function Je() {
+		let e = i?.agent?.enabled !== !1;
+		M(e), P("cli"), le("agent", "AI Agent 변경을 취소했습니다.");
 	}
-	function dt() {
-		let e = Oh(i?.llm?.provider), t = Pe[e] || {}, n = Ue, r = Le.find((e) => e.id === n) || Le[0];
-		A(e), P(kh(t.model, t.modelChoices)), H(n), W(kh(r?.model, r?.modelChoices)), I(Ye), _e("agent-model", "전역 모델 변경을 취소했습니다.");
+	function Ye() {
+		let e = ke, t = we.find((t) => t.id === e) || we[0];
+		I(e), R(Th(t?.model, t?.modelChoices)), A(Ne), le("agent-model", "전역 모델 변경을 취소했습니다.");
 	}
-	function ft() {
-		u(d), _e("task-policy", "작업별 변경을 취소했습니다.");
+	function Xe() {
+		u(d), le("task-policy", "작업별 변경을 취소했습니다.");
 	}
-	async function pt() {
-		if (!Ze) {
-			_e("agent", "변경 사항이 없습니다.");
+	async function Ze() {
+		if (!Fe) {
+			le("agent", "변경 사항이 없습니다.");
 			return;
 		}
-		let e = me("agent", "AI Agent 설정을 저장하는 중입니다.");
+		let e = se("agent", "AI Agent 설정을 저장하는 중입니다.");
 		try {
-			let t = await Z("/api/settings", {
-				agent: {
-					enabled: L,
-					mode: z
-				},
-				llm: j.trim() ? { providers: { [k]: { apiKey: j.trim() } } } : {}
-			}, { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
-			a(t), M(""), j.trim() && ce((e) => {
-				let t = { ...e };
-				return delete t[k], t;
-			}), q("agent", e.operationId, e.controller, L ? `AI Agent를 ${z === "cli" ? "LLM CLI" : "LLM API"} 모드로 저장했습니다.` : "AI Agent 생성을 비활성화했습니다.", "ok");
+			let t = await Z("/api/settings", { agent: {
+				enabled: j,
+				mode: N
+			} }, { signal: e.controller.signal });
+			if (!K(e.operationId, e.controller)) return;
+			a(t), q("agent", e.operationId, e.controller, j ? "AI Agent를 LLM CLI 모드로 저장했습니다." : "AI Agent 생성을 비활성화했습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("agent", e.operationId, e.controller, _g(t, "AI Agent 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("agent", e.operationId, e.controller, fg(t, "AI Agent 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	async function mt() {
-		if (Xe) {
-			_e("agent-model", "실행 방식 변경은 먼저 AI Agent 연동에서 저장하세요.");
+	async function Qe() {
+		if (Pe) {
+			le("agent-model", "실행 방식 변경은 먼저 AI Agent 연동에서 저장하세요.");
 			return;
 		}
-		if (!Qe) {
-			_e("agent-model", "변경 사항이 없습니다.");
+		if (!Ie) {
+			le("agent-model", "변경 사항이 없습니다.");
 			return;
 		}
-		let e = me("agent-model", "AI Agent 모델 설정을 저장하는 중입니다.");
+		let e = se("agent-model", "AI Agent 모델 설정을 저장하는 중입니다.");
 		try {
 			let t = {
-				agent: { mode: z },
-				llm: { reasoningEffort: F }
+				agent: { mode: N },
+				llm: { reasoningEffort: k }
 			};
-			z === "api" ? (t.llm.provider = k, t.llm.providers = { [k]: { model: N } }) : (t.agent.provider = V, t.agent.model = U);
-			let n = Z("/api/settings", t, { signal: e.controller.signal }), r = z === "cli" ? Z("/api/agent-bridge/settings", {
-				provider: V,
-				models: Object.fromEntries(Le.map((e) => [e.id, e.id === V ? U : e.model || ""]))
-			}, { signal: e.controller.signal }) : Promise.resolve(null), [i, o] = await Promise.all([n, r]);
-			if (!he(e.operationId, e.controller)) return;
-			a(i), I(String(i.llm?.reasoningEffort || F)), o && (s(o), window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: o }))), z === "api" && ce((e) => {
-				let t = { ...e };
-				return delete t[k], t;
-			}), q("agent-model", e.operationId, e.controller, "AI Agent 모델 설정을 저장했습니다.", "ok");
+			t.agent.provider = F, t.agent.model = L;
+			let n = Z("/api/settings", t, { signal: e.controller.signal }), r = Z("/api/agent-bridge/settings", {
+				provider: F,
+				models: Object.fromEntries(we.map((e) => [e.id, e.id === F ? L : e.model || ""]))
+			}, { signal: e.controller.signal }), [i, o] = await Promise.all([n, r]);
+			if (!K(e.operationId, e.controller)) return;
+			a(i), A(String(i.llm?.reasoningEffort || k)), o && (s(o), window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: o }))), q("agent-model", e.operationId, e.controller, "AI Agent 모델 설정을 저장했습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("agent-model", e.operationId, e.controller, _g(t, "AI Agent 모델 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("agent-model", e.operationId, e.controller, fg(t, "AI Agent 모델 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	async function ht() {
-		if (!He) {
-			_e("task-policy", "변경 사항이 없습니다.");
+	async function $e() {
+		if (!Oe) {
+			le("task-policy", "변경 사항이 없습니다.");
 			return;
 		}
-		let e = me("task-policy", "작업별 모델 설정을 저장하는 중입니다.");
+		let e = se("task-policy", "작업별 모델 설정을 저장하는 중입니다.");
 		try {
-			let t = await Z("/api/settings/task-policies", Uh(c), { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
-			u(Vh(t)), f(t), q("task-policy", e.operationId, e.controller, "작업별 모델 설정을 저장했습니다.", "ok");
+			let t = await Z("/api/settings/task-policies", Rh(c), { signal: e.controller.signal });
+			if (!K(e.operationId, e.controller)) return;
+			u(Ih(t)), f(t), q("task-policy", e.operationId, e.controller, "작업별 모델 설정을 저장했습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("task-policy", e.operationId, e.controller, _g(t, "작업별 모델 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("task-policy", e.operationId, e.controller, fg(t, "작업별 모델 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	async function gt(e) {
-		Ae.current[e]?.abort();
-		let t = (ke.current[e] || 0) + 1;
-		if (ke.current[e] = t, !Pe[e]?.hasApiKey) {
-			ce((t) => ({
-				...t,
-				[e]: {
-					status: "missing_key",
-					available: !1,
-					message: "API 키를 먼저 입력하세요",
-					diagnostic: null
-				}
-			}));
+	async function et() {
+		if (!Le) {
+			le("api", "변경 사항이 없습니다.");
 			return;
 		}
-		let n = new AbortController();
-		Ae.current[e] = n, ce((t) => ({
-			...t,
-			[e]: { checking: !0 }
-		}));
-		try {
-			let r = await Z(`/api/settings/llm/test/${encodeURIComponent(e)}`, {}, { signal: n.signal });
-			if (n.signal.aborted || ke.current[e] !== t) return;
-			ce((t) => ({
-				...t,
-				[e]: r
-			}));
-		} catch (r) {
-			if (J(r, n.signal) || ke.current[e] !== t) return;
-			ce((n) => ({
-				...n,
-				[e]: {
-					status: "network_error",
-					available: !1,
-					message: _g(r, "연결 확인 실패"),
-					diagnostic: qr(r, t)
-				}
-			}));
-		} finally {
-			ke.current[e] === t && (Ae.current[e] = null);
-		}
-	}
-	async function _t() {
-		if (!$e) {
-			_e("api", "변경 사항이 없습니다.");
-			return;
-		}
-		let e = me("api", "외부 데이터 API 설정을 저장하는 중입니다.");
+		let e = se("api", "외부 데이터 API 설정을 저장하는 중입니다.");
 		try {
 			let t = await Z("/api/settings", {
-				fred: { apiKey: ee.fred.trim() },
-				bok: { apiKey: ee.bok.trim() },
-				dart: { apiKey: ee.dart.trim() },
+				fred: { apiKey: z.fred.trim() },
+				bok: { apiKey: z.bok.trim() },
+				dart: { apiKey: z.dart.trim() },
 				toss: {
-					enabled: G.enabled,
-					clientId: G.clientId.trim(),
-					clientSecret: G.clientSecret.trim()
+					enabled: V.enabled,
+					clientId: V.clientId.trim(),
+					clientSecret: V.clientSecret.trim()
 				}
 			}, { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
-			a(t), te({
+			if (!K(e.operationId, e.controller)) return;
+			a(t), B({
 				fred: "",
 				bok: "",
 				dart: ""
-			}), ne({
+			}), H({
 				enabled: !!t.toss?.enabled,
 				clientId: "",
 				clientSecret: ""
 			}), q("api", e.operationId, e.controller, "외부 데이터 API 설정을 저장했습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("api", e.operationId, e.controller, _g(t, "API 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("api", e.operationId, e.controller, fg(t, "API 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	async function vt() {
-		if (!et) {
-			_e("notion", "변경 사항이 없습니다.");
+	async function tt() {
+		if (!Re) {
+			le("notion", "변경 사항이 없습니다.");
 			return;
 		}
-		let e = me("notion", "Notion 설정을 저장하는 중입니다.");
+		let e = se("notion", "Notion 설정을 저장하는 중입니다.");
 		try {
 			let t = await Z("/api/settings", { notion: {
-				token: re.token.trim(),
-				dbId: re.dbId.trim()
+				token: U.token.trim(),
+				dbId: U.dbId.trim()
 			} }, { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
-			a(t), ie({
+			if (!K(e.operationId, e.controller)) return;
+			a(t), W({
 				token: "",
 				dbId: t.notion?.dbId || ""
 			}), q("notion", e.operationId, e.controller, "Notion 설정을 저장했습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("notion", e.operationId, e.controller, _g(t, "Notion 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("notion", e.operationId, e.controller, fg(t, "Notion 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	async function yt() {
-		if (!tt) {
-			_e("obsidian", "변경 사항이 없습니다.");
+	async function nt() {
+		if (!ze) {
+			le("obsidian", "변경 사항이 없습니다.");
 			return;
 		}
-		let e = me("obsidian", "Obsidian 경로를 저장하는 중입니다.");
+		let e = se("obsidian", "Obsidian 경로를 저장하는 중입니다.");
 		try {
-			let t = await Z("/api/obsidian/settings", { vaultPath: ae.trim() }, { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
-			E(t), oe(t.vaultPath || ae), q("obsidian", e.operationId, e.controller, t.vaultPath ? "Obsidian 경로를 저장했습니다." : "Vault 경로를 입력하세요.", "ok");
+			let t = await Z("/api/obsidian/settings", { vaultPath: ee.trim() }, { signal: e.controller.signal });
+			if (!K(e.operationId, e.controller)) return;
+			E(t), te(t.vaultPath || ee), q("obsidian", e.operationId, e.controller, t.vaultPath ? "Obsidian 경로를 저장했습니다." : "Vault 경로를 입력하세요.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("obsidian", e.operationId, e.controller, _g(t, "Obsidian 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("obsidian", e.operationId, e.controller, fg(t, "Obsidian 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	async function bt() {
-		if (!nt) {
-			_e("automation", "변경 사항이 없습니다.");
+	async function rt() {
+		if (!Be) {
+			le("automation", "변경 사항이 없습니다.");
 			return;
 		}
-		let e = me("automation", "자동화 설정을 저장하는 중입니다.");
+		let e = se("automation", "자동화 설정을 저장하는 중입니다.");
 		try {
-			let t = await Z("/api/automation/settings", ng(p), { signal: e.controller.signal });
-			if (!he(e.operationId, e.controller)) return;
-			m(ng(t)), g(ng(t)), q("automation", e.operationId, e.controller, "자동화 설정을 저장했습니다.", "ok");
+			let t = await Z("/api/automation/settings", Zh(p), { signal: e.controller.signal });
+			if (!K(e.operationId, e.controller)) return;
+			m(Zh(t)), g(Zh(t)), q("automation", e.operationId, e.controller, "자동화 설정을 저장했습니다.", "ok");
 		} catch (t) {
-			if (!he(e.operationId, e.controller) || J(t, e.controller.signal)) return;
-			q("automation", e.operationId, e.controller, _g(t, "자동화 설정 저장에 실패했습니다."), "error", t);
+			if (!K(e.operationId, e.controller) || Ce(t, e.controller.signal)) return;
+			q("automation", e.operationId, e.controller, fg(t, "자동화 설정 저장에 실패했습니다."), "error", t);
 		} finally {
-			ge(e.operationId, e.controller);
+			ce(e.operationId, e.controller);
 		}
 	}
-	let xt = (0, l.useMemo)(() => Eh.map((e) => {
-		let t = Pe[e] || {}, n = se[e], r = n?.checking;
-		return {
-			providerId: e,
-			row: t,
-			label: r ? "확인 중" : n?.available ? "사용 가능" : n ? "확인 실패" : t.hasApiKey ? "확인 필요" : "키 없음",
-			className: n?.available ? "ready" : r || n ? "warn" : "",
-			detail: n?.message || `${t.model || "모델 미설정"} · ${t.hasApiKey ? "저장된 키가 있습니다." : "API Key를 저장하세요."}`,
-			checkedAt: qm(n?.checkedAt),
-			diagnostic: n?.diagnostic || null
-		};
-	}), [se, Pe]);
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "react-settings-route",
 		"data-settings-route": !0,
@@ -29233,34 +29073,34 @@ function Ag() {
 				actions: /* @__PURE__ */ (0, Q.jsx)("button", {
 					className: "btn",
 					type: "button",
-					onClick: () => at(!0, !0),
-					disabled: K === "load",
-					children: K === "load" ? "불러오는 중" : "새로고침"
+					onClick: () => Ue(!0, !0),
+					disabled: G === "load",
+					children: G === "load" ? "불러오는 중" : "새로고침"
 				})
 			}),
 			/* @__PURE__ */ (0, Q.jsx)("div", {
 				className: "segment settings-tabs",
 				role: "group",
 				"aria-label": "설정 하위 탭",
-				children: Th.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
+				children: wh.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
 					type: "button",
 					"aria-pressed": n === e.id,
 					onClick: () => r(e.id),
 					children: e.label
 				}, e.id))
 			}),
-			ve && /* @__PURE__ */ (0, Q.jsx)("p", {
+			ue && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "react-dashboard-error",
-				children: ve
+				children: ue
 			}),
-			be && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: be }),
-			Y && /* @__PURE__ */ (0, Q.jsx)("p", {
+			fe && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: fe }),
+			J && /* @__PURE__ */ (0, Q.jsx)("p", {
 				className: "react-dashboard-error",
 				"data-qa": "settings-market-scope-read-error",
 				role: "alert",
-				children: Y.message
+				children: J.message
 			}),
-			Y && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: Y.diagnostic }),
+			J && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: J.diagnostic }),
 			n === "ai" ? /* @__PURE__ */ (0, Q.jsxs)("div", {
 				id: "settings-ai",
 				className: "sub-tab-panel active",
@@ -29270,7 +29110,7 @@ function Ag() {
 					children: [
 						/* @__PURE__ */ (0, Q.jsx)("div", {
 							className: "input-panel-header settings-agent-header",
-							children: /* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "AI Agent 연동" }), /* @__PURE__ */ (0, Q.jsx)("p", { children: "AI Agent 사용 여부와 실행 경로, API Key·CLI 연결 상태를 관리합니다." })] })
+							children: /* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "AI Agent 연동" }), /* @__PURE__ */ (0, Q.jsx)("p", { children: "AI Agent 사용 여부와 CLI 연결 상태를 관리합니다." })] })
 						}),
 						/* @__PURE__ */ (0, Q.jsx)("div", {
 							className: "settings-grid",
@@ -29280,146 +29120,71 @@ function Ag() {
 									/* @__PURE__ */ (0, Q.jsx)("span", { children: "실행 방식" }),
 									/* @__PURE__ */ (0, Q.jsxs)("div", {
 										className: "settings-agent-mode-row",
-										children: [/* @__PURE__ */ (0, Q.jsx)(Mh, {
+										children: [/* @__PURE__ */ (0, Q.jsx)(Oh, {
 											ariaLabel: "AI Agent 사용",
-											checked: L,
-											onChange: R,
+											checked: j,
+											onChange: M,
 											compact: !0
-										}), /* @__PURE__ */ (0, Q.jsxs)("div", {
+										}), /* @__PURE__ */ (0, Q.jsx)("div", {
 											className: "segment",
 											role: "group",
 											"aria-label": "AI Agent 실행 방식",
-											children: [/* @__PURE__ */ (0, Q.jsx)("button", {
-												"aria-pressed": z === "cli",
+											children: /* @__PURE__ */ (0, Q.jsx)("button", {
+												"aria-pressed": N === "cli",
 												type: "button",
-												onClick: () => B("cli"),
+												onClick: () => P("cli"),
 												children: "LLM CLI"
-											}), /* @__PURE__ */ (0, Q.jsx)("button", {
-												"aria-pressed": z === "api",
-												type: "button",
-												onClick: () => B("api"),
-												children: "LLM API"
-											})]
+											})
 										})]
 									}),
-									!L && /* @__PURE__ */ (0, Q.jsx)("p", {
+									!j && /* @__PURE__ */ (0, Q.jsx)("p", {
 										className: "settings-hint",
 										children: "AI Agent가 꺼져 있어요. 켜면 아래 설정을 쓸 수 있습니다."
 									})
 								]
 							})
 						}),
+						i?.agent?.mode === "api" && /* @__PURE__ */ (0, Q.jsx)("p", {
+							role: "status",
+							className: "settings-hint",
+							children: "LLM API 지원이 종료되었습니다. CLI 연결을 확인한 뒤 AI Agent 연동을 저장하거나 AI를 꺼 주세요."
+						}),
 						/* @__PURE__ */ (0, Q.jsx)("fieldset", {
 							className: "settings-agent-controls",
-							disabled: !L,
-							children: z === "cli" ? /* @__PURE__ */ (0, Q.jsx)(Q.Fragment, { children: /* @__PURE__ */ (0, Q.jsx)(Ym, {
-								adapters: Le,
+							disabled: !j,
+							children: /* @__PURE__ */ (0, Q.jsx)(Q.Fragment, { children: /* @__PURE__ */ (0, Q.jsx)(Jm, {
+								adapters: we,
 								onSettings: (e) => s((t) => ({
 									...t || {},
 									...e
 								}))
-							}) }) : /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
-								/* @__PURE__ */ (0, Q.jsxs)("div", {
-									className: "field",
-									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "연결할 API 제공자" }), /* @__PURE__ */ (0, Q.jsxs)("p", {
-										className: "section-subtitle",
-										children: [Ie.name, " · 제공자와 모델은 아래 전역 모델 설정에서 선택합니다."]
-									})]
-								}),
-								/* @__PURE__ */ (0, Q.jsx)("div", {
-									className: "settings-grid",
-									children: /* @__PURE__ */ (0, Q.jsxs)("label", {
-										className: "field",
-										children: [/* @__PURE__ */ (0, Q.jsxs)("span", { children: [Ie.name, " API Key"] }), /* @__PURE__ */ (0, Q.jsx)("input", {
-											value: j,
-											onChange: (e) => M(e.currentTarget.value),
-											type: "password",
-											autoComplete: "off",
-											placeholder: Fe.hasApiKey ? `${Fe.apiKeyMasked} 저장됨` : Ie.key
-										})]
-									})
-								}),
-								/* @__PURE__ */ (0, Q.jsx)("div", {
-									className: "cli-provider-list",
-									"aria-live": "polite",
-									children: xt.map(({ providerId: e, row: t, label: n, className: r, detail: i, checkedAt: a, diagnostic: o }) => /* @__PURE__ */ (0, Q.jsxs)("div", {
-										className: "cli-provider-row",
-										children: [/* @__PURE__ */ (0, Q.jsxs)("div", {
-											className: "cli-provider-main",
-											children: [
-												/* @__PURE__ */ (0, Q.jsxs)("div", {
-													className: "cli-provider-head",
-													children: [
-														/* @__PURE__ */ (0, Q.jsx)("strong", { children: t.label || Dh[e].name }),
-														/* @__PURE__ */ (0, Q.jsx)("span", {
-															className: `cli-chip status-chip ${r}`,
-															children: n
-														}),
-														a && /* @__PURE__ */ (0, Q.jsxs)("span", {
-															className: "cli-provider-checked",
-															children: [a, " 확인"]
-														})
-													]
-												}),
-												/* @__PURE__ */ (0, Q.jsx)("div", {
-													className: "cli-provider-meta",
-													children: i
-												}),
-												o && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: o })
-											]
-										}), /* @__PURE__ */ (0, Q.jsxs)("div", {
-											className: "cli-provider-actions",
-											children: [/* @__PURE__ */ (0, Q.jsx)("button", {
-												className: "btn",
-												type: "button",
-												disabled: !!se[e]?.checking,
-												onClick: () => gt(e),
-												children: "연결 확인"
-											}), t.setupUrl && /* @__PURE__ */ (0, Q.jsx)("a", {
-												className: "btn",
-												href: t.setupUrl,
-												target: "_blank",
-												rel: "noreferrer",
-												children: "콘솔 열기"
-											})]
-										})]
-									}, e))
-								}),
-								/* @__PURE__ */ (0, Q.jsxs)("p", {
-									className: "cli-setup-note",
-									children: [
-										"이 앱은 키가 살아 있는지만 확인합니다. ",
-										/* @__PURE__ */ (0, Q.jsx)("b", { children: "사용량과 잔액은 제공사 콘솔" }),
-										"에서 보세요."
-									]
-								})
-							] })
+							}) })
 						}),
 						/* @__PURE__ */ (0, Q.jsxs)("div", {
 							className: "filter-actions settings-actions",
 							children: [
-								Ze && !K && /* @__PURE__ */ (0, Q.jsx)("span", {
+								Fe && !G && /* @__PURE__ */ (0, Q.jsx)("span", {
 									className: "settings-dirty-hint",
 									children: "저장 안 된 변경"
 								}),
 								/* @__PURE__ */ (0, Q.jsx)("button", {
-									className: Ze && !K ? "btn btn--primary" : "btn",
+									className: Fe && !G ? "btn btn--primary" : "btn",
 									type: "button",
-									onClick: pt,
-									disabled: K !== "",
+									onClick: Ze,
+									disabled: G !== "",
 									children: "AI Agent 연동 저장"
 								}),
 								/* @__PURE__ */ (0, Q.jsx)("button", {
 									className: "btn",
 									type: "button",
-									onClick: ut,
-									disabled: !Ze || K !== "",
+									onClick: Je,
+									disabled: !Fe || G !== "",
 									children: "AI Agent 변경 취소"
 								})
 							]
 						}),
-						/* @__PURE__ */ (0, Q.jsx)(gg, {
-							note: ue,
+						/* @__PURE__ */ (0, Q.jsx)(dg, {
+							note: re,
 							panel: "agent"
 						})
 					]
@@ -29431,42 +29196,36 @@ function Ag() {
 							className: "input-panel-header",
 							children: /* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "AI Agent 모델 설정" }), /* @__PURE__ */ (0, Q.jsx)("p", { children: "전역 모델을 먼저 정하고, 아래에서 작업별 모델을 따로 지정할 수 있습니다." })] })
 						}),
-						/* @__PURE__ */ (0, Q.jsx)(tg, {
-							mode: z,
-							provider: k,
-							providerModel: N,
-							agentProvider: V,
-							agentModel: U,
-							selectedProvider: Fe,
-							selectedAgent: Re,
-							globalReasoningEffort: F,
-							reasoningChoices: Be,
-							onProviderChange: (e) => A(e),
-							onProviderModelChange: (e) => P(e),
-							onAgentProviderChange: (e) => H(e),
-							onAgentModelChange: (e) => W(e),
-							onReasoningChange: I,
-							onSave: mt,
-							onCancel: dt,
-							canSave: Qe && K === "",
-							canCancel: Qe && K === "",
-							busy: K !== "",
-							note: ue
+						/* @__PURE__ */ (0, Q.jsx)(Xh, {
+							mode: N,
+							agentProvider: F,
+							agentModel: L,
+							selectedAgent: Te,
+							globalReasoningEffort: k,
+							reasoningChoices: Ee,
+							onAgentProviderChange: (e) => I(e),
+							onAgentModelChange: (e) => R(e),
+							onReasoningChange: A,
+							onSave: Qe,
+							onCancel: Ye,
+							canSave: Ie && G === "",
+							canCancel: Ie && G === "",
+							busy: G !== "",
+							note: re
 						}),
-						/* @__PURE__ */ (0, Q.jsx)(eg, {
+						/* @__PURE__ */ (0, Q.jsx)(Yh, {
 							policy: c,
-							globalEnabled: L,
-							globalConfig: Ve,
-							providers: Pe,
-							adapters: Le,
+							globalEnabled: j,
+							globalConfig: De,
+							adapters: we,
 							onChange: u,
-							onSave: ht,
-							onCancel: ft,
-							canCancel: He && K === "",
-							canSave: He && K === "",
-							dirty: He,
-							busy: K !== "",
-							note: ue
+							onSave: $e,
+							onCancel: Xe,
+							canCancel: Oe && G === "",
+							canSave: Oe && G === "",
+							dirty: Oe,
+							busy: G !== "",
+							note: re
 						})
 					]
 				})]
@@ -29486,9 +29245,9 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "FRED API Key" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										value: ee.fred,
-										onChange: (e) => te({
-											...ee,
+										value: z.fred,
+										onChange: (e) => B({
+											...z,
 											fred: e.currentTarget.value
 										}),
 										type: "password",
@@ -29499,7 +29258,7 @@ function Ag() {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "FRED 상태" }), /* @__PURE__ */ (0, Q.jsx)("p", {
 										className: "section-subtitle",
-										children: Ah(i?.fred?.hasApiKey, i?.fred?.apiKeyMasked, "딥 리서치 미국 경제지표용 FRED API 키가 없습니다.", "FRED API 키")
+										children: Eh(i?.fred?.hasApiKey, i?.fred?.apiKeyMasked, "딥 리서치 미국 경제지표용 FRED API 키가 없습니다.", "FRED API 키")
 									})]
 								})]
 							}),
@@ -29508,9 +29267,9 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "BOK API Key" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										value: ee.bok,
-										onChange: (e) => te({
-											...ee,
+										value: z.bok,
+										onChange: (e) => B({
+											...z,
 											bok: e.currentTarget.value
 										}),
 										type: "password",
@@ -29521,7 +29280,7 @@ function Ag() {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "BOK 상태" }), /* @__PURE__ */ (0, Q.jsx)("p", {
 										className: "section-subtitle",
-										children: Ah(i?.bok?.hasApiKey, i?.bok?.apiKeyMasked, "딥 리서치 한국 경제지표용 BOK API 키가 없습니다.", "BOK API 키")
+										children: Eh(i?.bok?.hasApiKey, i?.bok?.apiKeyMasked, "딥 리서치 한국 경제지표용 BOK API 키가 없습니다.", "BOK API 키")
 									})]
 								})]
 							}),
@@ -29530,9 +29289,9 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "DART API Key" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										value: ee.dart,
-										onChange: (e) => te({
-											...ee,
+										value: z.dart,
+										onChange: (e) => B({
+											...z,
 											dart: e.currentTarget.value
 										}),
 										type: "password",
@@ -29543,7 +29302,7 @@ function Ag() {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "DART 상태" }), /* @__PURE__ */ (0, Q.jsx)("p", {
 										className: "section-subtitle",
-										children: Ah(i?.dart?.hasApiKey, i?.dart?.apiKeyMasked, "국내 기업 분석용 DART API 키가 없습니다.", "DART API 키")
+										children: Eh(i?.dart?.hasApiKey, i?.dart?.apiKeyMasked, "국내 기업 분석용 DART API 키가 없습니다.", "DART API 키")
 									})]
 								})]
 							}),
@@ -29560,11 +29319,11 @@ function Ag() {
 										}), /* @__PURE__ */ (0, Q.jsx)("p", {
 											className: "settings-hint",
 											children: "실시간 시세와 Portfolio 보유 내역 가져오기에 사용합니다. 주문은 보내지 않습니다."
-										})] }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
+										})] }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
 											ariaLabel: "Toss Open API 사용",
-											checked: G.enabled,
-											onChange: (e) => ne({
-												...G,
+											checked: V.enabled,
+											onChange: (e) => H({
+												...V,
 												enabled: e
 											}),
 											compact: !0
@@ -29575,27 +29334,27 @@ function Ag() {
 										children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 											className: "field",
 											children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "Toss Client ID" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-												value: G.clientId,
-												onChange: (e) => ne({
-													...G,
+												value: V.clientId,
+												onChange: (e) => H({
+													...V,
 													clientId: e.currentTarget.value
 												}),
 												type: "password",
 												autoComplete: "off",
-												disabled: !G.enabled,
+												disabled: !V.enabled,
 												placeholder: i?.toss?.hasClientId ? `${i.toss.clientIdMasked} 저장됨` : "Toss Client ID"
 											})]
 										}), /* @__PURE__ */ (0, Q.jsxs)("label", {
 											className: "field",
 											children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "Toss Client Secret" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-												value: G.clientSecret,
-												onChange: (e) => ne({
-													...G,
+												value: V.clientSecret,
+												onChange: (e) => H({
+													...V,
 													clientSecret: e.currentTarget.value
 												}),
 												type: "password",
 												autoComplete: "new-password",
-												disabled: !G.enabled,
+												disabled: !V.enabled,
 												placeholder: i?.toss?.hasClientSecret ? `${i.toss.clientSecretMasked} 저장됨` : "Toss Client Secret"
 											})]
 										})]
@@ -29604,7 +29363,7 @@ function Ag() {
 										className: "settings-hint",
 										role: "status",
 										"aria-live": "polite",
-										children: jh(i?.toss, G)
+										children: Dh(i?.toss, V)
 									}),
 									/* @__PURE__ */ (0, Q.jsx)("p", {
 										className: "settings-hint",
@@ -29614,19 +29373,19 @@ function Ag() {
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "filter-actions settings-actions",
-								children: [$e && !K && /* @__PURE__ */ (0, Q.jsx)("span", {
+								children: [Le && !G && /* @__PURE__ */ (0, Q.jsx)("span", {
 									className: "settings-dirty-hint",
 									children: "저장 안 된 변경"
 								}), /* @__PURE__ */ (0, Q.jsx)("button", {
-									className: $e && !K ? "btn btn--primary" : "btn",
+									className: Le && !G ? "btn btn--primary" : "btn",
 									type: "button",
-									onClick: _t,
-									disabled: K === "api",
+									onClick: et,
+									disabled: G === "api",
 									children: "API 설정 저장"
 								})]
 							}),
-							/* @__PURE__ */ (0, Q.jsx)(gg, {
-								note: ue,
+							/* @__PURE__ */ (0, Q.jsx)(dg, {
+								note: re,
 								panel: "api"
 							})
 						]
@@ -29643,9 +29402,9 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "Notion 통합 토큰" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										value: re.token,
-										onChange: (e) => ie({
-											...re,
+										value: U.token,
+										onChange: (e) => W({
+											...U,
 											token: e.currentTarget.value
 										}),
 										type: "password",
@@ -29665,9 +29424,9 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "데이터베이스 ID" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										value: re.dbId,
-										onChange: (e) => ie({
-											...re,
+										value: U.dbId,
+										onChange: (e) => W({
+											...U,
 											dbId: e.currentTarget.value
 										}),
 										placeholder: "32자리 Database ID"
@@ -29682,19 +29441,19 @@ function Ag() {
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "filter-actions settings-actions",
-								children: [et && !K && /* @__PURE__ */ (0, Q.jsx)("span", {
+								children: [Re && !G && /* @__PURE__ */ (0, Q.jsx)("span", {
 									className: "settings-dirty-hint",
 									children: "저장 안 된 변경"
 								}), /* @__PURE__ */ (0, Q.jsx)("button", {
-									className: et && !K ? "btn btn--primary" : "btn",
+									className: Re && !G ? "btn btn--primary" : "btn",
 									type: "button",
-									onClick: vt,
-									disabled: K === "notion",
+									onClick: tt,
+									disabled: G === "notion",
 									children: "Notion 설정 저장"
 								})]
 							}),
-							/* @__PURE__ */ (0, Q.jsx)(gg, {
-								note: ue,
+							/* @__PURE__ */ (0, Q.jsx)(dg, {
+								note: re,
 								panel: "notion"
 							})
 						]
@@ -29711,8 +29470,8 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("label", {
 									className: "field",
 									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "Vault 폴더 경로" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										value: ae,
-										onChange: (e) => oe(e.currentTarget.value),
+										value: ee,
+										onChange: (e) => te(e.currentTarget.value),
 										type: "text",
 										placeholder: "C:\\Users\\username\\Documents\\MyVault"
 									})]
@@ -29726,19 +29485,19 @@ function Ag() {
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "filter-actions settings-actions",
-								children: [tt && !K && /* @__PURE__ */ (0, Q.jsx)("span", {
+								children: [ze && !G && /* @__PURE__ */ (0, Q.jsx)("span", {
 									className: "settings-dirty-hint",
 									children: "저장 안 된 변경"
 								}), /* @__PURE__ */ (0, Q.jsx)("button", {
-									className: tt && !K ? "btn btn--primary" : "btn",
+									className: ze && !G ? "btn btn--primary" : "btn",
 									type: "button",
-									onClick: yt,
-									disabled: K === "obsidian",
+									onClick: nt,
+									disabled: G === "obsidian",
 									children: "Obsidian 설정 저장"
 								})]
 							}),
-							/* @__PURE__ */ (0, Q.jsx)(gg, {
-								note: ue,
+							/* @__PURE__ */ (0, Q.jsx)(dg, {
+								note: re,
 								panel: "obsidian"
 							})
 						]
@@ -29800,8 +29559,8 @@ function Ag() {
 							})
 						]
 					}),
-					/* @__PURE__ */ (0, Q.jsx)(Dg, { readIssue: Y }),
-					/* @__PURE__ */ (0, Q.jsx)(kg, {}),
+					/* @__PURE__ */ (0, Q.jsx)(Sg, { readIssue: J }),
+					/* @__PURE__ */ (0, Q.jsx)(wg, {}),
 					/* @__PURE__ */ (0, Q.jsxs)("section", {
 						className: "settings-panel input-panel",
 						children: [
@@ -29809,13 +29568,13 @@ function Ag() {
 								className: "input-panel-header",
 								children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "자동화" }), /* @__PURE__ */ (0, Q.jsx)("p", { children: "수집, 중기 시장 정리, 브리핑 생성을 각각 독립 루틴으로 관리합니다." })]
 							}),
-							Se && /* @__PURE__ */ (0, Q.jsx)("p", {
+							me && /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "react-dashboard-error",
 								"data-qa": "settings-automation-runs-read-error",
 								role: "alert",
-								children: Se.message
+								children: me.message
 							}),
-							Se && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: Se.diagnostic }),
+							me && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: me.diagnostic }),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "automation-routines",
 								children: [
@@ -29828,7 +29587,7 @@ function Ag() {
 													/* @__PURE__ */ (0, Q.jsx)("span", { children: "RSS Collection" }),
 													/* @__PURE__ */ (0, Q.jsx)("strong", { children: "RSS 수집" }),
 													/* @__PURE__ */ (0, Q.jsx)("p", { children: "뉴스 피드를 정해진 간격으로 가져와 research inbox와 인덱스에 반영합니다." })
-												] }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
+												] }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
 													ariaLabel: "RSS 자동 수집",
 													checked: !!p.rss?.enabled,
 													onChange: (e) => m({
@@ -29874,7 +29633,7 @@ function Ag() {
 											}),
 											/* @__PURE__ */ (0, Q.jsxs)("div", {
 												className: "automation-inline-switch",
-												children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "기사 전문 저장 (무료 공개 본문만, 로컬 보관용)" }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
+												children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "기사 전문 저장 (무료 공개 본문만, 로컬 보관용)" }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
 													ariaLabel: "기사 전문 저장",
 													checked: p.rss?.saveFullText !== !1,
 													onChange: (e) => m({
@@ -29890,7 +29649,7 @@ function Ag() {
 											/* @__PURE__ */ (0, Q.jsxs)("label", {
 												className: "field",
 												children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "보관 기간" }), /* @__PURE__ */ (0, Q.jsx)("select", {
-													value: String(ct),
+													value: String(Ke),
 													onChange: (e) => m({
 														...p,
 														rss: {
@@ -29898,15 +29657,15 @@ function Ag() {
 															retentionDays: Number(e.currentTarget.value)
 														}
 													}),
-													children: hg.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+													children: ug.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 														value: e.value,
 														children: e.label
 													}, e.value))
 												})]
 											}),
-											/* @__PURE__ */ (0, Q.jsx)(Sg, {
+											/* @__PURE__ */ (0, Q.jsx)(_g, {
 												preview: y,
-												days: ct,
+												days: Ke,
 												unavailable: !!x
 											}),
 											x && /* @__PURE__ */ (0, Q.jsx)(Jr, { diagnostic: x }),
@@ -29915,17 +29674,17 @@ function Ag() {
 												children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 													type: "button",
 													className: "btn",
-													disabled: K === "retention",
-													onClick: lt,
-													children: K === "retention" ? "정리하는 중…" : "지금 정리"
+													disabled: G === "retention",
+													onClick: qe,
+													children: G === "retention" ? "정리하는 중…" : "지금 정리"
 												}), /* @__PURE__ */ (0, Q.jsx)("span", {
 													className: "settings-hint",
-													children: xg(y?.reclaimableBytes)
+													children: gg(y?.reclaimableBytes)
 												})]
 											}),
-											/* @__PURE__ */ (0, Q.jsx)(Tg, {
-												run: rt.rss,
-												unavailable: !Te
+											/* @__PURE__ */ (0, Q.jsx)(bg, {
+												run: Ve.rss,
+												unavailable: !_e
 											})
 										]
 									}),
@@ -29938,7 +29697,7 @@ function Ag() {
 													/* @__PURE__ */ (0, Q.jsx)("span", { children: "Market Memory" }),
 													/* @__PURE__ */ (0, Q.jsx)("strong", { children: "시장 메모리 업데이트" }),
 													/* @__PURE__ */ (0, Q.jsx)("p", { children: "최근 RSS와 시장 자료를 중기 시장 판단용 컨텍스트로 정리합니다." })
-												] }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
+												] }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
 													ariaLabel: "Market Memory 자동 정리",
 													checked: !!p.marketMemory?.enabled,
 													onChange: (e) => m({
@@ -29984,7 +29743,7 @@ function Ag() {
 											}),
 											/* @__PURE__ */ (0, Q.jsxs)("div", {
 												className: "automation-inline-switch",
-												children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "RSS 수집 직후에도 정리" }), /* @__PURE__ */ (0, Q.jsx)(Mh, {
+												children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "RSS 수집 직후에도 정리" }), /* @__PURE__ */ (0, Q.jsx)(Oh, {
 													ariaLabel: "RSS 수집 직후 Market Memory 정리",
 													checked: !!p.marketMemory?.runAfterRss,
 													onChange: (e) => m({
@@ -29997,9 +29756,9 @@ function Ag() {
 													compact: !0
 												})]
 											}),
-											/* @__PURE__ */ (0, Q.jsx)(Tg, {
-												run: rt.marketMemory,
-												unavailable: !Te
+											/* @__PURE__ */ (0, Q.jsx)(bg, {
+												run: Ve.marketMemory,
+												unavailable: !_e
 											})
 										]
 									}),
@@ -30014,11 +29773,11 @@ function Ag() {
 													/* @__PURE__ */ (0, Q.jsx)("p", { children: "예약한 시각에 그 시장의 일일 브리핑을 만듭니다. 마감 시각이 시장마다 달라 여러 개를 둘 수 있습니다." })
 												] })
 											}),
-											/* @__PURE__ */ (0, Q.jsx)(wg, {
+											/* @__PURE__ */ (0, Q.jsx)(yg, {
 												schedules: p.briefingSchedules || [],
 												watched: C,
-												runsById: it,
-												runsAvailable: Te,
+												runsById: He,
+												runsAvailable: _e,
 												onChange: (e) => m({
 													...p,
 													briefingSchedules: e
@@ -30032,7 +29791,7 @@ function Ag() {
 														...p,
 														missedRuns: { catchUpHours: e.currentTarget.value }
 													}),
-													children: pg.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
+													children: cg.map((e) => /* @__PURE__ */ (0, Q.jsx)("option", {
 														value: e.value,
 														children: e.label
 													}, e.value))
@@ -30044,19 +29803,19 @@ function Ag() {
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "filter-actions settings-actions",
-								children: [nt && !K && /* @__PURE__ */ (0, Q.jsx)("span", {
+								children: [Be && !G && /* @__PURE__ */ (0, Q.jsx)("span", {
 									className: "settings-dirty-hint",
 									children: "저장 안 된 변경"
 								}), /* @__PURE__ */ (0, Q.jsx)("button", {
-									className: nt && !K ? "btn btn--primary" : "btn",
+									className: Be && !G ? "btn btn--primary" : "btn",
 									type: "button",
-									onClick: bt,
-									disabled: K === "automation",
+									onClick: rt,
+									disabled: G === "automation",
 									children: "자동화 저장"
 								})]
 							}),
-							/* @__PURE__ */ (0, Q.jsx)(gg, {
-								note: ue,
+							/* @__PURE__ */ (0, Q.jsx)(dg, {
+								note: re,
 								panel: "automation"
 							})
 						]
@@ -30069,9 +29828,9 @@ function Ag() {
 								children: [/* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "캐시 관리" }), /* @__PURE__ */ (0, Q.jsx)("p", { children: "기업 분석용 SEC/DART per-company 캐시 중 오래된 항목만 정리합니다. 공통 ticker/corpCode 목록은 삭제하지 않습니다." })] }), /* @__PURE__ */ (0, Q.jsx)("button", {
 									className: "btn",
 									type: "button",
-									onClick: ot,
-									disabled: K === "cache",
-									children: K === "cache" ? "확인 중" : "상태 확인"
+									onClick: We,
+									disabled: G === "cache",
+									children: G === "cache" ? "확인 중" : "상태 확인"
 								})]
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
@@ -30108,13 +29867,13 @@ function Ag() {
 								children: /* @__PURE__ */ (0, Q.jsx)("button", {
 									className: "btn",
 									type: "button",
-									onClick: st,
-									disabled: K === "cache-cleanup",
-									children: K === "cache-cleanup" ? "정리 중" : "오래된 캐시 정리"
+									onClick: Ge,
+									disabled: G === "cache-cleanup",
+									children: G === "cache-cleanup" ? "정리 중" : "오래된 캐시 정리"
 								})
 							}),
-							/* @__PURE__ */ (0, Q.jsx)(gg, {
-								note: ue,
+							/* @__PURE__ */ (0, Q.jsx)(dg, {
+								note: re,
 								panel: "cache"
 							})
 						]
@@ -30124,9 +29883,9 @@ function Ag() {
 						children: [/* @__PURE__ */ (0, Q.jsx)("div", {
 							className: "input-panel-header",
 							children: /* @__PURE__ */ (0, Q.jsxs)("div", { children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "이전 작업 기록" }), /* @__PURE__ */ (0, Q.jsx)("p", { children: "예전 버전이 남긴 작업 기록 파일을 현재 저장소로 한 번만 옮깁니다. 보고서와 제안 파일은 건드리지 않습니다." })] })
-						}), /* @__PURE__ */ (0, Q.jsx)(gh, {})]
+						}), /* @__PURE__ */ (0, Q.jsx)(hh, {})]
 					}),
-					/* @__PURE__ */ (0, Q.jsx)(Sh, {})
+					/* @__PURE__ */ (0, Q.jsx)(xh, {})
 				]
 			})
 		]
@@ -30134,7 +29893,7 @@ function Ag() {
 }
 //#endregion
 //#region src/app/watchlist/ConsultationEntry.tsx
-function jg({ item: e }) {
+function Eg({ item: e }) {
 	return /* @__PURE__ */ (0, Q.jsx)("button", {
 		type: "button",
 		className: "btn btn--primary",
@@ -30152,7 +29911,7 @@ function jg({ item: e }) {
 }
 //#endregion
 //#region src/app/watchlist/ThesisWorkspace.tsx
-function Mg({ checkpoint: e }) {
+function Dg({ checkpoint: e }) {
 	let t = Zu(e.status), n = e.lastVerdict?.evidence || [];
 	return /* @__PURE__ */ (0, Q.jsxs)("li", {
 		className: "verification-checkpoint",
@@ -30193,7 +29952,7 @@ function Mg({ checkpoint: e }) {
 		]
 	});
 }
-function Ng({ items: e, empty: t }) {
+function Og({ items: e, empty: t }) {
 	return e.length ? /* @__PURE__ */ (0, Q.jsx)("ul", {
 		className: "verification-evidence",
 		children: e.map((e, t) => /* @__PURE__ */ (0, Q.jsxs)("li", { children: [/* @__PURE__ */ (0, Q.jsx)("span", {
@@ -30215,7 +29974,7 @@ function Ng({ items: e, empty: t }) {
 		children: t
 	});
 }
-function Pg() {
+function kg() {
 	return {
 		coreThesis: "",
 		keyAssumptions: "",
@@ -30224,10 +29983,10 @@ function Pg() {
 		conviction: "medium"
 	};
 }
-function Fg({ ticker: e, companyName: t = "" }) {
-	let [n, r] = (0, l.useState)(null), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(!1), [c, u] = (0, l.useState)(!1), [d, f] = (0, l.useState)(!1), [p, m] = (0, l.useState)(Pg), h = (0, l.useRef)(null), g = (0, l.useRef)(null), _ = (0, l.useRef)(e);
+function Ag({ ticker: e, companyName: t = "" }) {
+	let [n, r] = (0, l.useState)(null), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(!1), [c, u] = (0, l.useState)(!1), [d, f] = (0, l.useState)(!1), [p, m] = (0, l.useState)(kg), h = (0, l.useRef)(null), g = (0, l.useRef)(null), _ = (0, l.useRef)(e);
 	_.current = e, (0, l.useEffect)(() => {
-		if (h.current?.abort(), g.current?.abort(), g.current = null, r(null), a(""), u(!1), f(!1), m(Pg()), !e) return;
+		if (h.current?.abort(), g.current?.abort(), g.current = null, r(null), a(""), u(!1), f(!1), m(kg()), !e) return;
 		let t = new AbortController();
 		return Me(e, { signal: t.signal }).then(r).catch((e) => {
 			t.signal.aborted || a(e instanceof Error ? e.message : "Thesis 상태를 불러오지 못했습니다.");
@@ -30277,7 +30036,7 @@ function Fg({ ticker: e, companyName: t = "" }) {
 		try {
 			t = new AbortController(), h.current?.abort(), h.current = t;
 			let n = await Pe(e, { signal: t.signal });
-			Ig(n) && await Yt(n, { signal: t.signal }), r(await Me(e, { signal: t.signal }));
+			jg(n) && await Yt(n, { signal: t.signal }), r(await Me(e, { signal: t.signal }));
 		} catch (e) {
 			if (t?.signal.aborted || e instanceof DOMException && e.name === "AbortError") return;
 			a(e instanceof Error ? e.message : "최신 근거 검토를 완료하지 못했습니다.");
@@ -30512,9 +30271,9 @@ function Fg({ ticker: e, companyName: t = "" }) {
 							className: "thesis-workspace__meta",
 							children: [
 								"확신도 ",
-								Lg(v.conviction),
+								Mg(v.conviction),
 								" · 검토 주기 ",
-								Rg(v.reviewCycle),
+								Ng(v.reviewCycle),
 								" · 최근 검토",
 								" ",
 								td(v.lastReviewedAt)
@@ -30546,7 +30305,7 @@ function Fg({ ticker: e, companyName: t = "" }) {
 							children: [
 								"Thesis 종합 판정 · ",
 								td(y.generatedAt),
-								y.period ? ` · ${zg(y.period)} 창` : ""
+								y.period ? ` · ${Pg(y.period)} 창` : ""
 							]
 						})]
 					}), y.summary && /* @__PURE__ */ (0, Q.jsx)("p", {
@@ -30566,12 +30325,12 @@ function Fg({ ticker: e, companyName: t = "" }) {
 					children: [
 						/* @__PURE__ */ (0, Q.jsx)("h4", { children: "근거와 반대 근거" }),
 						/* @__PURE__ */ (0, Q.jsx)("h5", { children: "강화 근거" }),
-						/* @__PURE__ */ (0, Q.jsx)(Ng, {
+						/* @__PURE__ */ (0, Q.jsx)(Og, {
 							items: y?.supportingEvidence || [],
 							empty: "확인된 강화 근거가 없습니다."
 						}),
 						/* @__PURE__ */ (0, Q.jsx)("h5", { children: "반대 근거" }),
-						/* @__PURE__ */ (0, Q.jsx)(Ng, {
+						/* @__PURE__ */ (0, Q.jsx)(Og, {
 							items: y?.counterEvidence || [],
 							empty: "기록된 반대 근거가 없습니다."
 						}),
@@ -30591,7 +30350,7 @@ function Fg({ ticker: e, companyName: t = "" }) {
 						/* @__PURE__ */ (0, Q.jsx)("h4", { children: "다음 확인" }),
 						x && x.structured.length > 0 ? /* @__PURE__ */ (0, Q.jsx)("ul", {
 							className: "verification-checkpoint-list",
-							children: x.structured.map((e) => /* @__PURE__ */ (0, Q.jsx)(Mg, { checkpoint: e }, e.id))
+							children: x.structured.map((e) => /* @__PURE__ */ (0, Q.jsx)(Dg, { checkpoint: e }, e.id))
 						}) : /* @__PURE__ */ (0, Q.jsx)("p", {
 							className: "thesis-workspace__empty",
 							children: "기계가 대조할 확인 항목이 아직 없습니다."
@@ -30668,7 +30427,7 @@ function Fg({ ticker: e, companyName: t = "" }) {
 							row: t,
 							checkpoint: e,
 							index: n
-						})))].sort((e, t) => Bg(t.at) - Bg(e.at)).map((e) => {
+						})))].sort((e, t) => Fg(t.at) - Fg(e.at)).map((e) => {
 							if (e.kind === "delta") {
 								let t = e.row, n = Qu(t.verdict);
 								return /* @__PURE__ */ (0, Q.jsxs)("li", { children: [/* @__PURE__ */ (0, Q.jsx)("span", {
@@ -30711,10 +30470,10 @@ function Fg({ ticker: e, companyName: t = "" }) {
 		]
 	});
 }
-function Ig(e) {
+function jg(e) {
 	return "id" in e && "status" in e;
 }
-function Lg(e) {
+function Mg(e) {
 	return {
 		low: "낮음",
 		medium: "보통",
@@ -30722,7 +30481,7 @@ function Lg(e) {
 		high: "높음"
 	}[e] || "판단 보류";
 }
-function Rg(e) {
+function Ng(e) {
 	return {
 		weekly: "매주",
 		monthly: "매월",
@@ -30730,7 +30489,7 @@ function Rg(e) {
 		event_driven: "이벤트 발생 시"
 	}[e] || "정기 검토 없음";
 }
-function zg(e) {
+function Pg(e) {
 	return {
 		"30d": "최근 30일",
 		"90d": "최근 90일",
@@ -30739,13 +30498,13 @@ function zg(e) {
 		last_earnings: "지난 실적 이후"
 	}[e] || "기록된 기간";
 }
-function Bg(e) {
+function Fg(e) {
 	let t = Date.parse(e || "");
 	return Number.isFinite(t) ? t : -Infinity;
 }
 //#endregion
 //#region src/app/watchlist/FundamentalsPanel.tsx
-function Vg(e) {
+function Ig(e) {
 	let [t, n] = (0, l.useState)(null), [r, i] = (0, l.useState)("");
 	return (0, l.useEffect)(() => {
 		let t = !0;
@@ -30761,27 +30520,27 @@ function Vg(e) {
 		error: r
 	};
 }
-function Hg(e, t = 1) {
+function Lg(e, t = 1) {
 	return e == null || !Number.isFinite(e) ? "—" : e.toLocaleString("ko-KR", {
 		maximumFractionDigits: t,
 		minimumFractionDigits: 0
 	});
 }
-function Ug(e) {
+function Rg(e) {
 	return e === "toss_open_api" ? "Toss Open API" : e === "yfinance" ? "yfinance" : "시장 데이터 제공자";
 }
-function Wg(e) {
+function zg(e) {
 	return e == null || !Number.isFinite(e) ? "—" : `${(e * 100).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}%`;
 }
-function Gg(e) {
+function Bg(e) {
 	return e == null || !Number.isFinite(e) ? "—" : `${e.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
 }
-function Kg(e, t) {
+function Vg(e, t) {
 	if (e == null || t == null || !Number.isFinite(e) || !Number.isFinite(t)) return "—";
 	let n = Math.max(Math.abs(e), Math.abs(t)) >= 1e3 ? 0 : 2, r = (e) => e.toLocaleString("ko-KR", { maximumFractionDigits: n });
 	return `${r(e)} ~ ${r(t)}`;
 }
-function qg(e) {
+function Hg(e) {
 	let t = e.currency || "USD";
 	return [
 		{
@@ -30792,72 +30551,72 @@ function qg(e) {
 		{
 			label: "PER",
 			hint: "주가 ÷ 최근 4분기 EPS",
-			value: Hg(e.trailingPE)
+			value: Lg(e.trailingPE)
 		},
 		{
 			label: "선행 PER",
 			hint: "주가 ÷ 예상 EPS",
-			value: Hg(e.forwardPE)
+			value: Lg(e.forwardPE)
 		},
 		{
 			label: "PBR",
 			hint: "주가 ÷ 주당순자산",
-			value: Hg(e.priceToBook, 2)
+			value: Lg(e.priceToBook, 2)
 		},
 		{
 			label: "ROE",
 			hint: "순이익 ÷ 자기자본",
-			value: Wg(e.returnOnEquity)
+			value: zg(e.returnOnEquity)
 		},
 		{
 			label: "영업이익률",
 			hint: "영업이익 ÷ 매출",
-			value: Wg(e.operatingMargins)
+			value: zg(e.operatingMargins)
 		},
 		{
 			label: "순이익률",
 			hint: "순이익 ÷ 매출",
-			value: Wg(e.profitMargins)
+			value: zg(e.profitMargins)
 		},
 		{
 			label: "배당수익률",
 			hint: "연간 배당 ÷ 주가",
-			value: Gg(e.dividendYield)
+			value: Bg(e.dividendYield)
 		},
 		{
 			label: "매출 성장",
 			hint: "전년 동기 대비",
-			value: Wg(e.revenueGrowth)
+			value: zg(e.revenueGrowth)
 		},
 		{
 			label: "베타",
 			hint: "시장 대비 변동성",
-			value: Hg(e.beta, 2)
+			value: Lg(e.beta, 2)
 		},
 		{
 			label: "52주 범위",
 			hint: "최근 1년 저가 ~ 고가",
-			value: Kg(e.fiftyTwoWeekLow, e.fiftyTwoWeekHigh)
+			value: Vg(e.fiftyTwoWeekLow, e.fiftyTwoWeekHigh)
 		}
 	];
 }
-function Jg(e, t) {
+function Ug(e, t) {
 	return e == null || !Number.isFinite(e) || t == null || !Number.isFinite(t) || t === 0 ? null : e / t * 100;
 }
-function Yg(e) {
+function Wg(e) {
 	let t = e.currentLiabilities, n = e.nonCurrentLiabilities;
 	return t == null || !Number.isFinite(t) || n == null || !Number.isFinite(n) ? null : t + n;
 }
-var Xg = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Zg = (e) => `color-mix(in srgb, ${e} 45%, transparent)`, Qg = [
+var Gg = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Kg = (e) => `color-mix(in srgb, ${e} 45%, transparent)`, qg = [
 	{
 		key: "earnings",
 		label: "이익",
 		mode: "bars",
 		format: "amount",
 		colors: [
-			Xg,
+			Gg,
 			"var(--folio-green)",
-			Zg("var(--folio-green)")
+			Kg("var(--folio-green)")
 		],
 		series: [
 			{
@@ -30883,9 +30642,9 @@ var Xg = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Zg = (e) => `c
 		mode: "bars",
 		format: "amount",
 		colors: [
-			Xg,
+			Gg,
 			"var(--folio-chart-1)",
-			Zg("var(--folio-chart-1)")
+			Kg("var(--folio-chart-1)")
 		],
 		series: [
 			{
@@ -30914,11 +30673,11 @@ var Xg = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Zg = (e) => `c
 		series: [{
 			key: "currentRatio",
 			label: "유동비율",
-			of: (e) => Jg(e.currentAssets, e.currentLiabilities)
+			of: (e) => Ug(e.currentAssets, e.currentLiabilities)
 		}, {
 			key: "debtRatio",
 			label: "부채비율",
-			of: (e) => Jg(Yg(e), e.stockholdersEquity)
+			of: (e) => Ug(Wg(e), e.stockholdersEquity)
 		}]
 	},
 	{
@@ -30927,9 +30686,9 @@ var Xg = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Zg = (e) => `c
 		mode: "bars",
 		format: "amount",
 		colors: [
-			Xg,
+			Gg,
 			"var(--folio-gold)",
-			Zg("var(--folio-gold)")
+			Kg("var(--folio-gold)")
 		],
 		series: [
 			{
@@ -30950,7 +30709,7 @@ var Xg = "color-mix(in srgb, var(--folio-ink) 42%, transparent)", Zg = (e) => `c
 		]
 	}
 ];
-function $g(e, t) {
+function Jg(e, t) {
 	let n = e.filter((e) => e !== null && Number.isFinite(e));
 	if (!n.length) return {
 		max: 0,
@@ -30967,11 +30726,11 @@ function $g(e, t) {
 		min: i
 	};
 }
-function e_({ quarters: e, currency: t }) {
-	let [n, r] = (0, l.useState)(Qg[0].key), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), c = Qg.find((e) => e.key === n) || Qg[0], u = (e || []).filter((e) => c.series.some((t) => t.of(e) != null)), d = Math.max(0, u.length - 1), f = Math.min(i ?? d, d), p = f - 1, m = c.series.map((e) => u.map((t) => {
+function Yg({ quarters: e, currency: t }) {
+	let [n, r] = (0, l.useState)(qg[0].key), [i, a] = (0, l.useState)(null), [o, s] = (0, l.useState)(null), c = qg.find((e) => e.key === n) || qg[0], u = (e || []).filter((e) => c.series.some((t) => t.of(e) != null)), d = Math.max(0, u.length - 1), f = Math.min(i ?? d, d), p = f - 1, m = c.series.map((e) => u.map((t) => {
 		let n = e.of(t);
 		return n == null || !Number.isFinite(n) ? null : n;
-	})), h = $g(m.flat(), c.mode), g = h.max - h.min, _ = u.length ? 560 / u.length : 560, v = Math.min(30, (_ - 20) / c.series.length), y = g > 0 ? h.max / g * 190 : 190, b = (e) => (h.max - e) / g * 190, x = (e) => e * _ + _ / 2, S = (e) => c.format === "percent" ? Gg(e) : Fo(e, t), C = (e, t) => {
+	})), h = Jg(m.flat(), c.mode), g = h.max - h.min, _ = u.length ? 560 / u.length : 560, v = Math.min(30, (_ - 20) / c.series.length), y = g > 0 ? h.max / g * 190 : 190, b = (e) => (h.max - e) / g * 190, x = (e) => e * _ + _ / 2, S = (e) => c.format === "percent" ? Bg(e) : Fo(e, t), C = (e, t) => {
 		if (e === null || t === null) return {
 			text: "—",
 			tone: "flat"
@@ -30994,7 +30753,7 @@ function e_({ quarters: e, currency: t }) {
 		className: "segment",
 		role: "group",
 		"aria-label": "분기 차트 종류",
-		children: Qg.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
+		children: qg.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
 			type: "button",
 			"aria-pressed": e.key === n,
 			onClick: () => w(e.key),
@@ -31134,7 +30893,7 @@ function e_({ quarters: e, currency: t }) {
 		]
 	});
 }
-function t_({ payload: e }) {
+function Xg({ payload: e }) {
 	let [t, n] = (0, l.useState)(!1), r = String(e.longBusinessSummary || "").trim(), i = [{
 		label: "섹터",
 		value: e.sector || ""
@@ -31163,7 +30922,7 @@ function t_({ payload: e }) {
 		]
 	});
 }
-function n_({ ticker: e, payload: t, error: n }) {
+function Zg({ ticker: e, payload: t, error: n }) {
 	if (!e) return null;
 	if (n) return /* @__PURE__ */ (0, Q.jsx)("p", {
 		className: "section-subtitle",
@@ -31177,19 +30936,19 @@ function n_({ ticker: e, payload: t, error: n }) {
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "watchlist-fundamentals",
 		children: [/* @__PURE__ */ (0, Q.jsxs)("div", { children: [
-			/* @__PURE__ */ (0, Q.jsx)(t_, { payload: t }),
+			/* @__PURE__ */ (0, Q.jsx)(Xg, { payload: t }),
 			/* @__PURE__ */ (0, Q.jsx)("dl", {
 				className: "watchlist-fundamentals-rows",
-				children: qg(t).map((e) => /* @__PURE__ */ (0, Q.jsxs)("div", {
+				children: Hg(t).map((e) => /* @__PURE__ */ (0, Q.jsxs)("div", {
 					className: "watchlist-fundamentals-row",
 					children: [/* @__PURE__ */ (0, Q.jsxs)("dt", { children: [e.label, /* @__PURE__ */ (0, Q.jsx)("small", { children: e.hint })] }), /* @__PURE__ */ (0, Q.jsx)("dd", { children: e.value })]
 				}, e.label))
 			}),
 			/* @__PURE__ */ (0, Q.jsxs)("p", {
 				className: "section-subtitle",
-				children: ["출처 ", Ug(t.provider)]
+				children: ["출처 ", Rg(t.provider)]
 			})
-		] }), /* @__PURE__ */ (0, Q.jsx)(e_, {
+		] }), /* @__PURE__ */ (0, Q.jsx)(Yg, {
 			quarters: t.quarters || [],
 			currency: r
 		})]
@@ -31197,23 +30956,23 @@ function n_({ ticker: e, payload: t, error: n }) {
 }
 //#endregion
 //#region src/app/WatchlistRoute.tsx
-function r_(e) {
+function Qg(e) {
 	let t = /* @__PURE__ */ new Set();
 	return e.map((e) => String(e || "").trim()).filter(Boolean).filter((e) => {
 		let n = e.toLowerCase();
 		return !t.has(n) && (t.add(n), !0);
 	});
 }
-function i_(e) {
+function $g(e) {
 	return e.ticker || e.item || "";
 }
-function a_(e) {
-	return e.companyName || e.name || e.item || i_(e);
+function e_(e) {
+	return e.companyName || e.name || e.item || $g(e);
 }
-function o_(e, t = "") {
+function t_(e, t = "") {
 	return e?.company?.name || e?.item || t || "상세 보기";
 }
-function s_(e) {
+function n_(e) {
 	if (!e) return "상세 정보를 불러오는 중입니다.";
 	let t = e.company || {};
 	return [
@@ -31222,32 +30981,32 @@ function s_(e) {
 		e.newsCount ? `${e.newsCount}개 뉴스` : ""
 	].filter(Boolean).join(" · ") || "확인된 심볼 정보가 없습니다.";
 }
-function c_(e = []) {
+function r_(e = []) {
 	return [...e].sort((e, t) => String(t.date || "").localeCompare(String(e.date || "")));
 }
-function l_(e) {
+function i_(e) {
 	return e.title || e.url || e.path || "자료";
 }
-function u_(e) {
+function a_(e) {
 	return [e.source, e.date].filter(Boolean).join(" · ");
 }
-var d_ = /^(?:co|inc|ltd|corp|llc|plc|ag|nv|sa|se|kk|gmbh|s\.?a\.?s|co\.?,?\s*ltd)\.?$/i;
-function f_(e, t) {
+var o_ = /^(?:co|inc|ltd|corp|llc|plc|ag|nv|sa|se|kk|gmbh|s\.?a\.?s|co\.?,?\s*ltd)\.?$/i;
+function s_(e, t) {
 	let n = String(e || "").trim();
-	return n ? t ? [n] : n.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean).filter((e) => !d_.test(e)) : [];
+	return n ? t ? [n] : n.split(/[,;\n]/).map((e) => e.trim()).filter(Boolean).filter((e) => !o_.test(e)) : [];
 }
-function p_(e) {
+function c_(e) {
 	window.location.hash = e ? `#/watchlist/${encodeURIComponent(e)}` : "#/watchlist";
 }
-function m_() {
+function l_() {
 	let e = window.location.hash.match(/^#\/?watchlist\/(.+)$/);
 	return e ? decodeURIComponent(e[1]) : "";
 }
-function h_() {
+function u_() {
 	return window.location.hash.replace(/^#\/?/, "").split("/")[0] === "watchlist";
 }
-function g_() {
-	let [e, t] = (0, l.useState)([]), [n, r] = (0, l.useState)([]), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(() => m_()), [c, u] = (0, l.useState)(null), [d, f] = (0, l.useState)(!1), [p, m] = (0, l.useState)(!1), [h, g] = (0, l.useState)(!1), [_, v] = (0, l.useState)(""), [y, b] = (0, l.useState)(""), [x, S] = (0, l.useState)({}), [C, w] = (0, l.useState)("3m"), [T, E] = (0, l.useState)("line"), D = (0, l.useCallback)(async (e) => {
+function d_() {
+	let [e, t] = (0, l.useState)([]), [n, r] = (0, l.useState)([]), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(() => l_()), [c, u] = (0, l.useState)(null), [d, f] = (0, l.useState)(!1), [p, m] = (0, l.useState)(!1), [h, g] = (0, l.useState)(!1), [_, v] = (0, l.useState)(""), [y, b] = (0, l.useState)(""), [x, S] = (0, l.useState)({}), [C, w] = (0, l.useState)("3m"), [T, E] = (0, l.useState)("line"), D = (0, l.useCallback)(async (e) => {
 		if (!e.length) {
 			r([]);
 			return;
@@ -31257,7 +31016,7 @@ function g_() {
 	}, []), O = (0, l.useCallback)(async () => {
 		f(!0), v("");
 		try {
-			let e = await X("/api/watchlist"), n = r_(Array.isArray(e) ? e : []);
+			let e = await X("/api/watchlist"), n = Qg(Array.isArray(e) ? e : []);
 			t(n), await D(n), Lt("watchlist", {
 				surface: "watchlist",
 				viewId: "watchlist",
@@ -31274,7 +31033,7 @@ function g_() {
 		O();
 	}, [O]), (0, l.useEffect)(() => {
 		let e = () => {
-			h_() && s(m_());
+			u_() && s(l_());
 		};
 		return window.addEventListener("hashchange", e), e(), () => window.removeEventListener("hashchange", e);
 	}, []), (0, l.useEffect)(() => {
@@ -31310,7 +31069,7 @@ function g_() {
 	async function k(e, n) {
 		g(!0), v("");
 		try {
-			let r = await Z("/api/watchlist", { items: e }), i = r_(Array.isArray(r) ? r : []);
+			let r = await Z("/api/watchlist", { items: e }), i = Qg(Array.isArray(r) ? r : []);
 			t(i), await D(i), n && b(n);
 		} catch (e) {
 			v(e instanceof Error ? e.message : "워치리스트 저장에 실패했습니다.");
@@ -31327,7 +31086,7 @@ function g_() {
 		}
 	}
 	async function L() {
-		let t = f_(i, P);
+		let t = s_(i, P);
 		if (!t.length) return;
 		let n = [...e];
 		for (let e of t) {
@@ -31337,9 +31096,9 @@ function g_() {
 		a(""), n.length !== e.length && await k(n, "워치리스트에 추가했습니다.");
 	}
 	async function R(t) {
-		await k(e.filter((e) => e !== t), "워치리스트에서 삭제했습니다."), o === t && p_();
+		await k(e.filter((e) => e !== t), "워치리스트에서 삭제했습니다."), o === t && c_();
 	}
-	let z = (0, l.useMemo)(() => c_(c?.news || []), [c]), B = (0, l.useMemo)(() => (c?.tags || []).filter((e) => e && e !== "Unclassified").slice(0, 6), [c]), V = /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("div", {
+	let z = (0, l.useMemo)(() => r_(c?.news || []), [c]), B = (0, l.useMemo)(() => (c?.tags || []).filter((e) => e && e !== "Unclassified").slice(0, 6), [c]), V = /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "watchlist-detail-section__head",
 		children: [/* @__PURE__ */ (0, Q.jsx)("h3", { children: "수집한 뉴스" }), B.length > 0 && /* @__PURE__ */ (0, Q.jsxs)("p", {
 			className: "watchlist-news-topics",
@@ -31361,21 +31120,21 @@ function g_() {
 			children: [
 				/* @__PURE__ */ (0, Q.jsx)("span", {
 					className: "watchlist-news-row__meta",
-					children: u_(e)
+					children: a_(e)
 				}),
 				/* @__PURE__ */ (0, Q.jsx)("h4", { children: e.url ? /* @__PURE__ */ (0, Q.jsx)("a", {
 					href: e.url,
 					target: "_blank",
 					rel: "noopener noreferrer",
-					children: l_(e)
-				}) : /* @__PURE__ */ (0, Q.jsx)("span", { children: l_(e) }) }),
+					children: i_(e)
+				}) : /* @__PURE__ */ (0, Q.jsx)("span", { children: i_(e) }) }),
 				e.snippet && /* @__PURE__ */ (0, Q.jsx)("p", { children: e.snippet })
 			]
-		}, `${l_(e)}-${t}`))
+		}, `${i_(e)}-${t}`))
 	}) : /* @__PURE__ */ (0, Q.jsx)("p", {
 		className: "section-subtitle",
 		children: "수집된 관련 뉴스가 없습니다."
-	})] }), H = o_(c, o), U = n.find((e) => (e.item || a_(e)) === o) || null, W = String(U?.ticker || c?.company?.ticker || "").trim(), ee = U ? a_(U) : o_(c, o), te = Vg(W);
+	})] }), H = t_(c, o), U = n.find((e) => (e.item || e_(e)) === o) || null, W = String(U?.ticker || c?.company?.ticker || "").trim(), ee = U ? e_(U) : t_(c, o), te = Ig(W);
 	function G(e) {
 		let t = String(e?.ticker || "").toUpperCase();
 		return t ? x[t] : void 0;
@@ -31392,7 +31151,7 @@ function g_() {
 					/* @__PURE__ */ (0, Q.jsx)("button", {
 						type: "button",
 						className: "reader-crumb-link",
-						onClick: () => p_(),
+						onClick: () => c_(),
 						children: "워치리스트"
 					}),
 					/* @__PURE__ */ (0, Q.jsx)("span", {
@@ -31423,17 +31182,17 @@ function g_() {
 							}),
 							/* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "section-subtitle",
-								children: s_(c)
+								children: n_(c)
 							})
 						] }), /* @__PURE__ */ (0, Q.jsxs)("div", {
 							className: "watchlist-detail-actions",
-							children: [/* @__PURE__ */ (0, Q.jsx)(jg, { item: o }), /* @__PURE__ */ (0, Q.jsx)("button", {
+							children: [/* @__PURE__ */ (0, Q.jsx)(Eg, { item: o }), /* @__PURE__ */ (0, Q.jsx)("button", {
 								className: "btn btn--icon",
 								type: "button",
 								"aria-label": "닫기",
 								"data-tooltip": "닫기",
 								"data-tooltip-pos": "left",
-								onClick: () => p_(),
+								onClick: () => c_(),
 								children: "×"
 							})]
 						})]
@@ -31450,7 +31209,7 @@ function g_() {
 								children: [/* @__PURE__ */ (0, Q.jsx)("div", {
 									className: "watchlist-detail-section__head",
 									children: /* @__PURE__ */ (0, Q.jsx)("h3", { children: "재무·투자 지표" })
-								}), /* @__PURE__ */ (0, Q.jsx)(n_, {
+								}), /* @__PURE__ */ (0, Q.jsx)(Zg, {
 									ticker: W,
 									payload: te.payload,
 									error: te.error
@@ -31478,7 +31237,7 @@ function g_() {
 							}),
 							/* @__PURE__ */ (0, Q.jsx)("section", {
 								className: "watchlist-detail-section watchlist-detail-section--thesis",
-								children: /* @__PURE__ */ (0, Q.jsx)(Fg, {
+								children: /* @__PURE__ */ (0, Q.jsx)(Ag, {
 									ticker: W,
 									companyName: ee
 								})
@@ -31585,16 +31344,16 @@ function g_() {
 			/* @__PURE__ */ (0, Q.jsx)("div", {
 				className: "watchlist-grid",
 				children: n.length ? n.map((e) => {
-					let t = e.item || a_(e);
+					let t = e.item || e_(e);
 					return /* @__PURE__ */ (0, Q.jsxs)("article", {
 						className: "watchlist-card",
 						"data-watchlist-detail-item": t,
 						tabIndex: 0,
 						role: "button",
 						"aria-label": `${t} 상세 보기`,
-						onClick: () => p_(t),
+						onClick: () => c_(t),
 						onKeyDown: (e) => {
-							(e.key === "Enter" || e.key === " ") && (e.preventDefault(), p_(t));
+							(e.key === "Enter" || e.key === " ") && (e.preventDefault(), c_(t));
 						},
 						children: [
 							/* @__PURE__ */ (0, Q.jsx)("span", {
@@ -31627,8 +31386,8 @@ function g_() {
 								className: "watchlist-card-top",
 								children: [/* @__PURE__ */ (0, Q.jsx)("strong", {
 									className: "watchlist-ticker",
-									children: i_(e)
-								}), /* @__PURE__ */ (0, Q.jsx)("h3", { children: a_(e) })]
+									children: $g(e)
+								}), /* @__PURE__ */ (0, Q.jsx)("h3", { children: e_(e) })]
 							}),
 							/* @__PURE__ */ (0, Q.jsxs)("div", {
 								className: "watchlist-card-meta",
@@ -31670,16 +31429,16 @@ function g_() {
 }
 //#endregion
 //#region src/app/AppShell.tsx
-var __ = [
+var f_ = [
 	"light",
 	"dark",
 	"system"
-], v_ = {
+], p_ = {
 	light: "라이트",
 	dark: "다크",
 	system: "시스템"
 };
-function y_({ preference: e }) {
+function m_({ preference: e }) {
 	return e === "light" ? /* @__PURE__ */ (0, Q.jsxs)("svg", {
 		viewBox: "0 0 16 16",
 		fill: "none",
@@ -31726,8 +31485,8 @@ function y_({ preference: e }) {
 		})]
 	});
 }
-function b_() {
-	let e = ph(), [t, n] = (0, l.useState)(!1), r = (0, l.useRef)(null), i = (0, l.useRef)(null), a = (0, l.useRef)([]), o = e.preference === "system" ? `시스템 (${v_[e.resolved]})` : v_[e.preference];
+function h_() {
+	let e = fh(), [t, n] = (0, l.useState)(!1), r = (0, l.useRef)(null), i = (0, l.useRef)(null), a = (0, l.useRef)([]), o = e.preference === "system" ? `시스템 (${p_[e.resolved]})` : p_[e.preference];
 	(0, l.useEffect)(() => {
 		if (!t) return;
 		let e = (e) => {
@@ -31740,11 +31499,11 @@ function b_() {
 		};
 	}, [t]), (0, l.useEffect)(() => {
 		if (!t) return;
-		let n = Math.max(0, __.indexOf(e.preference));
+		let n = Math.max(0, f_.indexOf(e.preference));
 		a.current[n]?.focus();
 	}, [t, e.preference]);
 	let s = (e, t) => {
-		let n = (e + t + __.length) % __.length;
+		let n = (e + t + f_.length) % f_.length;
 		a.current[n]?.focus();
 	};
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
@@ -31760,12 +31519,12 @@ function b_() {
 			"data-tooltip": t ? "" : `테마: ${o}`,
 			"data-tooltip-pos": "bottom",
 			onClick: () => n((e) => !e),
-			children: /* @__PURE__ */ (0, Q.jsx)(y_, { preference: e.preference })
+			children: /* @__PURE__ */ (0, Q.jsx)(m_, { preference: e.preference })
 		}), t && /* @__PURE__ */ (0, Q.jsx)("div", {
 			className: "theme-menu-list",
 			role: "menu",
 			"aria-label": "화면 테마",
-			children: __.map((t, r) => /* @__PURE__ */ (0, Q.jsxs)("button", {
+			children: f_.map((t, r) => /* @__PURE__ */ (0, Q.jsxs)("button", {
 				type: "button",
 				role: "menuitemradio",
 				"aria-checked": e.preference === t,
@@ -31778,20 +31537,20 @@ function b_() {
 				onKeyDown: (e) => {
 					e.key === "ArrowDown" && (e.preventDefault(), s(r, 1)), e.key === "ArrowUp" && (e.preventDefault(), s(r, -1));
 				},
-				children: [/* @__PURE__ */ (0, Q.jsx)(y_, { preference: t }), v_[t]]
+				children: [/* @__PURE__ */ (0, Q.jsx)(m_, { preference: t }), p_[t]]
 			}, t))
 		})]
 	});
 }
-var x_ = [
+var g_ = [
 	"codex",
 	"claude",
 	"antigravity"
 ];
-function S_(e) {
+function __(e) {
 	return e ? e.bridgeSupported === !1 ? "지원 안 됨" : e.installed ? e.available ? "사용 가능" : "로그인 필요" : "미설치" : "확인 중";
 }
-function C_() {
+function v_() {
 	let [e, t] = (0, l.useState)(null), [n, r] = (0, l.useState)(!1), [i, a] = (0, l.useState)(!1), o = (0, l.useRef)(null), s = (0, l.useRef)(null);
 	(0, l.useEffect)(() => {
 		let e = !0;
@@ -31818,10 +31577,10 @@ function C_() {
 			document.removeEventListener("pointerdown", e), document.removeEventListener("keydown", t, !0);
 		};
 	}, [n]);
-	let c = x_.map((t) => ({
+	let c = g_.map((t) => ({
 		id: t,
 		row: e?.adapters?.find((e) => e.id === t)
-	})), u = e?.provider && x_.includes(e.provider) ? e.provider : "", d = c.find((e) => e.id === u)?.row?.label || "선택 안 됨";
+	})), u = e?.provider && g_.includes(e.provider) ? e.provider : "", d = c.find((e) => e.id === u)?.row?.label || "선택 안 됨";
 	async function f(n) {
 		a(!0);
 		try {
@@ -31881,7 +31640,7 @@ function C_() {
 					"aria-checked": u === e,
 					disabled: i || t?.bridgeSupported === !1,
 					onClick: () => void f(e),
-					children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: t?.label || e }), /* @__PURE__ */ (0, Q.jsx)("small", { children: S_(t) })]
+					children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: t?.label || e }), /* @__PURE__ */ (0, Q.jsx)("small", { children: __(t) })]
 				}, e)),
 				/* @__PURE__ */ (0, Q.jsx)("p", {
 					className: "agent-provider-menu__note",
@@ -31891,7 +31650,7 @@ function C_() {
 		})]
 	});
 }
-var w_ = [
+var y_ = [
 	{
 		id: "home",
 		title: "홈",
@@ -31921,7 +31680,7 @@ var w_ = [
 		title: "",
 		routes: ["settings"]
 	}
-], T_ = {
+], b_ = {
 	home: /* @__PURE__ */ (0, Q.jsxs)("svg", {
 		className: "react-left-nav-svg",
 		viewBox: "0 0 24 24",
@@ -32053,25 +31812,25 @@ var w_ = [
 		"aria-hidden": "true",
 		children: [/* @__PURE__ */ (0, Q.jsx)("path", { d: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" }), /* @__PURE__ */ (0, Q.jsx)("path", { d: "M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-.4-1.1 1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.1-.4 1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06A2 2 0 1 1 7.22 3.43l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 .4 1.1 1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.34.4.7.6 1a1.7 1.7 0 0 0 1.1.4H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.1.4c-.17.14-.31.28-.41.2Z" })]
 	})
-}, E_ = "(max-width: 1024px)";
-function D_() {
-	return typeof window < "u" && window.matchMedia(E_).matches;
+}, x_ = "(max-width: 1024px)";
+function S_() {
+	return typeof window < "u" && window.matchMedia(x_).matches;
 }
-function O_() {
-	let e = window.location.hash || xo(ch());
+function C_() {
+	let e = window.location.hash || xo(sh());
 	return /^#\/?office(?:\/|$)/.test(e) ? (window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/home`), xo("home")) : e;
 }
-function k_() {
-	let [e, t] = (0, l.useState)(() => O_());
+function w_() {
+	let [e, t] = (0, l.useState)(() => C_());
 	return (0, l.useEffect)(() => {
-		let e = () => t(O_());
+		let e = () => t(C_());
 		return window.addEventListener("hashchange", e), e(), () => window.removeEventListener("hashchange", e);
 	}, []), {
 		hash: e,
 		routeId: bo(e)
 	};
 }
-async function A_(e) {
+async function T_(e) {
 	await new Promise((e) => window.setTimeout(e, 1500));
 	let t = Date.now() + 6e4;
 	for (; Date.now() < t;) {
@@ -32085,11 +31844,11 @@ async function A_(e) {
 	}
 	e("재시작 확인 실패 · 수동 새로고침 필요");
 }
-function j_() {
-	let { hash: e, routeId: t } = k_(), n = So(t), r = ch(lh().preferences), [i, a] = (0, l.useState)(() => localStorage.getItem("folio.react.navCollapsed") === "1"), o = (0, l.useRef)(!1), [s, c] = (0, l.useState)(() => {
+function E_() {
+	let { hash: e, routeId: t } = w_(), n = So(t), r = sh(ch().preferences), [i, a] = (0, l.useState)(() => localStorage.getItem("folio.react.navCollapsed") === "1"), o = (0, l.useRef)(!1), [s, c] = (0, l.useState)(() => {
 		let e = localStorage.getItem("folio.react.agentClosed"), t = e === null || e !== "1";
-		return t && D_() ? (o.current = !0, !1) : t;
-	}), [u, d] = (0, l.useState)(() => /* @__PURE__ */ new Set([t])), [f, p] = (0, l.useState)(() => ({ [t]: O_() })), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(!1), v = (0, l.useRef)(null), y = (0, l.useRef)(t), b = (0, l.useRef)(!1), x = (0, l.useRef)({}), S = n.id !== "home", C = S && s ? " is-agent-open" : " is-agent-closed";
+		return t && S_() ? (o.current = !0, !1) : t;
+	}), [u, d] = (0, l.useState)(() => /* @__PURE__ */ new Set([t])), [f, p] = (0, l.useState)(() => ({ [t]: C_() })), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(!1), v = (0, l.useRef)(null), y = (0, l.useRef)(t), b = (0, l.useRef)(!1), x = (0, l.useRef)({}), S = n.id !== "home", C = S && s ? " is-agent-open" : " is-agent-closed";
 	(0, l.useEffect)(() => {
 		Bt(n.id, {
 			surface: `react_${n.id}`,
@@ -32104,7 +31863,7 @@ function j_() {
 		}
 		localStorage.setItem("folio.react.agentClosed", s ? "0" : "1");
 	}, [s]), (0, l.useEffect)(() => {
-		let e = window.matchMedia(E_), t = (e) => {
+		let e = window.matchMedia(x_), t = (e) => {
 			e.matches && c((e) => e && (o.current = !0, !1));
 		};
 		return e.addEventListener("change", t), () => e.removeEventListener("change", t);
@@ -32148,7 +31907,7 @@ function j_() {
 					body: "{}"
 				});
 			} catch {}
-			h("서버 재시작 중"), await A_(h), _(!1);
+			h("서버 재시작 중"), await T_(h), _(!1);
 		}
 	}
 	function T(e) {
@@ -32157,7 +31916,7 @@ function j_() {
 	}
 	function E(e) {
 		let t = So(e);
-		return t.id === "home" ? /* @__PURE__ */ (0, Q.jsx)(di, {}) : t.id === "dashboard" ? /* @__PURE__ */ (0, Q.jsx)(_l, {}) : t.id === "briefing" ? /* @__PURE__ */ (0, Q.jsx)(go, {}) : t.id === "rss" ? /* @__PURE__ */ (0, Q.jsx)(Vm, {}) : t.id === "market-memory" ? /* @__PURE__ */ (0, Q.jsx)(Ed, {}) : t.id === "analysis" ? /* @__PURE__ */ (0, Q.jsx)(oc, {}) : t.id === "deep-research" ? /* @__PURE__ */ (0, Q.jsx)(wu, {}) : t.id === "watchlist" ? /* @__PURE__ */ (0, Q.jsx)(g_, {}) : t.id === "portfolio" ? /* @__PURE__ */ (0, Q.jsx)(zp, {}) : t.id === "settings" ? /* @__PURE__ */ (0, Q.jsx)(Ag, {}) : null;
+		return t.id === "home" ? /* @__PURE__ */ (0, Q.jsx)(di, {}) : t.id === "dashboard" ? /* @__PURE__ */ (0, Q.jsx)(_l, {}) : t.id === "briefing" ? /* @__PURE__ */ (0, Q.jsx)(go, {}) : t.id === "rss" ? /* @__PURE__ */ (0, Q.jsx)(Vm, {}) : t.id === "market-memory" ? /* @__PURE__ */ (0, Q.jsx)(Ed, {}) : t.id === "analysis" ? /* @__PURE__ */ (0, Q.jsx)(oc, {}) : t.id === "deep-research" ? /* @__PURE__ */ (0, Q.jsx)(wu, {}) : t.id === "watchlist" ? /* @__PURE__ */ (0, Q.jsx)(d_, {}) : t.id === "portfolio" ? /* @__PURE__ */ (0, Q.jsx)(zp, {}) : t.id === "settings" ? /* @__PURE__ */ (0, Q.jsx)(Tg, {}) : null;
 	}
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: `react-shell${i ? " is-nav-collapsed" : ""}${C}${S ? "" : " is-agent-suppressed"}`,
@@ -32185,8 +31944,8 @@ function j_() {
 					"aria-live": "polite",
 					children: [
 						/* @__PURE__ */ (0, Q.jsx)("span", { children: m }),
-						/* @__PURE__ */ (0, Q.jsx)(b_, {}),
-						/* @__PURE__ */ (0, Q.jsx)(C_, {}),
+						/* @__PURE__ */ (0, Q.jsx)(h_, {}),
+						/* @__PURE__ */ (0, Q.jsx)(v_, {}),
 						/* @__PURE__ */ (0, Q.jsx)("button", {
 							className: "btn btn--sm",
 							type: "button",
@@ -32218,7 +31977,7 @@ function j_() {
 					children: [/* @__PURE__ */ (0, Q.jsx)("div", {
 						className: "react-left-nav-title",
 						children: "Navigate"
-					}), w_.map((e) => /* @__PURE__ */ (0, Q.jsxs)("section", {
+					}), y_.map((e) => /* @__PURE__ */ (0, Q.jsxs)("section", {
 						className: "react-left-nav-group",
 						"data-nav-group": e.id,
 						children: [e.title && /* @__PURE__ */ (0, Q.jsx)("h3", { children: e.title }), /* @__PURE__ */ (0, Q.jsx)("div", {
@@ -32241,7 +32000,7 @@ function j_() {
 										children: [/* @__PURE__ */ (0, Q.jsx)("span", {
 											className: "react-left-nav-icon",
 											"aria-hidden": "true",
-											children: T_[a.id]
+											children: b_[a.id]
 										}), /* @__PURE__ */ (0, Q.jsx)("span", {
 											className: "react-left-nav-label",
 											children: a.label
@@ -32281,7 +32040,7 @@ function j_() {
 }
 //#endregion
 //#region src/app/AppTour.tsx
-var M_ = [
+var D_ = [
 	{
 		route: "rss",
 		title: "여기로 자료가 들어옵니다",
@@ -32297,11 +32056,11 @@ var M_ = [
 		title: "이야기가 결과물이 됩니다",
 		body: "모인 자료와 흐름으로 매일의 브리핑을 만듭니다. 어떤 자료를 근거로 삼았는지가 함께 남고, 기업 분석과 테마 분석도 같은 자료를 씁니다."
 	}
-], N_ = 340, P_ = 14, F_ = 12;
-function I_(e) {
+], O_ = 340, k_ = 14, A_ = 12;
+function j_(e) {
 	return document.querySelector(`.react-left-nav-item[data-route="${e}"]`);
 }
-function L_(e) {
+function M_(e) {
 	if (!e) return null;
 	let t = e.getBoundingClientRect();
 	return t.width < 1 || t.height < 1 ? null : {
@@ -32311,25 +32070,25 @@ function L_(e) {
 		height: t.height
 	};
 }
-function R_(e) {
+function N_(e) {
 	if (!e) return {
-		top: Math.max(F_, window.innerHeight / 2 - 120),
-		left: Math.max(F_, (window.innerWidth - N_) / 2)
+		top: Math.max(A_, window.innerHeight / 2 - 120),
+		left: Math.max(A_, (window.innerWidth - O_) / 2)
 	};
-	let t = window.innerWidth - (e.left + e.width) - P_ >= 352 ? e.left + e.width + P_ : Math.min(Math.max(F_, e.left), window.innerWidth - N_ - F_);
+	let t = window.innerWidth - (e.left + e.width) - k_ >= 352 ? e.left + e.width + k_ : Math.min(Math.max(A_, e.left), window.innerWidth - O_ - A_);
 	return {
-		top: Math.min(Math.max(F_, e.top - 8), Math.max(F_, window.innerHeight - 260)),
+		top: Math.min(Math.max(A_, e.top - 8), Math.max(A_, window.innerHeight - 260)),
 		left: t
 	};
 }
-function z_({ onDone: e }) {
-	let [t, n] = (0, l.useState)(0), [r, i] = (0, l.useState)(null), a = (0, l.useRef)(null), o = (0, l.useRef)(null), s = M_[Math.min(t, M_.length - 1)];
+function P_({ onDone: e }) {
+	let [t, n] = (0, l.useState)(0), [r, i] = (0, l.useState)(null), a = (0, l.useRef)(null), o = (0, l.useRef)(null), s = D_[Math.min(t, D_.length - 1)];
 	(0, l.useEffect)(() => {
 		let e = xo(s.route);
 		window.location.hash !== e && (window.location.hash = e);
 	}, [s.route]), (0, l.useEffect)(() => {
 		let e = !0, t = () => {
-			e && i(L_(I_(s.route)));
+			e && i(M_(j_(s.route)));
 		};
 		t();
 		let n = [
@@ -32355,7 +32114,7 @@ function z_({ onDone: e }) {
 		if (!t.length) return;
 		let [n, r] = [t[0], t[t.length - 1]], i = document.activeElement;
 		e.shiftKey && (i === n || !a.current?.contains(i)) ? (e.preventDefault(), r.focus()) : !e.shiftKey && i === r && (e.preventDefault(), n.focus());
-	}, d = R_(r), f = t === M_.length - 1;
+	}, d = N_(r), f = t === D_.length - 1;
 	return /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "tour-layer",
 		role: "dialog",
@@ -32380,7 +32139,7 @@ function z_({ onDone: e }) {
 			style: {
 				top: d.top,
 				left: d.left,
-				width: N_
+				width: O_
 			},
 			children: [
 				/* @__PURE__ */ (0, Q.jsxs)("p", {
@@ -32388,7 +32147,7 @@ function z_({ onDone: e }) {
 					children: [
 						t + 1,
 						" / ",
-						M_.length
+						D_.length
 					]
 				}),
 				/* @__PURE__ */ (0, Q.jsx)("h2", {
@@ -32430,13 +32189,13 @@ function z_({ onDone: e }) {
 }
 //#endregion
 //#region src/app/WelcomeWizard.tsx
-var B_ = [
+var F_ = [
 	"welcome",
 	"theme",
 	"engine",
 	"markets",
 	"done"
-], V_ = [
+], I_ = [
 	{
 		id: "light",
 		label: "라이트"
@@ -32449,28 +32208,12 @@ var B_ = [
 		id: "system",
 		label: "시스템"
 	}
-], H_ = [
-	{
-		id: "openai",
-		label: "OpenAI",
-		url: "https://platform.openai.com/api-keys"
-	},
-	{
-		id: "gemini",
-		label: "Gemini",
-		url: "https://aistudio.google.com/apikey"
-	},
-	{
-		id: "claude",
-		label: "Claude",
-		url: "https://console.anthropic.com/settings/keys"
-	}
-], U_ = {
+], L_ = {
 	US: "US",
 	KR: "KR",
 	EUROPE: "EU",
 	JP: "JP"
-}, W_ = {
+}, R_ = {
 	welcome: /* @__PURE__ */ (0, Q.jsx)("path", { d: "M3 7.5 12 3l9 4.5-9 4.5zM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" }),
 	theme: /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsx)("circle", {
 		cx: "12",
@@ -32492,120 +32235,114 @@ var B_ = [
 		r: "8.6"
 	}), /* @__PURE__ */ (0, Q.jsx)("path", { d: "M3.4 12h17.2M12 3.4c2.5 2.6 3.8 5.5 3.8 8.6S14.5 18 12 20.6C9.5 18 8.2 15.1 8.2 12S9.5 6 12 3.4z" })] }),
 	done: /* @__PURE__ */ (0, Q.jsx)("path", { d: "M5 12.6 9.6 17 19 7.6" })
-}, G_ = {
+}, z_ = {
 	welcome: "환영합니다",
 	theme: "화면",
 	engine: "선택 사항",
 	markets: "수집 범위",
 	done: "준비 완료"
 };
-function K_({ step: e }) {
+function B_({ step: e }) {
 	return /* @__PURE__ */ (0, Q.jsx)("svg", {
 		viewBox: "0 0 24 24",
 		"aria-hidden": "true",
-		children: W_[e]
+		children: R_[e]
 	});
 }
-function q_({ onFinish: e }) {
-	let t = ph(), [n, r] = (0, l.useState)("welcome"), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(""), c = (0, l.useCallback)((e) => {
+function V_({ onFinish: e }) {
+	let t = fh(), [n, r] = (0, l.useState)("welcome"), [i, a] = (0, l.useState)(""), [o, s] = (0, l.useState)(""), c = (0, l.useCallback)((e) => {
 		s(""), r(e);
-	}, []), [u, d] = (0, l.useState)("none"), [f, p] = (0, l.useState)(!1), [m, h] = (0, l.useState)("openai"), [g, _] = (0, l.useState)(""), [v, y] = (0, l.useState)(null), [b, x] = (0, l.useState)(null), [S, C] = (0, l.useState)(null), [w, T] = (0, l.useState)([]), [E, D] = (0, l.useState)(!1), [O, k] = (0, l.useState)(null);
+	}, []), [u, d] = (0, l.useState)("none"), [f, p] = (0, l.useState)(!1), [m, h] = (0, l.useState)(null), [g, _] = (0, l.useState)(null), [v, y] = (0, l.useState)(null), [b, x] = (0, l.useState)([]), [S, C] = (0, l.useState)(!1), [w, T] = (0, l.useState)(null);
 	(0, l.useEffect)(() => {
 		let e = !1;
 		return (async () => {
 			try {
 				let t = await X("/api/market-scope");
 				if (e) return;
-				C(t), T([...t.selected]);
+				y(t), x([...t.selected]);
 			} catch {}
 			try {
 				let t = await X("/api/workspace");
-				e || k(t);
+				e || T(t);
 			} catch {}
 			try {
 				let t = await X("/api/settings");
-				!e && t.agent?.enabled && d(t.agent.mode === "cli" ? "cli" : "api");
+				!e && t.agent?.enabled && d(t.agent.mode === "cli" ? "cli" : "none");
 			} catch {}
 			try {
 				let t = await X("/api/agent-bridge/settings");
-				e || y(t);
+				e || h(t);
 			} catch {}
 		})(), () => {
 			e = !0;
 		};
 	}, []);
-	let A = (0, l.useCallback)((e) => {
+	let E = (0, l.useCallback)((e) => {
 		p(!0), d(e);
-	}, []), j = (0, l.useCallback)(async (t) => {
+	}, []), D = (0, l.useCallback)(async (t) => {
 		a("finish");
 		try {
 			await Z("/api/onboarding/complete", { skipped: t });
 		} catch {} finally {
-			a(""), e(!t && b === !0);
+			a(""), e(!t && g === !0);
 		}
-	}, [e, b]), M = async () => {
+	}, [e, g]), O = async () => {
 		if (!f) {
 			c("markets");
 			return;
 		}
 		a("engine"), s("");
 		try {
-			await Z("/api/settings", {
-				agent: {
-					enabled: u !== "none",
-					mode: u === "cli" ? "cli" : "api"
-				},
-				...u === "api" && g.trim() ? { llm: {
-					provider: m,
-					providers: { [m]: { apiKey: g.trim() } }
-				} } : {}
-			}), _(""), c("markets");
+			await Z("/api/settings", { agent: {
+				enabled: u !== "none",
+				mode: "cli"
+			} }), c("markets");
 		} catch (e) {
 			s(e instanceof Error ? e.message : "저장하지 못했습니다.");
 		} finally {
 			a("");
 		}
-	}, N = async () => {
-		if (!S || !w.length) {
+	}, k = async () => {
+		if (!v || !b.length) {
 			c("done");
 			return;
 		}
 		a("markets"), s("");
 		try {
-			let e = await Fe("/api/market-scope", { selected: w });
-			D(!!e.newlyEnabled?.length), c("done");
+			let e = await Fe("/api/market-scope", { selected: b });
+			C(!!e.newlyEnabled?.length), c("done");
 		} catch (e) {
 			s(e instanceof Error ? e.message : "저장하지 못했습니다.");
 		} finally {
 			a("");
 		}
-	}, P = (e) => {
-		T((t) => {
+	}, A = (e) => {
+		x((t) => {
 			let n = t.includes(e) ? t.filter((t) => t !== e) : [...t, e];
 			return n.length ? n : t;
 		});
-	}, F = (0, l.useRef)(null), I = () => Array.from(F.current?.querySelectorAll("button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex=\"-1\"])") ?? []);
+	}, j = (0, l.useRef)(null), M = () => Array.from(j.current?.querySelectorAll("button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex=\"-1\"])") ?? []);
 	(0, l.useEffect)(() => {
-		F.current?.querySelector("h1")?.focus();
+		j.current?.querySelector("h1")?.focus();
 	}, [n]);
-	let L = (e) => {
+	let N = (e) => {
 		if (e.key === "Escape") {
-			e.preventDefault(), j(!0);
+			e.preventDefault(), D(!0);
 			return;
 		}
 		if (e.key !== "Tab") return;
-		let t = I();
+		let t = M();
 		if (!t.length) return;
-		let [n, r] = [t[0], t[t.length - 1]], i = document.activeElement, a = F.current?.querySelector("h1") ?? null;
-		e.shiftKey && (i === n || i === a || !F.current?.contains(i)) ? (e.preventDefault(), r.focus()) : !e.shiftKey && i === r && (e.preventDefault(), n.focus());
-	}, R = B_.indexOf(n), z = H_.find((e) => e.id === m);
+		let [n, r] = [t[0], t[t.length - 1]], i = document.activeElement, a = j.current?.querySelector("h1") ?? null;
+		e.shiftKey && (i === n || i === a || !j.current?.contains(i)) ? (e.preventDefault(), r.focus()) : !e.shiftKey && i === r && (e.preventDefault(), n.focus());
+	}, P = F_.indexOf(n);
 	return /* @__PURE__ */ (0, Q.jsx)("div", {
 		className: "welcome-shell",
 		role: "dialog",
 		"aria-modal": "true",
 		"aria-labelledby": "welcomeTitle",
-		ref: F,
-		onKeyDown: L,
+		ref: j,
+		onKeyDown: N,
 		children: /* @__PURE__ */ (0, Q.jsxs)("div", {
 			className: "welcome-card",
 			children: [
@@ -32615,9 +32352,9 @@ function q_({ onFinish: e }) {
 						className: "welcome-count",
 						children: [
 							"단계 ",
-							/* @__PURE__ */ (0, Q.jsx)("b", { children: R + 1 }),
+							/* @__PURE__ */ (0, Q.jsx)("b", { children: P + 1 }),
 							" / ",
-							B_.length
+							F_.length
 						]
 					})]
 				}),
@@ -32626,16 +32363,16 @@ function q_({ onFinish: e }) {
 					role: "progressbar",
 					"aria-label": "진행 단계",
 					"aria-valuemin": 1,
-					"aria-valuemax": B_.length,
-					"aria-valuenow": R + 1,
-					style: { "--welcome-fill": `${(R + 1) / B_.length * 100}%` }
+					"aria-valuemax": F_.length,
+					"aria-valuenow": P + 1,
+					style: { "--welcome-fill": `${(P + 1) / F_.length * 100}%` }
 				}),
 				/* @__PURE__ */ (0, Q.jsxs)("section", {
 					className: "welcome-body",
 					children: [
 						/* @__PURE__ */ (0, Q.jsxs)("p", {
 							className: "welcome-eyebrow",
-							children: [/* @__PURE__ */ (0, Q.jsx)(K_, { step: n }), G_[n]]
+							children: [/* @__PURE__ */ (0, Q.jsx)(B_, { step: n }), z_[n]]
 						}),
 						n === "welcome" && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
 							/* @__PURE__ */ (0, Q.jsx)("h1", {
@@ -32668,7 +32405,7 @@ function q_({ onFinish: e }) {
 								className: "welcome-choices",
 								role: "group",
 								"aria-label": "화면 테마",
-								children: V_.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
+								children: I_.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
 									type: "button",
 									"aria-pressed": t.preference === e.id,
 									onClick: () => t.setPreference(e.id),
@@ -32696,79 +32433,28 @@ function q_({ onFinish: e }) {
 								className: "welcome-choices",
 								role: "group",
 								"aria-label": "생성 방식",
-								children: [
-									/* @__PURE__ */ (0, Q.jsx)("button", {
-										type: "button",
-										"aria-pressed": u === "none",
-										onClick: () => A("none"),
-										children: "AI 없이"
-									}),
-									/* @__PURE__ */ (0, Q.jsx)("button", {
-										type: "button",
-										"aria-pressed": u === "cli",
-										onClick: () => A("cli"),
-										children: "CLI"
-									}),
-									/* @__PURE__ */ (0, Q.jsx)("button", {
-										type: "button",
-										"aria-pressed": u === "api",
-										onClick: () => A("api"),
-										children: "API"
-									})
-								]
+								children: [/* @__PURE__ */ (0, Q.jsx)("button", {
+									type: "button",
+									"aria-pressed": u === "none",
+									onClick: () => E("none"),
+									children: "AI 없이"
+								}), /* @__PURE__ */ (0, Q.jsx)("button", {
+									type: "button",
+									"aria-pressed": u === "cli",
+									onClick: () => E("cli"),
+									children: "CLI"
+								})]
 							}),
 							u === "none" && /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "welcome-muted",
 								children: "규칙으로 보고서를 만듭니다. 자료 수집·검색·차트는 그대로 동작합니다. 나중에 설정에서 언제든 켤 수 있습니다."
 							}),
-							u === "api" && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
-								/* @__PURE__ */ (0, Q.jsxs)("p", {
-									className: "welcome-muted",
-									children: [/* @__PURE__ */ (0, Q.jsx)("b", { children: "제공사 서버를 부르는 열쇠" }), "입니다. 설치할 것이 없는 대신 쓴 만큼 요금이 붙습니다. 지금 넣지 않아도 되고, 설정에서 나중에 넣어도 됩니다."]
-								}),
-								/* @__PURE__ */ (0, Q.jsx)("div", {
-									className: "welcome-choices",
-									role: "group",
-									"aria-label": "제공사",
-									children: H_.map((e) => /* @__PURE__ */ (0, Q.jsx)("button", {
-										type: "button",
-										"aria-pressed": m === e.id,
-										onClick: () => h(e.id),
-										children: e.label
-									}, e.id))
-								}),
-								/* @__PURE__ */ (0, Q.jsxs)("label", {
-									className: "welcome-field",
-									children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "API 키" }), /* @__PURE__ */ (0, Q.jsx)("input", {
-										type: "password",
-										value: g,
-										autoComplete: "off",
-										placeholder: "나중에 설정에서 넣어도 됩니다",
-										onChange: (e) => _(e.target.value)
-									})]
-								}),
-								/* @__PURE__ */ (0, Q.jsxs)("p", {
-									className: "welcome-muted",
-									children: [
-										"키는 이 PC의 ",
-										/* @__PURE__ */ (0, Q.jsx)("code", { children: ".env" }),
-										" 파일에만 저장됩니다. 발급:",
-										" ",
-										/* @__PURE__ */ (0, Q.jsxs)("a", {
-											href: z?.url,
-											target: "_blank",
-											rel: "noreferrer",
-											children: [z?.label, " 키 페이지"]
-										})
-									]
-								})
-							] }),
 							u === "cli" && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("p", {
 								className: "welcome-muted",
-								children: [/* @__PURE__ */ (0, Q.jsx)("b", { children: "내 컴퓨터에 설치해서 쓰는 AI 프로그램" }), "입니다(Codex·Claude Code·Antigravity). 이미 구독 중이라면 추가 요금이 없고, 한 번 실행에 수십 초가 걸립니다. 아래에서 바로 설치하고 로그인할 수 있습니다."]
-							}), /* @__PURE__ */ (0, Q.jsx)(Ym, {
-								adapters: v?.adapters ?? [],
-								onSettings: y,
+								children: [/* @__PURE__ */ (0, Q.jsx)("b", { children: "내 컴퓨터에 설치해서 쓰는 AI 프로그램" }), "입니다(Codex·Claude Code·Antigravity). 이용 조건과 사용 한도는 연결한 CLI 계정을 따릅니다. 아래에서 바로 설치하고 로그인할 수 있습니다."]
+							}), /* @__PURE__ */ (0, Q.jsx)(Jm, {
+								adapters: m?.adapters ?? [],
+								onSettings: h,
 								disabled: !!i
 							})] })
 						] }),
@@ -32783,18 +32469,18 @@ function q_({ onFinish: e }) {
 								className: "welcome-muted",
 								children: "US 뉴욕·나스닥 · KR 코스피·코스닥 · EU 런던·프랑크푸르트 · JP 도쿄"
 							}),
-							S ? /* @__PURE__ */ (0, Q.jsx)("div", {
+							v ? /* @__PURE__ */ (0, Q.jsx)("div", {
 								className: "welcome-markets",
 								role: "group",
 								"aria-label": "수집·표시할 시장",
-								children: S.markets.map((e) => {
-									let t = U_[e.id] ?? e.id;
+								children: v.markets.map((e) => {
+									let t = L_[e.id] ?? e.id;
 									return /* @__PURE__ */ (0, Q.jsx)("button", {
 										type: "button",
 										"data-code": t,
 										"aria-label": `${t} ${e.label}`,
-										"aria-pressed": w.includes(e.id),
-										onClick: () => P(e.id),
+										"aria-pressed": b.includes(e.id),
+										onClick: () => A(e.id),
 										children: t
 									}, e.id);
 								})
@@ -32813,7 +32499,7 @@ function q_({ onFinish: e }) {
 								tabIndex: -1,
 								children: "이제 시작할 수 있습니다"
 							}),
-							E && /* @__PURE__ */ (0, Q.jsx)("p", { children: "뉴스를 모으고 있습니다. 상단 진행 표시에서 상태를 볼 수 있습니다." }),
+							S && /* @__PURE__ */ (0, Q.jsx)("p", { children: "뉴스를 모으고 있습니다. 상단 진행 표시에서 상태를 볼 수 있습니다." }),
 							/* @__PURE__ */ (0, Q.jsxs)("ol", {
 								className: "welcome-next",
 								children: [
@@ -32822,14 +32508,14 @@ function q_({ onFinish: e }) {
 									/* @__PURE__ */ (0, Q.jsx)("li", { children: /* @__PURE__ */ (0, Q.jsxs)("span", { children: [/* @__PURE__ */ (0, Q.jsx)("strong", { children: "기업 분석" }), "에 티커를 넣으면 공시와 숫자로 보고서를 만듭니다."] }) })
 								]
 							}),
-							O && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("p", {
+							w && /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [/* @__PURE__ */ (0, Q.jsxs)("p", {
 								className: "welcome-path",
 								children: [
 									/* @__PURE__ */ (0, Q.jsx)("b", { children: "자료 저장 위치" }),
 									" · ",
-									O.path
+									w.path
 								]
-							}), !O.outsideAppFolder && /* @__PURE__ */ (0, Q.jsx)("p", {
+							}), !w.outsideAppFolder && /* @__PURE__ */ (0, Q.jsx)("p", {
 								className: "welcome-muted",
 								children: "새 버전은 새 폴더로 풀립니다. 설정 > 자료 위치에서 옮겨두면 업데이트할 때 그대로 이어집니다."
 							})] }),
@@ -32850,13 +32536,13 @@ function q_({ onFinish: e }) {
 										"aria-label": "둘러보기",
 										children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 											type: "button",
-											"aria-pressed": b === !0,
-											onClick: () => x(!0),
+											"aria-pressed": g === !0,
+											onClick: () => _(!0),
 											children: "둘러보기"
 										}), /* @__PURE__ */ (0, Q.jsx)("button", {
 											type: "button",
-											"aria-pressed": b === !1,
-											onClick: () => x(!1),
+											"aria-pressed": g === !1,
+											onClick: () => _(!1),
 											children: "바로 시작"
 										})]
 									})
@@ -32875,16 +32561,16 @@ function q_({ onFinish: e }) {
 					children: [/* @__PURE__ */ (0, Q.jsx)("button", {
 						className: "welcome-skip",
 						type: "button",
-						onClick: () => void j(n !== "done"),
+						onClick: () => void D(n !== "done"),
 						disabled: !!i,
 						children: n === "done" ? "닫기" : "건너뛰기"
 					}), /* @__PURE__ */ (0, Q.jsxs)("div", {
 						className: "welcome-acts",
 						children: [
-							R > 0 && n !== "done" && /* @__PURE__ */ (0, Q.jsx)("button", {
+							P > 0 && n !== "done" && /* @__PURE__ */ (0, Q.jsx)("button", {
 								className: "welcome-btn",
 								type: "button",
-								onClick: () => c(B_[R - 1]),
+								onClick: () => c(F_[P - 1]),
 								disabled: !!i,
 								children: "이전"
 							}),
@@ -32903,23 +32589,23 @@ function q_({ onFinish: e }) {
 							n === "engine" && /* @__PURE__ */ (0, Q.jsx)("button", {
 								className: "welcome-btn welcome-btn--go",
 								type: "button",
-								onClick: () => void M(),
+								onClick: () => void O(),
 								disabled: !!i,
 								children: i === "engine" ? "저장 중" : "저장하고 다음"
 							}),
 							n === "markets" && /* @__PURE__ */ (0, Q.jsx)("button", {
 								className: "welcome-btn welcome-btn--go",
 								type: "button",
-								onClick: () => void N(),
+								onClick: () => void k(),
 								disabled: !!i,
 								children: i === "markets" ? "저장 중" : "저장하고 시작"
 							}),
 							n === "done" && /* @__PURE__ */ (0, Q.jsx)("button", {
 								className: "welcome-btn welcome-btn--go",
 								type: "button",
-								onClick: () => void j(!1),
+								onClick: () => void D(!1),
 								disabled: !!i,
-								children: b ? "둘러보기 시작" : "시작하기"
+								children: g ? "둘러보기 시작" : "시작하기"
 							})
 						]
 					})]
@@ -32930,7 +32616,7 @@ function q_({ onFinish: e }) {
 }
 //#endregion
 //#region src/app/App.tsx
-function J_() {
+function H_() {
 	let [e, t] = (0, l.useState)(!1), [n, r] = (0, l.useState)(!1);
 	return (0, l.useEffect)(() => {
 		let e = !1;
@@ -32946,28 +32632,28 @@ function J_() {
 		let e = () => t(!0);
 		return window.addEventListener("folio:show-welcome", e), () => window.removeEventListener("folio:show-welcome", e);
 	}, []), /* @__PURE__ */ (0, Q.jsxs)(Q.Fragment, { children: [
-		/* @__PURE__ */ (0, Q.jsx)(j_, {}),
-		e && /* @__PURE__ */ (0, Q.jsx)(q_, { onFinish: (e) => {
+		/* @__PURE__ */ (0, Q.jsx)(E_, {}),
+		e && /* @__PURE__ */ (0, Q.jsx)(V_, { onFinish: (e) => {
 			t(!1), r(e);
 		} }),
-		n && /* @__PURE__ */ (0, Q.jsx)(z_, { onDone: () => r(!1) })
+		n && /* @__PURE__ */ (0, Q.jsx)(P_, { onDone: () => r(!1) })
 	] });
 }
 //#endregion
 //#region src/main.tsx
-var Y_ = { "market-state": () => /* @__PURE__ */ (0, Q.jsx)(Wu, {}) };
-function X_() {
+var U_ = { "market-state": () => /* @__PURE__ */ (0, Q.jsx)(Wu, {}) };
+function W_() {
 	document.querySelectorAll("[data-react-island]").forEach((e) => {
-		let t = Y_[e.dataset.reactIsland || ""];
+		let t = U_[e.dataset.reactIsland || ""];
 		!t || e.dataset.reactMounted === "1" || (e.dataset.reactMounted = "1", (0, u.createRoot)(e).render(/* @__PURE__ */ (0, Q.jsx)(l.StrictMode, { children: t() })));
 	});
 }
-function Z_() {
+function G_() {
 	let e = document.getElementById("folioReactRoot");
-	return e ? e.dataset.reactMounted === "1" || (e.dataset.reactMounted = "1", (0, u.createRoot)(e).render(/* @__PURE__ */ (0, Q.jsx)(l.StrictMode, { children: /* @__PURE__ */ (0, Q.jsx)(J_, {}) })), !0) : !1;
+	return e ? e.dataset.reactMounted === "1" || (e.dataset.reactMounted = "1", (0, u.createRoot)(e).render(/* @__PURE__ */ (0, Q.jsx)(l.StrictMode, { children: /* @__PURE__ */ (0, Q.jsx)(H_, {}) })), !0) : !1;
 }
-function Q_() {
-	Z_(), X_();
+function K_() {
+	G_(), W_();
 }
-document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", Q_) : Q_();
+document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", K_) : K_();
 //#endregion

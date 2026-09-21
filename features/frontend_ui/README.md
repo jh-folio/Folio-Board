@@ -97,7 +97,7 @@ React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토�
 
 `#/watchlist`는 React Watchlist route지만 0.2 기본 사용자 nav에서는 숨긴다. `/api/watchlist`로 저장 목록을 읽고 저장하며, `/api/watchlist/resolve`로 티커/회사명을 정규화하고, `/api/watchlist/overview`로 카드용 태그·뉴스 카운트를 읽는다. 카드 클릭은 `#/watchlist/{item}` detail hash로 상세 화면을 열고, `/api/watchlist/detail`로 회사 정보·뉴스를, `MarketChartFigure`로 시세 차트를, `EarningsPanel`(`/api/market/earnings`)로 실적을 함께 보여준다. 카드와 상세 화면은 `watchlist-*`, `compact-item`, `input-panel`, `filter-btn` 클래스를 재사용한다.
 
-`#/settings`는 React Settings route다. `/api/settings`, `/api/agent-bridge/settings`, `/api/obsidian/settings`, `/api/automation/settings`를 직접 소비하며, AI Agent/API/Notion/Obsidian/자동화 설정을 `settings-panel`, `input-panel`, `settings-grid`, `filter-btn` 클래스 위에 렌더한다. `화면` 패널은 기본 Home, Classic/Student 캐릭터, 선택 이름, 시스템 모션/움직임 줄이기만 제공한다. AI Agent 설정은 ON/OFF와 LLM CLI/API 모드 토글을 한 패널에서 관리한다. 모델 필드는 마지막으로 불러온 `modelChoices`를 select로 표시하며, 새로고침은 `/api/settings?refresh=true`와 `/api/agent-bridge/settings?refresh=true`로 model catalog를 강제 갱신한다.
+`#/settings`는 React Settings route다. `/api/settings`, `/api/agent-bridge/settings`, `/api/obsidian/settings`, `/api/automation/settings`를 직접 소비하며, AI Agent/외부 데이터/Notion/Obsidian/자동화 설정을 `settings-panel`, `input-panel`, `settings-grid`, `filter-btn` 클래스 위에 렌더한다. `화면` 패널은 기본 Home, Classic/Student 캐릭터, 선택 이름, 시스템 모션/움직임 줄이기만 제공한다. AI Agent 설정은 ON/OFF와 CLI 연결을 한 패널에서 관리한다. 모델 필드는 마지막으로 불러온 `modelChoices`를 select로 표시하며, 새로고침은 `/api/settings?refresh=true`와 `/api/agent-bridge/settings?refresh=true`로 CLI model catalog를 갱신한다. 과거 API 설정에는 명시 전환 안내를 표시하며 데이터 API 설정은 유지한다.
 
 포트폴리오와 standalone 투자 노트 탭은 프론트엔드에서 숨김/비활성화한다. 기존 `data/portfolio*.json`, portfolio API, native notes API/storage는 유지하며, 보고서 옆 투자 노트 패널도 계속 유지한다.
 

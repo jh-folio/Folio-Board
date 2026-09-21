@@ -1485,7 +1485,7 @@ def _package_probe(extract_root: Path, source: str, arguments: list[str], enviro
 
 def _validate_generation_probe(generation: dict[str, Any]) -> None:
     expected_provenance = {
-        "direct": ("direct", "api", "rules", "engine_failed"),
+        "direct": ("direct", "none", "rules", None),
         "cli": ("cli", "cli", "rules", "engine_unavailable"),
     }
     for mode, expected in expected_provenance.items():
@@ -1496,7 +1496,7 @@ def _validate_generation_probe(generation: dict[str, Any]) -> None:
         if observed != expected or generation.get(mode, {}).get("saved") is not False:
             _fail("FULL_GENERATION_PROVENANCE_FAILED", f"{mode}: {observed}")
     if generation.get("sameEvidence") is not True or generation.get("sameResolution") is not True:
-        _fail("FULL_GENERATION_INPUT_DRIFT", "Direct and CLI did not use identical approved evidence")
+        _fail("FULL_GENERATION_INPUT_DRIFT", "Rules and CLI did not use identical approved evidence")
     if generation.get("orphanReport") is not False or generation.get("orphanJob") is not False:
         _fail("FULL_GENERATION_ORPHAN", f"Unexpected persistence: {generation}")
 
@@ -1539,21 +1539,8 @@ print(json.dumps(out, ensure_ascii=False))
     if observed_states != {"current": "current", "stale": "stale", "fallback": "fallback", "empty": "empty"}:
         _fail("MARKET_STATE_TRUTH_TABLE_FAILED", f"Unexpected statuses: {observed_states}")
 
-    proxy_url = str(payload["scenarioFixtures"]["GEN-F2"]["proxyUrl"])
     direct_environment = environment.copy()
-    direct_environment.update(
-        {
-            "OPENAI_API_KEY": "qa-synthetic-not-a-secret",
-            "LLM_PROVIDER": "openai",
-            "AI_AGENT_ENABLED": "1",
-            "USE_LLM_ANALYSIS": "1",
-            "LLM_TIMEOUT_SECONDS": "5",
-            "HTTPS_PROXY": proxy_url,
-            "https_proxy": proxy_url,
-            "NO_PROXY": "127.0.0.1,localhost",
-            "no_proxy": "127.0.0.1,localhost",
-        }
-    )
+    direct_environment.update({"AI_AGENT_ENABLED": "0", "AI_AGENT_MODE": "cli", "USE_LLM_ANALYSIS": "0"})
     generation_source = """
 import hashlib, json, os, sys
 from datetime import UTC, datetime
@@ -1633,7 +1620,7 @@ print(json.dumps({'direct':result(direct), 'cli':result(cli),
         direct_environment,
     )
     _validate_generation_probe(generation)
-    direct = {"failed": True, "statusCode": 500, "cause": "EngineFailedError"}
+    direct = {"attemptedEngine": "none", "finalEngine": "rules", "saved": False}
 
     proposal_source = """
 import json

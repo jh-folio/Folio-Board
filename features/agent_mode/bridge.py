@@ -133,7 +133,17 @@ _STATUS_CACHE: tuple[float, dict] | None = None
 _STATUS_LOCK = threading.Lock()
 _PROCESS_LOCK = threading.Lock()
 _RUNNING_PROCESSES: dict[str, subprocess.Popen] = {}
-_RUN_SEMAPHORE = threading.Semaphore(1)
+_RUN_SEMAPHORE = threading.RLock()
+_PROMPT_JOB_ID: ContextVar[str] = ContextVar("folio_prompt_job_id", default="")
+
+
+@contextmanager
+def _bind_prompt_job(job_id: str):
+    token = _PROMPT_JOB_ID.set(job_id)
+    try:
+        yield
+    finally:
+        _PROMPT_JOB_ID.reset(token)
 
 
 def _queued_task_snapshot(task_type: str, params: dict) -> dict | None:
@@ -1163,17 +1173,25 @@ def run_agent_prompt(
 
     Agent 채팅처럼 context pack/writeback이 필요 없는 read-only 호출용이다.
 
-    `serialize=False`는 **이미 `_RUN_SEMAPHORE`를 쥔 호출자 전용**이다. 그 세마포어는
-    `threading.Semaphore(1)`이라 재진입이 안 되고 acquire에 타임아웃도 없다 — 잡 스레드
-    안에서 다시 부르면 그 잡이 영원히 멈춘다. 브리핑 생성 잡의 커밋 단계에서 도는
-    의미 비교가 정확히 그 자리다(`run_agent_task`가 커밋까지 통째로 감싼다).
+    `_RUN_SEMAPHORE`는 같은 작업 스레드의 보조 CLI 호출을 허용하는 RLock이다.
+    다른 작업은 계속 직렬화한다. `serialize=False`는 이미 잠금을 소유한 호출자용이다.
     """
     effective_timeout = timeout or max(30, int(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", 300)))
+    job_id = job_id or _PROMPT_JOB_ID.get()
+    def check_cancelled():
+        if job_id and (get_job(job_id) or {}).get("status") in {"cancelled", "cancel_requested"}:
+            raise RuntimeError("cancelled")
+
+    check_cancelled()
     bound_policy = current_task_policy()
     if isinstance(bound_policy, dict):
+        if task_generation_mode(bound_policy) != "llm_cli":
+            raise RuntimeError("ai_disabled")
         # Nested calls made while a producer is running inherit its frozen
         # model/effort.  Explicit arguments remain available for Agent Dock
         # conversations and other read-only callers.
+        if not str(adapter or "").strip():
+            adapter = str(bound_policy.get("provider") or "")
         if not str(model or "").strip():
             model = str(bound_policy.get("model") or "")
         if not str(reasoning_effort or "").strip():
@@ -1196,6 +1214,7 @@ def run_agent_prompt(
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
         if budget:
             budget.check_active()
+        check_cancelled()
         web_search_facts = facts_sink.get("webSearchFacts") or WebSearchFacts()
         return {
             "output": output,
@@ -1206,13 +1225,20 @@ def run_agent_prompt(
     recorder, stage_id = diagnostic_stage_start("wait_engine")
     if on_phase is not None:
         on_phase("wait_engine")
-    acquired = _RUN_SEMAPHORE.acquire(timeout=budget.remaining_seconds()) if budget else _RUN_SEMAPHORE.acquire()
+    wait_deadline = time.monotonic() + ((budget.remaining_seconds() or effective_timeout) if budget else effective_timeout)
+    acquired = False
+    while not acquired and time.monotonic() < wait_deadline:
+        check_cancelled()
+        if budget:
+            budget.check_active()
+        acquired = _RUN_SEMAPHORE.acquire(timeout=min(0.25, max(0, wait_deadline - time.monotonic())))
     if not acquired:
         error = TimeoutError("deadline_expired")
         diagnostic_stage_failure(recorder, error, stage_id=stage_id, stage_code="wait_engine", boundary="adapter")
         diagnostic_stage_end(recorder, stage_id, "wait_engine")
         raise error
     try:
+        check_cancelled()
         diagnostic_stage_end(recorder, stage_id, "wait_engine")
         if on_phase is not None:
             on_phase("generate")
@@ -1242,6 +1268,7 @@ def run_agent_prompt(
         _RUN_SEMAPHORE.release()
     if budget:
         budget.check_active()
+    check_cancelled()
     web_search_facts = facts_sink.get("webSearchFacts") or WebSearchFacts()
     return {
         "output": output,
@@ -1270,7 +1297,7 @@ def _run_agent_task_locked(
         cancelled=lambda: bool(job_id) and (get_job(job_id) or {}).get("status") in {"cancelled", "cancel_requested"},
     ) if task_type == "briefing" else None
     policy_context = bind_task_policy(task_policy) if isinstance(task_policy, dict) else nullcontext()
-    with policy_context, _observed_tool_policy(task_type, selected), (bind_briefing_budget(budget) if budget else nullcontext()):
+    with _bind_prompt_job(job_id), policy_context, _observed_tool_policy(task_type, selected), (bind_briefing_budget(budget) if budget else nullcontext()):
         progress("Agent context pack을 구성하고 있습니다.", 10, adapter=selected["id"])
         # The immutable policy travels with the job parameters but is a
         # bridge concern; feature pack builders should receive only their
@@ -1509,7 +1536,7 @@ def run_agent_task(
                 "generationMode": task_generation_mode(task_policy),
                 "artifactType": task_type,
                 "policy": task_policy_metadata(task_policy),
-                "message": "이 작업은 현재 설정된 API 경로로 실행해야 합니다.",
+                "message": "이 작업의 CLI 설정을 확인해 주세요.",
             }
             progress(result["message"], 100, **result)
             return result
@@ -1586,7 +1613,7 @@ def run_market_memory_update_task(
                 "generationMode": task_generation_mode(task_policy),
                 "artifactType": "market_memory_update",
                 "policy": task_policy_metadata(task_policy),
-                "message": "이 작업은 현재 설정된 API 경로로 실행해야 합니다.",
+                "message": "이 작업의 CLI 설정을 확인해 주세요.",
             }
             progress(result["message"], 100, **result)
             return result

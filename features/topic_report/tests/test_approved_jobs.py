@@ -30,7 +30,7 @@ class HoldingExecutor:
         "expected_attempted_engine",
     ),
     [
-        ("direct", "auto", False, "topic_report", "llm_api", "api"),
+        ("direct", "auto", False, "topic_report", "rules", "none"),
         ("cli", "codex", False, "agent_bridge", "llm_cli", "cli"),
         ("cli", "codex", True, "agent_bridge", "rules", "none"),
     ],

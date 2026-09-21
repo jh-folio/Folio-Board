@@ -41,38 +41,22 @@ def configured_adjudication(base_decision: dict, signatures: list[dict], *, seri
     from features.llm_settings.client import (
         ai_agent_enabled,
         ai_agent_mode,
-        request_llm_text,
-        selected_llm_config,
+        request_cli_text,
+        selected_cli_config,
     )
 
     # Unit/integration tests must never launch a real external CLI or paid API call.
     if os.environ.get("PYTEST_CURRENT_TEST") or not ai_agent_enabled():
         return {**base_decision, "decisionSource": "fallback", "agentStatus": "unavailable"}
-    if ai_agent_mode() == "cli":
-        from features.agent_mode.bridge import run_agent_prompt
+    from features.agent_mode.bridge import run_agent_prompt
 
-        def invoke(prompt: str) -> str:
-            result = run_agent_prompt(
-                prompt,
-                timeout=max(30, int(os.environ.get("KR_CONCENTRATION_ADJUDICATION_TIMEOUT_SECONDS", "120"))),
-                serialize=serialize,
-            )
-            return str(result.get("output") or "")
-    else:
-        config = selected_llm_config()
-        if not config.get("apiKey"):
-            return {**base_decision, "decisionSource": "fallback", "agentStatus": "unavailable"}
-
-        def invoke(prompt: str) -> str:
-            text, _response_id = request_llm_text(
-                config,
-                "Return one JSON object only. Choose only from the supplied whitelist.",
-                prompt,
-                web_search=False,
-                max_output_tokens=900,
-                json_mode=True,
-            )
-            return str(text or "")
+    def invoke(prompt: str) -> str:
+        result = run_agent_prompt(
+            prompt,
+            timeout=max(30, int(os.environ.get("KR_CONCENTRATION_ADJUDICATION_TIMEOUT_SECONDS", "120"))),
+            serialize=serialize,
+        )
+        return str(result.get("output") or "")
     return adjudicate_conflict(base_decision, signatures, invoke=invoke)
 
 

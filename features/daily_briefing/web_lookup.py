@@ -696,7 +696,6 @@ def briefing_lookup_call(*, adapter: str = "", job_id: str = "") -> LookupCall:
     return configured_lookup_call(
         adapter=adapter,
         job_id=job_id,
-        api_timeout_env="BRIEFING_LOOKUP_API_TIMEOUT_SECONDS",
         cli_timeout_env="BRIEFING_LOOKUP_CLI_TIMEOUT_SECONDS",
         timeout_limit=budget.remaining_seconds if budget else None,
     )

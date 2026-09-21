@@ -8,7 +8,7 @@ test("Settings route owns settings, agent bridge, obsidian, and automation APIs"
   assert.match(source, /data-settings-route/);
   assert.match(source, /\/api\/settings"/);
   assert.match(source, /\/api\/settings\$\{refreshAgent \? "\?refresh=true" : ""\}/);
-  assert.match(source, /\/api\/settings\/llm\/test\/\$\{encodeURIComponent\(providerId\)\}/);
+  assert.doesNotMatch(source, /\/api\/settings\/llm\/test/);
   assert.match(source, /\/api\/agent-bridge\/settings/);
   assert.match(source, /\/api\/obsidian\/settings/);
   assert.match(source, /\/api\/automation\/settings/);
@@ -31,7 +31,7 @@ test("Settings route preserves legacy settings visual class contracts", async ()
   assert.match(source, /settings-switch/);
   assert.match(source, /settings-agent-header/);
   assert.match(source, /settings-agent-mode-row/);
-  assert.match(source, /settings-switch-compact/);
+  assert.match(source, /<ToggleSwitch/);
   assert.match(source, /fieldset className="settings-agent-controls"/);
   assert.match(source, /disabled=\{!agentEnabled\}/);
   assert.match(source, /<\/fieldset>\s*<div className="filter-actions settings-actions">/);
@@ -47,7 +47,8 @@ test("Settings route preserves legacy settings visual class contracts", async ()
   assert.match(source, /RSS Collection/);
   assert.match(source, /Market Memory/);
   assert.match(source, /Daily Briefing/);
-  assert.match(source, /cli-provider-list/);
+  const cliSetup = await readFile(new URL("../src/app/AgentCliSetup.tsx", import.meta.url), "utf8");
+  assert.match(cliSetup, /cli-provider-list/);
   assert.match(source, /AI Agent 연동/);
   assert.match(source, /AI Agent 모델 설정/);
   assert.match(source, /전역 모델 설정/);

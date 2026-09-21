@@ -20,8 +20,6 @@ import json
 import shutil
 import sqlite3
 import textwrap
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,15 +35,6 @@ class Fixture:
     adapters: Path
     marker: Path
     protected: dict[str, str]
-
-
-@dataclass(frozen=True, slots=True)
-class FakeApi:
-    server: ThreadingHTTPServer
-    thread: Thread
-    modePath: Path
-    requests: list[dict[str, JsonValue]]
-    url: str
 
 
 def _sha(path: Path) -> str:
@@ -191,7 +180,6 @@ def _write_sitecustomize(adapters: Path) -> None:
             import json, os, subprocess, traceback, urllib.request
             _original_urlopen = urllib.request.urlopen
             _original_run = subprocess.run
-            _fake_url = os.environ.get("QA_FAKE_API_URL", "")
             _trace_path = os.environ.get("QA_RSS_TRACE_PATH", "")
             _fault_stage = os.environ.get("FOLIO_QA_FAULT_STAGE", "")
             _fault_arm_path = os.environ.get("QA_FAULT_ARM_PATH", "")
@@ -210,11 +198,8 @@ def _write_sitecustomize(adapters: Path) -> None:
             def _route(request, *args, **kwargs):
                 url = request.full_url if isinstance(request, urllib.request.Request) else str(request)
                 _trace("urlopen", url=url)
-                if _fake_url and any(host in url for host in ("api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com")):
-                    if isinstance(request, urllib.request.Request):
-                        request = urllib.request.Request(_fake_url, data=request.data, headers=dict(request.header_items()), method=request.method)
-                    else:
-                        request = _fake_url
+                if any(host in url for host in ("api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com")):
+                    raise AssertionError("retired_llm_http_request")
                 return _original_urlopen(request, *args, **kwargs)
             urllib.request.urlopen = _route
 
@@ -431,43 +416,3 @@ def database_counts(path: Path) -> dict[str, JsonValue]:
         }
     finally:
         connection.close()
-
-
-def start_fake_api(mode_path: Path) -> FakeApi:
-    requests: list[dict[str, JsonValue]] = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length)
-            mode = mode_path.read_text(encoding="utf-8").strip() if mode_path.exists() else "ok"
-            requests.append({"path": self.path, "bodySha256": hashlib.sha256(body).hexdigest(), "mode": mode})
-            if mode == "fail":
-                payload = {"error": {"message": "qa fake api failure"}}
-                status = 500
-            else:
-                payload = {
-                    "id": "qa-response-1",
-                    "output_text": "# QA Deep Research Report\\n\\n**한 줄 결론:** deterministic QA API\\n\\n## Source & Data Notes\\n- Reuters QA fixture",
-                }
-                status = 200
-            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-
-        def log_message(self, _format: str, *_args: object) -> None:
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = Thread(target=server.serve_forever, name="folio-qa-fake-api", daemon=True)
-    thread.start()
-    return FakeApi(server, thread, mode_path, requests, f"http://127.0.0.1:{server.server_port}/v1/responses")
-
-
-def stop_fake_api(fake: FakeApi) -> None:
-    fake.server.shutdown()
-    fake.server.server_close()
-    fake.thread.join(timeout=5)

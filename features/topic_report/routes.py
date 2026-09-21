@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from features.llm_settings.task_policy import TaskPolicyError
+
 import secrets
 import os
 from concurrent.futures import Executor
@@ -122,7 +124,7 @@ class ApprovedRequestBoundary:
             return mode
         from features.llm_settings.client import ai_agent_mode
 
-        return "cli" if ai_agent_mode() == "cli" else "direct"
+        return "cli"
 
     @classmethod
     def _adapter(cls, request: GenerateApprovedRequest) -> str:
@@ -188,6 +190,8 @@ class ApprovedRequestBoundary:
     def preflight(self, body: dict[str, JsonValue]) -> JSONResponse:
         try:
             request = GenerateApprovedRequest.model_validate(body)
+            if request.execution.mode == "direct":
+                return _response(409, {"error": "llm_api_removed"})
             preflight = self._service.preflight(request)
             if preflight.replayJobId is not None:
                 replay = self._jobs.store.get(preflight.replayJobId)
@@ -243,6 +247,8 @@ class ApprovedRequestBoundary:
             )
         except (ValidationError, ApprovalStoreError, ApprovedRequestError, CollectionServiceError) as error:
             return _failure_response(error)
+        except TaskPolicyError as error:
+            return _response(error.status, {"error": error.code, "message": str(error)})
         except (AttemptStoreUnavailableError, JobsStoreUnavailableError, SubmissionError, OSError, ValueError):
             return _response(503, {"error": "topic_execution_unavailable"})
         return _response(202, {"job": self._jobs.compatibility(submitted.job)})

@@ -15,8 +15,8 @@ from features.common.utils import normalize, summarize
 from features.common.research_library.indexing.service import load_index
 from features.llm_settings.client import (
     extract_json_object,
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
 )
 from features.common.research_library.search.service import search_documents
@@ -389,24 +389,24 @@ def generate_delta(
     if not evidence:
         diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status="no_evidence"), "no_evidence"
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
         diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status="disabled"), "disabled"
-    if not cfg["apiKey"]:
+    if not cfg["enabled"]:
         diagnostic_execution(final_engine="rules")
-        return fallback_delta(thesis, evidence, meta, status=f"missing_{cfg['provider']}_api_key"), f"missing_{cfg['provider']}_api_key"
+        return fallback_delta(thesis, evidence, meta, status="cli_disabled"), "cli_disabled"
     prompt = read_prompt()
     if not prompt:
         diagnostic_execution(final_engine="rules")
         return fallback_delta(thesis, evidence, meta, status="missing_prompt"), "missing_prompt"
     try:
         context = build_context(thesis, evidence, meta)
-        text, rid, usage = request_llm_text(cfg, prompt, context, json_mode=True, max_output_tokens=3500, include_usage=True)
+        text, rid, usage = request_cli_text(cfg, prompt, context, json_mode=True, max_output_tokens=3500, include_usage=True)
         if not text:
             diagnostic_execution(
-                attempted_engine="api", final_engine="rules", fallback_reason="engine_failed",
+                attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed",
             )
             return fallback_delta(thesis, evidence, meta, status="generation_failed"), "generation_failed"
         with diagnostic_stage("validate", boundary="validation"):
@@ -421,7 +421,7 @@ def generate_delta(
             "sourceCount": len(evidence),
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=3500),
         }
-        diagnostic_execution(attempted_engine="api", final_engine="api")
+        diagnostic_execution(attempted_engine="cli", final_engine="cli")
         return delta, "ok"
     except Exception as error:
         diagnostic_stage_failure(
@@ -429,7 +429,7 @@ def generate_delta(
             stage_id=None, stage_code="generate", boundary="adapter",
         )
         diagnostic_execution(
-            attempted_engine="api", final_engine="rules", fallback_reason="engine_failed",
+            attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed",
         )
         return fallback_delta(thesis, evidence, meta, status="generation_failed"), "generation_failed"
 

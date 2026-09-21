@@ -7,16 +7,16 @@ from features.agent_mode import bridge
 from features.common.quality_generation.call_budget import SharedRepairBudget, bind_briefing_budget
 
 
-@pytest.mark.parametrize("provider", ["openai", "gemini", "claude"])
-def test_api_writer_does_not_inherit_lookup_permission(monkeypatch, provider):
-    monkeypatch.setattr(service, "selected_llm_config", lambda: {
+@pytest.mark.parametrize("provider", ["codex", "antigravity", "claude"])
+def test_cli_writer_does_not_inherit_lookup_permission(monkeypatch, provider):
+    monkeypatch.setattr(service, "selected_cli_config", lambda: {
         "enabled": True, "apiKey": "test-only", "provider": provider, "model": "test",
     })
     monkeypatch.setattr(service, "read_briefing_prompt", lambda *a: "Write only supplied facts")
     context = Mock(return_value=("fixed input", []))
     monkeypatch.setattr(service, "build_llm_context", context)
     request = Mock(return_value=("# 미국장\n\n확인된 자료가 없습니다.", "test", {}))
-    monkeypatch.setattr(service, "request_" + provider, request)
+    monkeypatch.setattr(service, "request_cli_text", request)
     service.generate_llm_briefing("2026-09-04", "2026-09-03", [], [], web_search_override=True, market_scope="us")
     assert context.call_args.kwargs["web_search"] is True
     assert request.call_args.kwargs["web_search"] is False

@@ -8,8 +8,8 @@ import pytest
 from features.llm_settings import task_policy
 
 
-def api_config(model: str = "gpt-6-astra", effort: str = "high") -> dict:
-    return {"mode": "api", "provider": "openai", "model": model, "reasoningEffort": effort}
+def cli_config(model: str = "gpt-6-astra", effort: str = "high") -> dict:
+    return {"mode": "cli", "provider": "codex", "model": model, "reasoningEffort": effort}
 
 
 def test_missing_policy_is_all_off_and_does_not_create_file(tmp_path: Path) -> None:
@@ -22,37 +22,52 @@ def test_missing_policy_is_all_off_and_does_not_create_file(tmp_path: Path) -> N
     assert not task_policy.task_policy_path(tmp_path).exists()
 
 
+def test_legacy_policy_switch_preserves_original_before_commit(tmp_path: Path) -> None:
+    path = task_policy.task_policy_path(tmp_path)
+    legacy = task_policy.load_task_policy(root=tmp_path)
+    legacy["tasks"]["company_analysis"] = {"enabled": True, "config": {
+        "mode": "api", "provider": "openai", "model": "old-model", "reasoningEffort": "provider_default",
+    }}
+    original = json.dumps(legacy).encode("utf-8")
+    path.write_bytes(original)
+    task_policy.save_task_policy({"expectedRevision": 0, "tasks": {
+        "company_analysis": {"enabled": True, "config": cli_config()},
+    }}, root=tmp_path)
+    assert path.with_suffix(".llm-api-transition.bak").read_bytes() == original
+    assert task_policy.load_task_policy(root=tmp_path)["tasks"]["company_analysis"]["config"] == cli_config()
+
+
 def test_first_save_and_off_to_on_restores_previous_config(tmp_path: Path) -> None:
     saved = task_policy.save_task_policy({
         "expectedRevision": 0,
-        "tasks": {"company_analysis": {"enabled": True, "config": api_config()}},
+        "tasks": {"company_analysis": {"enabled": True, "config": cli_config()}},
     }, root=tmp_path)
     assert saved["revision"] == 1
-    assert saved["tasks"]["company_analysis"]["config"] == api_config()
+    assert saved["tasks"]["company_analysis"]["config"] == cli_config()
 
     disabled = task_policy.save_task_policy({
         "expectedRevision": 1,
         "tasks": {"company_analysis": {"enabled": False}},
     }, root=tmp_path)
     assert disabled["tasks"]["company_analysis"]["enabled"] is False
-    assert disabled["tasks"]["company_analysis"]["config"] == api_config()
+    assert disabled["tasks"]["company_analysis"]["config"] == cli_config()
 
     restored = task_policy.save_task_policy({
         "expectedRevision": 2,
         "tasks": {"company_analysis": {"enabled": True}},
     }, root=tmp_path)
-    assert restored["tasks"]["company_analysis"]["config"] == api_config()
+    assert restored["tasks"]["company_analysis"]["config"] == cli_config()
 
 
 def test_stale_revision_returns_latest_without_overwriting(tmp_path: Path) -> None:
     task_policy.save_task_policy({
         "expectedRevision": 0,
-        "tasks": {"daily_briefing": {"enabled": True, "config": api_config("gpt-5.6-sol", "provider_default")}},
+        "tasks": {"daily_briefing": {"enabled": True, "config": cli_config("gpt-5.6-sol", "provider_default")}},
     }, root=tmp_path)
     with pytest.raises(task_policy.TaskPolicyConflict) as caught:
         task_policy.save_task_policy({
             "expectedRevision": 0,
-            "tasks": {"daily_briefing": {"enabled": True, "config": api_config()}},
+            "tasks": {"daily_briefing": {"enabled": True, "config": cli_config()}},
         }, root=tmp_path)
     assert caught.value.code == "task_policy_revision_conflict"
     assert caught.value.latest["revision"] == 1
@@ -60,8 +75,8 @@ def test_stale_revision_returns_latest_without_overwriting(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("config", [
-    {"mode": "api", "provider": "gemini", "model": "gemini-3.5-flash", "reasoningEffort": "high"},
-    {"mode": "api", "provider": "openai", "model": "gpt-5.6-sol", "reasoningEffort": "high"},
+    {"mode": "cli", "provider": "antigravity", "model": "gemini-3.5-flash", "reasoningEffort": "ultra"},
+    {"mode": "cli", "provider": "codex", "model": "gpt-5.5", "reasoningEffort": "ultra"},
     {"mode": "cli", "provider": "codex", "model": "gpt-5.5", "reasoningEffort": "max"},
 ])
 def test_unsupported_reasoning_is_rejected_before_write(tmp_path: Path, config: dict) -> None:
@@ -123,12 +138,12 @@ def test_explicit_override_does_not_require_unrelated_global_auto(monkeypatch: p
         "revision": 7,
         "tasks": {
             **{key: {"enabled": False, "config": None} for key in task_policy.TASK_KEYS},
-            "company_analysis": {"enabled": True, "config": api_config()},
+            "company_analysis": {"enabled": True, "config": cli_config()},
         },
     })
     assert resolved["source"] == "task"
-    assert resolved["mode"] == "api"
-    assert resolved["provider"] == "openai"
+    assert resolved["mode"] == "cli"
+    assert resolved["provider"] == "codex"
     assert resolved["policyRevision"] == 7
 
 

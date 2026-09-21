@@ -42,10 +42,8 @@ from features.company_analysis.sec_filings import (
     ranked_quarterly_report_paragraphs,
 )
 from features.llm_settings.client import (
-    request_claude,
-    request_gemini,
-    request_openai,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
     use_llm_analysis,
     use_web_search_for_analysis,
@@ -807,12 +805,12 @@ def generate_llm_company_analysis(
     다시 조립하면 두 경로가 또 갈린다 — 실제로 그렇게 갈려서, 계약을 한쪽에만 붙인 채로
     보고서가 나갔다. `context=None`은 이 함수를 직접 부르는 옛 호출자를 위한 길이다.
     """
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     llm_on = use_llm_analysis() if llm_override is None else bool(llm_override)
     if not llm_on:
         return None, "disabled"
-    if not cfg["apiKey"]:
-        return None, f"missing_{cfg['provider']}_api_key"
+    if not cfg["enabled"]:
+        return None, "cli_disabled"
     prompt = read_company_analysis_prompt(analysis_style)
     if not prompt:
         return None, "missing_prompt"
@@ -870,12 +868,7 @@ def generate_llm_company_analysis(
     web_status = "web_search" if web_search else "local_only"
     try:
         max_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000")))
-        if cfg["provider"] == "gemini":
-            text, response_id, usage = request_gemini(cfg, prompt, context, web_search=web_search, include_usage=True)
-        elif cfg["provider"] == "claude":
-            text, response_id, usage = request_claude(cfg, prompt, context, web_search=web_search, include_usage=True)
-        else:
-            text, response_id, usage = request_openai(cfg, prompt, context, web_search=web_search, include_usage=True)
+        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=web_search, include_usage=True)
         if not text:
             return None, "empty_response"
         text = strip_llm_citation_markers(text)

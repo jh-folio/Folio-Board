@@ -50,7 +50,7 @@ def _generation_runtime(llm):
         "generate_llm_company_analysis": llm,
         "build_rule_report": lambda *args, **kwargs: "# 규칙 기반 보고서",
         "company_analysis_sources": lambda *args, **kwargs: [],
-        "selected_llm_config": lambda: {"provider": "openai", "model": ""},
+        "selected_cli_config": lambda: {"provider": "openai", "model": ""},
         "use_web_search_for_analysis": lambda: False,
     }
 

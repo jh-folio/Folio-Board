@@ -38,11 +38,10 @@ from features.market_memory.snapshot import (
     save_market_state_snapshot,
 )
 from features.llm_settings.client import (
-    LlmRequestError,
     extract_json_object,
     json_repair_prompt,
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
 )
 from features.common.quality_generation.telemetry import normalize_token_usage
 from features.common.workspace import data_dir
@@ -327,14 +326,10 @@ def finalize_role_classification(
     return summary
 
 
-def _llm_budget_exhausted(error: LlmRequestError) -> bool:
+def _llm_budget_exhausted(error: RuntimeError) -> bool:
     """Map only provider budget/quota signals from this existing LLM call."""
-    try:
-        status = int(error.status_code)
-    except (TypeError, ValueError):
-        status = 0
     detail = f"{error} {getattr(error, 'body', '')}".lower()
-    return status == 402 or any(token in detail for token in (
+    return any(token in detail for token in (
         "insufficient_quota", "quota exceeded", "quota_exceeded", "budget exhausted",
         "budget_exhausted", "credit balance", "billing hard limit",
     ))
@@ -535,9 +530,9 @@ def save_memory_entries(entries, *, db_path=MARKET_MEMORY_DB_PATH) -> dict:
 
 
 def run_llm_market_memory(date=None):
-    cfg = selected_llm_config()
-    if not cfg["apiKey"]:
-        return {"ok": False, "status": f"missing_{cfg['provider']}_api_key", "saved": [], "message": "선택한 LLM Provider의 API 키가 없습니다."}
+    cfg = selected_cli_config()
+    if not cfg["enabled"]:
+        return {"ok": False, "status": "cli_disabled", "saved": [], "message": "AI가 꺼져 있습니다."}
     prompt = read_market_memory_prompt()
     if not prompt:
         return {"ok": False, "status": "missing_prompt", "saved": [], "message": "시장 내러티브 LLM 프롬프트가 없습니다."}
@@ -547,20 +542,7 @@ def run_llm_market_memory(date=None):
         context = add_role_candidates_to_context(context, role_selection)
     max_tokens = int(os.environ.get("LLM_MEMORY_MAX_OUTPUT_TOKENS", "2600"))
     try:
-        try:
-            text, response_id, usage = request_llm_text(cfg, prompt, context, web_search=False, max_output_tokens=max_tokens, json_mode=True, include_usage=True)
-        except LlmRequestError as exc:
-            if exc.status_code != 400:
-                raise
-            fallback_prompt = (
-                prompt
-                + "\n\nThe provider rejected strict JSON mode. Still return only one valid JSON object with an `entries` array. "
-                "No Markdown fences, no prose before or after JSON."
-            )
-            text, response_id, usage = request_llm_text(
-                cfg, fallback_prompt, context,
-                web_search=False, max_output_tokens=max_tokens, json_mode=False, include_usage=True,
-            )
+        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=False, max_output_tokens=max_tokens, json_mode=True, include_usage=True)
         with diagnostic_stage("validate", boundary="validation"):
             try:
                 payload = extract_json_object(text)
@@ -570,7 +552,7 @@ def run_llm_market_memory(date=None):
                     + clean_brief_text(text, 5000)
                     + "\n\nRequired schema: {\"entries\": [...]}"
                 )
-                repaired, repair_id, repair_usage = request_llm_text(
+                repaired, repair_id, repair_usage = request_cli_text(
                     cfg, json_repair_prompt(), repair_context,
                     web_search=False, max_output_tokens=min(max_tokens, 1800), json_mode=True, include_usage=True,
                 )
@@ -616,7 +598,7 @@ def run_llm_market_memory(date=None):
             "saved": saved,
             "message": detail,
         }
-    except LlmRequestError as exc:
+    except (RuntimeError, OSError) as exc:
         diagnostic_stage_failure(
             current_diagnostic_recorder(), exc, stage_id=None,
             stage_code="generate", boundary="generic",
@@ -715,9 +697,9 @@ def _merge_context_refs(contexts: dict[str, dict]) -> dict:
 
 
 def run_llm_market_state_snapshot(date=None):
-    cfg = selected_llm_config()
-    if not cfg["apiKey"]:
-        return {"ok": False, "status": f"missing_{cfg['provider']}_api_key", "message": "선택한 LLM Provider의 API 키가 없습니다."}
+    cfg = selected_cli_config()
+    if not cfg["enabled"]:
+        return {"ok": False, "status": "cli_disabled", "message": "AI가 꺼져 있습니다."}
     max_tokens = int(os.environ.get("LLM_MARKET_STATE_MAX_OUTPUT_TOKENS", "2200"))
     try:
         payloads = {}
@@ -729,7 +711,7 @@ def run_llm_market_state_snapshot(date=None):
             context_payload = build_market_state_context(market_scope=scope)
             context = json.dumps(context_payload, ensure_ascii=False, indent=2)
             prompt = _market_state_scope_prompt(scope)
-            text, response_id, usage = request_llm_text(
+            text, response_id, usage = request_cli_text(
                 cfg,
                 prompt,
                 context,

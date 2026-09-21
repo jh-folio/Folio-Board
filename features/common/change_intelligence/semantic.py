@@ -141,10 +141,9 @@ def evaluate_semantic_changes(summary: dict, *, llm_call=None) -> dict:
         return {"status": "no_eligible_items", "verdicts": {}}
     if llm_call is None:
         from features.llm_settings.client import (
-            LlmRequestError,
-            extract_json_object,
-            request_llm_text,
-            selected_llm_config,
+                    extract_json_object,
+            request_cli_text,
+            selected_cli_config,
         )
 
         from features.llm_settings.task_runtime import current_task_policy, generation_mode
@@ -155,39 +154,21 @@ def evaluate_semantic_changes(summary: dict, *, llm_call=None) -> dict:
         # A CLI task must not validate an unused global API model/effort.
         # Frozen per-task routing takes precedence over unrelated API keys.
         try:
-            cfg = {} if bound_mode == "llm_cli" else selected_llm_config()
+            cfg = policy if bound_mode == "llm_cli" else selected_cli_config()
         except (ValueError, KeyError, TypeError, OSError, RuntimeError):
             return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_configuration_invalid"}
-        if cfg.get("apiKey"):
-            def llm_call(prompt: str, context: str) -> dict:
-                from features.common.quality_generation.call_budget import current_briefing_budget
-                budget = current_briefing_budget()
-                timing = {"timeout_seconds": budget.remaining_seconds()} if budget else {}
-                text, _response_id, _usage = request_llm_text(
-                    cfg, prompt, context,
-                    web_search=False, max_output_tokens=MAX_OUTPUT_TOKENS,
-                    json_mode=True, include_usage=True,
-                    **timing,
-                )
-                if budget:
-                    budget.check_active()
-                return extract_json_object(text)
+        from features.llm_settings.client import default_generation_mode
 
-            provider, model = cfg.get("provider", ""), cfg.get("model", "")
-        else:
-            # 키가 없으면 CLI를 본다. 어느 쪽도 없을 때만 판정을 접는다.
-            from features.llm_settings.client import default_generation_mode
-
-            if bound_mode == "llm_api" or (bound_mode is None and default_generation_mode() != "llm_cli"):
-                return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
-            try:
-                llm_call = _cli_semantic_call()
-            except Exception:  # noqa: BLE001 - 어댑터를 못 고르면 판정만 접는다
-                return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
-            provider, model = "agent_cli", ""
+        if (bound_mode is None and default_generation_mode() != "llm_cli"):
+            return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+        try:
+            llm_call = _cli_semantic_call()
+        except Exception:  # noqa: BLE001 - 어댑터를 못 고르면 판정만 접는다
+            return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+        provider, model = "agent_cli", ""
         try:
             raw = llm_call(SEMANTIC_PROMPT, json.dumps(_context_payload(items), ensure_ascii=False))
-        except (LlmRequestError, KeyError, TypeError, ValueError, OSError, RuntimeError):
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError):
             return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_failed"}
     else:
         provider, model = "injected", ""

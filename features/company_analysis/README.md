@@ -41,7 +41,7 @@ API 저장 자체가 실패하면 본문과 `saved: false`, 고정 `saveError`�
 기업분석에는 생성 경로가 둘이다.
 
 ```text
-API   app.py → analyze_company()
+규칙  app.py → analyze_company()
 CLI   app.py → submit_agent_task() → agent_mode/service.py::prepare_company_analysis_pack()
 ```
 
@@ -130,7 +130,7 @@ CLI   app.py → submit_agent_task() → agent_mode/service.py::prepare_company_
 - `secFacts`의 companyfacts 링크는 `SEC_FACTS_URL`(`api/xbrl/companyfacts/CIK…`)을 가리킨다
   — submissions URL을 "SEC companyfacts"로 적으면 독자가 연 자료가 재무 숫자의 출처가 아니다.
 - 웹 조회로 인용한 자료(`GenerationInputs.webSourceItems`)는 `sourceLedger`뿐 아니라
-  `sources`에도 들어간다. `draft_artifact`가 두 경로(API/CLI) 공통으로 전달한다.
+  `sources`에도 들어간다. `draft_artifact`가 규칙/CLI 경로 공통으로 전달한다.
 
 ### 리더 렌더링 (`web/src/app/reportReader/CompanyAnalysisBody.tsx`)
 
@@ -243,7 +243,7 @@ LLM에는 전체 10-K나 전체 PDF를 넣지 않습니다. 입력은 `공식 �
 
 ## 규칙 기반 버전
 
-LLM이 꺼져 있거나 API Key가 없거나 호출에 실패하면 `features/company_analysis/report_rules.py`가 섹션별 규칙 엔진으로 보고서를 만듭니다.
+LLM이 꺼져 있거나 CLI 보조 작성 호출에 실패하면 `features/company_analysis/report_rules.py`가 섹션별 규칙 엔진으로 보고서를 만듭니다.
 
 - 재무 섹션: SEC companyfacts 또는 DART 재무제표의 핵심 항목을 표로 구성
 - 사업/경쟁우위: SEC 10-K 상위 문단 또는 로컬 공식자료 발췌 중 product, platform, customer, segment, network 등 키워드가 강한 문단 사용
@@ -416,7 +416,7 @@ DCF 차트는 통화가 `USD`로 하드코딩돼 있었습니다.
 ### 통화·주식 단위 확인
 
 `valuation_basis.py`가 공식 재무의 신고 통화, 주가 단위, 시장가치 통화와 공급자 재무 통화를
-구분합니다. 규칙 보고서·차트·API/CLI 공통 생성 입력이 이 판정을 사용합니다.
+구분합니다. 규칙 보고서·차트·CLI/규칙 공통 생성 입력이 이 판정을 사용합니다.
 통화가 다르거나 확인되지 않은 입력을 섞는 계산, 명시된 ADR 비율·주식종류 불일치에
 영향받는 주당 계산은 제외하고 `analysisCharts.valuationBasis`와 계산 객체에 사유를 남깁니다.
 펜스와 파운드는 같은 값으로 취급하지 않으며, 환율·ADR 환산을 새로 수행하지 않습니다.

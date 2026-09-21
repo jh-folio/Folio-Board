@@ -74,10 +74,10 @@ def run_direct_analysis(
             mode = generation.get("mode")
             status = generation.get("status")
             if mode == "llm":
-                diagnostic_execution(attempted_engine="api", final_engine="api")
+                diagnostic_execution(attempted_engine="cli", final_engine="cli")
             elif mode == "rules":
                 diagnostic_execution(
-                    attempted_engine="api" if status == "generation_failed" else None,
+                    attempted_engine="cli" if status == "generation_failed" else None,
                     final_engine="rules",
                     fallback_reason="engine_failed" if status == "generation_failed" else None,
                 )

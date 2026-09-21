@@ -1,4 +1,4 @@
-"""Bounded API/Agent-CLI transport for the daily-news semantic contract.
+"""Bounded Agent-CLI transport for the daily-news semantic contract.
 
 The semantic payload, prompt, and result validator live in
 ``daily_briefing.news_semantics``. This module is only the provider seam: it
@@ -20,7 +20,7 @@ INPUT_UTF8_MAX = 12_000
 OUTPUT_UTF8_MAX = 24_000
 MAX_CALLS_PER_MARKET = 1
 MAX_RUNTIME_SECONDS = 60
-API_MAX_OUTPUT_TOKENS = 3_000
+SEMANTIC_OUTPUT_BUDGET = 3_000
 
 CAPABILITY = {
     "name": "daily_briefing_news_semantic_transport",
@@ -29,7 +29,7 @@ CAPABILITY = {
     "timeoutSeconds": MAX_RUNTIME_SECONDS,
     "inputUtf8Max": INPUT_UTF8_MAX,
     "outputUtf8Max": OUTPUT_UTF8_MAX,
-    "apiMaxOutputTokens": API_MAX_OUTPUT_TOKENS,
+    "requestedOutputTokens": SEMANTIC_OUTPUT_BUDGET,
     # The CLI bridge has no portable exact output-token flag at this seam.
     "cliTokenCapEnforced": False,
     "webSearch": False,
@@ -149,7 +149,6 @@ def make_news_semantic_engine(
     mode: str = "shadow",
     selected_markets: Iterable[str] | None = None,
     engine: str = "",
-    api_config: Mapping[str, Any] | None = None,
     adapter: str = "",
     model: str = "",
     job_id: str = "",
@@ -172,10 +171,10 @@ def make_news_semantic_engine(
         return None
     if selected_markets is not None and target_market not in {_text(item).lower() for item in selected_markets}:
         return None
-    if llm_call is None and target_engine not in {"api", "cli"}:
+    if llm_call is None and target_engine != "cli":
         return None
 
-    selected_model = _text(model) or _text((api_config or {}).get("model"))
+    selected_model = _text(model)
     identity = semantic_cache_identity(
         market=target_market,
         kind=target_kind,
@@ -188,7 +187,7 @@ def make_news_semantic_engine(
     def invoke(
         payload: Mapping[str, Any], *,
         timeout_seconds: float = MAX_RUNTIME_SECONDS,
-        max_output_tokens: int = API_MAX_OUTPUT_TOKENS,
+        max_output_tokens: int = SEMANTIC_OUTPUT_BUDGET,
     ) -> dict[str, Any]:
         if state["calls"] >= MAX_CALLS_PER_MARKET:
             raise RuntimeError("semantic_call_budget_exhausted")
@@ -201,24 +200,9 @@ def make_news_semantic_engine(
         effective_timeout = _budget_timeout(budget, timeout_seconds)
         state["calls"] += 1
         try:
-            output_tokens = min(API_MAX_OUTPUT_TOKENS, max(1, int(max_output_tokens or API_MAX_OUTPUT_TOKENS)))
+            output_tokens = min(SEMANTIC_OUTPUT_BUDGET, max(1, int(max_output_tokens or SEMANTIC_OUTPUT_BUDGET)))
             if llm_call is not None:
                 raw = llm_call(payload, timeout_seconds=effective_timeout, max_output_tokens=output_tokens)
-            elif target_engine == "api":
-                if os.environ.get("PYTEST_CURRENT_TEST"):
-                    raise RuntimeError("external_semantic_disabled_in_tests")
-                from features.llm_settings.client import request_llm_text
-
-                response = request_llm_text(
-                    dict(api_config or {}),
-                    prompt,
-                    context,
-                    web_search=False,
-                    max_output_tokens=output_tokens,
-                    json_mode=True,
-                    timeout_seconds=effective_timeout,
-                )
-                raw = response[0] if isinstance(response, tuple) else response
             else:
                 if os.environ.get("PYTEST_CURRENT_TEST"):
                     raise RuntimeError("external_semantic_disabled_in_tests")
@@ -251,7 +235,7 @@ def make_news_semantic_engine(
 
 
 __all__ = [
-    "API_MAX_OUTPUT_TOKENS",
+    "SEMANTIC_OUTPUT_BUDGET",
     "CAPABILITY",
     "INPUT_UTF8_MAX",
     "MAX_CALLS_PER_MARKET",

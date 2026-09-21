@@ -44,8 +44,8 @@ class MarketStateContextBody(BaseModel):
     collectionMarket: str | None = Field(default=None, max_length=20)
 
 
-def _direct_mode() -> str:
-    return "llm_api"
+def _inline_mode() -> str:
+    return "inline"
 
 
 class ModeResolver(Protocol):
@@ -66,7 +66,7 @@ class MemoryRunner(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class MarketStateRouteAdapters:
-    modeResolver: ModeResolver = _direct_mode
+    modeResolver: ModeResolver = _inline_mode
     snapshotJobSubmitter: SnapshotJobSubmitter | None = None
     combinedJobSubmitter: CombinedJobSubmitter | None = None
     memoryRunner: MemoryRunner | None = None
@@ -127,8 +127,10 @@ class MarketStateBoundary:
                 return {
                     "ok": False,
                     "status": "rules_unavailable",
-                    "message": "시장 상태 스냅샷은 AI Agent 또는 LLM API가 활성화되어 있을 때 생성할 수 있습니다.",
+                    "message": "시장 상태 스냅샷은 AI Agent CLI가 활성화되어 있을 때 생성할 수 있습니다.",
                 }
+            if mode != "inline":
+                return JSONResponse({"error": "llm_api_removed"}, status_code=409)
             try:
                 return self.service.run_manual(
                     ManualSnapshotCommand(body.scope, body.date.isoformat() if body.date else None)
@@ -156,8 +158,10 @@ class MarketStateBoundary:
                 return {
                     "ok": False,
                     "status": "rules_unavailable",
-                    "message": "시장 메모리 업데이트는 화면용 시장 상태 스냅샷 생성을 위해 AI Agent 또는 LLM API가 필요합니다.",
+                    "message": "시장 메모리 업데이트는 화면용 시장 상태 스냅샷 생성을 위해 AI Agent CLI가 필요합니다.",
                 }
+            if mode != "inline":
+                return JSONResponse({"error": "llm_api_removed"}, status_code=409)
             if self.adapters.memoryRunner is None:
                 return JSONResponse({"error": "adapter_unavailable"}, status_code=503)
             memory = self.adapters.memoryRunner(date_value)

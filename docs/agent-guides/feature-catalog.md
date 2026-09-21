@@ -19,7 +19,7 @@
 | 워치리스트 | `watchlist_notes` | 워치리스트·상세(기업 정보/네이티브 차트/실적/수집 뉴스)와 종목별 Thesis 생성·수정·최신 근거 검토·반대 근거·다음 확인·이력 | metadata + hypothesis |
 | Native Investment Notes | `investment_notes` | Obsidian 없이 운용되는 Folio 로컬 투자 노트와 `native_note_index` | hypothesis 입력 |
 | 자동화 | `automation` | RSS 수집·시장 메모리 갱신·브리핑 예약 스케줄러와 실행 기록(`data/automation-settings.json`, `data/automation-runs.json`). 서버가 켜져 있을 때만 돈다 | — |
-| LLM/설정/웹검색 | `llm_settings` | API Key·웹검색 보완 | — |
+| LLM/설정/웹검색 | `llm_settings` | CLI 설정·웹검색 보완 | — |
 | Notion 내보내기 | `notion_export` | 보고서 → Notion DB | — |
 | Obsidian 연동 | `obsidian` | 보고서/내러티브 → Vault, 사용자 노트 회수, thesis/memo/review 템플릿·검사 | hypothesis 입력 |
 | Personal Overlay | `personal_overlay` | Canonical을 사용자 노트와 대조한 개인 해석 (브리핑/기업분석) | Personal Overlay |
@@ -44,9 +44,8 @@
 - **보이는 핵심 화면**: Home/AI Agent, Dashboard(Research Cockpit), Watchlist, Portfolio, Briefing, RSS Feed, Market Memory, Company Analysis, Deep Research, Settings.
 - **보이는 보조 기능**: Deep Research의 question-first 계획 승인, Smart Collection 상세/상태/변화, Market State, Agent Work Log, 보고서 reader의 Folio Note·규칙 기반 note/thesis 검토, 기존 리서치 화면의 읽기 전용 Investment Context, Obsidian/Notion 내보내기, Agent Dock/Ask Agent/제안 승인 흐름, Dashboard의 Change Feed·시장 캘린더, Watchlist 상세의 Thesis 생성·수정·`최신 근거로 검토`·반대 근거·다음 확인·이력, Portfolio의 날짜별 `투자 리뷰`, Watchlist/Portfolio `짚어보기` 대화와 `노트로 정리`.
 - **CLI 선택은 범위가 둘이다.** 전역 기본은 상단바 `Agent CLI` 메뉴와 설정 탭이 소유하며 예약 브리핑·기업분석 등 도크 밖 작업이 쓴다. 도크의 `이 대화의 CLI`는 요청의 `options.adapter`로만 전달되어 그 대화에만 적용되고 전역을 저장하지 않는다 — 전역과 다르면 도크가 그 사실을 밝히고, 새 대화는 다시 전역 기본에서 시작한다.
-- **Agent 실행 경계**: 설정에서 LLM API 키를 넣거나 Agent CLI를 연결한 순간부터, 사용자는 그 프로젝트의 일반 산출물 생성에 Agent 사용을 허락한 것으로 본다. 개인 판단 표면의 반박은 예외적으로 **명시 클릭**에서만 실행한다: 내러티브 `{kind: market_memory, id: stateId, intent: challenge}`와 Thesis `{kind: watchlist, id: ticker, tickers: [ticker], intent: challenge}`는 매 turn 정확한 권위 객체와 최근 90일 근거를 다시 읽는다. 투자 리뷰 `{kind: investment_review, id: date, revision: reviewRevision, intent: challenge}`는 정확한 `date + reviewRevision`의 저장된 구조화 리뷰만 다시 읽으며, 일반 Portfolio 맥락이나 새 근거 조회로 넓히지 않는다. ID/revision이 stale이면 모두 넓은 맥락으로 폴백하지 않고 data gap을 돌려준다. 화면 로드·판정 pass는 Agent를 부르지 않으며, 대화는 `reuseAsEvidence=false` hypothesis다. 답변은 Thesis verdict·checkpoint·review state를 자동 변경하지 않고, 구조화 저장은 preview와 명시적 확인 뒤에만 가능하다. freshness/health/context 배지와 `changeSummary`는 계속 규칙으로 자동 계산한다(Agent를 쓰지 않는다).
+- **Agent 실행 경계**: 설정에서 Agent CLI를 연결한 순간부터, 사용자는 그 프로젝트의 일반 산출물 생성에 Agent 사용을 허락한 것으로 본다. 개인 판단 표면의 반박은 예외적으로 **명시 클릭**에서만 실행한다: 내러티브 `{kind: market_memory, id: stateId, intent: challenge}`와 Thesis `{kind: watchlist, id: ticker, tickers: [ticker], intent: challenge}`는 매 turn 정확한 권위 객체와 최근 90일 근거를 다시 읽는다. 투자 리뷰 `{kind: investment_review, id: date, revision: reviewRevision, intent: challenge}`는 정확한 `date + reviewRevision`의 저장된 구조화 리뷰만 다시 읽으며, 일반 Portfolio 맥락이나 새 근거 조회로 넓히지 않는다. ID/revision이 stale이면 모두 넓은 맥락으로 폴백하지 않고 data gap을 돌려준다. 화면 로드·판정 pass는 Agent를 부르지 않으며, 대화는 `reuseAsEvidence=false` hypothesis다. 답변은 Thesis verdict·checkpoint·review state를 자동 변경하지 않고, 구조화 저장은 preview와 명시적 확인 뒤에만 가능하다. freshness/health/context 배지와 `changeSummary`는 계속 규칙으로 자동 계산한다(Agent를 쓰지 않는다).
 - 엔진을 부르는 화면은 **얼마나 걸리는지 미리 말하고**, 실패하면 규칙 결과로 내려간 사실을 숨기지 않는다. Agent CLI는 한 번에 수십 초가 걸린다.
 - **테마/접근성**: 전체 공개 화면은 Light/Dark/System 테마를 지원하고, 기존 사용자 기본값은 Light, 신규 사용자 기본값은 System이다. 키보드 탐색, 명확한 focus, WCAG 2.2 AA 대비를 공개 화면 계약으로 둔다.
 - **개인 판단 주 표면**: Watchlist 상세의 Thesis와 Portfolio의 `투자 리뷰`는 개인 판단을 읽고 점검하는 주 표면이다. 별도 최상위 Investment Review 화면이나 두 번째 Portfolio 화면은 만들지 않으며, Canonical 보고서·외부 근거·일반 대화와의 계층 분리는 유지한다.
 - **문서 원칙**: 사용자용 README는 현재 릴리즈에서 실제로 보이는 기능만 현재 기능으로 설명한다. 숨김/축소 기능은 개발자 문서나 후속 로드맵에서 다룬다.
-

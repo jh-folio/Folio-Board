@@ -536,9 +536,9 @@ def test_run_llm_market_state_snapshot_generates_independent_market_views(tmp_pa
         return json.dumps(payload, ensure_ascii=False), f"resp-{scope}", {}
 
     monkeypatch.setattr(memory_service, "MARKET_MEMORY_DB_PATH", tmp_path / "market-memory.sqlite3")
-    monkeypatch.setattr(memory_service, "selected_llm_config", lambda: {"apiKey": "key", "provider": "test", "model": "test-model"})
+    monkeypatch.setattr(memory_service, "selected_cli_config", lambda: {"enabled": True, "apiKey": "key", "provider": "test", "model": "test-model"})
     monkeypatch.setattr(memory_service, "build_market_state_context", fake_context)
-    monkeypatch.setattr(memory_service, "request_llm_text", fake_llm)
+    monkeypatch.setattr(memory_service, "request_cli_text", fake_llm)
 
     result = memory_service.run_llm_market_state_snapshot()
 

@@ -24,6 +24,5 @@
 - **프리셋 편집은 같은 id를 유지한다**(0.6). 기존 list 파일에서 각 프리셋만 독립 `revision`을 가지며 legacy는 읽기에서 0으로 투영한다(파일 재작성 금지). 수정·삭제는 `expectedRevision` 필수이고 충돌/삭제된 id는 409와 최신본으로 멈춘다. 신규·복제는 서버가 id를 발급하며, 전체 목록 RLock으로 서로 다른 프리셋의 동시 수정도 보존한다. 현재 보유의 revision과는 별개다. 새 UI는 `weightPercent`(1 = 1%)를 보내고, 합계 조정은 `normalizeWeights` 명시 선택에서만 한다.
 - 초기 공개 릴리즈에 실려 온 `.portfolio-donut-grid` 등 CSS 46개는 D1 프리미티브 이전 디자인(테두리 카드)이라 되살리지 않는다.
 - **스크린샷 가져오기는 0.5.0 화면에 없다.** 시간 대비 인식이 만족스럽지 않았고 첫 설정에 한 번 쓰는 도구였다(2026-08-07 사용자 결정). 버튼·다이얼로그·`/import-image/*` route를 걷어냈고 보유 종목은 직접 입력한다.
-- 다시 만들 때는 **Agent 도크 하나로 통일한다** — 사용자가 도크에 사진을 붙이고 포지션 입력을 요청할 때만 인식한다. 도크가 설정의 CLI/API 모드를 따르므로 엔진 선택을 따로 두지 않고, 로컬 Tesseract는 도크에 자리가 없어 함께 사라진다. **막힌 지점**: 도크 API 모드는 지금 이미지를 못 읽는다(`chat.py::_run_with_images`가 CLI 전용). 리뷰 표는 없애지 못한다 — 저장 전 확인이 안전 계약이라, 읽은 행을 Portfolio 편집표에 얹고 기존 저장 버튼이 커밋하게 한다. 기존 proposal 배관은 markdown 보고서 전용이라 쓸 수 없다.
-- `features/portfolio/import_image.py`·`agent_import.py`·`vision_import.py`·`import_schema.py`는 호출자가 없어도 **죽은 코드가 아니라 0.5.X용으로 남긴 것이다.** 지우기 전에 `plan/release/0.5_PLAN.md`를 본다.
-
+- 다시 만들 때는 **Agent 도크 하나로 통일한다** — 사용자가 도크에 사진을 붙이고 포지션 입력을 요청할 때만 인식한다. 도크가 설정의 CLI 설정를 따르므로 엔진 선택을 따로 두지 않고, 로컬 Tesseract는 도크에 자리가 없어 함께 사라진다. 직접 API Vision은 제거했으며 도크 이미지는 CLI capability를 따른다. 리뷰 표는 없애지 못한다 — 저장 전 확인이 안전 계약이라, 읽은 행을 Portfolio 편집표에 얹고 기존 저장 버튼이 커밋하게 한다. 기존 proposal 배관은 markdown 보고서 전용이라 쓸 수 없다.
+- `features/portfolio/import_image.py`·`agent_import.py`·`import_schema.py`는 호출자가 없어도 **죽은 코드가 아니라 0.5.X용으로 남긴 것이다.** 지우기 전에 `plan/release/0.5_PLAN.md`를 본다.

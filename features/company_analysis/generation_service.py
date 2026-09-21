@@ -25,7 +25,7 @@ from features.company_analysis.service import (
     read_company_analysis_prompt,
 )
 from features.company_analysis.style import analysis_prompt_path, normalize_analysis_style
-from features.llm_settings.client import selected_llm_config, use_web_search_for_analysis
+from features.llm_settings.client import selected_cli_config, use_web_search_for_analysis
 
 
 def analyze_company(query, web_search_override=None, llm_override=None, analysis_style="beginner", *, runtime: dict | None = None):
@@ -33,7 +33,7 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
     llm_fn = runtime.get("generate_llm_company_analysis", generate_llm_company_analysis)
     rule_fn = runtime.get("build_rule_report", build_rule_report)
     sources_fn = runtime.get("company_analysis_sources", company_analysis_sources)
-    llm_config_fn = runtime.get("selected_llm_config", selected_llm_config)
+    llm_config_fn = runtime.get("selected_cli_config", selected_cli_config)
     web_search_enabled_fn = runtime.get("use_web_search_for_analysis", use_web_search_for_analysis)
     analysis_style = normalize_analysis_style(analysis_style)
     web_search = bool(web_search_enabled_fn()) if web_search_override is None else bool(web_search_override)

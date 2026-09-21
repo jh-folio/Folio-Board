@@ -32,18 +32,18 @@ def run_direct_market_memory(date: str, *, generate: Callable[[str], dict[str, A
             raise
         diagnostic_stage_end(stage_recorder, stage_id, "generate")
         if result.get("ok") is True:
-            diagnostic_execution(attempted_engine="api", final_engine="api")
+            diagnostic_execution(attempted_engine="cli", final_engine="cli")
             finish_direct_diagnostic(recorder, "succeeded")
         else:
             status = str(result.get("status") or "")
             # Missing configuration/prompt performed no provider attempt and
             # did not manufacture a rules artifact.  A returned generation
-            # failure, by contrast, is the existing API-to-rules fallback.
-            if status.startswith("missing_"):
+            # failure, by contrast, is the existing CLI-to-rules fallback.
+            if status.startswith("missing_") or status == "cli_disabled":
                 diagnostic_execution(final_engine="none")
             else:
                 diagnostic_execution(
-                    attempted_engine="api", final_engine="rules", fallback_reason="engine_failed"
+                    attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed"
                 )
             finish_direct_diagnostic(recorder, "unknown")
         return result

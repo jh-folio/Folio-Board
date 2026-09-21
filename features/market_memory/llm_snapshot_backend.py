@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Final
 
 from features.llm_settings.client import (
-    LlmRequestError,
     extract_json_object,
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
 )
 from features.market_memory.attempt_store import AttemptErrorCode
 from features.market_memory.http_service import SnapshotPreparation
@@ -48,8 +47,8 @@ class LlmManualSnapshotBackend:
     clock: Clock
 
     def prepare(self, request: SnapshotPreparation) -> ManualSnapshotCandidate:
-        cfg = selected_llm_config()
-        if not cfg["apiKey"]:
+        cfg = selected_cli_config()
+        if not cfg["enabled"]:
             raise ManualSnapshotStageError(AttemptErrorCode.ADAPTER_UNAVAILABLE)
         max_tokens = int(os.environ.get("LLM_MARKET_STATE_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_TOKENS)))
         payloads: dict[str, dict] = {}
@@ -58,7 +57,7 @@ class LlmManualSnapshotBackend:
             for scope in MARKET_STATE_SCOPES:
                 context_payload = build_market_state_context(market_scope=scope)
                 context = json.dumps(context_payload, ensure_ascii=False, indent=2)
-                text, _response_id, _usage = request_llm_text(
+                text, _response_id, _usage = request_cli_text(
                     cfg,
                     _market_state_scope_prompt(scope),
                     context,
@@ -69,7 +68,7 @@ class LlmManualSnapshotBackend:
                 )
                 payloads[scope] = extract_json_object(text)
                 contexts[scope] = context_payload
-        except LlmRequestError as error:
+        except (RuntimeError, OSError) as error:
             raise ManualSnapshotStageError(AttemptErrorCode.ADAPTER_FAILED) from error
         except (KeyError, TypeError, ValueError) as error:
             raise ManualSnapshotStageError(AttemptErrorCode.VALIDATION_FAILED) from error

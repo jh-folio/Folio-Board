@@ -98,7 +98,6 @@ from features.llm_settings.task_runtime import (
     generation_mode as task_generation_mode,
     task_snapshot,
 )
-from features.llm_settings.provider_status import check_provider as check_llm_api_provider
 from features.company_analysis.cache_cleanup import cache_stats, cleanup_cache
 from features.market_memory.service import run_llm_market_memory, schedule_startup_regime_refresh
 from features.market_memory.direct_observer import run_direct_market_memory
@@ -169,7 +168,7 @@ from features.market_memory.regime_v2 import (
     refresh_regime_state,
     upsert_regime_thesis_link,
 )
-from features.llm_settings.client import bool_override, default_generation_mode, selected_llm_config, use_web_search_for_analysis
+from features.llm_settings.client import bool_override, default_generation_mode, selected_cli_config, use_web_search_for_analysis
 from features.daily_briefing.service import (
     NEWS_INBOX_PREFIXES,
     append_briefing_sources,
@@ -393,7 +392,7 @@ def analyze_company(q, web_search_override=None, llm_override=None, analysis_sty
             "generate_llm_company_analysis": generate_llm_company_analysis,
             "build_rule_report": build_rule_report,
             "company_analysis_sources": company_analysis_sources,
-            "selected_llm_config": selected_llm_config,
+            "selected_cli_config": selected_cli_config,
         },
     )
 
@@ -468,6 +467,11 @@ fastapi_app.include_router(create_portfolio_router(DATA_DIR))
 @fastapi_app.get("/api/health")
 def api_health():
     return health_payload(ROOT)
+
+
+@fastapi_app.exception_handler(TaskPolicyError)
+def task_policy_exception_handler(request: Request, exc: TaskPolicyError):
+    return JSONResponse(status_code=exc.status, content={"error": exc.code, "message": str(exc)})
 
 
 @fastapi_app.exception_handler(Exception)
@@ -1382,7 +1386,7 @@ def api_run_automation(kind: str):
 @fastapi_app.post("/api/settings/llm/test/{provider}")
 def api_test_llm_provider(provider: str):
     try:
-        return check_llm_api_provider(provider)
+        raise HTTPException(status_code=410, detail="llm_api_removed: CLI 설정을 사용해 주세요.")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid LLM provider") from exc
 

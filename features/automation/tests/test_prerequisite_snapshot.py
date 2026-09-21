@@ -151,33 +151,6 @@ def test_the_manual_prerequisite_path_shares_one_definition():
     assert "rss = import_rssarchive(run_collection=True)\n            memory = run_rss" not in source
 
 
-def test_the_api_path_uses_the_same_attempt_lifecycle_as_the_button(monkeypatch):
-    """API(LLM) 모드도 버튼과 같은 attempt/watermark 라이프사이클을 탄다.
-
-    바로 저장하면 attempt 기록이 없는 스냅샷이 남아 reconcile이 중단된 갱신을
-    복구할 근거를 잃는다. scope는 예약이 고른 시장과 무관한 GLOBAL이다 — 화면의
-    시장 내러티브는 시장별 보고서가 아니라 하나의 해석이다.
-    """
-    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
-    seen = {}
-
-    class FakeService:
-        def run_manual(self, command):
-            seen["scope"] = command.scope
-            seen["date"] = command.date
-            return {"ok": True, "snapshot": {"id": "snap-9"}, "attempt": {"attemptId": "att-3"}}
-
-    import features.market_memory.http_runtime as http_runtime
-
-    monkeypatch.setattr(http_runtime, "create_market_state_service", lambda data_dir: FakeService())
-
-    result = service._refresh_market_state_snapshot()
-
-    assert result["ok"] is True
-    assert result["snapshotId"] == "snap-9"
-    assert result["attemptId"] == "att-3"
-    assert str(seen["scope"]) == "GLOBAL"
-    assert result["scope"] == "GLOBAL"
 
 
 def test_an_explicit_run_ignores_the_freshness_guard(monkeypatch):
@@ -259,18 +232,6 @@ def test_an_explicit_run_ignores_the_failure_backoff(monkeypatch):
     assert calls == ["snapshot"]
 
 
-def test_stale_api_prerequisite_runs_memory_then_snapshot(monkeypatch):
-    calls = []
-    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
-    import features.market_memory.service as memory_service
-
-    monkeypatch.setattr(memory_service, "run_llm_market_memory", lambda *a, **k: calls.append("memory") or {"ok": True})
-    monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
-
-    out = service.run_briefing_prerequisites()
-
-    assert calls == ["memory", "snapshot"]
-    assert out["marketMemory"]["stateSnapshot"] == {"ok": True}
 
 
 def test_stale_cli_prerequisite_runs_memory_then_snapshot(monkeypatch):
@@ -292,10 +253,10 @@ def test_stale_cli_prerequisite_runs_memory_then_snapshot(monkeypatch):
 
 def test_memory_failure_still_attempts_snapshot(monkeypatch):
     calls = []
-    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
-    import features.market_memory.service as memory_service
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm_cli")
+    import features.agent_mode.bridge as memory_service
 
-    monkeypatch.setattr(memory_service, "run_llm_market_memory", lambda *a, **k: calls.append("memory") or {"ok": False})
+    monkeypatch.setattr(memory_service, "run_agent_task", lambda *a, **k: calls.append("memory") or {"ok": False})
     monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
 
     out = service.run_briefing_prerequisites()
@@ -307,10 +268,10 @@ def test_memory_failure_still_attempts_snapshot(monkeypatch):
 
 def test_stale_memory_still_runs_but_recent_snapshot_failure_skips_only_snapshot(monkeypatch):
     calls = []
-    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm")
-    import features.market_memory.service as memory_service
+    monkeypatch.setattr(service, "default_generation_mode", lambda: "llm_cli")
+    import features.agent_mode.bridge as memory_service
 
-    monkeypatch.setattr(memory_service, "run_llm_market_memory", lambda *a, **k: calls.append("memory") or {"ok": True})
+    monkeypatch.setattr(memory_service, "run_agent_task", lambda *a, **k: calls.append("memory") or {"ok": True})
     monkeypatch.setattr(service, "market_state_snapshot_recently_failed", lambda **kw: True)
     monkeypatch.setattr(service, "_run_market_state_snapshot_step", lambda **kw: calls.append("snapshot") or {"ok": True})
 
