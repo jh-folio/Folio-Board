@@ -572,8 +572,8 @@ def test_full_generation_probe_receipt_requires_two_exact_independent_modes() ->
     module = _load_qa_020()
     receipt = {
         "direct": {"saved": False, "provenance": {
-            "requestedMode": "direct", "attemptedEngine": "api", "finalEngine": "rules",
-            "fallbackReason": "engine_failed",
+            "requestedMode": "direct", "attemptedEngine": "none", "finalEngine": "rules",
+            "fallbackReason": None,
         }},
         "cli": {"saved": False, "provenance": {
             "requestedMode": "cli", "attemptedEngine": "cli", "finalEngine": "rules",
