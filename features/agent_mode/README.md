@@ -14,9 +14,9 @@ Claude 작성은 `plan`이 아닌 `dontAsk`로 실행한다. 도구는 Read/Glob
 
 브리핑 저장은 authored Markdown을 보존하면서 최종 형식·출처 URL·source ID·section whitelist를 확인합니다. 의미 기반 수치·단위·방향·날짜·상대강도 판정은 명시적 offline 평가에만 남고, 일반 CLI 저장 경로는 semantic/style/fact-repair/model 호출을 하지 않습니다. 취소·기한 초과·안전하지 않은 참조는 계속 저장을 막으며, 명시적 품질 보완은 별도 `quality_repair` 작업입니다. CLI 응답 형식이나 사용자가 선택한 모델 설정은 이 검사로 변경하지 않습니다.
 
-작성용 한국장 자료에는 내부 provider 경고를 넣지 않으며, 최종 저장에서도 연결 설정·provider 경고 문구만 제거합니다. 수치의 실제 출처·기준일과 원래 진단 메타데이터는 유지합니다. 저장 브리핑 차트는 API와 같은 정규장 가격 계열을 사용하며 Toss 실시간 화면 설정을 바꾸지 않습니다.
+작성용 한국장 자료에는 내부 provider 경고를 넣지 않으며, 최종 저장에서도 연결 설정·provider 경고 문구만 제거합니다. 수치의 실제 출처·기준일과 원래 진단 메타데이터는 유지합니다. 저장 브리핑 차트는 공통 정규장 가격 계열을 사용하며 Toss 실시간 화면 설정을 바꾸지 않습니다.
 
-선택적으로 켠 일간 뉴스 의미 평가는 실행 중인 bridge의 실제 adapter/model/job과 남은 시간을 전달받습니다. 단독 context pack 준비는 CLI를 호출하지 않습니다. 시장당 한 번의 별도 평가이며 본문 보수 횟수를 늘리지 않고, 중첩 호출은 기존 세마포어를 다시 잡지 않습니다. API fallback은 없으며 평가를 못 하면 기존 작성 입력을 유지합니다. 상한과 입력·출처 계약은 일일 브리핑 README를 따릅니다.
+선택적으로 켠 일간 뉴스 의미 평가는 실행 중인 bridge의 실제 adapter/model/job과 남은 시간을 전달받습니다. 단독 context pack 준비는 CLI를 호출하지 않습니다. 시장당 한 번의 별도 평가이며 본문 보수 횟수를 늘리지 않고, 중첩 호출은 기존 세마포어를 다시 잡지 않습니다. 평가를 못 하면 기존 작성 입력을 유지합니다. 상한과 입력·출처 계약은 일일 브리핑 README를 따릅니다.
 
 브리핑은 자료 보완 검색과 본문 작성을 분리합니다. Codex 작성 명령은 `web_search="disabled"`, 보완 조회는 `web_search="live"`를 명시하고 Claude 작성에서는 WebSearch/WebFetch를 제한합니다. 다른 작업의 검색 정책은 그대로입니다. 실행 도구 사용이 관측되지 않으면 미확인으로 기록하며, 명령에 설정했다고 실제 검색 증거로 계산하지 않습니다. CLI와 규칙 경로는 같은 시장별 이전 확인 사항 및 제한 뉴스 선별 컨텍스트를 사용합니다.
 
@@ -24,7 +24,7 @@ AI Agent Mode는 Codex, Claude Code 같은 로컬 CLI를 Folio Board의 AI 작�
 
 0.2에서는 Home과 Deep Research에서 Agent를 사용하고, 두 화면이 같은 metadata-only Work Log를 공유합니다. Work Log에는 prompt, reply transcript, Markdown, diff, attachment, 로컬 path, credential, raw stdout/stderr가 저장되지 않습니다. Canonical 보고서는 generate/regenerate 또는 명시적으로 승인된 proposal만 수정할 수 있습니다.
 
-Folio Board는 자료 선별, context pack 생성, 저장 포맷, 품질 metadata를 맡고, 현재 채팅 중인 AI 에이전트가 context pack을 읽어 보고서/overlay/delta를 작성합니다. 앱 내부 LLM API를 호출하지 않는 경로입니다.
+Folio Board는 자료 선별, context pack 생성, 저장 포맷, 품질 metadata를 맡고, 현재 채팅 중인 AI 에이전트가 context pack을 읽어 보고서/overlay/delta를 작성합니다. AI 작성은 CLI 브리지를 통해 실행합니다.
 
 ## Phase 1 흐름
 
@@ -70,7 +70,6 @@ market-memory.sqlite3
 ```text
 AI_AGENT_ENABLED=0      -> 규칙 기반
 AI_AGENT_ENABLED=1
-AI_AGENT_MODE=api       -> 지원 종료: CLI 전환 또는 AI OFF 필요
 AI_AGENT_MODE=cli       -> 로컬 Codex/Claude Code/Antigravity CLI
 ```
 
@@ -100,7 +99,7 @@ CLI 선택은 **범위가 둘**이다. 자리도 둘이고, 화면이 어느 쪽
 - 도크 헤더의 `대화 목록`·`새 대화`·`닫기`는 **아이콘 셋**이다. 글자 버튼으로 두면 385px 헤더에서 액션이 175px을 가져가 제목이 두 줄로 접히고 헤더가 107px까지 자란다 — 그만큼 대화가 아래로 밀린다. 아이콘으로 줄여 116px이 되고 제목은 한 줄로 선다(넘치면 말줄임). 이름은 툴팁과 `aria-label`이 진다.
 - 도크에서 CLI를 바꾸면 모델 목록이 통째로 달라지므로 모델도 그 CLI의 것으로 옮긴다. 이때도 전역 모델은 저장하지 않는다 — 저장하면 `이 대화에만`이 거짓이 되고 예약 브리핑의 모델까지 조용히 바뀐다.
 
-설정 탭의 `AI Agent 설정`에서는 Agent 생성 ON/OFF와 CLI/API 모드를 토글하고, CLI 모드에서는 Codex CLI, Claude Code CLI, Antigravity CLI 중 하나를 선택해 모델을 지정합니다. 모델 목록은 마지막으로 갱신한 캐시를 기본으로 사용하고, 사용자가 새로고침을 누를 때만 CLI 모델 조회 명령을 실행합니다. 설치 명령은 실행 전에 사용자 확인을 받습니다.
+설정 탭의 `AI Agent 설정`에서는 Agent 생성 ON/OFF를 설정하고, Codex CLI, Claude Code CLI, Antigravity CLI 중 하나를 선택해 모델을 지정합니다. 모델 목록은 마지막으로 갱신한 캐시를 기본으로 사용하고, 사용자가 새로고침을 누를 때만 CLI 모델 조회 명령을 실행합니다. 설치 명령은 실행 전에 사용자 확인을 받습니다.
 
 ### 예약이 고른 시장만 만든다
 
@@ -133,7 +132,7 @@ CLI 선택은 **범위가 둘**이다. 자리도 둘이고, 화면이 어느 쪽
 
 실측(2026-09-13, "AI 에이전트 웹 전환" 주제로 `run_agent_task("topic_report", ...)` 직접 실행, Claude Code CLI, `deep_research=True`): 하위질문 10개 전부 `custom_label` 원문을 기계적으로 잘라 붙인 문장(`"AI 에이전트 사람 대신해의 현재 상황과 핵심 동인은 무엇인가?"`)이 됐고 `candidateTickers`가 항상 빈 `{}`였다. 그 결과 마이크로소프트·아마존 같은 개별 기업 시세를 아예 못 가져왔고, 저장된 보고서는 사용자가 물은 "미국 기업별 영향"을 전부 "데이터 갭"으로 남겼다 — 계획을 세운 함수 하나가 조용히 규칙으로 떨어진 결과가 본문까지 그대로 이어졌다.
 
-수정: `llm_override=False` 인자를 제거해 `build_topic_plan()` 자신의 기본값(`None`→`use_llm_analysis()`로 판단)을 쓰게 했다. 부수적으로 두 곳의 미가드 예외도 같이 잡았다(`planner.py::refine_plan_with_llm()`·`topic_report/service.py::generate_topic_report()`의 `selected_llm_config()` 호출이 잘못된 설정값에서 예외를 그대로 흘려보내 "실패하면 규칙으로" 계약을 못 지키고 있었다) — 상세는 [topic-report 가이드](../../docs/agent-guides/topic-report.md)를 본다. `features/agent_mode/`+`features/topic_report/` 763 passed(이 예외 미가드 하나가 이전에 "환경설정 문제"로 기록해 둔 무관 실패 36건 중 34건도 함께 해소했다).
+수정: `llm_override=False` 인자를 제거해 `build_topic_plan()` 자신의 기본값(`None`→`use_llm_analysis()`로 판단)을 쓰게 했다. 부수적으로 두 곳의 미가드 예외도 같이 잡았다(`planner.py::refine_plan_with_llm()`·`topic_report/service.py::generate_topic_report()`의 `selected_cli_config()` 호출이 잘못된 설정값에서 예외를 그대로 흘려보내 "실패하면 규칙으로" 계약을 못 지키고 있었다) — 상세는 [topic-report 가이드](../../docs/agent-guides/topic-report.md)를 본다. `features/agent_mode/`+`features/topic_report/` 763 passed(이 예외 미가드 하나가 이전에 "환경설정 문제"로 기록해 둔 무관 실패 36건 중 34건도 함께 해소했다).
 
 ### 브리핑 출력 계약은 시장마다 라벨이 다르다
 
@@ -166,7 +165,7 @@ in settings.json (e.g. read_file(<target>)).
 
 **Folio Board의 Agent task는 전부 컨텍스트 팩 파일을 읽는 것으로 시작한다.** 팩이 5.2MB라 프롬프트에 넣을 수 없고(게다가 agy는 프롬프트를 명령 인자로 받아 Windows 32,767자 한계가 걸린다), `--add-dir`로도 열리지 않는다(실측). 그래서 antigravity로는 브리핑·기업분석을 만들 수 없다. 파일을 읽지 않는 호출(도크 대화, 테마 계획)은 정상 동작한다 — 실측으로 짧은 프롬프트는 20초에 응답했다.
 
-브리핑 Agent pack의 출처 카탈로그는 컨텍스트에 실제로 렌더링된 writer 자료 집합에서 만들어집니다. API와 CLI 모두 같은 `sourceId` 집합을 사용하고, 시장별 ledger도 해당 시장 writer 자료만 보존합니다. Summary와 Full Text는 분리된 제한 발췌로 전달되며 페이지 메뉴·추천·자동 요약 문구는 제외됩니다.
+브리핑 Agent pack의 출처 카탈로그는 컨텍스트에 실제로 렌더링된 writer 자료 집합에서 만들어집니다. CLI 생성에서 같은 `sourceId` 집합을 사용하고, 시장별 ledger도 해당 시장 writer 자료만 보존합니다. Summary와 Full Text는 분리된 제한 발췌로 전달되며 페이지 메뉴·추천·자동 요약 문구는 제외됩니다.
 
 - 실패는 `AGY_PERMISSION_DENIED_MARK`로 알아보고 `AGY_PERMISSION_HELP`를 올린다. 예전에는 일반 "빈 결과"와 구분되지 않아 예약 브리핑이 `internal_error`로만 남았고, 한 번에 **8분 30초**를 버린 뒤 실패했다(실측 2026-08-11 18:00 KR/JP 예약).
 - 한 번 거부당하면 `_AGY_FILE_READS_BLOCKED`가 서고, 다음 팩 task는 팩을 만들기 전에 즉시 막는다. 상태 행도 `bridgeSupported: false`로 사유를 함께 낸다.
@@ -344,7 +343,7 @@ When the user explicitly asks to revise, create, update, schedule, or write back
 - 임시 파일 수명은 `StagedImages` 컨텍스트가 CLI 호출 구간으로 한정한다. 성공·실패·취소 모두에서 삭제한다. 원본을 `data/`에 남기지 않는다(0.4 스크린샷 계약과 동일).
 - **바이트는 프롬프트·잡 결과·Work Log 어디에도 남지 않는다.** 잡 결과는 `data/jobs.json`에 저장되므로 `companion.public_options()`가 `imageData`를 떼고 `hasImage: true` 플래그만 남긴다.
 - CLI가 없으면 이미지를 읽을 주체가 없다. 조용히 무시하지 않고 "Agent CLI가 없어 이미지를 열 수 없습니다"를 알린다.
-- 포트폴리오 사진 가져오기는 **0.5.0 화면에서 빠졌다**(`features/portfolio/README.md`). 로컬 OCR·외부 Vision 런타임은 코드로만 남아 있고 화면도 route도 없다 — 0.5.X에서 사진 인식을 이 도크 경로 하나로 옮길 때 재료로 쓴다. **막힌 지점**: 이 첨부 경로는 CLI 전용이라(`_run_with_images`) 도크가 API 모드일 때는 이미지를 못 읽는다.
+- 포트폴리오 사진 가져오기 화면은 숨김 상태다. 기존 `import_image.py`와 `agent_import.py`의 CLI 추출·preview·임시 파일 수명 계약은 유지하며, 도크 이미지 첨부는 지원되는 CLI를 사용한다.
 
 Deep Research의 `Agent에게 변화 묻기`는 frontend가 `collectionId`와 strict 정수 `collectionRevision`만 전달하는 명시적 Companion action이다. 서버는 저장된 Collection을 다시 조회하고 revision을 검사한 뒤, 한 번의 read-only resolve로 현재/이전 스냅샷 metadata, change counts/reason, 현재 외부 evidence 카드 최대 12개를 구성한다. Collection 정의는 ID/revision/definition hash만 포함한 `saved_filter_metadata_not_evidence`, 외부 카드는 `external_evidence_untrusted`로 표시한다. 카드의 title/source/url/snippet은 인용 데이터일 뿐 prompt 지시가 아니며 별도 untrusted delimiter 안에 둔다. 사용자 note/context, frontend가 보낸 match/evidence body, 보고서, Agent 응답은 이 projection에 들어가지 않는다.
 
@@ -482,7 +481,7 @@ features/agent_mode/cli.py      # Phase 1 chat command entrypoint
 features/agent_mode/bridge.py   # Phase 2 Direct Agent Bridge adapters/subprocess
 features/agent_mode/collection_context.py # bounded Collection change-summary context
 features/agent_mode/setup.py    # CLI 설치/로그인/제공자·모델 설정
-features/agent_mode/generation_mode.py # rules/llm_api/llm_cli normalization
+features/agent_mode/generation_mode.py # rules/llm_cli normalization
 ```
 
 ## Stage 0.2.3 Investment Context 통합

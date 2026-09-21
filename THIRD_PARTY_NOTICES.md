@@ -75,11 +75,3 @@ systems: the U.S. Securities and Exchange Commission (EDGAR, company tickers,
 companyfacts) and, for Korean companies, DART. Requests identify Folio Board
 through `SEC_USER_AGENT`. Folio Board reads what these systems publish openly and
 does not bypass access controls.
-
-## Optional OpenAI Vision import
-
-When the user explicitly selects external Vision and consents for that request,
-Folio Board can send only the browser-cropped/redacted image to the configured
-OpenAI API with storage disabled in the request. The local import remains the
-default. Users should review the current provider privacy and retention terms
-before enabling this option.

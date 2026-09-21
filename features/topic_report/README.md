@@ -311,7 +311,7 @@ data/topic-reports/YYYY-MM-DD_<topic_key>_<id>.json
 - **화면의 계획 수정은 요청 문장 하나다.** 칸을 하나씩 편집하게 했더니 축 다섯 개에 텍스트 영역이 열한 개였다. 사람이 계획을 고칠 때 하는 말은 "밸류에이션 축은 빼고 공급 쪽을 자세히"에 가깝지 각 칸을 다시 타자하는 것이 아니다. 수정 요청은 `현재 계획`과 함께 엔진에 넘어가며, 규칙 계획에서 다시 시작하지 않는다 — 다시 시작하면 사용자가 앞서 받아 든 계획이 통째로 사라져 무엇이 반영됐는지 알 수 없다.
 - `POST /api/topic-reports/plan/revise`(PlanEdits)는 항목 단위 수정을 하는 결정적 경로로 남는다. 화면은 쓰지 않으며 엔진 없이 계획을 고쳐야 하는 호출자용이다.
 - **테스트는 Agent CLI를 부르지 않는다.** `tests/conftest.py`가 `run_agent_prompt`를 막는다. 막지 않았을 때 실제 CLI가 돌아 스위트가 멈춰 섰다.
-- 플래너는 **API 키와 Agent CLI 둘 다 쓴다.** 이 설치처럼 `AI_AGENT_MODE=cli`로 도는 환경에서는 `selected_llm_config()["apiKey"]`가 비어 있어, 보고서를 쓰는 엔진이 멀쩡히 있는데도 계획은 늘 규칙으로 떨어졌다. 키가 없으면 `run_agent_prompt()`로 같은 프롬프트를 보낸다. 타임아웃은 `TOPIC_PLANNER_TIMEOUT_SECONDS`(기본 120초).
+- 플래너는 작업에 지정된 CLI·모델·추론 강도를 사용한다. `TOPIC_PLANNER_TIMEOUT_SECONDS` 기본값은 120초이며, AI OFF 또는 선택적 계획 생성 실패 시 기존 규칙 fallback 계약을 따른다.
 - LLM 결과에도 같은 검색어 위생을 코드가 다시 적용한다(§5 원칙 4 — 프롬프트는 부탁이지 제한이 아니다).
 - `plannerMode`(`rules|llm|preset|edited`)가 계획에 남고 화면이 그대로 표시한다. 무엇이 쓴 계획인지 모르면 얼마나 믿을지 정할 수 없다.
 

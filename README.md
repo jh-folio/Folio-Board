@@ -6,7 +6,7 @@
 
 Folio Board helps you collect market news and research material on your own PC, then turn it into daily briefings, market context, company analysis, and auditable Deep Research with optional AI assistance. It covers four markets: the US, Korea, Europe, and Japan.
 
-Your files and generated reports stay local by default. LLM/API integrations are optional and only used when you configure them.
+Your files and generated reports stay local by default. AI features use an optional local CLI connection that you configure.
 
 ---
 
@@ -228,7 +228,7 @@ Folio Board is local-first:
 
 - Source files live under `research-inbox/`.
 - Generated reports, notes, databases, and caches live under `data/`.
-- API keys and tokens live in the operating system credential store; `.env` retains non-secret settings.
+- Data integration keys and tokens live in the operating system credential store; `.env` retains non-secret settings.
 - Cloud storage is not required.
 
 
@@ -240,7 +240,7 @@ When Notion export with chart images is configured with `IMGBB_API_KEY`, chart i
 
 When AI/LLM features are enabled, selected report context or summarized evidence may be sent to the configured provider or CLI tool. Disable AI features if you want rule-based local behavior only.
 
-Legacy `.env` secrets are removed only after a successful credential-store migration. Never share `.env` or paste real API keys into documentation, issues, or chat logs.
+Legacy data-integration `.env` secrets are removed only after a successful credential-store migration. Never share `.env` or paste real API keys into documentation, issues, or chat logs.
 
 ---
 
@@ -279,9 +279,9 @@ python3 -m pip install -r requirements.txt
 If AI features do not work, check that:
 
 - AI Agent is enabled in Settings.
-- The selected LLM CLI is installed and authenticated, or API keys are configured.
+- The selected LLM CLI is installed and authenticated.
 - Model choices have been refreshed if you recently changed provider settings.
 
 Folio Board should still run with local rule-based behavior when LLM features are unavailable.
 
-AI generation uses the configured CLI. Direct LLM API support has been removed. Existing API settings require an explicit switch to CLI in Settings, or turning AI off. Saved reports, historical logs, and external data integrations remain available.
+AI generation uses the configured CLI. If Settings asks you to update an older configuration, select and save a CLI connection or turn AI off. Saved reports, historical logs, and external data integrations remain available.

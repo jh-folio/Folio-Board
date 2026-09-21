@@ -1,16 +1,16 @@
 # 일일 브리핑
 
-생성 경계의 최종 처리는 본문을 보존하고 저장 형식·출처 참조만 확인한다. 의미 기반 수치·방향·날짜·상대강도 판정은 `validate_briefing_candidate()`를 통한 명시적 offline 평가에서만 수행하며, production API·CLI·규칙 저장 경로는 그 결과로 본문을 교정하거나 거절하지 않는다. 저장된 `finalValidation`과 `validationRun`은 `contentAssessment: not_assessed`를 명시하고 의미 검증 수나 모순 수를 성공 수치로 주장하지 않는다.
+생성 경계의 최종 처리는 본문을 보존하고 저장 형식·출처 참조만 확인한다. 의미 기반 수치·방향·날짜·상대강도 판정은 `validate_briefing_candidate()`를 통한 명시적 offline 평가에서만 수행하며, production CLI·규칙 저장 경로는 그 결과로 본문을 교정하거나 거절하지 않는다. 저장된 `finalValidation`과 `validationRun`은 `contentAssessment: not_assessed`를 명시하고 의미 검증 수나 모순 수를 성공 수치로 주장하지 않는다.
 
 출처 URL, source ID, 최종 본문 section whitelist와 빈 본문·취소·기한 초과 경계는 production에서도 유지한다. 안전하지 않거나 허용 목록 밖인 참조는 저장하지 않으며, provider 운영 경고만 reader hygiene 규칙에 따라 제거할 수 있다. 명시적 사용자 품질 보완 작업은 일반 생성·저장 경로와 분리한다.
 
 이 기능은 `research-inbox/articles`와 `research-inbox/rss`의 최신 뉴스 자료를 바탕으로 일일 시장 브리핑을 생성하고 날짜별로 저장합니다.
 
-`validate_briefing_candidate()`는 지수 이름의 숫자, 환율 quote 단위, 세션 기준일과 문장 귀속을 offline 평가할 때만 사용합니다. production finalizer는 이 semantic 결과와 모델·문체·수리 함수를 호출하지 않고 authored Markdown을 그대로 보존합니다. 규칙 생성이 명시된 경우 사용하지 않는 API 모델 설정을 읽지 않습니다.
+`validate_briefing_candidate()`는 지수 이름의 숫자, 환율 quote 단위, 세션 기준일과 문장 귀속을 offline 평가할 때만 사용합니다. production finalizer는 이 semantic 결과와 모델·문체·수리 함수를 호출하지 않고 authored Markdown을 그대로 보존합니다. 규칙 생성이 명시된 경우 사용하지 않는 모델 설정을 읽지 않습니다.
 
 ### 최종 저장 검사는 무엇을 확인하나
 
-API·CLI·규칙 경로는 같은 production finalizer를 사용한다. 본문은 작성 결과를 그대로 유지하고, 안전한 출처 URL·source ID·section whitelist와 빈 형식·취소·기한 초과만 저장 경계에서 확인한다. 의미 검증은 `validate_briefing_candidate()`로 별도 실행할 수 있으며 저장 결과에 성공 판정으로 투영하지 않는다.
+CLI·규칙 경로는 같은 production finalizer를 사용한다. 본문은 작성 결과를 그대로 유지하고, 안전한 출처 URL·source ID·section whitelist와 빈 형식·취소·기한 초과만 저장 경계에서 확인한다. 의미 검증은 `validate_briefing_candidate()`로 별도 실행할 수 있으며 저장 결과에 성공 판정으로 투영하지 않는다.
 
 - 의미가 서로 다른 본문이라도 형식과 출처 참조가 유효하면 authored Markdown을 그대로 저장한다. 의미 검증 결과를 production 거절이나 규칙 fallback의 근거로 사용하지 않는다.
 - 일반 생성에서는 quality/style/fact-repair/model 호출을 수행하지 않으며 보수 예산도 사용하지 않는다. 명시적 `quality_repair` 작업은 별도 사용자 액션으로만 실행한다.
@@ -397,7 +397,7 @@ KR 당일 개장/장중
 
 세션 기준일은 Agent/LLM이 정하지 않고 `features/common/market_calendar.py`가 결정합니다. Toss Open API가 활성화되고 자격증명이 연결된 환경에서는 `/api/v1/market-calendar/{KR|US}`의 해당 날짜 개장 여부와 직전 영업일을 정적 휴장일 표보다 우선합니다. API 미연결, 요청 실패, 날짜 불일치 또는 검증할 수 없는 응답이면 기존 정적 캘린더로 자동 복귀합니다. 판정에 사용한 provider는 `marketWindows.calendarProviders`에 남깁니다.
 
-독자용 시장별 제목은 발행일이 아니라 **시장 세션일 + 상태**를 사용합니다. 예: `US Market Briefing — 2026.08.03 마감`. 한국장은 생성 시각(KST)을 함께 판정해 09:00 전에는 `Korea Market Briefing — 2026.08.03 마감`, 09:00~15:30에는 `Korea Market Briefing — 2026.08.04 장중`, 15:30 이후에는 `Korea Market Briefing — 2026.08.04 마감`으로 표시합니다. 보고서 생성일은 별도 `publicationDate`와 리더의 `2026.08.04 KST 발행` 보조 정보로 표시합니다. 저장 키와 기본 정렬은 발행일을 유지하고, 아카이브 텍스트·날짜 검색은 `reportDate`와 `sessionDate`를 모두 검색합니다. Agent CLI 출력 계약은 기대 제목을 정확히 검증하며 API LLM·규칙 fallback도 같은 제목 정규화를 거칩니다. 종합 브리핑의 상위 제목은 발행일을 유지하고 내부 미국장·한국장 제목에서 각 세션일을 구분합니다.
+독자용 시장별 제목은 발행일이 아니라 **시장 세션일 + 상태**를 사용합니다. 예: `US Market Briefing — 2026.08.03 마감`. 한국장은 생성 시각(KST)을 함께 판정해 09:00 전에는 `Korea Market Briefing — 2026.08.03 마감`, 09:00~15:30에는 `Korea Market Briefing — 2026.08.04 장중`, 15:30 이후에는 `Korea Market Briefing — 2026.08.04 마감`으로 표시합니다. 보고서 생성일은 별도 `publicationDate`와 리더의 `2026.08.04 KST 발행` 보조 정보로 표시합니다. 저장 키와 기본 정렬은 발행일을 유지하고, 아카이브 텍스트·날짜 검색은 `reportDate`와 `sessionDate`를 모두 검색합니다. Agent CLI 출력 계약은 기대 제목을 정확히 검증하며 규칙 fallback도 같은 제목 정규화를 거칩니다. 종합 브리핑의 상위 제목은 발행일을 유지하고 내부 미국장·한국장 제목에서 각 세션일을 구분합니다.
 
 한국장 세션 단계는 `marketWindows.krSessionPhase`의 `pre_open | intraday | closed | holiday`로 저장합니다. 거래소 API가 연결되어 있으면 먼저 해당 날짜의 개장 여부를 확인하고, 개장일에만 KST 정규장 시각을 적용합니다. `pre_open`에서는 `krCurrentSessionDate`를 비워 당일 장중 자료를 만들지 않고 `krLatestCompletedSessionDate`를 제목·Market Tape·차트 기준으로 사용합니다.
 
@@ -756,12 +756,12 @@ POST /api/briefings/{date}/export-notion
 ## 웹 보완 (web_lookup.py)
 
 - 공백은 종목·지표·세션·단위별로 확인합니다. SPY가 있어도 QQQ가 비었으면 별도 공백이며, 날짜 없는 한국장 수치를 정상으로 간주하지 않습니다. 주간은 정확한 주간 구간을 별도로 전달합니다.
-- API와 CLI 모두 먼저 찾고 검증한 뒤 작성합니다. 본문 작성의 웹 검색은 명시적으로 끄며, 다른 기능의 검색 설정은 바꾸지 않습니다.
+- CLI 생성에서 먼저 찾고 검증한 뒤 작성합니다. 본문 작성의 웹 검색은 명시적으로 끄며, 다른 기능의 검색 설정은 바꾸지 않습니다.
 - 허용 HTTPS 출처의 공개 문구를 별도로 읽어 같은 짧은 문구 안의 종목·날짜·지표·단위·숫자를 확인할 때만 사용합니다. ETF를 지수로 대체하지 않습니다. 여러 수치가 섞여 대응을 확인하기 어렵거나 유료 본문이면 미검증으로 남깁니다.
 - `webLookup`는 검색 설정·시도·채택/거절을 구분합니다. 도구 사용이 실제로 관측되지 않으면 `unknown`이며, 링크와 모델의 선언만으로 검증됨을 표시하지 않습니다.
 
 §6 규칙 9("웹 검색은 부족한 지수/가격 반응/공식 자료를 보완하는 용도")의 실행 통로다.
-예전에는 API 경로의 provider 웹 도구뿐이라 실제 사용 경로(CLI)에 통로가 없었다 —
+과거에는 CLI에 자료 공백을 보완하는 검색 연결이 없어
 실측으로 최근 저장 브리핑 14건 전부 웹 기여 0건이었다.
 
 - **찾기 전용 패스**다. 쓰기 과제에 검색을 얹는 방식은 실측 4회 모두 실패했다.
@@ -782,8 +782,8 @@ POST /api/briefings/{date}/export-notion
 - 이전 확인 사항은 같은 시장·같은 종류의 앞선 완료 세션에서만 읽습니다. 한국장에 미국장 확인 사항, 주간에 일간 확인 사항을 넣지 않습니다. 이전 보고서는 비교 맥락이지 오늘의 새로운 근거가 아닙니다.
 - `BRIEFING_NEWS_SELECTION_MODE=off|shadow|active`는 내부 제한 실험입니다. 기본 `off`는 추가 검색·평가를 하지 않습니다. `shadow`는 기존 작성 입력을 그대로 유지하며, `active`는 미국·한국 일간에만 제한됩니다. KR 기업 쏠림 제어의 기본 `shadow`와 별개입니다.
 - 자료 수집 전 비교 기준을 고정하고, 작성 자료 최종 선별 전에 최대 96개 후보와 제한된 로컬 질문 검색을 검토합니다. 명시적으로 켠 US/KR 일간 실험은 최대 24개 사건의 제한 발췌를 한 번에 평가합니다. 이전 보고서의 확인 사항에 대해 근거별 지지·반박·중립을 구분하며, 관계가 확인되지 않은 새 사건과 자료 부족을 구별합니다. 개인 노트는 입력하지 않습니다.
-- `news_semantics.py`가 입력/출처/주장/가설 ID·인용 연결을 검증하고, `news_semantic_engine.py`는 같은 입력을 현재 생성 경로의 API 또는 CLI로 전달합니다. 규칙 경로·키 없는 API·단독 pack 준비·미선택 시장·주간에는 추가 호출이 없습니다. API와 CLI 사이의 숨은 재시도도 없습니다.
-- 의미 평가는 시장당 최대 1회·남은 전체 실행 시간 안에서 60초, 입력 UTF-8 12,000바이트·응답 24,000바이트 제한입니다. API 출력은 3,000토큰 상한입니다. CLI는 정확한 출력 토큰 상한을 보장하지 않으며 응답 크기 초과는 수신 후 거절합니다. 이전 결과는 동일 입력·baseline·모델·정책에 한해 프로세스 내 최대 128건·24시간 재사용합니다.
+- `news_semantics.py`가 입력/출처/주장/가설 ID·인용 연결을 검증하고, `news_semantic_engine.py`는 같은 입력을 현재 생성 경로의 CLI로 전달합니다. 규칙 경로·단독 pack 준비·미선택 시장·주간에는 추가 호출이 없습니다. CLI와 규칙 생성 사이의 숨은 재시도도 없습니다.
+- 의미 평가는 시장당 최대 1회·남은 전체 실행 시간 안에서 60초, 입력 UTF-8 12,000바이트·응답 24,000바이트 제한입니다. CLI는 정확한 출력 토큰 상한을 보장하지 않으며 응답 크기 초과는 수신 후 거절합니다. 이전 결과는 동일 입력·baseline·모델·정책에 한해 프로세스 내 최대 128건·24시간 재사용합니다.
 - 검증 결과가 없거나 기존 핵심 시황을 잃는 active 제안은 기존 작성 입력으로 돌아갑니다. 평가 후보의 자기 선언 역할을 믿지 않으며, 미평가를 낮은 중요도나 변화 없음으로 바꾸지 않습니다. 저장 메타에는 제한된 ID·역할·상태·건수만 남기고 기사 발췌는 복제하지 않습니다. 실제 선별 품질 비교와 활성화 수용은 별도입니다.
 - 저장 직전 `validationRun`에는 입력 해시·세션·출처 ID·보수 횟수·최종 검사 상태를 남깁니다. 관측할 수 없는 실행 모델·도구 사용은 미확인 값으로 남기며 이전 보고서를 소급 변경하지 않습니다.
 

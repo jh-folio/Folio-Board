@@ -262,14 +262,14 @@ hypothesis metadata일 뿐 자동 리밸런싱·매수/매도/보유 권고가 �
 
 한 가지는 인식이 아니라 우리 코드 문제였다는 것을 남겨 둔다. 한국 증권사 화면은 미국 종목도 한글 이름으로 보여주고 티커 칸이 없는 경우가 많은데, `normalize_draft()`가 티커 모양 문자열만 받아 **이름만 읽힌 행을 전부 `unresolved`로 버렸다**. 모델은 제대로 읽었는데 우리가 버린 것이다 — `알파벳`→GOOGL, `브로드컴`→AVGO, `히타치`→6501.T 모두 `company_resolution`이 confident로 답한다. 다시 만들 때 여기부터 붙인다.
 
-**남은 코드는 죽은 코드가 아니다.** `import_image.py`(임시 파일 수명·`validate_image` 가드·`import_preview` 정규화), `agent_import.py`(CLI 추출), `vision_import.py`(API 추출), `import_schema.py`(초안 정규화)는 0.5.X가 그대로 쓴다. 지우기 전에 `plan/release/0.5_PLAN.md`를 본다.
+**기존 CLI 가져오기 계약을 유지한다.** `import_image.py`의 임시 파일 수명·이미지 검증·preview 정규화, `agent_import.py`의 CLI 추출, `import_schema.py`의 초안 정규화를 보존한다. 숨김 화면 재도입은 별도 계획이다.
 
 ## 다시 만들 때 — Agent 도크로 통일 (0.5.X)
 
 전용 진입점을 만들지 않는다. **사용자가 도크에 사진을 붙이고 포지션 입력을 요청할 때만** 인식한다(2026-08-07 사용자 결정).
 
 - 엔진 선택을 따로 두지 않는다. 도크가 설정의 CLI 설정를 따르므로 그 선택이 곧 인식 엔진이다. 로컬 Tesseract는 도크에 자리가 없어 함께 사라진다(`local_ocr.py`, `import_image.py`의 `local` 모드).
-- 직접 API Vision과 `vision_import.py`는 제거했다. 기존 CLI 이미지 추출·preview·임시 파일 수명은 유지하며 숨김 화면은 새로 공개하지 않는다.
+- 기존 CLI 이미지 추출·preview·임시 파일 수명은 유지하며 숨김 화면은 새로 공개하지 않는다.
 - crop 슬라이더 5개는 없앤다. CLI/모델이 전체 화면을 읽고 합계·예수금 행을 알아서 거른다. 계좌번호를 가리는 용도의 상단 가리기 하나만 남길지는 다시 만들 때 정한다.
 - **리뷰 표는 없애지 못한다.** 저장 전 확인이 안전 계약이다. 다만 별도 표를 만들지 말고 읽은 행을 Portfolio 편집표에 얹고(화면 상단 배너로 알림) 기존 `Portfolio 저장` 버튼이 커밋하게 하면, 다이얼로그·crop·모드 라디오·preflight가 모두 사라져 남는 UI가 오히려 줄어든다.
 - 기존 제안(proposal) 배관은 쓸 수 없다. markdown 보고서 전용이라 diff·섹션 검증·base revision이 전제이고 `ReportKind`도 셋뿐이다. 포트폴리오는 JSON 포지션이라 짧은 별도 경로가 필요하다.

@@ -329,7 +329,7 @@ Support simple schedules first:
 - interval minutes or daily time
 - market scope for briefing: `us`, `kr`, `both`
 - briefing type: `default`, `market_focused`, `concise`
-- generation mode: `rules`, `llm_api`, `llm_cli`
+- generation mode: `rules`, `llm_cli`
 - quality mode
 - run missed jobs on startup: yes/no
 
@@ -466,7 +466,7 @@ This reduces migration risk and avoids delaying the Agent/Market Memory product 
    Recommended default: replace the default view with Market State Dashboard v2 and move current maintenance tools behind an advanced/debug entry.
 4. Whether RSS digest generation should be rules-first with optional LLM refinement, or LLM-first with rules fallback.
    Recommended default: rules-first clustering and promotion, with optional LLM refinement for summaries and state phrasing.
-5. Whether automated briefing generation should default to `rules`, `llm_api`, or the user's last selected generation mode.
+5. Whether automated briefing generation should default to `rules`, or the user's last selected generation mode.
    Recommended default: use the user's saved generation mode, falling back to `rules` if no mode is configured.
 
 ## Acceptance Criteria

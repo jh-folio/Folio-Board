@@ -2,11 +2,11 @@
 
 ## 문제
 
-가격 snapshot은 본문 작성 전에 기사 그룹에서 고른 기업으로 생성되고, LLM API·CLI는 본문에서 별도의 주도 기업을 선택한다. 프론트는 기업명이 아니라 시장별 ①·② 순번으로 차트를 삽입하므로 NVIDIA 본문 아래 Microsoft 차트가 표시될 수 있다.
+가격 snapshot은 본문 작성 전에 기사 그룹에서 고른 기업으로 생성되고, CLI는 본문에서 별도의 주도 기업을 선택한다. 프론트는 기업명이 아니라 시장별 ①·② 순번으로 차트를 삽입하므로 NVIDIA 본문 아래 Microsoft 차트가 표시될 수 있다.
 
 ## 목표
 
-- API·CLI·규칙 기반 브리핑 모두 본문 제목의 주도 기업과 같은 ticker의 차트만 표시한다.
+- CLI·규칙 기반 브리핑 모두 본문 제목의 주도 기업과 같은 ticker의 차트만 표시한다.
 - 생성 당시 snapshot 불변성과 시장별 ①·② 순서를 유지한다.
 - 기업 해석이나 시세 수집에 실패하면 다른 기업 차트를 대신 표시하지 않는다.
 
@@ -14,7 +14,7 @@
 
 `features/daily_briefing/visuals.py`가 `## 3/4. 미국장/한국장을 주도한 기업 ①/② — 기업명` 제목을 파싱하고 기존 company master·aliases로 ticker를 해석한다. 결과는 시장별 ordinal 순서의 명시적 leader subject 목록이다.
 
-`collect_briefing_visuals()`는 선택적 `leader_subjects`를 받는다. 값이 있으면 기사 그룹의 첫 기업 대신 본문에서 파싱한 기업만 수집한다. API·규칙 경로는 Markdown 완성 뒤 이 목록을 전달한다.
+`collect_briefing_visuals()`는 선택적 `leader_subjects`를 받는다. 값이 있으면 기사 그룹의 첫 기업 대신 본문에서 파싱한 기업만 수집한다. 규칙 경로는 Markdown 완성 뒤 이 목록을 전달한다.
 
 CLI context pack은 기존처럼 시장·히트맵 snapshot을 준비한다. writeback 시 완성 Markdown에서 leader subject를 파싱하고 회사 차트만 다시 수집한 뒤, draft의 기존 `role=leading_company` 추천·snapshot을 제거하고 새 결과로 교체한다. heatmap sidecar와 지수 snapshot은 다시 수집하거나 변경하지 않는다.
 

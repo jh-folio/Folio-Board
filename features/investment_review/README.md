@@ -27,7 +27,7 @@ v1 파일은 열 때만 `sourceSchemaVersion=1`, revision 0, legacy input basis�
 `POST /api/investment-review/{date}/reviewed {expectedReviewRevision}`의 CAS write이며,
 상태·확인시각만 바꾼다.
 
-직접 rules/API 생성은 shared artifact lock 안에서 마지막 input fingerprint를 다시 읽는다.
+직접 rules 생성은 shared artifact lock 안에서 마지막 input fingerprint를 다시 읽는다.
 생성 중 입력이 바뀌면 같은 날짜의 candidate를 `stale`과
 `input_changed_during_generation`으로 저장해 사용자가 원인을 볼 수 있다. 반대로 CLI Job은
 staging과 promotion 사이에 오래 멈출 수 있어, promotion 직전 authority fingerprint가 다르면

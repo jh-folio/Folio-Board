@@ -37,7 +37,7 @@ store.close()
 
 L1b에서는 SharedJob 제출·worker·기존 private terminal/recovery 권위 뒤에만 observer가 연결됩니다. `GET /api/diagnostics/runs/{runId}`와 `GET /api/diagnostics/jobs/{jobId}`는 headless v1 상세이며, 기존 jobs/private-cleanup 503을 우회하지 않습니다. HTTP는 모든 요청에 서버 생성 request ID header를 붙이고 unhandled 500에서만 별도 direct diagnostic run을 best-effort로 기록합니다.
 
-L1c는 automation/RSS/index, report API·CLI bridge, durable JSON/SQL commit, approved topic worker, consultation worker, 그리고 지원되는 direct personal-judgment 경계에 observer를 연결합니다. 각 producer는 실제 권위 경계와 저장 proof만 기록합니다. 기존 one-shot `chat_cli`와 consultation worker는 이 범위에 포함되며, `chat_api`는 아직 별도 producer branch가 없는 reserved route code입니다. provider protocol·parser 소비자·UI/Work Log·standalone/manual CLI는 이 단계의 보장 대상이 아닙니다.
+L1c는 automation/RSS/index, report CLI bridge, durable JSON/SQL commit, approved topic worker, consultation worker, 그리고 지원되는 direct personal-judgment 경계에 observer를 연결합니다. 각 producer는 실제 권위 경계와 저장 proof만 기록합니다. 기존 one-shot `chat_cli`와 consultation worker는 이 범위에 포함되며, 미사용 route code를 신규 실행 경로로 활성화하지 않습니다. provider protocol·parser 소비자·UI/Work Log·standalone/manual CLI는 이 단계의 보장 대상이 아닙니다.
 
 `requiredProducerCoverage`는 `complete|partial` closed enum입니다. L1c에서 `complete`를 주장할 수 있는 경로는 실제 SharedJob authority terminal 뒤에 observer가 끝까지 연결되고, 모든 stage가 닫히며, drop/issue/recovery gap이 없는 감사된 `index/index_build`와 `rss/rss_collect`뿐입니다. 상세 projection도 현재 authority가 `matched`일 때만 `diagnosticQuality=complete`로 보이며, 현재 authority가 changed/unavailable이거나 그 밖의 모든 경로는 `partial`입니다.
 

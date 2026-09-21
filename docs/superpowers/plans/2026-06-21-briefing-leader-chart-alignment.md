@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Bind each leading-company chart to the company named in the final briefing heading across API, rules, and CLI generation.
+**Goal:** Bind each leading-company chart to the company named in the final briefing heading across rules and CLI generation.
 
 **Architecture:** Parse final Markdown headings into market/ordinal company subjects, pass them as explicit overrides to visual collection, and reconcile CLI draft company visuals during writeback without touching index or heatmap snapshots.
 
@@ -23,7 +23,7 @@
 - [x] Add a pure helper that removes old leading-company snapshots/recommendations and appends aligned replacements.
 - [x] Run visual tests and commit.
 
-### Task 3: Connect API/rules and CLI writeback
+### Task 3: Connect rules and CLI writeback
 
 - [x] Add failing builder and Agent writeback tests for NVIDIA/Alphabet and SK hynix/Samsung alignment.
 - [x] Pass parsed final leaders from `builder.py` into visual collection.

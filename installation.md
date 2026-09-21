@@ -109,7 +109,7 @@ macOS / Linux:
 cp .env.example .env
 ```
 
-Then edit `.env` only for the services you actually use. Data API keys are optional. AI features use a supported local CLI bridge; direct LLM API keys are no longer used. Existing API-mode settings require an explicit switch to CLI in Settings, or turning AI off.
+Then edit `.env` only for the services you actually use. Data API keys are optional. AI features use a supported local CLI bridge. Configure the CLI in Settings, or turn AI off to use rule-based features.
 
 Do not commit or share `.env`.
 
@@ -273,7 +273,6 @@ python3 -m pip install -r requirements.txt
 
 Check:
 
-- `.env` has the API keys you intend to use, or
 - the selected LLM CLI is installed and authenticated, and
 - AI Agent settings are enabled inside Folio Board.
 

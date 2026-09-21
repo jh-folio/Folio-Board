@@ -1,12 +1,12 @@
 # AI Agent와 연동 설정
 
-Folio Board의 AI 실행은 Codex, Claude Code, Antigravity CLI를 사용합니다. 앱이 OpenAI·Gemini·Anthropic LLM API를 직접 호출하는 경로, 모델 조회, 연결 검사와 키 입력은 제거했습니다. CLI 인증과 사용 요금은 해당 CLI 제공자의 정책을 따릅니다.
+Folio Board의 AI 실행은 Codex, Claude Code, Antigravity CLI를 사용합니다. CLI 인증과 사용 요금은 해당 CLI 제공자의 정책을 따릅니다.
 
 ## 설정과 전환
 
 - `AI Agent 연동`에서 AI를 켜고 CLI 설치·로그인 상태를 확인합니다. AI를 끄면 기존 규칙 생성·계산·조회 기능을 사용합니다. AI가 필수인 스냅샷 등은 생성할 수 없다고 안내합니다.
 - `AI Agent 모델 설정`에서 전역 CLI·모델·추론 강도를 정합니다. 브리핑·기업분석·딥 리서치·시장 내러티브는 별도 설정을 켤 수 있습니다. 작업별 설정이 꺼져 있으면 전역 설정을 따릅니다.
-- 이전 `api` 전역/작업별 설정은 조회만으로 수정하지 않습니다. 화면에서 CLI로 전환해 저장하거나 AI를 꺼야 합니다. 활성 API 설정, 새 API 설정 저장, 오래된 API 실행 snapshot의 재개는 `llm_api_removed`로 거부합니다. 비활성 작업의 예전 설정은 보관하지만 다시 켜기 전에 CLI로 바꿔야 합니다.
+- 이전 `api` 전역/작업별 설정은 조회만으로 수정하지 않습니다. 화면에서 CLI로 전환해 저장하거나 AI를 꺼야 합니다. 지원 종료된 설정의 새 저장·실행·재개는 `llm_api_removed`로 거부합니다. 비활성 작업의 예전 설정은 보관하지만 다시 켜기 전에 CLI로 바꿔야 합니다.
 - 이전 LLM 키는 `.env`와 OS 자격 증명 저장소에서 자동 삭제·이전·조회하지 않습니다. 과거 보고서·작업·로그의 provider/usage는 읽기 호환을 유지합니다.
 - 이전 API 설정을 명시적으로 저장·전환할 때 원본 복구 사본을 남깁니다. 전역은 `.env.llm-api-transition.bak`, 작업별 설정은 원본 옆의 `.llm-api-transition.bak` 파일입니다. 기존 복구 사본은 덮어쓰지 않으며 전역 사본도 비밀이 포함될 수 있는 개인 파일로 취급합니다.
 
@@ -33,7 +33,7 @@ USE_WEB_SEARCH_FOR_BRIEFING=1
 USE_WEB_SEARCH_FOR_ANALYSIS=1
 ```
 
-웹 검색 허가는 생성 ON/OFF와 독립입니다. 요청됨·지원됨·실제 사용됨을 구분하며, CLI 장애 때 LLM API로 우회하지 않습니다. CLI 출력의 정확한 토큰 사용량과 토큰 상한 적용 여부를 추정치와 혼동하지 않습니다.
+웹 검색 허가는 생성 ON/OFF와 독립입니다. 요청됨·지원됨·실제 사용됨을 구분하며, CLI 장애는 해당 작업의 실패/fallback 계약으로 처리합니다. CLI 출력의 정확한 토큰 사용량과 토큰 상한 적용 여부를 추정치와 혼동하지 않습니다.
 
 ## 구현 경계
 
@@ -44,4 +44,4 @@ USE_WEB_SEARCH_FOR_ANALYSIS=1
 - `../agent_mode/setup.py`, `../agent_mode/bridge.py`: CLI 설치·인증·실행. 같은 스레드의 보조 호출을 허용하는 직렬화 잠금을 사용합니다.
 - `../../web/src/app/SettingsRoute.tsx`, `WelcomeWizard.tsx`: CLI 설정 및 AI 없이 사용 안내.
 
-과거 `/api/settings/llm/test/{provider}`는 HTTP 410을 반환합니다. 새 설정의 API 모드와 활성 API 작업 설정은 HTTP 409로 거부합니다.
+과거 `/api/settings/llm/test/{provider}`는 HTTP 410을 반환합니다. 지원 종료된 실행 설정은 HTTP 409로 거부합니다.

@@ -156,7 +156,7 @@
 - **프롬프트는 부탁이고 집행은 validator입니다.** `prompt.md`가 모양·direction enum·keyword 규칙(각 2~40자, 상태 라벨 전문 금지, 방향을 담은 구체어)·엔트리당 3개 상한을 지시하지만, 검증은 `tracked_checkpoints`가 병합 시점에 합니다.
 - **귀속은 엔트리의 `stateKey`를 따릅니다.** 엔트리가 active/watch 상태를 만들거나 갱신할 때 그 상태에 `merge_state_checkpoints`로 병합하고, **새 상태를 파생하지 않아도**(중요도 미달 등) `stateKey`의 살아 있는 상태가 있으면 거기에 붙습니다(`current_state_id_for_key`). 상태로 승격되지 않은 issue 메모의 체크포인트만 버리고 **버린 개수를 결과 요약에 남깁니다**(`checkpointsMerged`/`checkpointsDropped`). 병합 **실패**는 dropped에 섞지 않고 `checkpointErrors`+`checkpointErrorCode`(예외 클래스)로 따로 셉니다 — 섞으면 기능 전체가 죽어도 "LLM이 나쁜 체크포인트를 냈다"와 구분되지 않습니다.
 - **체크포인트는 계보(state_key)의 소유물입니다.** 상태 행은 날짜별로 회전하고(state_id = sha(state_key:date)) 이전 행은 overridden으로 밀리는데, `upsert_state_from_memory`가 회전 시 밀려나는 행의 목록을 새 행에 **승계**합니다 — 없으면 같은 체크포인트가 매일 open으로 다시 태어나고 어제의 판정·이력은 판정 pass가 다시는 방문하지 않는 행에 고립됩니다. `dueBy` 없는 open도 구조 판정 창(90일)을 신호 없이 넘기면 `expired`가 됩니다(병합은 open을 자르지 않으므로 만료가 무한 누적의 유일한 출구).
-- **생성 경로가 둘이라 저장을 한 함수로 모았습니다**(`service.save_memory_entries`). `/api/memory/llm`(API 키)과 Agent CLI writeback이 같은 함수를 쓰므로 병합 계약이 한쪽에만 붙는 일이 구조적으로 불가능합니다.
+- **메모리 저장은 `service.save_memory_entries`로 통일합니다.** 수동·예약 CLI 생성과 writeback에 동일한 병합·권위 저장 계약을 적용합니다.
 - **`storyCheckpoint`(자유 문장)는 그대로 병존합니다.** 사람이 읽는 한 줄 요약이고, 구조화 체크포인트는 기계가 대조하는 층입니다. 대체하면 LLM 구조화 실패가 곧 표시 실패가 됩니다.
 - 상태 스냅샷 경로는 체크포인트를 내지 않습니다 — 생성 경로가 늘수록 병합 규칙이 갈라집니다.
 
