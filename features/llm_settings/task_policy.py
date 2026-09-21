@@ -279,6 +279,10 @@ def save_task_policy(body: Mapping[str, Any] | None, *, root: Path | None = None
                 if row.get("enabled") or row.get("config") != old.get("config"):
                     raise TaskPolicyError("llm_api_removed", "API 설정은 저장할 수 없습니다. CLI를 선택해 주세요.", status=409)
         encoded = (json.dumps(next_policy, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        if path.exists() and any((row.get("config") or {}).get("mode") == "api" for row in latest["tasks"].values()):
+            backup = path.with_suffix(".llm-api-transition.bak")
+            if not backup.exists():
+                write_bytes_atomic(backup, path.read_bytes())
         write_bytes_atomic(path, encoded)
     return public_task_policy(root=root)
 

@@ -125,6 +125,18 @@ def test_failed_environment_commit_preserves_file_and_process(tmp_path, monkeypa
     assert os.environ["AI_AGENT_MODE"] == "api"
 
 
+def test_explicit_legacy_switch_preserves_recovery_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(client, "ROOT", tmp_path)
+    path = tmp_path / ".env"
+    original = b"AI_AGENT_MODE = api\nOPENAI_API_KEY=synthetic-preserved\n"
+    path.write_bytes(original)
+    client.write_env_values({"AI_AGENT_MODE": "cli"})
+    assert path.with_name(".env.llm-api-transition.bak").read_bytes() == original
+    assert b"OPENAI_API_KEY=synthetic-preserved" in path.read_bytes()
+    client.write_env_values({"AI_AGENT_MODE": "cli"})
+    assert path.with_name(".env.llm-api-transition.bak").read_bytes() == original
+
+
 def test_nested_cli_inherits_job_and_reenters_lock(monkeypatch):
     from features.agent_mode import bridge
     seen = []

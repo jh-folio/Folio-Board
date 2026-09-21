@@ -208,6 +208,13 @@ def write_env_values(updates):
     # Secret values are stored through the OS credential service, never in .env.
     # codeql[py/clear-text-storage-sensitive-data]
     from features.common.atomic_replace import write_bytes_atomic
+    if env_path.exists() and updates.get("AI_AGENT_MODE") == "cli":
+        previous_modes = [line.split("=", 1)[1].strip().strip("\"'").lower().replace("-", "_")
+                          for line in rows if "=" in line and line.split("=", 1)[0].strip() == "AI_AGENT_MODE"]
+        if any(mode in {"api", "llm_api"} for mode in previous_modes):
+            backup = env_path.with_name(".env.llm-api-transition.bak")
+            if not backup.exists():
+                write_bytes_atomic(backup, env_path.read_bytes())
     write_bytes_atomic(env_path, ("\n".join(next_rows).rstrip() + "\n").encode("utf-8"))
     for key, value in updates.items():
         if value is not None:

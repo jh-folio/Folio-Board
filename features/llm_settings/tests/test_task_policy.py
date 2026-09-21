@@ -22,6 +22,21 @@ def test_missing_policy_is_all_off_and_does_not_create_file(tmp_path: Path) -> N
     assert not task_policy.task_policy_path(tmp_path).exists()
 
 
+def test_legacy_policy_switch_preserves_original_before_commit(tmp_path: Path) -> None:
+    path = task_policy.task_policy_path(tmp_path)
+    legacy = task_policy.load_task_policy(root=tmp_path)
+    legacy["tasks"]["company_analysis"] = {"enabled": True, "config": {
+        "mode": "api", "provider": "openai", "model": "old-model", "reasoningEffort": "provider_default",
+    }}
+    original = json.dumps(legacy).encode("utf-8")
+    path.write_bytes(original)
+    task_policy.save_task_policy({"expectedRevision": 0, "tasks": {
+        "company_analysis": {"enabled": True, "config": cli_config()},
+    }}, root=tmp_path)
+    assert path.with_suffix(".llm-api-transition.bak").read_bytes() == original
+    assert task_policy.load_task_policy(root=tmp_path)["tasks"]["company_analysis"]["config"] == cli_config()
+
+
 def test_first_save_and_off_to_on_restores_previous_config(tmp_path: Path) -> None:
     saved = task_policy.save_task_policy({
         "expectedRevision": 0,

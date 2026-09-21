@@ -3,6 +3,7 @@ web/test-results/
 web/playwright-report/
 dist/
 .env
+.env.llm-api-transition.bak
 README.dev.md
 plan/
 research-inbox/

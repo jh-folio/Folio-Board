@@ -8,6 +8,7 @@ Folio Board의 AI 실행은 Codex, Claude Code, Antigravity CLI를 사용합니�
 - `AI Agent 모델 설정`에서 전역 CLI·모델·추론 강도를 정합니다. 브리핑·기업분석·딥 리서치·시장 내러티브는 별도 설정을 켤 수 있습니다. 작업별 설정이 꺼져 있으면 전역 설정을 따릅니다.
 - 이전 `api` 전역/작업별 설정은 조회만으로 수정하지 않습니다. 화면에서 CLI로 전환해 저장하거나 AI를 꺼야 합니다. 활성 API 설정, 새 API 설정 저장, 오래된 API 실행 snapshot의 재개는 `llm_api_removed`로 거부합니다. 비활성 작업의 예전 설정은 보관하지만 다시 켜기 전에 CLI로 바꿔야 합니다.
 - 이전 LLM 키는 `.env`와 OS 자격 증명 저장소에서 자동 삭제·이전·조회하지 않습니다. 과거 보고서·작업·로그의 provider/usage는 읽기 호환을 유지합니다.
+- 이전 API 설정을 명시적으로 저장·전환할 때 원본 복구 사본을 남깁니다. 전역은 `.env.llm-api-transition.bak`, 작업별 설정은 원본 옆의 `.llm-api-transition.bak` 파일입니다. 기존 복구 사본은 덮어쓰지 않으며 전역 사본도 비밀이 포함될 수 있는 개인 파일로 취급합니다.
 
 작업별 설정은 `data/ai-agent-task-settings.json`에 비밀 없는 값으로 저장합니다. revision 충돌 검사와 원자적 교체를 사용하며, 파일이 없는 설치에서는 조회만으로 파일을 만들지 않습니다. 전역 설정과 작업별 설정은 각각 저장합니다. 실행을 접수한 뒤에는 고정된 작업 snapshot의 provider/model/effort를 본문과 보조 호출에 전달합니다. Agent 대화별 CLI 선택은 보고서 전역 설정과 별개입니다.
 
