@@ -166,6 +166,7 @@ const {
   heatmapPlanLabels,
   heatmapHeaderAt,
   heatmapSectorOutlines,
+  heatmapHeaderRules,
   heatmapWithAlpha,
   heatmapTickerLabel,
   heatmapGroupName,
@@ -632,8 +633,8 @@ test("라벨은 칸 폭의 84%를 넘지 않는다 — 가장자리에 붙어 �
   assert.ok(measureStub(narrow.lines[0], narrow.size) <= 20 - 6 + 1e-9);
 });
 
-// 머리띠는 ECharts가 글자 폭을 좌우 padding(6px씩)과 틀 두께(1.5px씩)만큼 줄여 잰다. 계획도 그만큼과 여유 2px을 뺀다.
-const HEADER_CHROME = 6 * 2 + 1.5 * 2 + 2;
+// 머리띠는 ECharts가 글자 폭을 좌우 padding(6px씩)과 틀 두께(1px씩)만큼 줄여 잰다. 계획도 그만큼과 여유 2px을 뺀다.
+const HEADER_CHROME = 6 * 2 + 1 * 2 + 2;
 
 test("머리띠는 이름과 섹터 평균 등락을 한 줄에 쓴다", () => {
   const plan = heatmapHeaderPlan("Financials", "-0.71%", 200, measureStub);
@@ -777,6 +778,33 @@ test("섹터 머리띠는 섹터 평균 등락 색 그대로이고, 그 위 흰 
     assert.ok(contrast >= 4.5, `${change}% 띠(${band}) 위 흰 글자 대비가 ${contrast.toFixed(2)}:1이다`);
   }
 });
+test("머리띠 아래에 종목 사이 틈과 같은 1px 구분선을 둔다 — 띠가 아래 칸과 한 덩어리로 보이지 않게", () => {
+  const headers = [{ id: "sector:A", x: 10, y: 20, width: 200, height: 28 }, { id: "sector:B", x: 220, y: 20, width: 80, height: 28 }];
+  const rules = heatmapHeaderRules(headers, "rgb(19, 21, 27)");
+  assert.equal(rules.length, 2);
+  // 띠의 맨 아래 1px, 틀(1px)만큼 안쪽.
+  assert.deepEqual(rules[0].shape, { x: 11, y: 47, width: 198, height: 1 });
+  assert.equal(rules[0].style.fill, "rgb(19, 21, 27)");
+  assert.equal(rules[0].silent, true, "머리띠 클릭을 막지 않는다");
+  // 카드 색을 못 읽으면 그리지 않는다(엉뚱한 색 선보다 낫다).
+  assert.deepEqual(heatmapHeaderRules(headers, ""), []);
+  assert.deepEqual(heatmapHeaderRules([], "#000"), []);
+});
+
+test("지도가 한 장으로 읽힌다 — 경계는 간격의 위계로 말하고 굵은 바깥선을 두르지 않는다", () => {
+  const series = heatmapSeriesBase(2);
+  const tileGap = series.itemStyle.gapWidth;
+  const sectorGap = series.levels[0].itemStyle.gapWidth;
+  const frame = series.levels[1].itemStyle.borderWidth;
+  // 섹터 사이(틈 + 양쪽 틀)가 종목 사이 틈보다 뚜렷하게 넓다.
+  assert.ok(sectorGap + frame * 2 >= tileGap * 4, `섹터 사이 ${sectorGap + frame * 2}px, 종목 사이 ${tileGap}px`);
+  // 틈은 모두 투명 — 같은 색(카드 배경)으로 지도 전체가 나뉜다.
+  assert.equal(series.itemStyle.borderColor, "transparent");
+  // 굵고 진한 섹터 바깥선은 지도를 카드 여러 개로 갈랐다(사용자 피드백). 기본으로 끈다.
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "briefing-visuals.js"), "utf8");
+  assert.match(source, /const HEATMAP_SECTOR_OUTLINE_ALPHA = 0;/);
+});
+
 test("섹터 바깥선은 등락 색과 따로, 섹터 사각형마다 선만 그린다", () => {
   const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
   const rects = fakeRects([["sector:Technology", 500, 400, 0, 0], ["sector:Financials", 160, 400, 504, 0]]);
@@ -790,7 +818,7 @@ test("섹터 바깥선은 등락 색과 따로, 섹터 사각형마다 선만 �
   // 클릭·hover는 통과한다(머리띠 클릭과 툴팁이 계속 동작해야 한다).
   assert.equal(first.silent, true);
   // 선은 사각형 안쪽으로 그려 이웃 섹터 쪽 틈을 침범하지 않는다.
-  assert.deepEqual(first.shape, { x: 1, y: 1, width: 498, height: 398 });
+  assert.deepEqual(first.shape, { x: 0.5, y: 0.5, width: 499, height: 399 });
   assert.ok(first.z > 0, "트리맵 위에 얹혀야 한다");
 });
 
@@ -835,8 +863,11 @@ test("라벨 계획은 머리띠·잎·깊이 상한의 그룹을 모두 다룬�
   assert.equal(roots[0].upperLabel.formatter, "{n|Technology}{c|+1.15%}");
   assert.equal(roots[0].upperLabel.height, 28);
   // 띠 색은 섹터 평균 등락 색 그대로다 — 색이 "이 섹터가 오늘 어땠는가"의 답이다. 경계는 바깥선이 따로 맡는다.
-  assert.equal(roots[0].itemStyle.borderColor, roots[0].itemStyle.color);
   assert.equal(roots[0].itemStyle.color, heatmapColor(1.15));
+  // 틀·틈은 투명이다 — 카드 배경이 비쳐 지도 전체가 같은 색 선으로 나뉜 한 장으로 읽힌다.
+  assert.equal(roots[0].itemStyle.borderColor, "transparent");
+  // 트리맵은 띠·틀·틈을 borderColor 한 색으로 칠하므로, 띠 색은 라벨 배경으로 따로 준다.
+  assert.equal(roots[0].upperLabel.backgroundColor, heatmapColor(1.15));
   // 잎: 이름 + 등락률.
   const nvda = roots[0].children[0];
   assert.equal(nvda.label.show, true);

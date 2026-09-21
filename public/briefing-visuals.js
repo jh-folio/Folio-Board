@@ -616,7 +616,11 @@
   // 남긴다 — 색이 바로 "이 섹터가 오늘 어땠는가"의 답이다. 예전에는 13px 흰 글자였고 섹터 경계가 종목 경계와 같은 얇은 선이라
   // 띠가 옆 종목 칸에 섞였다. 그래서 **색은 그대로 두고 경계를 색과 따로** 준다: 섹터 바깥선(아래 heatmapSectorOutlines)이
   // 등락 색과 무관한 무채색으로 섹터를 감싼다. 흰 글자는 등락 색 9단 모두에서 5.26:1 이상이다(heatmapColor).
-  const HEATMAP_SECTOR_OUTLINE_PX = 2;
+  // 섹터 바깥선. 섹터끼리 떨어져 보이려고 굵고 진한 선을 두르면 지도가 한 장으로 안 읽히고 카드 여러 개로 갈라졌다
+  // (사용자 피드백). 경계는 **간격의 위계**가 말한다 — 종목 사이 1px, 섹터 사이 그보다 넓게 — 바깥선은 기본으로 끈다.
+  // 0보다 크면 그 투명도의 잉크색 선을 섹터마다 얹는다(heatmapSectorOutlines).
+  const HEATMAP_SECTOR_OUTLINE_PX = 1;
+  const HEATMAP_SECTOR_OUTLINE_ALPHA = 0;
   const HEATMAP_HEADER_MAX_LABEL_PX = 14;
   const HEATMAP_HEADER_MIN_LABEL_PX = 11;
   // 두 줄로 나눈 머리띠 이름의 하한. 한 줄보다 1px 작게 시작해 이 값까지만 내려간다.
@@ -624,9 +628,9 @@
   // 머리띠 글자의 왼쪽·오른쪽 여백. ECharts가 글자 폭을 이만큼 줄여 재므로 계획도 같은 값을 뺀다.
   const HEATMAP_HEADER_SIDE_PAD_PX = 6;
   // 섹터 사이의 틈. 종목 사이 틈(1px)보다 뚜렷하게 굵어야 "묶음"이 보인다. 틈에는 카드 배경이 비쳐 나온다.
-  const HEATMAP_SECTOR_GAP_PX = 4;
+  const HEATMAP_SECTOR_GAP_PX = 3;
   // 섹터를 감싸는 틀. 종목 칸을 한 묶음으로 두르는 띠와 같은 색이다.
-  const HEATMAP_SECTOR_FRAME_PX = 1.5;
+  const HEATMAP_SECTOR_FRAME_PX = 1;
   // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
   const HEATMAP_MAX_LABEL_LINES = 2;
   // 글자가 baseline 위아래로 차지하는 몫. 렌더된 줄 상자가 글꼴 크기의 약 1.2배다.
@@ -907,15 +911,18 @@
       const rect = rectOf(node);
       const hasChildren = Array.isArray(node.children) && node.children.length > 0;
       if (hasChildren && level < depth) {
-        // 머리띠 색은 fill이 아니라 **틀·틈의 색(borderColor)**으로 칠해진다. 섹터 평균 등락 색을 그대로 준다.
-        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: node.itemStyle.color });
+        // 틀·틈은 투명이다 — 카드 배경이 비쳐 지도 전체가 같은 색 선으로 나뉜 한 장으로 읽힌다. 머리띠는 borderColor가 아니라
+        // 라벨 배경으로 칠한다(트리맵은 띠·틀·틈을 borderColor 한 색으로 칠해서, 그러면 띠 색과 틈 색을 따로 못 준다).
+        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: "transparent" });
         const plan = heatmapHeaderPlan(node.name, heatmapChangeText(node._change), rect.width, measure);
+        // 띠 색은 섹터 평균 등락 색 그대로다(시가총액 가중). 라벨 상자가 띠 전체를 덮는다(폭·높이를 트리맵이 채운다).
+        const band = node.itemStyle.color;
         node.upperLabel = plan
-          ? Object.assign({ show: true, height: HEATMAP_HEADER_PX }, heatmapHeaderLabel(plan))
+          ? Object.assign({ show: true, height: HEATMAP_HEADER_PX, backgroundColor: band }, heatmapHeaderLabel(plan))
           // 머리띠는 남기고 글자만 비운다. `show: false`면 띠 자체가 사라져 자식이 그 자리를 먹는다.
           // 빈 문자열("")은 서식이 없는 것으로 읽혀 기본 이름이 `Steels ...`처럼 잘려 그려진다(브라우저 실측) —
           // 공백 한 글자로 "글자 없음"을 명시한다.
-          : { show: true, height: HEATMAP_HEADER_PX, formatter: " " };
+          : { show: true, height: HEATMAP_HEADER_PX, formatter: " ", backgroundColor: band };
         if (finite(rect.x) !== null && finite(rect.y) !== null) {
           headers.push({ id: node.id, x: rect.x, y: rect.y, width: rect.width, height: HEATMAP_HEADER_PX });
         }
@@ -929,7 +936,7 @@
       // 강조 상태의 표시 여부를 평상시와 같게 못 박고, 서식(formatter·rich)은 평상시 것을 그대로 물려받는다.
       node.emphasis = { label: { show: Boolean(plan) } };
       // 깊이 상한에서 잎이 된 섹터(좁은 화면)는 틀이 있는 레벨이라 자기 색 틀을 준다 — 안 주면 시리즈 기본(투명)이 아니라 어두운 링이 생긴다.
-      if (hasChildren) node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: node.itemStyle.color });
+      if (hasChildren) node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: "transparent" });
     };
     roots.forEach((node) => walk(node, 1));
     return headers;
@@ -962,6 +969,22 @@
     }));
   }
 
+  /** 머리띠와 종목 칸 사이의 가는 구분선 — 카드 배경색 1px.
+   *
+   *  띠가 섹터 색 그대로라 그 아래 종목 칸과 맞붙으면 한 덩어리로 보인다. 종목 사이 틈(1px)과 **같은 색 같은 굵기**의 선을 띠 아래에
+   *  두면 지도 전체가 한 가지 선으로 나뉜 한 장으로 읽히면서도 띠가 칸과 갈린다. 좌표는 머리띠 클릭 판정에 쓰는 것과 같다.
+   */
+  function heatmapHeaderRules(headers, color) {
+    if (!color) return [];
+    return (headers || []).map((header) => ({
+      type: "rect",
+      silent: true,
+      z: 21,
+      shape: { x: header.x + HEATMAP_SECTOR_FRAME_PX, y: header.y + header.height - 1, width: Math.max(0, header.width - HEATMAP_SECTOR_FRAME_PX * 2), height: 1 },
+      style: { fill: color },
+    }));
+  }
+
   /** `#rgb`·`#rrggbb`에 투명도를. 그 밖의 형식(rgb() 등)은 그대로 돌려준다. */
   function heatmapWithAlpha(color, alpha) {
     const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
@@ -969,6 +992,12 @@
     const hex = match[1].length === 3 ? match[1].replace(/./g, (c) => c + c) : match[1];
     const value = parseInt(hex, 16);
     return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+  }
+
+  /** 카드 배경색. 머리띠 구분선이 종목 사이 틈(카드가 비쳐 나온다)과 같은 색이어야 한다. */
+  function heatmapSurfaceColor(element) {
+    const value = element ? getComputedStyle(element).backgroundColor : "";
+    return value && value !== "rgba(0, 0, 0, 0)" && value !== "transparent" ? value : "";
   }
 
   function heatmapTooltipTheme() {
@@ -981,8 +1010,8 @@
       backgroundColor: token("--folio-surface-dark", "#101829"),
       borderColor: token("--folio-border-strong", "#c5ccd8"),
       color: token("--folio-ink-inverse", "#ffffff"),
-      // 섹터 바깥선. 라이트에선 어두운 잉크, 다크에선 밝은 잉크다.
-      outline: heatmapWithAlpha(token("--folio-ink", "#07111f"), 0.72),
+      // 섹터 바깥선(기본 꺼짐). 라이트에선 어두운 잉크, 다크에선 밝은 잉크다.
+      outline: HEATMAP_SECTOR_OUTLINE_ALPHA > 0 ? heatmapWithAlpha(token("--folio-ink", "#07111f"), HEATMAP_SECTOR_OUTLINE_ALPHA) : "",
     };
   }
 
@@ -1789,7 +1818,7 @@
           formatter: (params) => (params?.data?._row ? heatmapHoverText(params.data._row) : ""),
         },
         series: [series],
-        graphic: { elements: heatmapSectorOutlines(roots, rects, tooltip.outline) },
+        graphic: { elements: [...heatmapSectorOutlines(roots, rects, tooltip.outline), ...heatmapHeaderRules(headers, heatmapSurfaceColor(card))] },
       }, { notMerge: true });
       stage.dataset.rendered = "true";
       card.dataset.heatmapCompact = heatmapCompact(stage) ? "true" : "false";
@@ -2270,6 +2299,7 @@
     heatmapPlanLabels,
     heatmapHeaderAt,
     heatmapSectorOutlines,
+    heatmapHeaderRules,
     heatmapWithAlpha,
     heatmapTickerLabel,
     heatmapGroupName,
