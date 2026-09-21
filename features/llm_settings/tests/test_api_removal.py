@@ -106,7 +106,8 @@ def test_retired_secrets_are_not_loaded_or_migrated(tmp_path, monkeypatch):
 def test_no_runtime_provider_http_endpoints():
     root = Path(__file__).resolve().parents[3]
     forbidden = ("api.openai.com/v1", "api.anthropic.com/v1", "generativelanguage.googleapis.com/v1")
-    for path in root.rglob("*.py"):
+    # Audit this checkout's application, excluding other agents' nested worktrees.
+    for path in [root / "app.py", *(root / "features").rglob("*.py")]:
         if "tests" not in path.parts:
             assert not any(url in path.read_text(encoding="utf-8") for url in forbidden), path
 

@@ -8410,7 +8410,7 @@ async function Ie(e, t, n = {}) {
 	});
 }
 //#endregion
-//#region D:/Project/Personal/FolioBoard_Public/web/node_modules/react/cjs/react-jsx-runtime.production.js
+//#region node_modules/react/cjs/react-jsx-runtime.production.js
 var Le = /* @__PURE__ */ e(((e) => {
 	var t = Symbol.for("react.transitional.element"), n = Symbol.for("react.fragment");
 	function r(e, n, r) {
