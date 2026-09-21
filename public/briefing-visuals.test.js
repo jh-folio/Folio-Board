@@ -645,6 +645,21 @@ test("머리띠는 이름과 섹터 평균 등락을 한 줄에 쓴다", () => {
   assert.ok(plan.tailSize < plan.size);
 });
 
+test("머리띠 글자는 띠의 세로 가운데에 앉는다 — 줄 높이를 띠 높이에 맞춘다", () => {
+  // 줄 높이가 글자 크기와 같으면 ECharts가 글자를 띠 맨 위에 붙여 그렸다(글자 중심이 띠 중심보다 7px 위, 브라우저 실측).
+  // verticalAlign은 효과가 없어서, 줄 상자를 띠 높이(28px)만큼 높여 그 안에서 가운데에 앉힌다.
+  const one = heatmapHeaderPlan("Financials", "-0.71%", 200, measureStub);
+  assert.equal(one.lines.length, 1);
+  assert.equal(one.lineHeight, 28);
+  const label = heatmapHeaderLabel(one);
+  assert.equal(label.rich.n.lineHeight, 28);
+  assert.equal(label.rich.c.lineHeight, 28, "등락도 이름과 같은 줄 높이여야 같은 세로 위치에 앉는다");
+  // 두 줄은 줄 높이 14px씩 — 두 줄이 정확히 띠를 채워 위아래 여백이 같다.
+  const two = heatmapHeaderPlan("Energy & Chemicals", "-0.40%", 70, measureStub);
+  assert.equal(two.lines.length, 2);
+  assert.equal(two.lineHeight * 2, 28);
+});
+
 test("머리띠 글자는 이름 폭 + 등락 폭이 ECharts가 쓸 수 있는 폭 안에 들어갈 때만 한 줄에 함께 쓴다", () => {
   for (const width of [90, 120, 160, 240, 500]) {
     for (const [name, change] of [["Financials", "-0.71%"], ["Health Care", "+1.20%"], ["Consumer Disc.", "-1.22%"]]) {

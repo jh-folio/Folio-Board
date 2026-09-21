@@ -766,12 +766,16 @@
       if (nameWidth > available) continue;
       const tailSize = Math.max(10, size - 2);
       const withTail = tail && nameWidth + tailGap + measure(tail, tailSize, false) <= available;
-      return { lines: [text], size, lineHeight: size, tail: withTail ? tail : "", tailSize, tailGap };
+      // **줄 높이를 띠 높이와 같게** 둔다. 줄 높이가 글자 크기와 같으면 ECharts가 글자를 띠 맨 위에 붙여 그린다 —
+      // `verticalAlign: "middle"`은 효과가 없었고(브라우저 실측: 글자 중심이 띠 중심보다 7px 위), 줄 상자가 띠만큼 높으면
+      // 글자가 그 안의 세로 가운데에 앉는다.
+      return { lines: [text], size, lineHeight: HEATMAP_HEADER_PX, tail: withTail ? tail : "", tailSize, tailGap };
     }
     // 한 줄에 안 들어가는 좁은 섹터: 두 줄로. 어절 경계로만 나누고 자르지 않는다.
     for (let size = HEATMAP_HEADER_MIN_LABEL_PX - 1; size >= HEATMAP_HEADER_TWO_LINE_MIN_LABEL_PX; size -= 1) {
       const lines = wrapLabelLines(text, size, available, measure, 2);
-      if (lines && lines.length === 2) return { lines, size, lineHeight: size + 2, tail: "", tailSize: size, tailGap };
+      // 두 줄은 줄 높이를 띠 높이의 절반으로 — 두 줄이 정확히 띠를 채워 위아래 여백이 같다.
+      if (lines && lines.length === 2) return { lines, size, lineHeight: HEATMAP_HEADER_PX / 2, tail: "", tailSize: size, tailGap };
     }
     return null;
   }
@@ -784,7 +788,8 @@
       rich: {
         n: { fontSize: plan.size, lineHeight: plan.lineHeight, fontWeight: 700, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
         // 평균 등락은 이름보다 한 걸음 물러난 톤이다.
-        c: { fontSize: plan.tailSize, fontWeight: 500, color: "rgba(255, 255, 255, 0.78)", fontFamily: HEATMAP_FONT_FAMILY, padding: [0, 0, 0, plan.tailGap] },
+        // 등락도 같은 줄 높이여야 이름과 같은 세로 위치에 앉는다.
+        c: { fontSize: plan.tailSize, lineHeight: plan.lineHeight, fontWeight: 500, color: "rgba(255, 255, 255, 0.78)", fontFamily: HEATMAP_FONT_FAMILY, padding: [0, 0, 0, plan.tailGap] },
       },
     };
   }
