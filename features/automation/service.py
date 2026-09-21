@@ -62,19 +62,8 @@ def _automation_task_snapshot(task_key: str) -> dict:
             snapshot = {
                 **snapshot,
                 "enabled": legacy_mode != "rules",
-                "mode": "api" if legacy_mode == "llm_api" else "cli" if legacy_mode == "llm_cli" else "",
+                "mode": "cli" if legacy_mode == "llm_cli" else "",
             }
-            if legacy_mode == "llm_api":
-                # Keep compatibility with callers that replace the legacy
-                # mode getter while using the current global API provider.
-                from features.llm_settings.client import selected_llm_config
-
-                cfg = selected_llm_config()
-                snapshot.update({
-                    "provider": str(cfg.get("provider") or "openai"),
-                    "model": str(cfg.get("model") or ""),
-                    "reasoningEffort": str(cfg.get("reasoningEffort") or "provider_default"),
-                })
     return snapshot
 
 
@@ -403,11 +392,12 @@ def _refresh_market_state_snapshot(*, memory_is_fresh: bool = False) -> dict:
     엔진이 없으면(규칙 모드) 만들 수 없다. LLM이 시장 해석 문장을 쓰는 산출물이라
     규칙으로 대신할 수 있는 것이 아니다.
     """
-    task_policy = _automation_task_snapshot("market_memory")
-    mode = task_generation_mode(task_policy)
-    if mode == "rules":
-        return {"ok": False, "skipped": True, "reason": "rules_mode"}
+    mode = "rules"
     try:
+        task_policy = _automation_task_snapshot("market_memory")
+        mode = task_generation_mode(task_policy)
+        if mode == "rules":
+            return {"ok": False, "skipped": True, "reason": "rules_mode"}
         if mode == "llm_cli":
             # Prerequisites own the medium-memory step.  This function is
             # snapshot-only so a failed memory call cannot suppress the second
@@ -421,36 +411,16 @@ def _refresh_market_state_snapshot(*, memory_is_fresh: bool = False) -> dict:
             )
             snapshot_id = str((result or {}).get("snapshotId") or "")
             return {"ok": True, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "snapshotId": snapshot_id}
-        # API(LLM) 모드도 버튼과 **같은** attempt/watermark 라이프사이클을 탄다. 바로
-        # 저장하면 attempt 기록이 없는 스냅샷이 남아 reconcile이 복구할 근거를 잃는다.
-        from features.market_memory.attempt_store import AttemptScope
-        from features.market_memory.http_runtime import create_market_state_service
-        from features.market_memory.http_service import ManualSnapshotCommand
-
-        service = create_market_state_service(DATA_DIR)
-        with bind_task_policy(task_policy):
-            result = service.run_manual(
-                ManualSnapshotCommand(AttemptScope(PREREQUISITE_SNAPSHOT_SCOPE), kst_date())
-            )
-        snapshot = result.get("snapshot") if isinstance(result, dict) else None
-        snapshot_id = str((snapshot or {}).get("id") or "") if isinstance(snapshot, dict) else ""
-        attempt = result.get("attempt") if isinstance(result, dict) else None
-        return {
-            "ok": True,
-            "mode": mode,
-            "scope": PREREQUISITE_SNAPSHOT_SCOPE,
-            "snapshotId": snapshot_id,
-            "attemptId": str((attempt or {}).get("attemptId") or "") if isinstance(attempt, dict) else "",
-        }
+        return {"ok": False, "reason": "unsupported_generation_mode"}
     except Exception as exc:  # noqa: BLE001 - 브리핑을 막지 않는다
         return {"ok": False, "mode": mode, "scope": PREREQUISITE_SNAPSHOT_SCOPE, "errorType": type(exc).__name__}
 
 
 def _refresh_medium_memory() -> dict:
     """Run the configured medium-memory writer without blocking a snapshot."""
-    task_policy = _automation_task_snapshot("market_memory")
-    mode = task_generation_mode(task_policy)
     try:
+        task_policy = _automation_task_snapshot("market_memory")
+        mode = task_generation_mode(task_policy)
         if mode == "llm_cli":
             from features.agent_mode.bridge import run_agent_task
 
@@ -459,11 +429,6 @@ def _refresh_medium_memory() -> dict:
                 {"date": kst_date(), "_task_policy_snapshot": task_policy},
                 adapter=str(task_policy.get("provider") or ""),
             )
-        if mode == "llm_api":
-            from features.market_memory.service import run_llm_market_memory
-
-            with bind_task_policy(task_policy):
-                return run_llm_market_memory(kst_date())
         return run_rss_market_memory_update()
     except Exception as exc:  # noqa: BLE001 - snapshot and briefing still run
         return {"ok": False, "errorType": type(exc).__name__}

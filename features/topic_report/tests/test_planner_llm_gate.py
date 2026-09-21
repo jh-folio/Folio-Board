@@ -15,8 +15,8 @@ def _llm_returning(payload: dict, monkeypatch):
     import features.llm_settings.client as client
 
     monkeypatch.setattr(client, "use_llm_analysis", lambda: True)
-    monkeypatch.setattr(client, "selected_llm_config", lambda: {"apiKey": "test-key", "provider": "test"})
-    monkeypatch.setattr(client, "request_llm_text", lambda *a, **k: (json.dumps(payload, ensure_ascii=False), "rid"))
+    monkeypatch.setattr(client, "selected_cli_config", lambda: {"enabled": True, "apiKey": "test-key", "provider": "test"})
+    monkeypatch.setattr(client, "request_cli_text", lambda *a, **k: (json.dumps(payload, ensure_ascii=False), "rid"))
     monkeypatch.setattr(client, "extract_json_object", lambda text: json.loads(text))
 
 
@@ -86,8 +86,8 @@ def test_a_broken_llm_reply_keeps_the_rule_plan(monkeypatch):
     import features.llm_settings.client as client
 
     monkeypatch.setattr(client, "use_llm_analysis", lambda: True)
-    monkeypatch.setattr(client, "selected_llm_config", lambda: {"apiKey": "k"})
-    monkeypatch.setattr(client, "request_llm_text", lambda *a, **k: ("not json", "rid"))
+    monkeypatch.setattr(client, "selected_cli_config", lambda: {"enabled": True, "apiKey": "k"})
+    monkeypatch.setattr(client, "request_cli_text", lambda *a, **k: ("not json", "rid"))
     monkeypatch.setattr(client, "extract_json_object", lambda _text: None)
 
     rule_plan = planner.build_rule_plan(LONG)
@@ -107,7 +107,7 @@ def test_without_a_key_the_planner_asks_the_agent_cli(monkeypatch):
     from features.agent_mode import bridge
 
     monkeypatch.setattr(client, "use_llm_analysis", lambda: True)
-    monkeypatch.setattr(client, "selected_llm_config", lambda: {"apiKey": ""})
+    monkeypatch.setattr(client, "selected_cli_config", lambda: {"enabled": True, "apiKey": ""})
     monkeypatch.setattr(bridge, "bridge_status", lambda *a, **k: {"available": True})
     asked = {}
 
@@ -134,7 +134,7 @@ def test_with_no_key_and_no_cli_it_stays_on_rules(monkeypatch):
     from features.agent_mode import bridge
 
     monkeypatch.setattr(client, "use_llm_analysis", lambda: True)
-    monkeypatch.setattr(client, "selected_llm_config", lambda: {"apiKey": ""})
+    monkeypatch.setattr(client, "selected_cli_config", lambda: {"enabled": True, "apiKey": ""})
     monkeypatch.setattr(bridge, "bridge_status", lambda *a, **k: {"available": False})
 
     plan = planner.build_topic_plan("custom", custom_label=LONG)
@@ -152,7 +152,7 @@ def test_the_preview_uses_the_engine_by_default(monkeypatch):
     from features.agent_mode import bridge
 
     monkeypatch.setattr(client, "use_llm_analysis", lambda: True)
-    monkeypatch.setattr(client, "selected_llm_config", lambda: {"apiKey": ""})
+    monkeypatch.setattr(client, "selected_cli_config", lambda: {"enabled": True, "apiKey": ""})
     monkeypatch.setattr(bridge, "bridge_status", lambda *a, **k: {"available": True})
     monkeypatch.setattr(bridge, "run_agent_prompt", lambda *a, **k: {"output": json.dumps({
         "topic": LONG,

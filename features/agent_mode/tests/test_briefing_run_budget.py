@@ -16,15 +16,18 @@ def test_api_market_workers_receive_same_budget_object():
 
 
 def test_nested_cli_wait_cannot_exceed_original_deadline(monkeypatch):
-    monkeypatch.setattr(call_budget.time, "monotonic", lambda: 10.0)
+    clock = [10.0]
+    monkeypatch.setattr(call_budget.time, "monotonic", lambda: clock[0])
     timeouts = []
     class BusySemaphore:
         def acquire(self, **kwargs):
             timeouts.append(kwargs["timeout"])
+            clock[0] += kwargs["timeout"]
             return False
         def release(self):
             pytest.fail("unowned semaphore release")
     monkeypatch.setattr(bridge, "_RUN_SEMAPHORE", BusySemaphore())
     with bind_briefing_budget(SharedRepairBudget(deadline=20)), pytest.raises(TimeoutError, match="deadline_expired"):
         bridge.run_agent_prompt("synthetic", serialize=True)
-    assert timeouts == [10.0]
+    assert sum(timeouts) == pytest.approx(10.0)
+    assert all(0 < timeout <= 0.25 for timeout in timeouts)

@@ -41,6 +41,11 @@ def normalize_token_usage(
         out["estimated"] = False
     if usage.get("providerRaw"):
         out["providerRaw"] = usage["providerRaw"]
+    if usage.get("transport") == "cli":
+        out["transport"] = "cli"
+        out["outputTokenCapEnforced"] = False
+        out["requestedOutputTokens"] = max_output_tokens
+        out["maxOutputTokens"] = None
     return out
 
 

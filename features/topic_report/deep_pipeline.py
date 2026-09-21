@@ -10,7 +10,7 @@ from features.common.quality_generation.call_budget import deep_research_budget
 from features.common.quality_generation.candidate_store import CandidateStore
 from features.common.research_quality.contract_ceiling import apply_contract_ceiling
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
-from features.llm_settings.client import request_llm_text, selected_llm_config
+from features.llm_settings.client import request_cli_text, selected_cli_config
 from features.topic_report.approved_generation import ApprovedGenerationInput, ApprovedGenerationOutcome
 from features.topic_report.candidate_pipeline import candidate_improves, repairable_sections
 from features.topic_report.evaluation import evaluate_report
@@ -78,20 +78,6 @@ def configured_repair_call(command: ApprovedGenerationInput, *, job_id: str) -> 
     def invoke(_pass_no: int, context: str) -> str:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise DeepResearchGenerationError("external_repair_disabled_in_tests")
-        if command.requestedMode == "direct":
-            config = selected_llm_config()
-            if not config.get("apiKey"):
-                raise DeepResearchGenerationError("repair_engine_unavailable")
-            text, _response_id = request_llm_text(
-                config,
-                "Return one valid JSON object only. Repair only the allowlisted report sections.",
-                context,
-                web_search=False,
-                max_output_tokens=7_000,
-                json_mode=True,
-                timeout_seconds=max(60, int(os.environ.get("TOPIC_REPORT_REPAIR_API_TIMEOUT_SECONDS", "300"))),
-            )
-            return str(text or "")
         result = agent_bridge.run_agent_prompt(
             "Return JSON only for this bounded Deep Research section repair.\n\n" + context,
             adapter=command.adapter,

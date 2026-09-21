@@ -13,7 +13,7 @@ from features.common.engine_lookup import configured_lookup_call
 def test_cli_branch_exposes_the_observed_facts_as_an_attribute(monkeypatch):
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setattr(
-        "features.common.engine_lookup.selected_llm_config", lambda: {"apiKey": ""}
+        "features.common.engine_lookup.selected_cli_config", lambda: {"enabled": True}
     )
 
     def fake_prompt(prompt, **kwargs):
@@ -37,7 +37,7 @@ def test_cli_branch_leaves_the_attribute_absent_when_bridge_gives_none(monkeypat
     """기존 호출부(company_analysis/topic_report)가 새 필드를 몰라도 그대로 동작한다."""
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setattr(
-        "features.common.engine_lookup.selected_llm_config", lambda: {"apiKey": ""}
+        "features.common.engine_lookup.selected_cli_config", lambda: {"enabled": True}
     )
     monkeypatch.setattr(
         "features.agent_mode.bridge.run_agent_prompt",
@@ -49,23 +49,3 @@ def test_cli_branch_leaves_the_attribute_absent_when_bridge_gives_none(monkeypat
 
     assert output == "plain output"
     assert invoke.web_search_facts is None
-
-
-def test_api_branch_never_sets_the_attribute(monkeypatch):
-    """API 경로는 이번 작업 범위 밖이다 — 여전히 관측하지 않은 것으로 남는다."""
-    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-    monkeypatch.setattr(
-        "features.common.engine_lookup.selected_llm_config",
-        lambda: {"apiKey": "test-only", "provider": "openai", "model": "test"},
-    )
-    monkeypatch.setattr("features.common.engine_lookup.use_llm_analysis", lambda: True)
-    monkeypatch.setattr(
-        "features.common.engine_lookup.request_llm_text",
-        lambda *args, **kwargs: ("api output", "response-id"),
-    )
-
-    invoke = configured_lookup_call()
-    output = invoke("prompt", "context")
-
-    assert output == "api output"
-    assert not hasattr(invoke, "web_search_facts")

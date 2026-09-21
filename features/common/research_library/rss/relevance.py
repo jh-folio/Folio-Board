@@ -93,8 +93,6 @@ def is_market_relevant_item(title: str, description: str, link: str) -> bool:
     return relevant >= 1 or company
 
 
-
-
 def should_archive_item(title: str, description: str, link: str, feed: dict | None = None) -> bool:
     """Hard gate: reject vendor pages, raw ticker headlines, and off-topic noise.
 

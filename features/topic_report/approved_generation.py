@@ -26,7 +26,6 @@ from features.topic_report.approved_generation_support import (
     _normalized_evidence,
     _topic,
     attempt_cli,
-    attempt_direct,
 )
 from features.topic_report.approved_research import PreparedResearch
 from features.topic_report.approved_schema import ApprovedRequest
@@ -51,7 +50,7 @@ from features.common.web_search_scope import (
     render_scope_instruction,
     render_web_search_directive,
 )
-from features.llm_settings.client import LlmRequestError, use_web_search_for_analysis
+from features.llm_settings.client import use_web_search_for_analysis
 from features.topic_report.data_fetcher import market_data_to_markdown
 from features.topic_report.depth_policy import build_depth_policy
 from features.topic_report.material_requirements import (
@@ -102,8 +101,6 @@ def _task_reasoning_effort(command: ApprovedGenerationInput) -> str:
     return "" if normalized in {"", "default", "providerdefault", "provider_default"} else normalized
 
 
-
-
 def resume_root() -> Path:
     """재개 파일 위치. `job-context` 밖이라 잡이 끝나도 지워지지 않는다."""
     return data_dir() / "topic-resume"
@@ -139,6 +136,9 @@ def build_approved_report(
     job_id: str,
     clock: Callable[[], datetime],
 ) -> ApprovedGenerationOutcome:
+    from features.llm_settings.task_runtime import generation_mode as policy_mode
+    ai_enabled = (policy_mode(command.taskPolicy) == "llm_cli"
+                  if isinstance(command.taskPolicy, dict) else command.requestedMode == "cli")
     approved = command.approved
     rows = command.research.evidence_items
     evidence_items = _normalized_evidence(rows)
@@ -180,7 +180,7 @@ def build_approved_report(
     # 죽이지 않는다 — 못 남기면 다음 실행이 그 단계를 다시 할 뿐이고 그게 예전 동작이다.
     resume = _resume_store(
         command,
-        enabled=approved.deepResearch and not command.preview.zeroEvidence.required,
+        enabled=ai_enabled and approved.deepResearch and not command.preview.zeroEvidence.required,
         selected_evidence_ids=selected,
     )
     source_scope = load_source_scope() if use_web_search_for_analysis() else None
@@ -194,7 +194,7 @@ def build_approved_report(
     # 팩에 근거가 있으면 충분하다고 판단한다. 같은 어댑터에 순수한 찾기 과제를 주면
     # 곧바로 검색한다(실측: 닛케이 12.4%, 31,458.42, URL 2건).
     web_lookups: list[dict] = []
-    if approved.deepResearch and source_scope is not None and not command.preview.zeroEvidence.required:
+    if ai_enabled and approved.deepResearch and source_scope is not None and not command.preview.zeroEvidence.required:
         subquestions = list(approved.topicPlan.deepResearch.subQuestions)
         saved_lookups = {str(row.get("axisKey") or ""): row for row in resume.web_lookups()}
         # 이 콜러블은 `lookup_axis()`가 쓴다 — 웹에서 찾아오는 것이 그 패스의 일이므로
@@ -248,7 +248,7 @@ def build_approved_report(
     # 축별 분석 — 하위 질문에 실제로 답하게 하고, 그 결과가 본문 섹션의 뼈대가 된다.
     # 한 축이 실패해도 보고서를 죽이지 않는다(그 축은 status로 남고 본문은 근거로 쓴다).
     axis_briefs: list[dict] = []
-    if approved.deepResearch and not command.preview.zeroEvidence.required:
+    if ai_enabled and approved.deepResearch and not command.preview.zeroEvidence.required:
         try:
             existing_axis_briefs = resume.axis_briefs()
             if existing_axis_briefs:
@@ -349,41 +349,14 @@ def build_approved_report(
     if web_facts:
         context = "\n\n".join([context, web_facts])
     context = "\n\n".join([context, render_market_state_projection(command.marketState)])
-    attempted = "none" if command.preview.zeroEvidence.required else "api" if command.requestedMode == "direct" else "cli"
-    fallback_reason = "confirmed_zero_evidence" if attempted == "none" else None
+    attempted = "none" if command.preview.zeroEvidence.required or not ai_enabled else "cli"
+    fallback_reason = "confirmed_zero_evidence" if command.preview.zeroEvidence.required else None
     output: EngineOutput | None = None
 
     def _generate(extra: str = "") -> EngineOutput | None:
         """쓰기 호출 하나. 재시도가 같은 경로를 타야 컨텍스트가 갈리지 않는다."""
         nonlocal fallback_reason
         full = "\n\n".join([context, extra]) if extra else context
-        if attempted == "api":
-            try:
-                supports_deep_options = "timeout_seconds" in inspect.signature(attempt_direct).parameters
-                return (
-                    attempt_direct(prompt, full, max_output_tokens=14_000, timeout_seconds=600)
-                    if approved.deepResearch and supports_deep_options
-                    else attempt_direct(prompt, full)
-                )
-            except EngineUnavailableError as error:
-                diagnostic_stage_failure(
-                    current_diagnostic_recorder(), error, stage_id=None,
-                    stage_code="generate", boundary="adapter",
-                )
-                fallback_reason = "engine_unavailable"
-            except EngineFailedError as error:
-                # ``attempt_direct`` intentionally preserves the original
-                # typed provider error as ``__cause__`` while presenting its
-                # existing EngineFailedError fallback contract to callers.
-                # Observe that closed typed cause when present; never inspect
-                # exception text or create a second failure for the wrapper.
-                diagnostic_error = error.__cause__ if isinstance(error.__cause__, LlmRequestError) else error
-                diagnostic_stage_failure(
-                    current_diagnostic_recorder(), diagnostic_error, stage_id=None,
-                    stage_code="generate", boundary="adapter",
-                )
-                fallback_reason = "engine_failed"
-            return None
         if attempted == "cli":
             try:
                 cli_args = {
@@ -466,7 +439,7 @@ def build_approved_report(
         if attempted == "none"
         else command.adapter
     )
-    generation_mode = "llm_api" if output is not None and attempted == "api" else "llm_cli" if output is not None else "rules"
+    generation_mode = "llm_cli" if output is not None else "rules"
     mode = "generate" if output is not None else "fallback"
     # 리서치 에디터 — 분석가가 사실을 정하고 에디터는 전달 방식을 정한다.
     # 한 호출이 두 역할을 겸하면 안전한 쪽으로 기운다(실측: 문단마다 유보 표현,

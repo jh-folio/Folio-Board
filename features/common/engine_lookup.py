@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from features.llm_settings.client import request_llm_text, selected_llm_config, use_llm_analysis
+from features.llm_settings.client import selected_cli_config
 
 LookupCall = Callable[[str, str], str]
 
@@ -24,55 +24,41 @@ def configured_lookup_call(
     *,
     adapter: str = "",
     job_id: str = "",
-    api_timeout_env: str = "LOOKUP_API_TIMEOUT_SECONDS",
     cli_timeout_env: str = "LOOKUP_CLI_TIMEOUT_SECONDS",
-    default_api_timeout: int = 240,
     default_cli_timeout: int = 600,
     max_output_tokens: int = 2_500,
     timeout_limit: Callable[[], float] | None = None,
 ) -> LookupCall:
-    """웹 조회 한 번. API 키가 있으면 그것을, 없으면 Agent CLI를 쓴다."""
+    """설정한 Agent CLI로 웹 조회를 한 번 수행한다."""
 
     def invoke(prompt: str, context: str) -> str:
         def timeout_for(configured: int) -> float:
             return min(configured, timeout_limit()) if timeout_limit else configured
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_lookup_disabled_in_tests")
-        config = selected_llm_config()
-        if use_llm_analysis() and config.get("apiKey"):
-            text, _response_id = request_llm_text(
-                config,
-                prompt,
-                context,
-                web_search=True,
-                max_output_tokens=max_output_tokens,
-                json_mode=True,
-                timeout_seconds=timeout_for(max(60, int(os.environ.get(api_timeout_env, str(default_api_timeout))))),
-            )
-            if timeout_limit:
-                timeout_limit()
-            return str(text or "")
+        config = selected_cli_config()
+        if not config.get("enabled"):
+            raise RuntimeError("ai_disabled")
         # 최상단에서 가져오면 순환이 생긴다(bridge → agent_mode.service → 기능 조립기 → 여기).
         from features.agent_mode import bridge as agent_bridge
 
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
-            adapter=adapter,
+            adapter=adapter or str(config.get("provider") or ""),
+            model=str(config.get("model") or ""),
+            reasoning_effort=str(config.get("reasoningEffort") or ""),
             job_id=job_id,
             timeout=timeout_for(max(60, int(os.environ.get(cli_timeout_env, str(default_cli_timeout))))),
             web_search=True,
             # 조회는 팩 준비 중에 불린다 — 그 시점은 run_agent_task가 _RUN_SEMAPHORE를
-            # 쥐고 있다. 세마포어는 재진입이 안 되므로 serialize=True면 그 잡이 영원히
-            # 멈춘다(semantic.py에서 실측한 함정과 동일).
+            # 쥐고 있다. 이미 소유한 직렬화 경계를 재사용한다.
             serialize=False,
             # This is evidence lookup, not the report's primary execution.
             diagnostic_primary=False,
         )
         # Additive passthrough: bridge.py may have observed whether the
         # adapter actually searched (its own structured CLI output). Callers
-        # that care read this attribute right after invoking `invoke`; it is
-        # never set when the API branch above returns first, so it stays
-        # absent exactly where there is nothing to observe.
+        # that care read this attribute right after invoking `invoke`.
         invoke.web_search_facts = result.get("webSearchFacts")
         return str(result.get("output") or "")
 

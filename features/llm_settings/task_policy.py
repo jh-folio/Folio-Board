@@ -29,7 +29,6 @@ from features.llm_settings.reasoning import (
 SCHEMA_VERSION = 1
 POLICY_FILE_NAME = "ai-agent-task-settings.json"
 SUPPORTED_REASONING = REASONING_VALUES
-API_PROVIDERS = ("openai", "gemini", "claude")
 CLI_PROVIDERS = ("codex", "claude", "antigravity")
 
 # CLI effort is an adapter concern.  Keep this table close to the persisted
@@ -137,16 +136,16 @@ def _normalize_config(config: Mapping[str, Any], *, field: str = "config") -> di
     else:
         raise TaskPolicyError("task_policy_invalid_mode", "실행 방식은 API 또는 CLI여야 합니다.")
     provider = str(config.get("provider") or "").strip().lower()
-    allowed = API_PROVIDERS if mode == "api" else CLI_PROVIDERS
+    if mode == "api":
+        return {"mode": "api", "provider": provider,
+                "model": str(config.get("model") or ""),
+                "reasoningEffort": str(config.get("reasoningEffort") or "provider_default")}
+    allowed = CLI_PROVIDERS
     if provider not in allowed:
-        raise TaskPolicyError("task_policy_unsupported_combination", "선택한 실행 방식과 제공자 조합을 지원하지 않습니다.")
+        raise TaskPolicyError("task_policy_unsupported_combination", "지원하지 않는 CLI 제공자입니다.")
     model = _normalize_model(config.get("model"), field="model")
     reasoning = _normalize_reasoning(config.get("reasoningEffort", "provider_default"))
     if not is_supported_reasoning_effort(mode, provider, model, reasoning):
-        if mode == "api" and provider != "openai":
-            raise TaskPolicyError("task_policy_unsupported_reasoning", "이 API 제공자는 제공자 기본값만 지원합니다.")
-        if mode == "api" and provider == "openai":
-            raise TaskPolicyError("task_policy_unsupported_reasoning", "선택한 OpenAI 모델은 명시적 추론 강도를 지원하지 않습니다.")
         raise TaskPolicyError("task_policy_unsupported_reasoning", "선택한 CLI 제공자와 모델은 이 추론 강도를 지원하지 않습니다.")
     return {
         "mode": mode,
@@ -274,6 +273,11 @@ def save_task_policy(body: Mapping[str, Any] | None, *, root: Path | None = None
             "revision": latest["revision"] + 1,
             "tasks": _normalize_tasks(_body_tasks(payload), existing=latest["tasks"]),
         }
+        for key, row in next_policy["tasks"].items():
+            if (row.get("config") or {}).get("mode") == "api":
+                old = latest["tasks"][key]
+                if row.get("enabled") or row.get("config") != old.get("config"):
+                    raise TaskPolicyError("llm_api_removed", "API 설정은 저장할 수 없습니다. CLI를 선택해 주세요.", status=409)
         encoded = (json.dumps(next_policy, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
         write_bytes_atomic(path, encoded)
     return public_task_policy(root=root)
@@ -289,24 +293,11 @@ def canonical_task_key(task_key: str) -> str:
 
 def _global_config() -> dict[str, str]:
     """Resolve current global settings without returning credentials."""
-    from features.llm_settings.client import ai_agent_enabled, ai_agent_mode, configured_global_reasoning_effort, load_dotenv, selected_llm_config
+    from features.llm_settings.client import ai_agent_enabled, ai_agent_mode, configured_global_reasoning_effort, load_dotenv, selected_cli_config
 
     mode = ai_agent_mode()
     if mode == "api":
-        selected = selected_llm_config()
-        effort = str(selected.get("reasoningEffort") or configured_global_reasoning_effort(
-            mode="api",
-            provider=selected.get("provider", ""),
-            model=selected.get("model", ""),
-            runtime=True,
-        ))
-        config = {
-            "mode": "api",
-            "provider": str(selected.get("provider") or "").strip().lower(),
-            "model": str(selected.get("model") or "").strip(),
-            "reasoningEffort": effort,
-        }
-        return {**_normalize_config(config), "enabled": "1" if ai_agent_enabled() else "0"}
+        raise TaskPolicyError("llm_api_removed", "설정에서 CLI로 전환하거나 AI를 꺼 주세요.", status=409)
     from features.agent_mode.setup import configured_model, configured_provider
 
     provider = configured_provider()
@@ -363,6 +354,8 @@ def resolve_task_policy(
     else:
         global_cfg = _global_config()
     selected = deepcopy(override or global_cfg)
+    if effective_global_enabled and selected.get("mode") == "api":
+        raise TaskPolicyError("llm_api_removed", "이 작업의 API 설정을 CLI로 전환해 주세요.", status=409)
     result = {
         "taskKey": canonical,
         "runtimeTaskType": str(task_key),

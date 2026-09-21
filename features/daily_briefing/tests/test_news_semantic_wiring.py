@@ -35,7 +35,7 @@ def _patch_builder(monkeypatch, *, config, callback=None):
     monkeypatch.setattr(builder, "collect_briefing_visuals", _visuals)
     monkeypatch.setattr(builder, "apply_quality_loop", lambda _kind, artifact, **_kwargs: artifact)
     monkeypatch.setattr(builder, "generate_llm_briefing", lambda *args, **_kwargs: (None, "disabled"))
-    monkeypatch.setattr(builder, "selected_llm_config", lambda: config)
+    monkeypatch.setattr(builder, "selected_cli_config", lambda: config)
     monkeypatch.setattr(news_semantic_engine, "make_news_semantic_engine", factory)
     monkeypatch.setattr(
         news_selection_runtime,
@@ -61,7 +61,7 @@ def test_builder_passes_factory_callback_to_real_selection_call(monkeypatch):
         selection_context=_selection_context(),
     )
 
-    assert factory.call_args.kwargs["engine"] == "api"
+    assert factory.call_args.kwargs["engine"] == "cli"
     assert prepare.call_args.kwargs["semantic_callback"] is callback
 
 
@@ -69,11 +69,11 @@ def test_builder_passes_factory_callback_to_real_selection_call(monkeypatch):
     "config, llm_override",
     [
         ({"enabled": True, "apiKey": "test-key"}, False),
-        ({"enabled": True, "apiKey": ""}, None),
+        ({"enabled": False}, None),
     ],
-    ids=["llm-off", "api-key-missing"],
+    ids=["llm-off", "ai-disabled"],
 )
-def test_builder_uses_rules_and_no_semantic_callback_when_api_is_unavailable(
+def test_builder_uses_rules_and_no_semantic_callback_when_cli_is_disabled(
     monkeypatch, config, llm_override
 ):
     factory, prepare = _patch_builder(monkeypatch, config=config, callback=None)

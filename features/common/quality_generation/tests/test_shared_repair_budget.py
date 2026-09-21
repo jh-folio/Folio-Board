@@ -72,7 +72,7 @@ def test_briefing_parse_failure_cannot_spend_another_model_call(monkeypatch):
     from features.common.quality_generation import llm_section_rewrite as rewrite
     def forbidden(*args, **kwargs):
         pytest.fail("second repair call")
-    monkeypatch.setattr(rewrite, "request_llm_text", forbidden)
+    monkeypatch.setattr(rewrite, "request_cli_text", forbidden)
     with pytest.raises(ValueError, match="rewrite_json_invalid"):
         _parse_rewrite_response({}, "invalid response", max_tokens=100, allow_repair=False)
 
@@ -81,13 +81,13 @@ def test_quality_rewrite_uses_shared_deadline_and_no_nested_retry(monkeypatch):
     from features.common.quality_generation import llm_section_rewrite as rewrite
     now = [10.0]
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(rewrite, "selected_llm_config", lambda: {"enabled": True, "apiKey": "test", "provider": "test"})
+    monkeypatch.setattr(rewrite, "selected_cli_config", lambda: {"enabled": True, "apiKey": "test", "provider": "test"})
     monkeypatch.setattr(rewrite, "_rewrite_context", lambda *args: "synthetic")
     calls = []
     def request(*args, **kwargs):
         calls.append(kwargs)
         return "invalid response", "", {}
-    monkeypatch.setattr(rewrite, "request_llm_text", request)
+    monkeypatch.setattr(rewrite, "request_cli_text", request)
     budget = SharedRepairBudget(deadline=20)
     artifact = {"markdown": "original", "generation": {"mode": "llm"}}
     out = rewrite.improve_sections_with_llm("briefing", artifact, {}, {}, [], mode="strict", repair_budget=budget)
@@ -103,11 +103,11 @@ def test_expired_rewrite_result_cannot_be_accepted(monkeypatch):
     from features.common.quality_generation import llm_section_rewrite as rewrite
     now = [10.0]
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(rewrite, "selected_llm_config", lambda: {"enabled": True, "apiKey": "test", "provider": "test"})
+    monkeypatch.setattr(rewrite, "selected_cli_config", lambda: {"enabled": True, "apiKey": "test", "provider": "test"})
     monkeypatch.setattr(rewrite, "_rewrite_context", lambda *args: "synthetic")
     def request(*args, **kwargs):
         now[0] = 21
         return '{"markdown":"valid"}', "", {}
-    monkeypatch.setattr(rewrite, "request_llm_text", request)
+    monkeypatch.setattr(rewrite, "request_cli_text", request)
     with pytest.raises(TimeoutError, match="deadline_expired"):
         rewrite.improve_sections_with_llm("briefing", {"generation": {"mode": "llm"}}, {}, {}, [], mode="strict", repair_budget=SharedRepairBudget(deadline=20))

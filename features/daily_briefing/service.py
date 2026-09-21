@@ -65,10 +65,8 @@ from features.daily_briefing.source_integrity import (
     source_manifest_prompt,
 )
 from features.llm_settings.client import (
-    request_claude,
-    request_gemini,
-    request_openai,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
     use_web_search_for_briefing,
 )
@@ -1498,13 +1496,13 @@ def build_llm_context(
 def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block="", concentration_context="", markets=None):
     if llm_override is False:
         return None, "disabled"
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     kind = normalize_briefing_kind(kind)
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
         return None, "disabled"
-    if not cfg["apiKey"]:
-        return None, f"missing_{cfg['provider']}_api_key"
+    if not cfg["enabled"]:
+        return None, "cli_disabled"
     prompt = read_briefing_prompt(market_scope, kind)
     if not prompt:
         return None, "missing_prompt"
@@ -1565,12 +1563,7 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
     timing = {"timeout_seconds": budget.remaining_seconds()} if budget else {}
     try:
         max_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000")))
-        if cfg["provider"] == "gemini":
-            text, response_id, usage = request_gemini(cfg, prompt, context, web_search=False, include_usage=True, **timing)
-        elif cfg["provider"] == "claude":
-            text, response_id, usage = request_claude(cfg, prompt, context, web_search=False, include_usage=True, **timing)
-        else:
-            text, response_id, usage = request_openai(cfg, prompt, context, web_search=False, include_usage=True, **timing)
+        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=False, include_usage=True, **timing)
         if budget:
             budget.check_active()
         if not text:

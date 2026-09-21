@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 import os
-import urllib.error
 from dataclasses import dataclass
 
 from features.agent_mode import bridge as agent_bridge
 from features.agent_mode import schema as agent_schema
 from features.common.research_schema.evidence import evidence_items_from_list
 from features.llm_settings.client import (
-    LlmRequestError,
-    request_llm_text,
-    selected_llm_config,
-    use_llm_analysis,
     use_web_search_for_analysis,
 )
 from features.topic_report.approved_schema import ApprovedRequest
@@ -106,35 +101,6 @@ def _materials(approved: ApprovedRequest, rows: list[dict]) -> tuple[dict, dict,
     return topic, market_data, macro_data
 
 
-def attempt_direct(prompt: str, context: str, *, max_output_tokens: int = 9000, timeout_seconds: int | None = None) -> EngineOutput:
-    config = selected_llm_config()
-    if not use_llm_analysis() or not config.get("apiKey") or not prompt:
-        raise EngineUnavailableError("api")
-    try:
-        text, response_id, _usage = request_llm_text(
-            config,
-            prompt,
-            context,
-            web_search=use_web_search_for_analysis(),
-            max_output_tokens=max_output_tokens,
-            timeout_seconds=timeout_seconds,
-            include_usage=True,
-        )
-    except (LlmRequestError, urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
-        raise EngineFailedError("api") from error
-    if not str(text or "").strip():
-        raise EngineFailedError("api")
-    provider = str(config.get("provider") or "")
-    adapters = {"openai": "openai_api", "gemini": "gemini_api", "claude": "claude_api"}
-    return EngineOutput(
-        markdown=str(text).strip(),
-        adapter=adapters.get(provider, "openai_api"),
-        provider=provider,
-        model=str(config.get("model") or ""),
-        responseId=str(response_id or ""),
-    )
-
-
 def attempt_cli(
     prompt: str,
     context: str,
@@ -222,7 +188,6 @@ __all__ = [
     "_normalized_evidence",
     "_topic",
     "attempt_cli",
-    "attempt_direct",
 ]
 
 
@@ -246,19 +211,6 @@ def configured_editor_call(
     def invoke(prompt: str, context: str) -> str:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_editor_disabled_in_tests")
-        if requested_mode == "direct":
-            config = selected_llm_config()
-            if not use_llm_analysis() or not config.get("apiKey"):
-                raise EngineUnavailableError("api")
-            text, _response_id = request_llm_text(
-                config,
-                prompt,
-                context,
-                web_search=False,
-                max_output_tokens=16_000,
-                timeout_seconds=max(120, int(os.environ.get("TOPIC_EDITOR_API_TIMEOUT_SECONDS", "600"))),
-            )
-            return str(text or "")
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
@@ -297,20 +249,6 @@ def configured_axis_call(
     def invoke(prompt: str, context: str) -> str:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_axis_analysis_disabled_in_tests")
-        if requested_mode == "direct":
-            config = selected_llm_config()
-            if not use_llm_analysis() or not config.get("apiKey"):
-                raise EngineUnavailableError("api")
-            text, _response_id = request_llm_text(
-                config,
-                prompt,
-                context,
-                web_search=resolved_web_search,
-                max_output_tokens=2_500,
-                json_mode=True,
-                timeout_seconds=max(60, int(os.environ.get("TOPIC_AXIS_API_TIMEOUT_SECONDS", "240"))),
-            )
-            return str(text or "")
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,

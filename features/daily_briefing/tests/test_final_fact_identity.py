@@ -18,7 +18,7 @@ def test_rules_generation_does_not_validate_unused_api_settings(monkeypatch):
     from features.daily_briefing import service
     def invalid_api():
         raise AssertionError("unused API configuration accessed")
-    monkeypatch.setattr(service, "selected_llm_config", invalid_api)
+    monkeypatch.setattr(service, "selected_cli_config", invalid_api)
     assert service.generate_llm_briefing("2026-09-07", "2026-09-07", [], [], llm_override=False) == (None, "disabled")
 
 

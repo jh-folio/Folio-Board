@@ -106,7 +106,7 @@ from features.daily_briefing.visuals import (
     write_visual_sidecar,
 )
 from features.daily_briefing.weekly_visuals import collect_weekly_visuals
-from features.llm_settings.client import selected_llm_config
+from features.llm_settings.client import selected_cli_config
 from features.market_memory.memory import build_memory_from_briefing, list_briefing_memories, upsert_memory
 from features.market_memory.snapshot import render_market_memory_context
 from features.common.workspace import data_dir
@@ -448,7 +448,7 @@ def _scope_result(
                 leading_companies=qualified_leaders,
             )
         generation = {
-            "mode": "rules", "status": llm_status, "provider": "" if llm_override is False else selected_llm_config().get("provider", ""),
+            "mode": "rules", "status": llm_status, "provider": "" if llm_override is False else selected_cli_config().get("provider", ""),
             "model": "", "sourceCount": len(sources),
         }
         generation_evidence = {
@@ -681,12 +681,12 @@ def build_briefing(
     from features.daily_briefing.news_semantic_engine import make_news_semantic_engine
     selection_mode = str(selection_context.get("mode") or "off")
     selection_budget = current_briefing_budget()
-    semantic_cfg = selected_llm_config() if selection_mode in {"shadow", "active"} and kind == "daily" and llm_override is not False else {}
-    semantic_api_on = bool(semantic_cfg.get("apiKey")) and (bool(semantic_cfg.get("enabled")) if llm_override is None else bool(llm_override))
+    semantic_cfg = selected_cli_config() if selection_mode in {"shadow", "active"} and kind == "daily" and llm_override is not False else {}
+    semantic_cli_on = bool(semantic_cfg.get("enabled")) and (bool(semantic_cfg.get("enabled")) if llm_override is None else bool(llm_override))
     for scope in requested_scopes:
         semantic_callback = make_news_semantic_engine(
             market=scope, kind=kind, mode=selection_mode, selected_markets=requested_scopes,
-            engine="api" if semantic_api_on else "rules", api_config=semantic_cfg,
+            engine="cli" if semantic_cli_on else "rules", adapter=semantic_cfg.get("provider", ""), model=semantic_cfg.get("model", ""),
             budget=current_briefing_budget(),
         )
         selection_results[scope] = prepare_selection_candidates(
@@ -949,12 +949,12 @@ def build_briefing(
     failed = any(str(item.get("status") or "") == "generation_failed" for item in generations)
     if generation["mode"] == "llm":
         diagnostic_execution(
-            attempted_engine="api", final_engine="api",
+            attempted_engine="cli", final_engine="cli",
             fallback_reason="engine_failed" if failed else None,
         )
     else:
         diagnostic_execution(
-            attempted_engine="api" if failed else None,
+            attempted_engine="cli" if failed else None,
             final_engine="rules",
             fallback_reason="engine_failed" if failed else None,
         )

@@ -12,15 +12,15 @@ Claude 작성은 `plan`이 아닌 `dontAsk`로 실행한다. 도구는 Read/Glob
 
 규칙 기반 브리핑 대체 조립은 자료 그룹이 없거나 요청 시장에 해당하는 그룹이 없어도 처리합니다. 실행 중인 서버에는 Python 변경이 자동 반영되지 않으므로, 수정 적용 시 활성 작업이 없는지 확인하고 정상 재시작한 뒤 응답을 확인합니다.
 
-브리핑 저장은 authored Markdown을 보존하면서 최종 형식·출처 URL·source ID·section whitelist를 확인합니다. 의미 기반 수치·단위·방향·날짜·상대강도 판정은 명시적 offline 평가에만 남고, 일반 CLI/API 저장 경로는 semantic/style/fact-repair/model 호출을 하지 않습니다. 취소·기한 초과·안전하지 않은 참조는 계속 저장을 막으며, 명시적 품질 보완은 별도 `quality_repair` 작업입니다. CLI 응답 형식이나 사용자가 선택한 모델 설정은 이 검사로 변경하지 않습니다.
+브리핑 저장은 authored Markdown을 보존하면서 최종 형식·출처 URL·source ID·section whitelist를 확인합니다. 의미 기반 수치·단위·방향·날짜·상대강도 판정은 명시적 offline 평가에만 남고, 일반 CLI 저장 경로는 semantic/style/fact-repair/model 호출을 하지 않습니다. 취소·기한 초과·안전하지 않은 참조는 계속 저장을 막으며, 명시적 품질 보완은 별도 `quality_repair` 작업입니다. CLI 응답 형식이나 사용자가 선택한 모델 설정은 이 검사로 변경하지 않습니다.
 
 작성용 한국장 자료에는 내부 provider 경고를 넣지 않으며, 최종 저장에서도 연결 설정·provider 경고 문구만 제거합니다. 수치의 실제 출처·기준일과 원래 진단 메타데이터는 유지합니다. 저장 브리핑 차트는 API와 같은 정규장 가격 계열을 사용하며 Toss 실시간 화면 설정을 바꾸지 않습니다.
 
 선택적으로 켠 일간 뉴스 의미 평가는 실행 중인 bridge의 실제 adapter/model/job과 남은 시간을 전달받습니다. 단독 context pack 준비는 CLI를 호출하지 않습니다. 시장당 한 번의 별도 평가이며 본문 보수 횟수를 늘리지 않고, 중첩 호출은 기존 세마포어를 다시 잡지 않습니다. API fallback은 없으며 평가를 못 하면 기존 작성 입력을 유지합니다. 상한과 입력·출처 계약은 일일 브리핑 README를 따릅니다.
 
-브리핑은 자료 보완 검색과 본문 작성을 분리합니다. Codex 작성 명령은 `web_search="disabled"`, 보완 조회는 `web_search="live"`를 명시하고 Claude 작성에서는 WebSearch/WebFetch를 제한합니다. 다른 작업의 검색 정책은 그대로입니다. 실행 도구 사용이 관측되지 않으면 미확인으로 기록하며, 명령에 설정했다고 실제 검색 증거로 계산하지 않습니다. API와 CLI는 같은 시장별 이전 확인 사항 및 제한 뉴스 선별 컨텍스트를 사용합니다.
+브리핑은 자료 보완 검색과 본문 작성을 분리합니다. Codex 작성 명령은 `web_search="disabled"`, 보완 조회는 `web_search="live"`를 명시하고 Claude 작성에서는 WebSearch/WebFetch를 제한합니다. 다른 작업의 검색 정책은 그대로입니다. 실행 도구 사용이 관측되지 않으면 미확인으로 기록하며, 명령에 설정했다고 실제 검색 증거로 계산하지 않습니다. CLI와 규칙 경로는 같은 시장별 이전 확인 사항 및 제한 뉴스 선별 컨텍스트를 사용합니다.
 
-AI Agent Mode는 OpenAI/Gemini/Claude API Key 없이도 Codex, Claude Code 같은 구독형 AI 에이전트를 Folio Board의 최종 작성자로 쓰기 위한 보조 기능입니다.
+AI Agent Mode는 Codex, Claude Code 같은 로컬 CLI를 Folio Board의 AI 작성자로 사용하는 실행 기능입니다.
 
 0.2에서는 Home과 Deep Research에서 Agent를 사용하고, 두 화면이 같은 metadata-only Work Log를 공유합니다. Work Log에는 prompt, reply transcript, Markdown, diff, attachment, 로컬 path, credential, raw stdout/stderr가 저장되지 않습니다. Canonical 보고서는 generate/regenerate 또는 명시적으로 승인된 proposal만 수정할 수 있습니다.
 
@@ -70,7 +70,7 @@ market-memory.sqlite3
 ```text
 AI_AGENT_ENABLED=0      -> 규칙 기반
 AI_AGENT_ENABLED=1
-AI_AGENT_MODE=api       -> 앱 내부 LLM API
+AI_AGENT_MODE=api       -> 지원 종료: CLI 전환 또는 AI OFF 필요
 AI_AGENT_MODE=cli       -> 로컬 Codex/Claude Code/Antigravity CLI
 ```
 

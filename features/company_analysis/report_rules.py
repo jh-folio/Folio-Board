@@ -1289,11 +1289,3 @@ def build_rule_report(analysis: dict, analysis_style: str = "beginner") -> str:
         "styleLabel": analysis_style_label(style),
     }
     return render_report(context)
-
-
-
-
-
-
-
-

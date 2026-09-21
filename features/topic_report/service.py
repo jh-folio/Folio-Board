@@ -30,9 +30,8 @@ from features.common.quality_generation.prompt_hints import render_prompt_hints
 from features.common.quality_generation.quality_targets import render_quality_target_context
 from features.common.quality_generation.telemetry import normalize_token_usage
 from features.llm_settings.client import (
-    LlmRequestError,
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
     use_llm_analysis,
     use_web_search_for_analysis,
@@ -482,13 +481,13 @@ def generate_topic_report(
 
     # 4. LLM generation — 공통 prompt + report_type별 지침 결합 (Phase 3)
     try:
-        cfg = selected_llm_config()
+        cfg = selected_cli_config()
     except Exception:
         # 아래는 `cfg`가 실패하더라도 규칙 기반으로 떨어지도록 설계돼 있는데
         # (`generation = {"mode": "rules", ...}`), 정작 그 `cfg` 자체가 설정값
         # 오류(예: 지원 안 되는 `AI_AGENT_REASONING_EFFORT`)로 예외를 던지면
         # 이 함수 전체가 그 순간 죽어 규칙 생성까지 막혔다. 빈 설정으로 두면
-        # 아래 `cfg.get("apiKey")`가 falsy가 되어 의도한 대로 규칙 경로로 간다.
+        # 아래 `cfg.get("enabled")`가 falsy가 되어 의도한 대로 규칙 경로로 간다.
         cfg = {}
     prompt = _read_prompt()
     report_type = (topic_plan or {}).get("reportType") or topic.get("report_type", "")
@@ -498,7 +497,7 @@ def generate_topic_report(
 
     llm_on = use_llm_analysis() if llm_override is None else bool(llm_override)
     markdown = None
-    if llm_on and cfg.get("apiKey") and prompt:
+    if llm_on and cfg.get("enabled") and prompt:
         context = _build_llm_context(
             topic, market_data, macro_data, docs, memories, user_context, date,
             data_gaps=evidence_pack["dataGaps"] if evidence_pack else None,
@@ -535,7 +534,7 @@ def generate_topic_report(
         # Web search only as supplement — try local first
         try:
             max_tokens = int(os.environ.get("TOPIC_REPORT_MAX_OUTPUT_TOKENS", "9000"))
-            text, response_id, usage = request_llm_text(
+            text, response_id, usage = request_cli_text(
                 cfg, prompt, context,
                 web_search=use_web,
                 max_output_tokens=max_tokens,
@@ -548,7 +547,7 @@ def generate_topic_report(
                 if _topic_report_looks_cut(markdown):
                     try:
                         cont_context = _continuation_context(topic, date, markdown)
-                        cont_text, _cont_response_id, continuation_usage = request_llm_text(
+                        cont_text, _cont_response_id, continuation_usage = request_cli_text(
                             cfg,
                             prompt,
                             cont_context,
@@ -582,12 +581,12 @@ def generate_topic_report(
                     )
                 if generation["mayBeTruncated"]:
                     generation["message"] += " · 후반 섹션이 일부 누락됐을 수 있습니다."
-        except LlmRequestError:
+        except (RuntimeError, OSError):
             generation["message"] = f"{cfg.get('provider', '')} LLM 호출 실패로 규칙 기반 보고서로 대체했습니다."
         except Exception:
             generation["message"] = "LLM 호출에 실패했습니다."
-    elif not cfg.get("apiKey"):
-        generation["message"] = f"{cfg.get('provider', '')} API 키가 없어 규칙 기반 보고서를 생성했습니다."
+    elif not cfg.get("enabled"):
+        generation["message"] = "AI가 꺼져 있어 규칙 기반 보고서를 생성했습니다."
     elif not llm_on:
         generation["message"] = "LLM이 꺼져 있어 규칙 기반 보고서를 생성했습니다."
 

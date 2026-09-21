@@ -22,7 +22,7 @@ Your files and generated reports stay local by default. LLM/API integrations are
 - **Keep your own thinking separate** — Write notes beside a report and check how old they are, what argues against them, and what you said you would follow up on. Your notes stay marked as your thinking and never merge into a report's evidence.
 - **Use AI, or don't** — Chat with the Agent from Home or the dock about a holding, a watchlist entry, or a report; conversations are saved on your computer and resume later. The Work Log shows what the AI did, and any change it proposes to a saved report waits for your approval. **Folio Board runs without an AI key** — collection, search, charts, and rule-based reports all work locally.
 - **Export** — Send generated reports to Obsidian or Notion.
-- **Settle in** — A short first-run guide sets up AI and your markets, and can be skipped at any step. Settings covers LLM CLI/API, model choices, RSS, automation, appearance (Light, Dark, or System), and where your research data is stored — including moving it out of the app folder so updating no longer means copying by hand.
+- **Settle in** — A short first-run guide sets up AI and your markets, and can be skipped at any step. Settings covers AI CLI, model choices, RSS, automation, appearance (Light, Dark, or System), and where your research data is stored — including moving it out of the app folder so updating no longer means copying by hand.
 
 Not included yet:
 
@@ -202,7 +202,7 @@ None of these screens tell you what to buy or sell.
 
 ### Settings
 
-Configure appearance and motion, interest markets, AI Agent mode, LLM CLI/API settings, cached model choices, RSS/automation options, Obsidian, and Notion.
+Configure appearance and motion, interest markets, AI Agent mode, AI CLI settings, cached model choices, RSS/automation options, Obsidian, and Notion.
 
 **“자료 위치”** (data location) shows where your reports and collected material are stored, how much there is, and opens the folder. It can also move everything to your Documents folder so a new version finds it without you copying anything. Moving copies your files and never deletes the originals — check the new location works before removing the old one.
 
@@ -283,3 +283,5 @@ If AI features do not work, check that:
 - Model choices have been refreshed if you recently changed provider settings.
 
 Folio Board should still run with local rule-based behavior when LLM features are unavailable.
+
+AI generation uses the configured CLI. Direct LLM API support has been removed. Existing API settings require an explicit switch to CLI in Settings, or turning AI off. Saved reports, historical logs, and external data integrations remain available.

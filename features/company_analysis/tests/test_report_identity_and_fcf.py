@@ -141,7 +141,7 @@ _RUNTIME = {
     "generate_llm_company_analysis": lambda *a, **k: (None, "disabled"),
     "build_rule_report": lambda *a, **k: "# 규칙 기반 보고서",
     "company_analysis_sources": lambda *a, **k: [],
-    "selected_llm_config": lambda *a, **k: {"provider": "", "model": ""},
+    "selected_cli_config": lambda *a, **k: {"provider": "", "model": ""},
     "use_web_search_for_analysis": lambda: True,
 }
 

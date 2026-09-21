@@ -740,8 +740,8 @@ def refine_plan_with_llm(
     try:
         from features.llm_settings.client import (
             extract_json_object,
-            request_llm_text,
-            selected_llm_config,
+            request_cli_text,
+            selected_cli_config,
             use_llm_analysis,
         )
     except Exception:
@@ -749,9 +749,9 @@ def refine_plan_with_llm(
     if not use_llm_analysis():
         return rule_plan, "llm_disabled"
     try:
-        cfg = selected_llm_config()
+        cfg = selected_cli_config()
     except Exception:
-        # 이 함수의 계약은 "실패하면 rule_plan"이다. `selected_llm_config()`는
+        # 이 함수의 계약은 "실패하면 rule_plan"이다. `selected_cli_config()`는
         # 설정값(예: 지원 안 되는 `AI_AGENT_REASONING_EFFORT`)이 안 맞으면 예외를
         # 던지는데, 이 줄만 두 try 블록 사이에 안 감싸여 있어 그 예외가 그대로
         # 새 나갔다 — 계획을 아예 못 만드는 대신 규칙 계획으로 내려가야 한다.
@@ -771,8 +771,8 @@ def refine_plan_with_llm(
         )
     context = "\n\n".join(context_lines)
     try:
-        if cfg.get("apiKey"):
-            text, _rid = request_llm_text(cfg, prompt, context, json_mode=True, max_output_tokens=2500)
+        if cfg.get("enabled"):
+            text, _rid = request_cli_text(cfg, prompt, context, json_mode=True, max_output_tokens=2500)
         else:
             text = _plan_via_cli(prompt, context)
             if not text.strip():

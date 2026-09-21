@@ -17,16 +17,16 @@ test("첫 실행 안내는 다섯 단계이고 테마가 자기 단계를 갖는
   assert.doesNotMatch(welcomeBlock, /THEME_CHOICES/);
 });
 
-test("AI 단계는 부담이 적은 것부터 세 가지를 같은 말로 낸다", async () => {
+test("AI 단계는 부담이 적은 것부터 두 가지를 같은 말로 낸다", async () => {
   const source = await wizard();
   const block = source.slice(source.indexOf('aria-label="생성 방식"'));
   const labels = [...block.slice(0, 700).matchAll(/>([^<>{]+)<\/button>/g)].map((m) => m[1].trim());
 
-  assert.deepEqual(labels.slice(0, 3), ["AI 없이", "CLI", "API"]);
+  assert.deepEqual(labels.slice(0, 2), ["AI 없이", "CLI"]);
   // 짧은 라벨은 설명을 대신하지 못한다. 셋 다 고르면 무엇인지 한 문단이 따라온다.
   assert.match(source, /engine === "none" && \(/);
   assert.match(source, /내 컴퓨터에 설치해서 쓰는/);
-  assert.match(source, /제공사 서버를 부르는 열쇠/);
+  assert.doesNotMatch(source, /제공사 서버를 부르는 열쇠/);
 });
 
 test("CLI를 고르면 안내 안에서 설치와 로그인을 끝낼 수 있다", async () => {
@@ -50,18 +50,13 @@ test("CLI를 고르면 안내 안에서 설치와 로그인을 끝낼 수 있다
   assert.doesNotMatch(settings, /function adapterStatus\(/);
   assert.doesNotMatch(settings, /function adapterStatusClass\(/);
   assert.doesNotMatch(settings, /function checkedAtLabel\(/);
-  assert.match(settings, /import \{ checkedAtLabel \} from "\.\/aiConnectionStatus"/);
 });
 
-test("API 제공사 행은 언제 확인한 값인지 밝히고 잔액을 아는 척하지 않는다", async () => {
+test("설정은 API 키 입력과 연결 호출 없이 이전 설정 전환을 안내한다", async () => {
   const settings = await readFile(new URL("../src/app/SettingsRoute.tsx", import.meta.url), "utf8");
-
-  // `사용 가능`이 방금인지 지난주인지 모르면 상태를 믿을 수 없다. 서버는 `checkedAt`을
-  // 주고 있었는데 화면이 버리고 있었다.
-  assert.match(settings, /className="cli-provider-checked"/);
-  // 계정 잔액·사용량은 관리자 키를 요구해 일반 API 키로는 볼 수 없다. 모르는 것을
-  // 아는 척하지 않고 어디서 보는지만 말한다.
-  assert.match(settings, /사용량과 잔액은 제공사 콘솔/);
+  assert.doesNotMatch(settings, /providerApiKey|testProvider|\/settings\/llm\/test/);
+  assert.match(settings, /LLM API 지원이 종료되었습니다/);
+  assert.match(settings, /CLI 전환 필요/);
 });
 
 test("완료 화면은 둘러보기를 물어볼 뿐 카드 안에서 돌지 않는다", async () => {

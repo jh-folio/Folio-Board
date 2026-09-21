@@ -47,7 +47,6 @@ ANTIGRAVITY_REASONING_EFFORTS = ("low", "medium", "high")
 # The local Responses transport currently accepts these explicit Astra
 # values.  Other OpenAI API models, Gemini, and Claude API stay at the
 # provider default until their API contract exposes a matching field.
-OPENAI_API_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 COMMON_LABELS = {
     "provider_default": "제공자 기본값",
@@ -77,16 +76,10 @@ def normalize_reasoning_effort(value: Any) -> str:
 def supported_reasoning_efforts(mode: str, provider: str, model: str = "") -> tuple[str, ...]:
     """Return explicit transport enums for one mode/provider/model tuple."""
     normalized_mode = str(mode or "").strip().lower().replace("-", "_")
-    if normalized_mode in {"llm_api", "api"}:
-        normalized_mode = "api"
-    elif normalized_mode in {"llm_cli", "cli", "agent"}:
+    if normalized_mode in {"llm_cli", "agent"}:
         normalized_mode = "cli"
     normalized_provider = str(provider or "").strip().lower()
     normalized_model = str(model or "").strip().lower()
-    if normalized_mode == "api":
-        if normalized_provider == "openai" and normalized_model == "gpt-6-astra":
-            return OPENAI_API_REASONING_EFFORTS
-        return ()
     if normalized_mode != "cli":
         return ()
     if normalized_provider == "codex":

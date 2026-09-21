@@ -24,7 +24,7 @@ production `finalValidation`/`validationRun`은 `assessmentStatus`와 `contentAs
 
 - 저장 브리핑의 `price_history.py`는 5분봉·1시간봉·일봉을 같은 정규장 기준의 yfinance(`prepost=False`, `auto_adjust=False`)로 조회한다. 최근 Toss 1분봉 200개를 과거 정규장 5분봉으로 표시하거나 장후 일봉을 섞지 않는다. 대시보드·워치리스트의 Toss 실시간 경로와 사용자 설정은 바꾸지 않는다.
 - 분봉은 공급원이 실제 제공한 시각까지만 그리며 없는 마감 구간을 만들지 않는다. 종가·기간 비교는 저장된 일봉을 기준으로 한다.
-- `korea_market_data_to_markdown()`은 공급원과 수치 기준일은 전달하지만 연결 설정·전송 오류 등의 raw warning은 작성용 자료에 넣지 않는다. `reader_hygiene.py`는 API/CLI/규칙 공통 최종 저장 단계에서 provider 운영 경고 문장만 제거하고 실제 수치의 출처 표기는 유지한다. 원래 경고는 `koreaMarketData.warnings`에 보존한다.
+- `korea_market_data_to_markdown()`은 공급원과 수치 기준일은 전달하지만 연결 설정·전송 오류 등의 raw warning은 작성용 자료에 넣지 않는다. `reader_hygiene.py`는 CLI/규칙 공통 최종 저장 단계에서 provider 운영 경고 문장만 제거하고 실제 수치의 출처 표기는 유지한다. 원래 경고는 `koreaMarketData.warnings`에 보존한다.
 - `saved_chart_repair.py`는 사용자가 지정한 KR 일간 보고서의 기업 차트를 보정할 때만 명시적으로 호출하는 후보 조립기다. 날짜·기업·정규장·5분 간격을 검증하며 파일 쓰기·재생성·자동 과거 변경을 하지 않는다. 호출자가 백업과 canonical revision/동시성 검증 후 저장한다. 다른 시각자료·출처·본문 분석과 작성 엔진은 보존한다.
 
 ## 담당 범위

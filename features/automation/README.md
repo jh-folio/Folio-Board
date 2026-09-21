@@ -44,8 +44,7 @@ Run kinds:
 - 주간 예약은 `briefingType`(편집 강조점)을 적용하지 않는다. 세 값이 모두 "기존 섹션 구성을 유지하라"는 지시라 골격이 다른 주간에 성립하지 않으며, 화면도 주간을 고르면 그 선택지를 감춘다.
 - **사전작업(`runPrerequisites`)은 예약별로 정한다.** 브리핑 전에 RSS 수집과 시장 메모리 갱신을 돌릴지다. 예약이 여럿일 때 매번 모으면 같은 자료를 하루에 여러 번 수집하고, 하나도 안 모으면 어제 자료로 브리핑을 만든다. 값이 없으면 켠 것으로 읽는다.
 - **사전작업은 화면이 보여주는 내러티브까지 만든다.** 예전에는 `run_rss_market_memory_update()`만 불렀는데, 그것은 `market_memory` 행과 regime 카운트를 규칙으로 갱신할 뿐 **`market_state_snapshots`를 만들지 않는다.** 시장 내러티브 탭의 `시장 해석`·`판단 및 투자 행동`이 바로 그 스냅샷이라, 사전작업이 도는 날에도 화면은 며칠 전 해석 그대로였다. 실측으로 스냅샷 이력이 08-12·08-07·08-06으로 띄엄띄엄했고 그 시각에는 자동화 기록이 없었다 — 전부 사용자가 버튼을 누른 것이었다.
-- 스냅샷 생성은 `_refresh_market_state_snapshot()`이며 버튼과 **같은 경로**를 쓴다: CLI 모드는 `run_market_memory_update_task`(중기 메모리 → 스냅샷 2단계, `job_id` 없이 부르면 동기), API 모드는 `create_market_state_service(DATA_DIR).run_manual(...)`. 따로 만들면 버튼과 예약이 서로 다른 스냅샷을 만들게 된다.
-  - **API 모드는 attempt/watermark 라이프사이클을 탄다**(0.5.4). 예전에는 `run_llm_market_state_snapshot()`으로 바로 저장해서 자동 스냅샷에만 `updateAttemptRef`가 없었고, reconcile이 중단된 갱신을 복구할 근거를 잃었다. 조립은 `features/market_memory/http_runtime.py::create_market_state_service()` 하나이며 라우터도 같은 것을 쓴다.
+- 사전작업은 같은 작업 설정으로 CLI `market_memory_llm` 다음 `market_state_snapshot`을 실행한다. 메모리 실패 뒤에도 스냅샷은 독립적으로 시도하며 각각의 실패·신선도·재시도 유예를 기록한다. 수동/예약 모두 attempt/watermark와 재시작 복구 계약을 유지한다. AI OFF에서는 메모리 규칙 갱신을 유지하고 스냅샷은 생성 불가를 명시한다.
   - **scope는 GLOBAL 고정이다**(`PREREQUISITE_SNAPSHOT_SCOPE`). 예약이 고른 시장 집합과 무관하다 — 화면의 시장 내러티브는 시장별 보고서가 아니라 하나의 해석이고, 그 안에서 `marketViews`로 미국장·한국장을 나눈다.
 - **실패해도 올리지 않는다.** 브리핑이 오늘의 결과물이고 스냅샷은 그 앞의 준비다 — 스냅샷을 못 만들었다고 브리핑까지 없어지면 손해가 더 크다. 왜 못 만들었는지만 `marketMemory.stateSnapshot`에 남긴다.
 - 규칙 모드에서는 만들 수 없다(`reason: rules_mode`). LLM이 시장 해석 문장을 쓰는 산출물이라 규칙으로 대신할 수 있는 것이 아니다.

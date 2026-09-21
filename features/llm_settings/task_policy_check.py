@@ -5,7 +5,6 @@ import datetime as dt
 from collections.abc import Mapping
 
 from features.agent_mode.bridge import bridge_status
-from features.llm_settings.provider_status import check_provider
 from features.llm_settings.task_policy import CLI_PROVIDERS, TaskPolicyError, _normalize_config
 
 
@@ -60,13 +59,7 @@ def check_task_policy(config: Mapping[str, object] | None) -> dict:
         raise TaskPolicyError("task_policy_config_required", "작업별 설정을 모두 입력해야 합니다.")
     normalized = _normalize_config(config, field="config")
     if normalized["mode"] == "api":
-        result = check_provider(normalized["provider"], model=normalized["model"])
-        return {
-            **result,
-            "mode": "api",
-            "modelAccessVerified": result.get("status") == "available",
-            "generationAttempted": False,
-        }
+        raise TaskPolicyError("llm_api_removed", "API 연결 검사는 지원하지 않습니다. CLI를 선택해 주세요.", status=409)
     if normalized["provider"] not in CLI_PROVIDERS:
         raise TaskPolicyError("task_policy_unsupported_combination", "선택한 실행 방식과 제공자 조합을 지원하지 않습니다.")
     return _cli_check(normalized)

@@ -268,8 +268,8 @@ hypothesis metadata일 뿐 자동 리밸런싱·매수/매도/보유 권고가 �
 
 전용 진입점을 만들지 않는다. **사용자가 도크에 사진을 붙이고 포지션 입력을 요청할 때만** 인식한다(2026-08-07 사용자 결정).
 
-- 엔진 선택을 따로 두지 않는다. 도크가 설정의 CLI/API 모드를 따르므로 그 선택이 곧 인식 엔진이다. 로컬 Tesseract는 도크에 자리가 없어 함께 사라진다(`local_ocr.py`, `import_image.py`의 `local` 모드).
-- **막힌 지점**: 도크 API 모드는 지금 이미지를 못 읽는다. `chat.py::_run_with_images`가 `bridge.run_agent_prompt`(CLI 전용)를 부르고, CLI가 없으면 "이미지를 열 수 없습니다"라고 답한다. `vision_import.py`가 하는 base64 vision 입력을 그 경로에 붙여야 "도크 하나로 통일"이 성립한다.
+- 엔진 선택을 따로 두지 않는다. 도크가 설정의 CLI 설정를 따르므로 그 선택이 곧 인식 엔진이다. 로컬 Tesseract는 도크에 자리가 없어 함께 사라진다(`local_ocr.py`, `import_image.py`의 `local` 모드).
+- 직접 API Vision과 `vision_import.py`는 제거했다. 기존 CLI 이미지 추출·preview·임시 파일 수명은 유지하며 숨김 화면은 새로 공개하지 않는다.
 - crop 슬라이더 5개는 없앤다. CLI/모델이 전체 화면을 읽고 합계·예수금 행을 알아서 거른다. 계좌번호를 가리는 용도의 상단 가리기 하나만 남길지는 다시 만들 때 정한다.
 - **리뷰 표는 없애지 못한다.** 저장 전 확인이 안전 계약이다. 다만 별도 표를 만들지 말고 읽은 행을 Portfolio 편집표에 얹고(화면 상단 배너로 알림) 기존 `Portfolio 저장` 버튼이 커밋하게 하면, 다이얼로그·crop·모드 라디오·preflight가 모두 사라져 남는 UI가 오히려 줄어든다.
 - 기존 제안(proposal) 배관은 쓸 수 없다. markdown 보고서 전용이라 diff·섹션 검증·base revision이 전제이고 `ReportKind`도 셋뿐이다. 포트폴리오는 JSON 포지션이라 짧은 별도 경로가 필요하다.
@@ -284,4 +284,3 @@ React 전환 때 화면만 안 옮겨와서 백엔드 API 16개 중 화면이 �
 - `analytics.targetWeights`는 포지션의 `targetWeight`만 봤고 프리셋과 서로 몰랐다. 프리셋을 아무리 만들어도 `hasTargets`가 False라 **목표와의 차이 표가 한 번도 뜨지 않았다**. `GET /analytics?presetId=`로 어느 목표와 비교할지 받는다. 프리셋에만 있고 아직 안 산 종목도 한 줄로 낸다 — 조정에서 가장 중요한 정보다.
 
 남은 CSS 정리: 초기 공개 릴리즈에 실려 온 `.portfolio-donut-grid`·`.portfolio-analysis-grid` 등 46개 클래스는 D1 프리미티브 이전 디자인(테두리 있는 카드)이라 되살리지 않았다. 0.5.1 디자인 정리에서 걷어낸다.
-

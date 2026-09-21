@@ -185,11 +185,11 @@ class ApprovedTopicJobs:
         job = new_shared_job(
             kind=job_kind,
             task_type="topic_report",
-            generation_mode="rules" if confirmed_zero else "llm_api" if is_direct else "llm_cli",
-            adapter="rules" if confirmed_zero else adapter,
+            generation_mode="rules" if confirmed_zero or is_direct else "llm_cli",
+            adapter="rules" if confirmed_zero or is_direct else adapter,
             requested_mode=execution_mode,
             mode="fallback" if confirmed_zero else "generate",
-            attempted_engine="none" if confirmed_zero else "api" if is_direct else "cli",
+            attempted_engine="none" if confirmed_zero or is_direct else "cli",
             clock=self.clock,
         )
         if not confirmed_zero:

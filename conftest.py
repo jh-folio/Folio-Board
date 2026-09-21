@@ -27,3 +27,10 @@ def no_agent_cli_process(monkeypatch):
         )
 
     monkeypatch.setattr(bridge, "_invoke_agent_cli", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_user_task_settings(monkeypatch, tmp_path):
+    """Task routing tests must never inherit a developer's saved overrides."""
+    from features.llm_settings import task_policy
+    monkeypatch.setattr(task_policy, "data_dir", lambda: tmp_path)

@@ -30,7 +30,7 @@ def test_bound_cli_does_not_read_unused_api_configuration(monkeypatch):
     def invalid_api():
         raise AssertionError("unused API configuration accessed")
 
-    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", invalid_api)
+    monkeypatch.setattr("features.llm_settings.client.selected_cli_config", invalid_api)
     calls = []
     monkeypatch.setattr("features.agent_mode.bridge.run_agent_prompt", lambda *args, **kwargs: calls.append(kwargs) or {"output": '{"units": [{"id": "u1", "verdict": "no_new_information"}]}'})
     with bind_task_policy({"taskKey": "daily_briefing", "enabled": True, "mode": "cli", "provider": "codex", "model": "test-model", "reasoningEffort": "high"}):
@@ -46,7 +46,7 @@ def test_invalid_optional_api_configuration_does_not_block_report(monkeypatch):
     def invalid_api():
         raise ValueError("private configuration")
 
-    monkeypatch.setattr("features.llm_settings.client.selected_llm_config", invalid_api)
+    monkeypatch.setattr("features.llm_settings.client.selected_cli_config", invalid_api)
     result = semantic.evaluate_semantic_changes(_summary())
     assert result == {"status": "not_evaluated", "verdicts": {}, "reason": "llm_configuration_invalid"}
 
@@ -60,7 +60,7 @@ def test_non_object_semantic_response_is_not_evaluated():
 def test_a_cli_only_install_still_gets_a_verdict(monkeypatch):
     """키가 없다고 판정을 접지 않는다. CLI 모드에서는 키가 없는 것이 정상이다."""
     monkeypatch.setattr(
-        "features.llm_settings.client.selected_llm_config", lambda: {"apiKey": "", "provider": "", "model": ""}
+        "features.llm_settings.client.selected_cli_config", lambda: {"apiKey": "", "provider": "", "model": ""}
     )
     monkeypatch.setattr("features.llm_settings.client.default_generation_mode", lambda: "llm_cli")
     seen = {}
@@ -81,7 +81,7 @@ def test_a_cli_only_install_still_gets_a_verdict(monkeypatch):
 
 def test_no_engine_at_all_still_reports_not_evaluated(monkeypatch):
     monkeypatch.setattr(
-        "features.llm_settings.client.selected_llm_config", lambda: {"apiKey": "", "provider": "", "model": ""}
+        "features.llm_settings.client.selected_cli_config", lambda: {"apiKey": "", "provider": "", "model": ""}
     )
     monkeypatch.setattr("features.llm_settings.client.default_generation_mode", lambda: "rules")
 
@@ -94,7 +94,7 @@ def test_no_engine_at_all_still_reports_not_evaluated(monkeypatch):
 def test_a_cli_failure_degrades_instead_of_raising(monkeypatch):
     """판정 실패가 브리핑 커밋을 무너뜨리면 안 된다."""
     monkeypatch.setattr(
-        "features.llm_settings.client.selected_llm_config", lambda: {"apiKey": "", "provider": "", "model": ""}
+        "features.llm_settings.client.selected_cli_config", lambda: {"apiKey": "", "provider": "", "model": ""}
     )
     monkeypatch.setattr("features.llm_settings.client.default_generation_mode", lambda: "llm_cli")
 
@@ -109,29 +109,6 @@ def test_a_cli_failure_degrades_instead_of_raising(monkeypatch):
     assert result["reason"] == "llm_failed"
 
 
-def test_the_api_path_is_unchanged(monkeypatch):
-    """키가 있으면 예전처럼 API를 쓴다. CLI 분기가 그 경로를 가로채지 않는다."""
-    monkeypatch.setattr(
-        "features.llm_settings.client.selected_llm_config",
-        lambda: {"apiKey": "k", "provider": "openai", "model": "gpt"},
-    )
-    calls = []
-
-    def fake_request(cfg, prompt, context, **kwargs):
-        calls.append(cfg["provider"])
-        return ('{"units": [{"id": "u1", "verdict": "no_new_information", "note": "같은 이야기"}]}', "r", {})
-
-    monkeypatch.setattr("features.llm_settings.client.request_llm_text", fake_request)
-
-    def explode(*args, **kwargs):
-        raise AssertionError("키가 있으면 CLI를 부르지 않는다")
-
-    monkeypatch.setattr("features.agent_mode.bridge.run_agent_prompt", explode)
-
-    result = semantic.evaluate_semantic_changes(_summary())
-
-    assert calls == ["openai"]
-    assert result["verdicts"]["u1"]["verdict"] == "no_new_information"
 
 
 def test_the_bridge_can_run_without_retaking_the_semaphore():
@@ -145,7 +122,7 @@ def test_the_bridge_can_run_without_retaking_the_semaphore():
 
     from features.agent_mode import bridge
 
-    assert isinstance(bridge._RUN_SEMAPHORE, type(threading.Semaphore(1)))
+    assert isinstance(bridge._RUN_SEMAPHORE, type(threading.RLock()))
     source = inspect.getsource(bridge.run_agent_prompt)
     assert "if not serialize:" in source
     # 직렬화를 건너뛰는 분기가 세마포어 acquire보다 앞에 있어야 한다.

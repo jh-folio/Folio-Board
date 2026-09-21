@@ -80,7 +80,7 @@ def test_api_and_real_prepare_pack_use_same_writer_ids_and_excerpt_values(monkey
     original_context = daily_service.build_llm_context
     monkeypatch.setattr(agent_service, "build_llm_context", _capture_writer(original_context, cli_capture))
 
-    monkeypatch.setattr(daily_service, "selected_llm_config", lambda: {
+    monkeypatch.setattr(daily_service, "selected_cli_config", lambda: {
         "enabled": True, "apiKey": "test", "provider": "openai", "model": "gpt-test",
     })
     monkeypatch.setattr(daily_service, "read_briefing_prompt", lambda *args, **kwargs: "Write briefing")
@@ -89,7 +89,7 @@ def test_api_and_real_prepare_pack_use_same_writer_ids_and_excerpt_values(monkey
         api_request["context"] = context
         return "# Market Briefing — 2026.06.09\n\n## 0. 오늘의 시장 성격\n본문", "resp", {}
 
-    monkeypatch.setattr(daily_service, "request_openai", fake_request)
+    monkeypatch.setattr(daily_service, "request_cli_text", fake_request)
     monkeypatch.setattr(daily_service, "build_llm_context", _capture_writer(original_context, api_capture))
     api_results = {}
     for market in ("us", "kr"):

@@ -139,15 +139,15 @@ def test_generate_llm_company_analysis_uses_selected_style_prompt(monkeypatch):
     captured = {}
 
     def fake_config():
-        return {"provider": "openai", "apiKey": "test", "model": "test-model"}
+        return {"provider": "openai", "enabled": True, "apiKey": "test", "model": "test-model"}
 
     def fake_openai(_cfg, prompt, context, web_search=False, include_usage=True):
         captured["prompt"] = prompt
         captured["context"] = context
         return "## 분석 결과", "resp-1", {}
 
-    monkeypatch.setattr(svc, "selected_llm_config", fake_config)
-    monkeypatch.setattr(svc, "request_openai", fake_openai)
+    monkeypatch.setattr(svc, "selected_cli_config", fake_config)
+    monkeypatch.setattr(svc, "request_cli_text", fake_openai)
 
     result, status = svc.generate_llm_company_analysis(
         "NVDA",
@@ -188,7 +188,7 @@ def test_analyze_company_report_includes_style_and_data_gaps(monkeypatch):
     monkeypatch.setattr(app, "generate_llm_company_analysis", lambda *_args, **_kwargs: (None, "disabled"))
     monkeypatch.setattr(app, "build_rule_report", lambda analysis, analysis_style="beginner": f"{analysis_style} rule report")
     monkeypatch.setattr(app, "company_analysis_sources", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(app, "selected_llm_config", lambda: {"provider": "openai"})
+    monkeypatch.setattr(app, "selected_cli_config", lambda: {"provider": "openai"})
 
     report = app.analyze_company("NVDA", llm_override=False, analysis_style="advanced")
 

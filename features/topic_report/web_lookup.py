@@ -211,8 +211,6 @@ def lookup_summary(rows) -> dict:
     }
 
 
-
-
 def web_source_items(rows) -> list[dict]:
     """조회 결과를 source ledger 항목으로. 본문이 `web_001`로 인용할 수 있게 한다."""
     items: list[dict] = []

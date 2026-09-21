@@ -6,17 +6,6 @@ from features.llm_settings import client
 from features.llm_settings import task_runtime
 
 
-def _api_snapshot(*, effort: str = "medium") -> dict:
-    return {
-        "taskKey": "company_analysis",
-        "runtimeTaskType": "company_analysis",
-        "enabled": True,
-        "mode": "api",
-        "provider": "openai",
-        "model": "gpt-6-astra",
-        "reasoningEffort": effort,
-        "policyRevision": 4,
-    }
 
 
 def _cli_snapshot(*, model: str = "gpt-task", effort: str = "xhigh") -> dict:
@@ -32,44 +21,6 @@ def _cli_snapshot(*, model: str = "gpt-task", effort: str = "xhigh") -> dict:
     }
 
 
-def test_bound_api_task_snapshot_reaches_selected_model_and_reasoning_request(monkeypatch):
-    captured: dict = {}
-
-    monkeypatch.setattr(
-        client,
-        "openai_config",
-        lambda: {
-            "provider": "openai",
-            "apiKey": "task-test-key",
-            "geminiApiKey": "",
-            "anthropicApiKey": "",
-            "model": "gpt-5.6-sol",
-            "geminiModel": "gemini-3.5-flash",
-            "anthropicModel": "claude-sonnet-5",
-            "enabled": True,
-        },
-    )
-    monkeypatch.setattr(
-        client,
-        "post_json",
-        lambda url, body, headers, timeout: captured.update(
-            url=url, body=body, headers=headers, timeout=timeout
-        ) or {
-            "status": "completed",
-            "id": "task-response",
-            "output": [{"content": [{"type": "output_text", "text": "ok"}]}],
-        },
-    )
-
-    with task_runtime.bind_task_policy(_api_snapshot()):
-        config = client.selected_llm_config()
-        client.request_openai(config, "prompt", "context")
-
-    assert config["provider"] == "openai"
-    assert config["model"] == "gpt-6-astra"
-    assert config["reasoningEffort"] == "medium"
-    assert captured["body"]["model"] == "gpt-6-astra"
-    assert captured["body"]["reasoning"] == {"effort": "medium"}
 
 
 def test_bound_cli_task_snapshot_reaches_adapter_model_and_effort():

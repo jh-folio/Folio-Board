@@ -215,12 +215,11 @@ def test_rule_retry_schedule_and_budget_exhaustion_do_not_increment_failure(tmp_
 
 def test_provider_budget_signal_uses_the_non_incrementing_role_fallback():
     import features.market_memory.service as memory_service
-    from features.llm_settings.client import LlmRequestError
 
     assert memory_service._llm_budget_exhausted(
-        LlmRequestError(429, "Too Many Requests", '{"code":"insufficient_quota"}')
+        RuntimeError("insufficient_quota")
     ) is True
-    assert memory_service._llm_budget_exhausted(LlmRequestError(429, "Too Many Requests", "rate limited")) is False
+    assert memory_service._llm_budget_exhausted(RuntimeError("rate limited")) is False
 
 
 def test_budget_exhaustion_keeps_failure_index_but_always_retries_in_24_hours(tmp_path):
@@ -485,10 +484,10 @@ def test_api_role_candidate_builder_failure_does_not_abort_memory_generation(mon
         raise sqlite3.OperationalError("locked")
 
     monkeypatch.setattr(roles, "build_role_candidates", locked)
-    monkeypatch.setattr(memory_service, "selected_llm_config", lambda: {"apiKey": "x", "provider": "openai", "model": "test"})
+    monkeypatch.setattr(memory_service, "selected_cli_config", lambda: {"enabled": True, "apiKey": "x", "provider": "openai", "model": "test"})
     monkeypatch.setattr(memory_service, "read_market_memory_prompt", lambda: "prompt")
     monkeypatch.setattr(memory_service, "build_memory_llm_context", lambda _date: ("{}", [], "2026-09-01"))
-    monkeypatch.setattr(memory_service, "request_llm_text", lambda *_a, **_kw: ('{"entries": []}', "", {}))
+    monkeypatch.setattr(memory_service, "request_cli_text", lambda *_a, **_kw: ('{"entries": []}', "", {}))
     monkeypatch.setattr(memory_service, "save_memory_entries", lambda _entries: {"saved": [], "checkpointsMerged": 0, "checkpointsDropped": 0})
 
     result = memory_service.run_llm_market_memory("2026-09-01")

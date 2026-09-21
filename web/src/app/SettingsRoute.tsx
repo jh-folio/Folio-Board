@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, getJson, isAbortError, postJson, putJson } from "../api";
 import { AgentCliSetup } from "./AgentCliSetup";
-import { checkedAtLabel } from "./aiConnectionStatus";
 import { setReactAgentContextScope } from "./agentContext";
 import { DiagnosticDetail } from "./DiagnosticDetail";
 import { captureReportError, isResponseLessError, ReportErrorDiagnostic, reportErrorMessage, type CapturedReportError } from "./reportErrorDiagnostic";
@@ -11,7 +10,6 @@ import { useThemePreference, type ThemePreference } from "./themePreference";
 import { WorkLogMigrationControl } from "./WorkLogMigration";
 import { DiagnosticRetention } from "./DiagnosticRetention";
 
-type ProviderId = "openai" | "gemini" | "claude";
 type SettingsTab = "ai" | "admin" | "integrations";
 
 const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
@@ -23,16 +21,6 @@ const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
 type ModelChoice = { value: string; label: string };
 type ReasoningChoice = { value: string; label: string };
 
-type LlmProvider = {
-  label?: string;
-  hasApiKey?: boolean;
-  apiKeyMasked?: string;
-  model?: string;
-  modelChoices?: ModelChoice[];
-  reasoningChoices?: ReasoningChoice[];
-  reasoningByModel?: Record<string, ReasoningChoice[]>;
-  setupUrl?: string;
-};
 
 type TaskPolicyMode = "api" | "cli";
 type TaskPolicyConfig = {
@@ -72,8 +60,6 @@ type SettingsPayload = {
     mode?: "cli" | "api";
   };
   llm?: {
-    provider?: ProviderId;
-    providers?: Record<string, LlmProvider>;
     reasoningEffort?: string;
   };
   taskPolicies?: TaskPoliciesPayload;
@@ -179,17 +165,8 @@ type CacheCleanup = {
   details?: Array<{ path?: string; age_days?: number }>;
 };
 
-const API_PROVIDERS: ProviderId[] = ["openai", "gemini", "claude"];
 
-const PROVIDER_LABELS: Record<ProviderId, { name: string; key: string; model: string }> = {
-  openai: { name: "OpenAI", key: "sk-...", model: "gpt-5.6-sol" },
-  gemini: { name: "Gemini", key: "AIza...", model: "gemini-3.5-flash" },
-  claude: { name: "Claude", key: "sk-ant-...", model: "claude-sonnet-5" },
-};
 
-function providerOrDefault(value?: string): ProviderId {
-  return API_PROVIDERS.includes(value as ProviderId) ? (value as ProviderId) : "openai";
-}
 
 /** loadAll이 저장된 모델을 선택지 목록에 맞춰 정규화하는 것과 같은 규칙.
  *  dirty 판정 기준선도 같은 규칙으로 계산해야 "불러오자마자 dirty"가 되지 않는다. */
@@ -283,7 +260,6 @@ const TASK_POLICY_VISIBLE_ORDER = [
   "market_memory",
 ] as const;
 const TASK_POLICY_VISIBLE_KEYS = new Set<string>(TASK_POLICY_VISIBLE_ORDER);
-const API_TASK_PROVIDERS = ["openai", "gemini", "claude"] as const;
 const CLI_TASK_PROVIDERS = ["codex", "claude", "antigravity"] as const;
 const PROVIDER_DEFAULT_REASONING: ReasoningChoice = { value: "provider_default", label: "제공자 기본값" };
 
@@ -338,32 +314,30 @@ function serializableTaskPolicies(policy: TaskPoliciesPayload): { expectedRevisi
   return { expectedRevision: Number(policy.revision || 0), tasks };
 }
 
-function taskPolicyProviderLabel(config: TaskPolicyConfig, providers: Record<string, LlmProvider>, adapters: AgentAdapter[]): string {
-  if (config.mode === "api") {
-    return providers[config.provider]?.label || ({ openai: "GPT / OpenAI", gemini: "Gemini / Google", claude: "Claude / Anthropic" } as Record<string, string>)[config.provider] || config.provider;
-  }
+function taskPolicyProviderLabel(config: TaskPolicyConfig, adapters: AgentAdapter[]): string {
+
   return adapters.find((adapter) => adapter.id === config.provider)?.label || ({ codex: "Codex CLI", claude: "Claude Code CLI", antigravity: "Antigravity CLI" } as Record<string, string>)[config.provider] || config.provider;
 }
 
-function taskPolicyModelLabel(config: TaskPolicyConfig, providers: Record<string, LlmProvider>, adapters: AgentAdapter[]): string {
-  const choices = config.mode === "api" ? providers[config.provider]?.modelChoices || [] : adapters.find((adapter) => adapter.id === config.provider)?.modelChoices || [];
+function taskPolicyModelLabel(config: TaskPolicyConfig, adapters: AgentAdapter[]): string {
+  const choices = adapters.find((adapter) => adapter.id === config.provider)?.modelChoices || [];
   return choices.find((choice) => choice.value === config.model)?.label || config.model;
 }
 
-function taskPolicySummary(config: TaskPolicyConfig | null | undefined, providers: Record<string, LlmProvider>, adapters: AgentAdapter[]): string {
+function taskPolicySummary(config: TaskPolicyConfig | null | undefined, adapters: AgentAdapter[]): string {
   if (!config) return "별도 설정을 선택하세요.";
-  const mode = config.mode === "cli" ? "LLM CLI" : "LLM API";
-  return `${mode} · ${taskPolicyProviderLabel(config, providers, adapters)} · ${taskPolicyModelLabel(config, providers, adapters) || "모델 없음"}`;
+  if (config.mode !== "cli") return "이전 API 설정 · CLI 전환 필요";
+
+  const mode = "LLM CLI";
+  return `${mode} · ${taskPolicyProviderLabel(config, adapters)} · ${taskPolicyModelLabel(config, adapters) || "모델 없음"}`;
 }
 
 function taskPolicyChoices(
   config: TaskPolicyConfig,
-  providers: Record<string, LlmProvider>,
+
   adapters: AgentAdapter[],
 ): ModelChoice[] {
-  const choices = config.mode === "api"
-    ? providers[config.provider]?.modelChoices || []
-    : adapters.find((adapter) => adapter.id === config.provider)?.modelChoices || [];
+  const choices = adapters.find((adapter) => adapter.id === config.provider)?.modelChoices || [];
   if (config.model && !choices.some((choice) => choice.value === config.model)) {
     return [{ value: config.model, label: `${config.model} (저장된 값)` }, ...choices];
   }
@@ -371,7 +345,7 @@ function taskPolicyChoices(
 }
 
 function reasoningChoicesForSource(
-  source: LlmProvider | AgentAdapter | undefined,
+  source: AgentAdapter | undefined,
   model: string,
   selectedEffort = "",
 ): ReasoningChoice[] {
@@ -387,41 +361,37 @@ function reasoningChoicesForSource(
 
 function taskPolicyReasoningChoices(
   config: TaskPolicyConfig,
-  providers: Record<string, LlmProvider>,
+
   adapters: AgentAdapter[],
 ): ReasoningChoice[] {
-  const source = config.mode === "api"
-    ? providers[config.provider]
-    : adapters.find((adapter) => adapter.id === config.provider);
+  const source = adapters.find((adapter) => adapter.id === config.provider);
   return reasoningChoicesForSource(source, config.model, config.reasoningEffort);
 }
 
 function taskPolicyReasoningHint(
   config: TaskPolicyConfig,
-  providers: Record<string, LlmProvider>,
+
   adapters: AgentAdapter[],
 ): string {
-  const choices = taskPolicyReasoningChoices(config, providers, adapters);
+  const choices = taskPolicyReasoningChoices(config, adapters);
   return choices.length <= 1 ? "현재 연결된 모델에서는 제공자 기본값만 확인할 수 있습니다." : "";
 }
 
 function taskPolicyValidation(
   config: TaskPolicyConfig | null | undefined,
-  providers: Record<string, LlmProvider> = {},
+
   adapters: AgentAdapter[] = [],
 ): string {
   if (!config) return "실행 방식·제공자·모델·추론 강도를 모두 입력하세요.";
-  if (config.mode !== "api" && config.mode !== "cli") return "실행 방식은 LLM API 또는 LLM CLI 중 하나를 선택하세요.";
+  if (config.mode !== "cli") return "이전 API 설정입니다. CLI로 전환해 저장하세요.";
+
+
   if (!config.provider || !config.model) return "실행 방식·제공자·모델을 모두 입력하세요.";
-  if (config.mode === "api" && !API_TASK_PROVIDERS.includes(config.provider as typeof API_TASK_PROVIDERS[number])) {
-    return "LLM API에서는 GPT / OpenAI, Gemini / Google, Claude / Anthropic 중 하나를 선택하세요.";
-  }
-  if (config.mode === "cli" && !CLI_TASK_PROVIDERS.includes(config.provider as typeof CLI_TASK_PROVIDERS[number])) {
+
+  if (!CLI_TASK_PROVIDERS.includes(config.provider as typeof CLI_TASK_PROVIDERS[number])) {
     return "LLM CLI에서는 설치된 CLI 제공자를 선택하세요.";
   }
-  const source = config.mode === "api"
-    ? providers[config.provider]
-    : adapters.find((adapter) => adapter.id === config.provider);
+  const source = adapters.find((adapter) => adapter.id === config.provider);
   const explicitSupported = reasoningChoicesForSource(source, config.model).some((choice) => choice.value === config.reasoningEffort);
   if ((config.reasoningEffort || "provider_default") !== "provider_default" && !explicitSupported) {
     return "선택한 조합은 제공자 기본값만 지원합니다.";
@@ -432,16 +402,14 @@ function taskPolicyValidation(
 function taskPolicyConfigForMode(
   current: TaskPolicyConfig,
   mode: TaskPolicyMode,
-  providers: Record<string, LlmProvider>,
+
   adapters: AgentAdapter[],
 ): TaskPolicyConfig {
-  const providerChoices = mode === "api"
-    ? API_TASK_PROVIDERS.map((value) => ({ value, label: value }))
-    : (adapters.length ? adapters : CLI_TASK_PROVIDERS.map((value) => ({ id: value, label: value }))).map((adapter) => ({ value: adapter.id, label: adapter.label || adapter.id }));
+  const providerChoices = (adapters.length ? adapters : CLI_TASK_PROVIDERS.map((value) => ({ id: value, label: value }))).map((adapter) => ({ value: adapter.id, label: adapter.label || adapter.id }));
   const provider = providerChoices.some((choice) => choice.value === current.provider)
     ? current.provider
     : providerChoices[0]?.value || current.provider;
-  const choices = mode === "api" ? providers[provider]?.modelChoices || [] : adapters.find((adapter) => adapter.id === provider)?.modelChoices || [];
+  const choices = adapters.find((adapter) => adapter.id === provider)?.modelChoices || [];
   const model = choices.some((choice) => choice.value === current.model) ? current.model : choices[0]?.value || current.model;
   return { ...current, mode, provider, model };
 }
@@ -449,10 +417,10 @@ function taskPolicyConfigForMode(
 function taskPolicyConfigForProvider(
   current: TaskPolicyConfig,
   provider: string,
-  providers: Record<string, LlmProvider>,
+
   adapters: AgentAdapter[],
 ): TaskPolicyConfig {
-  const choices = current.mode === "api" ? providers[provider]?.modelChoices || [] : adapters.find((adapter) => adapter.id === provider)?.modelChoices || [];
+  const choices = adapters.find((adapter) => adapter.id === provider)?.modelChoices || [];
   const model = choices.some((choice) => choice.value === current.model) ? current.model : choices[0]?.value || current.model;
   return { ...current, provider, model };
 }
@@ -461,7 +429,6 @@ function TaskPolicySettings({
   policy,
   globalEnabled,
   globalConfig,
-  providers,
   adapters,
   onChange,
   onSave,
@@ -475,7 +442,6 @@ function TaskPolicySettings({
   policy: TaskPoliciesPayload;
   globalEnabled: boolean;
   globalConfig: TaskPolicyConfig | null;
-  providers: Record<string, LlmProvider>;
   adapters: AgentAdapter[];
   onChange: (next: TaskPoliciesPayload) => void;
   onSave: () => void;
@@ -511,7 +477,7 @@ function TaskPolicySettings({
     patchTask(key, { enabled, ...(copied ? { config: copied } : {}) });
   };
   const checkTask = async (key: string, config: TaskPolicyConfig | null) => {
-    const validation = taskPolicyValidation(config, providers, adapters);
+    const validation = taskPolicyValidation(config, adapters);
     if (validation || !config) {
       setCheckResults((previous) => ({ ...previous, [key]: { status: "invalid", available: false, message: validation || "작업별 설정을 모두 입력하세요." } }));
       return;
@@ -542,26 +508,21 @@ function TaskPolicySettings({
           const enabled = row.enabled === true;
           const config = row.config || (enabled ? globalConfig : null);
           const label = TASK_POLICY_LABELS[key] || row.label || key;
-          const modelChoices = config ? taskPolicyChoices(config, providers, adapters) : [];
-          const reasoningChoices = config ? taskPolicyReasoningChoices(config, providers, adapters) : [];
-          const validation = enabled ? taskPolicyValidation(config, providers, adapters) : "";
+          const modelChoices = config ? taskPolicyChoices(config, adapters) : [];
+          const reasoningChoices = config ? taskPolicyReasoningChoices(config, adapters) : [];
+          const validation = enabled ? taskPolicyValidation(config, adapters) : "";
           const result = checkResults[key];
-          const apiProviderChoices: Array<{ value: string; label: string }> = [
-            { value: "openai", label: "GPT / OpenAI" },
-            { value: "gemini", label: "Gemini / Google" },
-            { value: "claude", label: "Claude / Anthropic" },
-          ];
           const cliProviderChoices = adapters.length
             ? adapters.map((adapter) => ({ value: adapter.id, label: adapter.label || adapter.id }))
             : CLI_TASK_PROVIDERS.map((value) => ({ value, label: value }));
-          const providerChoices = config?.mode === "api" ? apiProviderChoices : cliProviderChoices;
+          const providerChoices = cliProviderChoices;
           return (
             <div className="task-policy-row" key={key}>
               <div className="task-policy-row-head">
                 <div>
                   <strong>{label}</strong>
                   <p className="task-policy-summary">
-                    {enabled ? taskPolicySummary(config, providers, adapters) : `전역 공통 설정 · ${taskPolicySummary(globalConfig, providers, adapters)}`}
+                    {enabled ? taskPolicySummary(config, adapters) : `전역 공통 설정 · ${taskPolicySummary(globalConfig, adapters)}`}
                   </p>
                 </div>
                 <ToggleSwitch
@@ -581,19 +542,19 @@ function TaskPolicySettings({
                       <span>실행 방식</span>
                       <select value={config.mode} onChange={(event) => {
                         const mode = event.currentTarget.value as TaskPolicyMode;
-                        const next = taskPolicyConfigForMode(config, mode, providers, adapters);
+                        const next = taskPolicyConfigForMode(config, mode, adapters);
                         const changed = next.provider !== config.provider || next.model !== config.model;
                         patchConfig(key, next, changed ? "실행 방식에 맞춰 제공자와 모델을 선택지에 맞췄습니다. 추론 강도를 확인하세요." : "");
                       }}>
                         <option value="cli">LLM CLI</option>
-                        <option value="api">LLM API</option>
+                        {config.mode !== "cli" && <option value="api" disabled>CLI 전환 필요</option>}
                       </select>
                     </label>
                     <label className="field">
                       <span>제공자</span>
                       <select value={config.provider} onChange={(event) => {
                         const provider = event.currentTarget.value;
-                        const next = taskPolicyConfigForProvider(config, provider, providers, adapters);
+                        const next = taskPolicyConfigForProvider(config, provider, adapters);
                         patchConfig(key, next, next.model !== config.model ? "제공자에 맞춰 모델을 선택지의 첫 값으로 맞췄습니다." : "");
                       }}>
                         {providerChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
@@ -613,14 +574,14 @@ function TaskPolicySettings({
                       </select>
                     </label>
                   </div>
-                  {taskPolicyReasoningHint(config, providers, adapters) && <p className="settings-hint">{taskPolicyReasoningHint(config, providers, adapters)}</p>}
+                  {taskPolicyReasoningHint(config, adapters) && <p className="settings-hint">{taskPolicyReasoningHint(config, adapters)}</p>}
                   {/* 버튼 옆 설명이 좁아지면 버튼 아래로 내려가는 배치는 자동화 카드가
                       이미 갖고 있다. 같은 모양을 다시 만들지 않고 그 클래스에 훅만 얹는다. */}
                   <div className="automation-card-actions task-policy-check-actions">
                     <button className="btn" type="button" onClick={() => void checkTask(key, config)} disabled={checkingTask === key}>
                       {checkingTask === key ? "확인 중" : "연결 확인"}
                     </button>
-                    <span className="settings-hint">API는 모델 조회만, CLI는 설치·로그인 상태만 확인합니다.</span>
+                    <span className="settings-hint">CLI 설치·로그인 상태만 확인합니다.</span>
                   </div>
                   {adjustments[key] && <p className="settings-hint task-policy-adjustment" role="status">{adjustments[key]}</p>}
                   {/* `.settings-hint`를 같이 걸면 파일 뒤쪽에 있는 그 규칙이 색과 굵기를
@@ -646,17 +607,11 @@ function TaskPolicySettings({
 }
 
 function GlobalModelSettings({
-  mode,
-  provider,
-  providerModel,
   agentProvider,
   agentModel,
-  selectedProvider,
   selectedAgent,
   globalReasoningEffort,
   reasoningChoices,
-  onProviderChange,
-  onProviderModelChange,
   onAgentProviderChange,
   onAgentModelChange,
   onReasoningChange,
@@ -668,16 +623,11 @@ function GlobalModelSettings({
   note,
 }: {
   mode: TaskPolicyMode;
-  provider: ProviderId;
-  providerModel: string;
   agentProvider: string;
   agentModel: string;
-  selectedProvider: LlmProvider;
   selectedAgent?: AgentAdapter;
   globalReasoningEffort: string;
   reasoningChoices: ReasoningChoice[];
-  onProviderChange: (provider: ProviderId) => void;
-  onProviderModelChange: (model: string) => void;
   onAgentProviderChange: (provider: string) => void;
   onAgentModelChange: (model: string) => void;
   onReasoningChange: (effort: string) => void;
@@ -688,20 +638,13 @@ function GlobalModelSettings({
   busy: boolean;
   note: { panel: string; text: string; tone: "ok" | "error"; diagnostic?: CapturedReportError | null } | null;
 }) {
-  const apiProviderChoices: Array<{ value: ProviderId; label: string }> = [
-    { value: "openai", label: "GPT / OpenAI" },
-    { value: "gemini", label: "Gemini / Google" },
-    { value: "claude", label: "Claude / Anthropic" },
-  ];
   const cliProviderChoices = [
     { value: "codex", label: "Codex CLI" },
     { value: "claude", label: "Claude Code CLI" },
     { value: "antigravity", label: "Antigravity CLI" },
   ];
-  const modelChoices = mode === "api"
-    ? selectedProvider.modelChoices || []
-    : selectedAgent?.modelChoices || [];
-  const selectedModel = mode === "api" ? providerModel : agentModel;
+  const modelChoices = selectedAgent?.modelChoices || [];
+  const selectedModel = agentModel;
   const selectedModelChoices = modelChoices.length
     ? modelChoices
     : selectedModel
@@ -717,12 +660,8 @@ function GlobalModelSettings({
       </div>
       <div className="settings-grid global-model-fields">
         <label className="field">
-          <span>{mode === "api" ? "API 제공자" : "사용할 CLI"}</span>
-          {mode === "api" ? (
-            <select value={provider} onChange={(event) => onProviderChange(providerOrDefault(event.currentTarget.value))}>
-              {apiProviderChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
-            </select>
-          ) : (
+          <span>{"사용할 CLI"}</span>
+          {(
             <select value={agentProvider} onChange={(event) => onAgentProviderChange(event.currentTarget.value)}>
               {cliProviderChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
             </select>
@@ -730,7 +669,7 @@ function GlobalModelSettings({
         </label>
         <label className="field">
           <span>모델</span>
-          <select value={selectedModel} onChange={(event) => (mode === "api" ? onProviderModelChange(event.currentTarget.value) : onAgentModelChange(event.currentTarget.value))}>
+          <select value={selectedModel} onChange={(event) => (onAgentModelChange(event.currentTarget.value))}>
             {selectedModelChoices.length ? selectedModelChoices.map((choice) => (
               <option value={choice.value} key={choice.value}>{choice.label}</option>
             )) : <option value="">모델 목록 없음</option>}
@@ -1565,9 +1504,8 @@ export function SettingsRoute() {
   const [watchedMarkets, setWatchedMarkets] = useState<string[]>(MARKET_CODES.map((m) => m.id));
   const [obsidian, setObsidian] = useState<ObsidianSettings>({});
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [provider, setProvider] = useState<ProviderId>("openai");
-  const [providerApiKey, setProviderApiKey] = useState("");
-  const [providerModel, setProviderModel] = useState("");
+  const [] = useState("");
+  const [] = useState("");
   const [globalReasoningEffort, setGlobalReasoningEffort] = useState("provider_default");
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [agentMode, setAgentMode] = useState<"cli" | "api">("cli");
@@ -1577,7 +1515,7 @@ export function SettingsRoute() {
   const [tossDraft, setTossDraft] = useState({ enabled: false, clientId: "", clientSecret: "" });
   const [notionDraft, setNotionDraft] = useState({ token: "", dbId: "" });
   const [vaultPath, setVaultPath] = useState("");
-  const [llmStatus, setLlmStatus] = useState<Record<string, LlmTestResult & { checking?: boolean; diagnostic?: CapturedReportError | null }>>({});
+  const [] = useState<Record<string, LlmTestResult & { checking?: boolean; diagnostic?: CapturedReportError | null }>>({});
   const [busy, setBusy] = useState("");
   // 결과는 누른 버튼 옆에 뜬다. 예전에는 한 곳(화면 맨 위)에 모아서, 문서상 1,991px에 있는
   // 자동화 저장을 눌러도 메시지가 54px에 떠 두 화면 반 위에 있었다 — 보이지 않는 확인이다.
@@ -1619,19 +1557,14 @@ export function SettingsRoute() {
   const [automationRunsAvailable, setAutomationRunsAvailable] = useState(true);
   const loadAllSequence = useRef(0);
   const loadAllController = useRef<AbortController | null>(null);
-  const providerRequestSequence = useRef<Record<string, number>>({});
-  const providerControllers = useRef<Record<string, AbortController | null>>({});
   const retentionRequestSequence = useRef(0);
   const retentionController = useRef<AbortController | null>(null);
   const refreshDraftRef = useRef<{
     agentDirty: boolean;
     agentEnabled: boolean;
     agentMode: "cli" | "api";
-    providerApiKey: string;
     globalModelDirty: boolean;
-    provider: ProviderId;
-    providerModel: string;
-    agentProvider: string;
+      agentProvider: string;
     agentModel: string;
     globalReasoningEffort: string;
     taskPolicyDirty: boolean;
@@ -1647,27 +1580,19 @@ export function SettingsRoute() {
     automation: AutomationSettings;
   } | null>(null);
 
-  const providers = settings?.llm?.providers || {};
-  const selectedProvider = providers[provider] || {};
-  const selectedProviderMeta = PROVIDER_LABELS[provider];
   const agentAdapters = agentSettings?.adapters || [];
   const selectedAgent = agentAdapters.find((adapter) => adapter.id === agentProvider) || agentAdapters[0];
-  const selectedGlobalModel = agentMode === "api"
-    ? providerModel || String(selectedProvider.model || "")
-    : agentModel || String(selectedAgent?.model || "");
+  const selectedGlobalModel = agentModel || String(selectedAgent?.model || "");
   const globalReasoningChoices = reasoningChoicesForSource(
-    agentMode === "api" ? selectedProvider : selectedAgent,
+    selectedAgent,
     selectedGlobalModel,
     globalReasoningEffort,
   );
   const globalTaskConfig = useMemo<TaskPolicyConfig | null>(() => {
-    if (agentMode === "api") {
-      const model = providerModel || String(selectedProvider.model || "");
-      return model ? { mode: "api", provider, model, reasoningEffort: globalReasoningEffort } : null;
-    }
+
     const model = agentModel || String(selectedAgent?.model || "");
     return model ? { mode: "cli", provider: agentProvider, model, reasoningEffort: globalReasoningEffort } : null;
-  }, [agentMode, provider, providerModel, selectedProvider.model, agentProvider, agentModel, selectedAgent?.model, globalReasoningEffort]);
+  }, [agentProvider, agentModel, selectedAgent?.model, globalReasoningEffort]);
   // The visible draft keeps the three legacy rows disabled, while the saved
   // baseline keeps their stored config so a later save can preserve it.  Use
   // the raw row shape for dirty detection: otherwise a legacy enabled flag
@@ -1681,22 +1606,15 @@ export function SettingsRoute() {
     ? String(agentSettings?.provider)
     : String(agentSettings?.selectedAdapter || agentAdapters[0]?.id || "codex");
   const baselineAdapter = agentAdapters.find((adapter) => adapter.id === baselineAgentProvider) || agentAdapters[0];
-  const baselineGlobalProvider = providerOrDefault(settings?.llm?.provider);
-  const baselineGlobalProviderData = providers[baselineGlobalProvider] || {};
   const baselineGlobalAgent = agentAdapters.find((adapter) => adapter.id === baselineAgentProvider) || baselineAdapter;
-  const baselineGlobalModel = agentMode === "api"
-    ? normalizedChoice(baselineGlobalProviderData.model, baselineGlobalProviderData.modelChoices)
-    : normalizedChoice(baselineGlobalAgent?.model, baselineGlobalAgent?.modelChoices);
+  const baselineGlobalModel = normalizedChoice(baselineGlobalAgent?.model, baselineGlobalAgent?.modelChoices);
   const baselineReasoningEffort = String(settings?.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default";
   const baselineAgentMode = settings?.agent?.mode === "api" ? "api" : "cli";
   const agentModeDirty = agentMode !== baselineAgentMode;
   const agentDirty =
     agentEnabled !== (settings?.agent?.enabled !== false) ||
-    agentModeDirty ||
-    providerApiKey.trim() !== "";
-  const globalModelDirty = agentMode === "api"
-    ? provider !== baselineGlobalProvider || providerModel !== baselineGlobalModel || globalReasoningEffort !== baselineReasoningEffort
-    : agentProvider !== baselineAgentProvider || agentModel !== baselineGlobalModel || globalReasoningEffort !== baselineReasoningEffort;
+    agentModeDirty;
+  const globalModelDirty = agentProvider !== baselineAgentProvider || agentModel !== baselineGlobalModel || globalReasoningEffort !== baselineReasoningEffort;
   const apiDirty = Boolean(
     apiDraft.fred.trim() ||
     apiDraft.bok.trim() ||
@@ -1714,10 +1632,7 @@ export function SettingsRoute() {
     agentDirty,
     agentEnabled,
     agentMode,
-    providerApiKey,
     globalModelDirty,
-    provider,
-    providerModel,
     agentProvider,
     agentModel,
     globalReasoningEffort,
@@ -1805,15 +1720,8 @@ export function SettingsRoute() {
       setTaskPolicies(normalizeTaskPoliciesForFrontend(rawTaskPolicies));
       setTaskPoliciesSaved(rawTaskPolicies);
       setAgentEnabled(settingsPayload.agent?.enabled !== false);
-      setAgentMode(settingsPayload.agent?.mode === "api" ? "api" : "cli");
+      setAgentMode("cli");
       setGlobalReasoningEffort(String(settingsPayload.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default");
-      const nextProvider = providerOrDefault(settingsPayload.llm?.provider);
-      setProvider(nextProvider);
-      const nextProviderData = settingsPayload.llm?.providers?.[nextProvider] || {};
-      const nextProviderChoices = nextProviderData.modelChoices || [];
-      setProviderModel(nextProviderChoices.some((choice) => choice.value === nextProviderData.model)
-        ? String(nextProviderData.model || "")
-        : nextProviderChoices[0]?.value || "");
       setTossDraft({ enabled: Boolean(settingsPayload.toss?.enabled), clientId: "", clientSecret: "" });
       setNotionDraft({ token: "", dbId: settingsPayload.notion?.dbId || "" });
 
@@ -1839,11 +1747,8 @@ export function SettingsRoute() {
       if (draft?.agentDirty) {
         setAgentEnabled(draft.agentEnabled);
         setAgentMode(draft.agentMode);
-        setProviderApiKey(draft.providerApiKey);
       }
       if (draft?.globalModelDirty) {
-        setProvider(draft.provider);
-        setProviderModel(draft.providerModel);
         setAgentProvider(draft.agentProvider);
         setAgentModel(draft.agentModel);
         setGlobalReasoningEffort(draft.globalReasoningEffort);
@@ -1977,20 +1882,9 @@ export function SettingsRoute() {
       panelController.current?.abort();
       retentionRequestSequence.current += 1;
       retentionController.current?.abort();
-      Object.values(providerControllers.current).forEach((controller) => controller?.abort());
     };
   }, [loadAll]);
 
-  useEffect(() => {
-    const current = providers[provider] || {};
-    const choices = current.modelChoices || [];
-    setProviderModel((previous) => choices.some((choice) => choice.value === previous)
-      ? previous
-      : choices.some((choice) => choice.value === current.model)
-        ? String(current.model || "")
-        : choices[0]?.value || "");
-    setProviderApiKey("");
-  }, [provider, providers]);
 
   useEffect(() => {
     const adapter = agentAdapters.find((item) => item.id === agentProvider) || agentAdapters[0];
@@ -2004,20 +1898,15 @@ export function SettingsRoute() {
 
   function cancelAiAgentSettings() {
     const nextEnabled = settings?.agent?.enabled !== false;
-    const nextMode = settings?.agent?.mode === "api" ? "api" : "cli";
+    const nextMode = "cli";
     setAgentEnabled(nextEnabled);
     setAgentMode(nextMode);
-    setProviderApiKey("");
     showPanelNote("agent", "AI Agent 변경을 취소했습니다.");
   }
 
   function cancelGlobalModelSettings() {
-    const savedProvider = providerOrDefault(settings?.llm?.provider);
-    const savedProviderData = providers[savedProvider] || {};
     const savedAgentProvider = baselineAgentProvider;
     const savedAgent = agentAdapters.find((adapter) => adapter.id === savedAgentProvider) || agentAdapters[0];
-    setProvider(savedProvider);
-    setProviderModel(normalizedChoice(savedProviderData.model, savedProviderData.modelChoices));
     setAgentProvider(savedAgentProvider);
     setAgentModel(normalizedChoice(savedAgent?.model, savedAgent?.modelChoices));
     setGlobalReasoningEffort(baselineReasoningEffort);
@@ -2040,22 +1929,11 @@ export function SettingsRoute() {
     try {
       const settingsPayload = await postJson<SettingsPayload>("/api/settings", {
         agent: { enabled: agentEnabled, mode: agentMode },
-        llm: providerApiKey.trim()
-          ? { providers: { [provider]: { apiKey: providerApiKey.trim() } } }
-          : {},
       }, { signal: operation.controller.signal });
       if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setSettings(settingsPayload);
-      setProviderApiKey("");
-      if (providerApiKey.trim()) {
-        setLlmStatus((current) => {
-          const next = { ...current };
-          delete next[provider];
-          return next;
-        });
-      }
       completePanelOperation("agent", operation.operationId, operation.controller, agentEnabled
-        ? `AI Agent를 ${agentMode === "cli" ? "LLM CLI" : "LLM API"} 모드로 저장했습니다.`
+        ? `AI Agent를 ${"LLM CLI"} 모드로 저장했습니다.`
         : "AI Agent 생성을 비활성화했습니다.", "ok");
     } catch (err) {
       if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
@@ -2078,15 +1956,12 @@ export function SettingsRoute() {
     try {
       const body: {
         agent: { mode: "cli" | "api"; provider?: string; model?: string };
-        llm: { reasoningEffort: string; provider?: ProviderId; providers?: Record<string, { model: string }> };
+        llm: { reasoningEffort: string };
       } = {
         agent: { mode: agentMode },
         llm: { reasoningEffort: globalReasoningEffort },
       };
-      if (agentMode === "api") {
-        body.llm.provider = provider;
-        body.llm.providers = { [provider]: { model: providerModel } };
-      } else {
+      {
         // Send the draft tuple explicitly. The settings service must validate
         // the selected model before the concurrent CLI settings write changes
         // the environment underneath it.
@@ -2094,12 +1969,10 @@ export function SettingsRoute() {
         body.agent.model = agentModel;
       }
       const settingsRequest = postJson<SettingsPayload>("/api/settings", body, { signal: operation.controller.signal });
-      const agentRequest = agentMode === "cli"
-        ? postJson<AgentSettings>("/api/agent-bridge/settings", {
+      const agentRequest = postJson<AgentSettings>("/api/agent-bridge/settings", {
           provider: agentProvider,
           models: Object.fromEntries(agentAdapters.map((adapter) => [adapter.id, adapter.id === agentProvider ? agentModel : adapter.model || ""])),
-        }, { signal: operation.controller.signal })
-        : Promise.resolve<AgentSettings | null>(null);
+        }, { signal: operation.controller.signal });
       const [settingsPayload, agentPayload] = await Promise.all([settingsRequest, agentRequest]);
       if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setSettings(settingsPayload);
@@ -2108,13 +1981,7 @@ export function SettingsRoute() {
         setAgentSettings(agentPayload);
         window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: agentPayload }));
       }
-      if (agentMode === "api") {
-        setLlmStatus((current) => {
-          const next = { ...current };
-          delete next[provider];
-          return next;
-        });
-      }
+
       completePanelOperation("agent-model", operation.operationId, operation.controller, "AI Agent 모델 설정을 저장했습니다.", "ok");
     } catch (err) {
       if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
@@ -2141,36 +2008,6 @@ export function SettingsRoute() {
       completePanelOperation("task-policy", operation.operationId, operation.controller, settingsErrorMessage(err, "작업별 모델 설정 저장에 실패했습니다."), "error", err);
     } finally {
       finishPanelOperation(operation.operationId, operation.controller);
-    }
-  }
-
-  async function testProvider(providerId: ProviderId) {
-    // 키 없이 눌러도 버튼은 눌리게 두고, 빠진 것을 그 자리에서 말한다(§4 disabled 금지).
-    providerControllers.current[providerId]?.abort();
-    const sequence = (providerRequestSequence.current[providerId] || 0) + 1;
-    providerRequestSequence.current[providerId] = sequence;
-    if (!providers[providerId]?.hasApiKey) {
-      setLlmStatus((current) => ({
-        ...current,
-        [providerId]: { status: "missing_key", available: false, message: "API 키를 먼저 입력하세요", diagnostic: null },
-      }));
-      return;
-    }
-    const controller = new AbortController();
-    providerControllers.current[providerId] = controller;
-    setLlmStatus((current) => ({ ...current, [providerId]: { checking: true } }));
-    try {
-      const result = await postJson<LlmTestResult>(`/api/settings/llm/test/${encodeURIComponent(providerId)}`, {}, { signal: controller.signal });
-      if (controller.signal.aborted || providerRequestSequence.current[providerId] !== sequence) return;
-      setLlmStatus((current) => ({ ...current, [providerId]: result }));
-    } catch (err) {
-      if (isAbortError(err, controller.signal) || providerRequestSequence.current[providerId] !== sequence) return;
-      setLlmStatus((current) => ({
-        ...current,
-        [providerId]: { status: "network_error", available: false, message: settingsErrorMessage(err, "연결 확인 실패"), diagnostic: captureReportError(err, sequence) },
-      }));
-    } finally {
-      if (providerRequestSequence.current[providerId] === sequence) providerControllers.current[providerId] = null;
     }
   }
 
@@ -2270,16 +2107,6 @@ export function SettingsRoute() {
     }
   }
 
-  const providerRows = useMemo(() => API_PROVIDERS.map((providerId) => {
-    const row = providers[providerId] || {};
-    const result = llmStatus[providerId];
-    const checking = result?.checking;
-    const label = checking ? "확인 중" : result?.available ? "사용 가능" : result ? "확인 실패" : row.hasApiKey ? "확인 필요" : "키 없음";
-    const className = result?.available ? "ready" : checking || result ? "warn" : "";
-    const detail = result?.message || `${row.model || "모델 미설정"} · ${row.hasApiKey ? "저장된 키가 있습니다." : "API Key를 저장하세요."}`;
-    const checkedAt = checkedAtLabel(result?.checkedAt);
-    return { providerId, row, label, className, detail, checkedAt, diagnostic: result?.diagnostic || null };
-  }), [llmStatus, providers]);
 
   return (
     <div className="react-settings-route" data-settings-route>
@@ -2315,7 +2142,7 @@ export function SettingsRoute() {
             <div className="input-panel-header settings-agent-header">
               <div>
                 <h3>AI Agent 연동</h3>
-                <p>AI Agent 사용 여부와 실행 경로, API Key·CLI 연결 상태를 관리합니다.</p>
+                <p>AI Agent 사용 여부와 CLI 연결 상태를 관리합니다.</p>
               </div>
             </div>
             <div className="settings-grid">
@@ -2325,7 +2152,6 @@ export function SettingsRoute() {
                   <ToggleSwitch ariaLabel="AI Agent 사용" checked={agentEnabled} onChange={setAgentEnabled} compact />
                   <div className="segment" role="group" aria-label="AI Agent 실행 방식">
                     <button aria-pressed={agentMode === "cli"} type="button" onClick={() => setAgentMode("cli")}>LLM CLI</button>
-                    <button aria-pressed={agentMode === "api"} type="button" onClick={() => setAgentMode("api")}>LLM API</button>
                   </div>
                 </div>
                 {!agentEnabled && (
@@ -2334,8 +2160,9 @@ export function SettingsRoute() {
               </div>
             </div>
 
+            {settings?.agent?.mode === "api" && <p role="status" className="settings-hint">LLM API 지원이 종료되었습니다. CLI 연결을 확인한 뒤 AI Agent 연동을 저장하거나 AI를 꺼 주세요.</p>}
             <fieldset className="settings-agent-controls" disabled={!agentEnabled}>
-            {agentMode === "cli" ? (
+            {(
               <>
                 {/* 안내 화면과 같은 컴포넌트다. 안내가 "나중에 설정에서 바꿀 수 있습니다"라고
                     말하므로 설정에서도 설치·로그인이 되어야 그 말이 참이 된다. */}
@@ -2343,44 +2170,6 @@ export function SettingsRoute() {
                   adapters={agentAdapters}
                   onSettings={(payload) => setAgentSettings((current) => ({ ...(current || {}), ...payload }))}
                 />
-              </>
-            ) : (
-              <>
-                <div className="field">
-                  <span>연결할 API 제공자</span>
-                  <p className="section-subtitle">{selectedProviderMeta.name} · 제공자와 모델은 아래 전역 모델 설정에서 선택합니다.</p>
-                </div>
-                <div className="settings-grid">
-                  <label className="field">
-                    <span>{selectedProviderMeta.name} API Key</span>
-                    <input value={providerApiKey} onChange={(event) => setProviderApiKey(event.currentTarget.value)} type="password" autoComplete="off" placeholder={selectedProvider.hasApiKey ? `${selectedProvider.apiKeyMasked} 저장됨` : selectedProviderMeta.key} />
-                  </label>
-                </div>
-                <div className="cli-provider-list" aria-live="polite">
-                  {providerRows.map(({ providerId, row, label, className, detail, checkedAt, diagnostic }) => (
-                    <div className="cli-provider-row" key={providerId}>
-                      <div className="cli-provider-main">
-                        <div className="cli-provider-head">
-                          <strong>{row.label || PROVIDER_LABELS[providerId].name}</strong>
-                          <span className={`cli-chip status-chip ${className}`}>{label}</span>
-                          {/* 언제 잰 값인지 없으면 "사용 가능"이 지금인지 지난주인지 모른다. */}
-                          {checkedAt && <span className="cli-provider-checked">{checkedAt} 확인</span>}
-                        </div>
-                        <div className="cli-provider-meta">{detail}</div>
-                        {diagnostic && <ReportErrorDiagnostic diagnostic={diagnostic} />}
-                      </div>
-                      <div className="cli-provider-actions">
-                        <button className="btn" type="button" disabled={Boolean(llmStatus[providerId]?.checking)} onClick={() => testProvider(providerId)}>연결 확인</button>
-                        {row.setupUrl && <a className="btn" href={row.setupUrl} target="_blank" rel="noreferrer">콘솔 열기</a>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {/* 사용량과 잔액은 이 앱이 볼 수 없다. 조회에 관리자 키가 필요해서 일반 API
-                    키로는 불가능하다 — 모르는 것을 아는 척하지 않고 어디서 보는지만 말한다. */}
-                <p className="cli-setup-note">
-                  이 앱은 키가 살아 있는지만 확인합니다. <b>사용량과 잔액은 제공사 콘솔</b>에서 보세요.
-                </p>
               </>
             )}
 
@@ -2405,16 +2194,11 @@ export function SettingsRoute() {
             </div>
             <GlobalModelSettings
               mode={agentMode}
-              provider={provider}
-              providerModel={providerModel}
               agentProvider={agentProvider}
               agentModel={agentModel}
-              selectedProvider={selectedProvider}
               selectedAgent={selectedAgent}
               globalReasoningEffort={globalReasoningEffort}
               reasoningChoices={globalReasoningChoices}
-              onProviderChange={(nextProvider) => setProvider(nextProvider)}
-              onProviderModelChange={(nextModel) => setProviderModel(nextModel)}
               onAgentProviderChange={(nextProvider) => setAgentProvider(nextProvider)}
               onAgentModelChange={(nextModel) => setAgentModel(nextModel)}
               onReasoningChange={setGlobalReasoningEffort}
@@ -2430,8 +2214,7 @@ export function SettingsRoute() {
                 policy={taskPolicies}
                 globalEnabled={agentEnabled}
                 globalConfig={globalTaskConfig}
-                providers={providers}
-                adapters={agentAdapters}
+                                adapters={agentAdapters}
                 onChange={setTaskPolicies}
                 onSave={saveTaskPolicies}
                 onCancel={cancelTaskPolicies}

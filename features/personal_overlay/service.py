@@ -32,8 +32,8 @@ from features.daily_briefing.schema import (
     normalize_market_scope,
 )
 from features.llm_settings.client import (
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
 )
 from features.common.quality_generation.telemetry import normalize_token_usage
@@ -168,14 +168,14 @@ def generate_overlay(canonical: dict, hypotheses: list, *, kind="briefing", llm_
     if not hypotheses:
         diagnostic_execution(final_engine="rules")
         return _fallback_overlay([]), "no_notes"
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
         diagnostic_execution(final_engine="rules")
         return _fallback_overlay(hypotheses), "disabled"
-    if not cfg["apiKey"]:
+    if not cfg["enabled"]:
         diagnostic_execution(final_engine="rules")
-        return _fallback_overlay(hypotheses), f"missing_{cfg['provider']}_api_key"
+        return _fallback_overlay(hypotheses), "cli_disabled"
     prompt = read_prompt()
     if not prompt:
         diagnostic_execution(final_engine="rules")
@@ -183,10 +183,10 @@ def generate_overlay(canonical: dict, hypotheses: list, *, kind="briefing", llm_
     context = _build_context(canonical, hypotheses, kind)
     web_search = bool(web_search_override) if web_search_override is not None else False
     try:
-        text, _rid, usage = request_llm_text(cfg, prompt, context, web_search=web_search, json_mode=True, include_usage=True)
+        text, _rid, usage = request_cli_text(cfg, prompt, context, web_search=web_search, json_mode=True, include_usage=True)
         if not text:
             diagnostic_execution(
-                attempted_engine="api", final_engine="rules", fallback_reason="engine_failed",
+                attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed",
             )
             return _fallback_overlay(hypotheses), "empty_response"
         with diagnostic_stage("validate", boundary="validation"):
@@ -200,7 +200,7 @@ def generate_overlay(canonical: dict, hypotheses: list, *, kind="briefing", llm_
             "responseId": _rid,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text),
         }
-        diagnostic_execution(attempted_engine="api", final_engine="api")
+        diagnostic_execution(attempted_engine="cli", final_engine="cli")
         return overlay, "ok"
     except Exception as error:
         # The fallback is an existing public contract.  Retain only the typed
@@ -210,7 +210,7 @@ def generate_overlay(canonical: dict, hypotheses: list, *, kind="briefing", llm_
             stage_id=None, stage_code="generate", boundary="adapter",
         )
         diagnostic_execution(
-            attempted_engine="api", final_engine="rules", fallback_reason="engine_failed",
+            attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed",
         )
         return _fallback_overlay(hypotheses), "generation_failed"
 

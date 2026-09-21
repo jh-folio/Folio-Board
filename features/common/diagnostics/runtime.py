@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 _SOURCE_REGISTRY = frozenset({
     ("features.common.change_intelligence.service", "decorate_candidate"),
     ("features.common.change_intelligence.semantic", "evaluate_semantic_changes"),
-    ("features.llm_settings.client", "selected_llm_config"),
+    ("features.llm_settings.client", "selected_cli_config"),
     ("features.llm_settings.client", "configured_global_reasoning_effort"),
     ("features.agent_mode.job_runtime", "commit_json_output"),
     ("features.agent_mode.job_runtime", "_prepare_rules_briefing_fallback"),
