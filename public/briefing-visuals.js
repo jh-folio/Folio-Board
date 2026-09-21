@@ -611,8 +611,23 @@
   // 완만하게 따라간다(면적을 그대로 쓰면 큰 칸만 남고 작은 칸은 전부 하한이 된다).
   const HEATMAP_SIZE_PER_ROOT_AREA = 0.105;
   // 섹터·산업 머리띠. 이름은 한 줄이고 이 띠 안에 들어가야 한다.
-  const HEATMAP_HEADER_PX = 26;
-  const HEATMAP_HEADER_MAX_LABEL_PX = 13;
+  const HEATMAP_HEADER_PX = 28;
+  // 섹터 이름은 지도에서 가장 먼저 읽혀야 하는 글자다. 예전에는 13px 흰 글자를 **섹터 평균 등락 색**의 띠 위에 얹어
+  // 옆의 종목 칸과 같은 색 계열이 되었고(IT 띠는 바로 아래 초록 칸과 거의 같았다) 글자도 작아 읽히지 않았다.
+  // 이제 띠는 등락 색이 아니라 **무채색 슬레이트**다 — 색은 종목 칸이 말하고 띠는 "여기서 섹터가 시작된다"만 말한다.
+  // 흰 글자 대비 약 10:1(AA 4.5:1의 두 배 이상)이고 라이트·다크 카드 배경 양쪽에서 띠가 보인다.
+  // 섹터의 평균 등락은 색이 아니라 **글자로** 띠에 적는다(`Financials  -0.71%`).
+  const HEATMAP_SECTOR_BAND_COLOR = "#3b4251";
+  const HEATMAP_HEADER_MAX_LABEL_PX = 14;
+  const HEATMAP_HEADER_MIN_LABEL_PX = 11;
+  // 두 줄로 나눈 머리띠 이름의 하한. 한 줄보다 1px 작게 시작해 이 값까지만 내려간다.
+  const HEATMAP_HEADER_TWO_LINE_MIN_LABEL_PX = 9;
+  // 머리띠 글자의 왼쪽·오른쪽 여백. ECharts가 글자 폭을 이만큼 줄여 재므로 계획도 같은 값을 뺀다.
+  const HEATMAP_HEADER_SIDE_PAD_PX = 6;
+  // 섹터 사이의 틈. 종목 사이 틈(1px)보다 뚜렷하게 굵어야 "묶음"이 보인다. 틈에는 카드 배경이 비쳐 나온다.
+  const HEATMAP_SECTOR_GAP_PX = 4;
+  // 섹터를 감싸는 틀. 종목 칸을 한 묶음으로 두르는 띠와 같은 색이다.
+  const HEATMAP_SECTOR_FRAME_PX = 1.5;
   // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
   const HEATMAP_MAX_LABEL_LINES = 2;
   // 글자가 baseline 위아래로 차지하는 몫. 렌더된 줄 상자가 글꼴 크기의 약 1.2배다.
@@ -730,6 +745,47 @@
     return change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
   };
 
+  /** 섹터 머리띠의 라벨 — **이름 + 섹터 평균 등락**. 안 들어가면 이름만, 그래도 안 들어가면 두 줄로, 그래도 안 되면 비운다.
+   *
+   *  섹터 이름은 한 줄일 때 11px, 두 줄일 때 10px 밑으로 내리지 않는다(읽혀야 한다). 두 줄은 머리띠 높이(28px)에 들어가는
+   *  `Energy &` / `Chemicals` 같은 어절 줄바꿈이다. 이름이 좁은 섹터에서 통째로 비면 그 칸은 어느 섹터인지 알 수 없다.
+   *  `width`는 머리띠 폭이다. ECharts는 글자 폭을 **좌우 padding과 틀 두께(양쪽)만큼** 줄여 재므로 그만큼과 잘림 여유 2px을 뺀다.
+   */
+  function heatmapHeaderPlan(name, change, width, measure) {
+    const text = String(name || "").trim();
+    if (!text) return null;
+    const available = (finite(width) || 0) - HEATMAP_HEADER_SIDE_PAD_PX * 2 - HEATMAP_SECTOR_FRAME_PX * 2 - 2;
+    if (available <= 0) return null;
+    const tail = String(change || "");
+    const tailGap = 8;
+    for (let size = HEATMAP_HEADER_MAX_LABEL_PX; size >= HEATMAP_HEADER_MIN_LABEL_PX; size -= 1) {
+      const nameWidth = measure(text, size, true);
+      if (nameWidth > available) continue;
+      const tailSize = Math.max(10, size - 2);
+      const withTail = tail && nameWidth + tailGap + measure(tail, tailSize, false) <= available;
+      return { lines: [text], size, lineHeight: size, tail: withTail ? tail : "", tailSize, tailGap };
+    }
+    // 한 줄에 안 들어가는 좁은 섹터: 두 줄로. 어절 경계로만 나누고 자르지 않는다.
+    for (let size = HEATMAP_HEADER_MIN_LABEL_PX - 1; size >= HEATMAP_HEADER_TWO_LINE_MIN_LABEL_PX; size -= 1) {
+      const lines = wrapLabelLines(text, size, available, measure, 2);
+      if (lines && lines.length === 2) return { lines, size, lineHeight: size + 2, tail: "", tailSize: size, tailGap };
+    }
+    return null;
+  }
+
+  function heatmapHeaderLabel(plan) {
+    const safe = (value) => String(value).replace(/[{}|]/g, "");
+    const body = plan.lines.map((line) => `{n|${safe(line)}}`).join("\n");
+    return {
+      formatter: body + (plan.tail ? `{c|${safe(plan.tail)}}` : ""),
+      rich: {
+        n: { fontSize: plan.size, lineHeight: plan.lineHeight, fontWeight: 700, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+        // 평균 등락은 이름보다 한 걸음 물러난 톤이다.
+        c: { fontSize: plan.tailSize, fontWeight: 500, color: "rgba(255, 255, 255, 0.78)", fontFamily: HEATMAP_FONT_FAMILY, padding: [0, 0, 0, plan.tailGap] },
+      },
+    };
+  }
+
   /** heatmapNodes의 평면 배열을 ECharts가 받는 중첩 트리로. 자료 모양 변환일 뿐이다. */
   function heatmapTree(nodes) {
     const byId = new Map();
@@ -775,16 +831,19 @@
       height: "100%",
       top: 0, left: 0, right: 0, bottom: 0,
       squareRatio: 1,
-      itemStyle: { borderColor: "#ffffff", borderWidth: 0.45, gapWidth: 0 },
+      // 종목 칸: 테두리 없이 1px 틈만 둔다. 틈은 부모(섹터)의 borderColor — 어두운 슬레이트 — 로 비쳐 가는 선이 된다.
+      itemStyle: { borderColor: HEATMAP_SECTOR_BAND_COLOR, borderWidth: 0, gapWidth: 1 },
       // 라벨은 노드마다 heatmapPlanLabels가 정한다. 여기서 자르거나 줄바꿈하지 않는다.
       // **padding 0.** 트리맵 라벨의 기본 padding은 5라서 ECharts가 글자에 쓸 수 있는 폭을 칸 폭보다 양쪽 5px씩
       // 줄인다 — 계획한 폭이 넉넉히 들어가는데도 `...`로 잘렸다(브라우저 실측: 여백 5px 이하에서 잘림 다수).
       label: { show: false, position: "inside", padding: 0, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
-      upperLabel: { show: true, height: HEATMAP_HEADER_PX, padding: 0, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY, overflow: "truncate" },
+      upperLabel: { show: true, height: HEATMAP_HEADER_PX, padding: [0, HEATMAP_HEADER_SIDE_PAD_PX, 0, HEATMAP_HEADER_SIDE_PAD_PX], color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY, overflow: "truncate" },
       levels: [
         // 보이지 않는 뿌리는 머리띠를 갖지 않는다 — 안 그러면 맨 위 26px이 빈 띠로 남는다.
-        { itemStyle: { borderWidth: 0, gapWidth: 1 }, upperLabel: { show: false } },
-        { itemStyle: { borderWidth: 0.45, gapWidth: 0.45 } },
+        // 섹터 사이 틈. 카드 배경이 비쳐 나와 라이트·다크 어느 쪽에서도 섹터가 갈라져 보인다.
+        { itemStyle: { borderWidth: 0, gapWidth: HEATMAP_SECTOR_GAP_PX }, upperLabel: { show: false } },
+        // 섹터 틀. 종목 칸을 한 묶음으로 두르고 위에 머리띠가 얹힌다.
+        { itemStyle: { borderColor: HEATMAP_SECTOR_BAND_COLOR, borderWidth: HEATMAP_SECTOR_FRAME_PX, gapWidth: 1 } },
       ],
     };
   }
@@ -849,16 +908,11 @@
       const rect = rectOf(node);
       const hasChildren = Array.isArray(node.children) && node.children.length > 0;
       if (hasChildren && level < depth) {
-        // 머리띠 색은 fill이 아니라 **자식 사이 틈의 색(borderColor)**으로 칠해진다.
-        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: node.itemStyle.color });
-        const plan = heatmapLabelPlan(node.name, "", {
-          width: rect.width,
-          height: HEATMAP_HEADER_PX,
-          maxSize: HEATMAP_HEADER_MAX_LABEL_PX,
-          maxLines: 1,
-        }, measure);
+        // 머리띠 색은 fill이 아니라 **틀·틈의 색(borderColor)**으로 칠해진다. 등락 색이 아니라 무채색 슬레이트를 준다.
+        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: HEATMAP_SECTOR_BAND_COLOR });
+        const plan = heatmapHeaderPlan(node.name, heatmapChangeText(node._change), rect.width, measure);
         node.upperLabel = plan
-          ? Object.assign({ show: true, height: HEATMAP_HEADER_PX }, heatmapRichLabel(plan))
+          ? Object.assign({ show: true, height: HEATMAP_HEADER_PX }, heatmapHeaderLabel(plan))
           // 머리띠는 남기고 글자만 비운다. `show: false`면 띠 자체가 사라져 자식이 그 자리를 먹는다.
           // 빈 문자열("")은 서식이 없는 것으로 읽혀 기본 이름이 `Steels ...`처럼 잘려 그려진다(브라우저 실측) —
           // 공백 한 글자로 "글자 없음"을 명시한다.
@@ -871,6 +925,10 @@
       }
       const plan = heatmapLabelPlan(node.name, heatmapChangeText(node._change), { width: rect.width, height: rect.height }, measure);
       node.label = plan ? Object.assign({ show: true }, heatmapRichLabel(plan)) : { show: false };
+      // **마우스를 올려도 라벨이 그대로여야 한다.** 올린 칸은 별도의 강조 상태(emphasis)로 그려지는데 그 상태의
+      // 라벨은 시리즈 기본(show: false)을 따라 통째로 꺼진다 — 기업명이 사라지는 것으로 보였다(브라우저 실측).
+      // 강조 상태의 표시 여부를 평상시와 같게 못 박고, 서식(formatter·rich)은 평상시 것을 그대로 물려받는다.
+      node.emphasis = { label: { show: Boolean(plan) } };
     };
     roots.forEach((node) => walk(node, 1));
     return headers;
@@ -1704,6 +1762,26 @@
       stage.dataset.rendered = "true";
       card.dataset.heatmapCompact = heatmapCompact(stage) ? "true" : "false";
       renderPath();
+      redrawWhenFontsLoad();
+    };
+
+    /** 글꼴이 다 내려온 뒤 한 번 더 그린다.
+     *
+     *  라벨 폭은 캔버스로 재는데, 웹 글꼴(Inter·IBM Plex·SUIT)이 아직 안 내려왔으면 대체 글꼴로 잰다. 다 내려온 뒤
+     *  ECharts가 진짜 글꼴로 그리면 글자가 조금 넓어져 계획한 폭에 딱 맞던 라벨이 `...`로 잘린다(브라우저 실측:
+     *  `Heavy Industr...`). 다 내려온 뒤 다시 재서 계획을 새로 세운다. 이미 다 내려와 있으면 아무것도 안 한다. */
+    let fontRedrawQueued = false;
+    const redrawWhenFontsLoad = () => {
+      const fonts = root.document?.fonts;
+      if (!fonts || fonts.status === "loaded" || fontRedrawQueued) return;
+      fontRedrawQueued = true;
+      Promise.resolve(fonts.ready).then(() => {
+        fontRedrawQueued = false;
+        if (chart) {
+          lastSize = "";
+          draw();
+        }
+      }).catch(() => { fontRedrawQueued = false; });
     };
 
     const plot = () => {
@@ -2149,6 +2227,8 @@
     heatmapNodes,
     heatmapLabelPlan,
     heatmapRichLabel,
+    heatmapHeaderPlan,
+    heatmapHeaderLabel,
     heatmapTree,
     heatmapSeriesBase,
     heatmapTileSizes,
