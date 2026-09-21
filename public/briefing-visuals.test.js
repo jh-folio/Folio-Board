@@ -165,6 +165,8 @@ const {
   heatmapFallbackSize,
   heatmapPlanLabels,
   heatmapHeaderAt,
+  heatmapSectorOutlines,
+  heatmapWithAlpha,
   heatmapTickerLabel,
   heatmapGroupName,
   abbreviateHeatmapLabel,
@@ -757,20 +759,54 @@ test("시리즈 설정은 깊이와 머리띠 규칙을 담는다 — 진짜 차
   assert.equal(heatmapSeriesBase(1).leafDepth, 1);
   // 섹터 사이 틈은 종목 사이 틈보다 뚜렷하게 굵다 — 그래야 섹터가 한 묶음으로 갈라져 보인다.
   assert.ok(series.levels[0].itemStyle.gapWidth >= 3 * series.levels[1].itemStyle.gapWidth, "섹터 틈이 종목 틈보다 굵어야 한다");
-  // 섹터는 틀로 둘러싸인다. 틀 색은 등락 색이 아니라 무채색 슬레이트다.
-  assert.equal(series.levels[1].itemStyle.borderColor, "#3b4251");
+  // 섹터는 틀로 둘러싸인다. 틀 색은 노드마다 자기 섹터 색을 준다(시리즈 기본에 색을 박지 않는다).
+  assert.equal(series.levels[1].itemStyle.borderColor, undefined);
   assert.ok(series.levels[1].itemStyle.borderWidth >= 1);
   // 종목 칸은 테두리 없이 1px 틈만 둔다.
   assert.equal(series.itemStyle.borderWidth, 0);
   assert.equal(series.itemStyle.gapWidth, 1);
 });
 
-test("섹터 머리띠 색은 흰 글자와 대비가 AA(4.5:1)의 두 배 이상이다 — 읽혀야 하는 글자다", () => {
+test("섹터 머리띠는 섹터 평균 등락 색 그대로이고, 그 위 흰 글자는 어느 등락 색에서도 AA(4.5:1) 이상이다", () => {
+  // 띠 색을 등락 색에서 떼어 내지 않는 대신 글자가 읽혀야 한다. 흰 글자 대비를 등락 색 9단 전부에서 확인한다.
   const channel = (value) => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
   const luminance = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255); };
-  const band = heatmapSeriesBase(2).levels[1].itemStyle.borderColor;
-  const contrast = (1.05) / (luminance(band) + 0.05);
-  assert.ok(contrast >= 9, `머리띠 대비가 ${contrast.toFixed(2)}:1이다`);
+  for (const change of [-9, -3, -2, -1, -0.3, 0, 0.3, 1, 2, 3, 9, null]) {
+    const band = heatmapColor(change);
+    const contrast = 1.05 / (luminance(band) + 0.05);
+    assert.ok(contrast >= 4.5, `${change}% 띠(${band}) 위 흰 글자 대비가 ${contrast.toFixed(2)}:1이다`);
+  }
+});
+test("섹터 바깥선은 등락 색과 따로, 섹터 사각형마다 선만 그린다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const rects = fakeRects([["sector:Technology", 500, 400, 0, 0], ["sector:Financials", 160, 400, 504, 0]]);
+  const outlines = heatmapSectorOutlines(roots, rects, "rgba(7, 17, 31, 0.72)");
+  assert.equal(outlines.length, 2);
+  const first = outlines[0];
+  assert.equal(first.type, "rect");
+  // 채움 없이 선만 — 아래 등락 색을 가리지 않는다.
+  assert.equal(first.style.fill, "none");
+  assert.equal(first.style.stroke, "rgba(7, 17, 31, 0.72)");
+  // 클릭·hover는 통과한다(머리띠 클릭과 툴팁이 계속 동작해야 한다).
+  assert.equal(first.silent, true);
+  // 선은 사각형 안쪽으로 그려 이웃 섹터 쪽 틈을 침범하지 않는다.
+  assert.deepEqual(first.shape, { x: 1, y: 1, width: 498, height: 398 });
+  assert.ok(first.z > 0, "트리맵 위에 얹혀야 한다");
+});
+
+test("섹터 바깥선: 좌표를 못 읽었거나 색이 없으면 그리지 않는다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  assert.deepEqual(heatmapSectorOutlines(roots, null, "#000"), []);
+  assert.deepEqual(heatmapSectorOutlines(roots, fakeRects([["sector:Technology", 10, 10]]), ""), []);
+  // 배치에 없는 섹터는 건너뛴다.
+  assert.equal(heatmapSectorOutlines(roots, fakeRects([["sector:Technology", 100, 100]]), "#000").length, 1);
+  assert.equal(heatmapSectorOutlines(roots, fakeRects([["sector:Technology", 1, 1]]), "#000")[0].shape.width, 0, "아주 작아도 음수 폭이 되지 않는다");
+});
+
+test("heatmapWithAlpha는 hex를 rgba로 풀고 다른 형식은 그대로 둔다", () => {
+  assert.equal(heatmapWithAlpha("#07111f", 0.72), "rgba(7, 17, 31, 0.72)");
+  assert.equal(heatmapWithAlpha("#fff", 0.5), "rgba(255, 255, 255, 0.5)");
+  assert.equal(heatmapWithAlpha("rgb(1, 2, 3)", 0.5), "rgb(1, 2, 3)");
 });
 
 test("heatmapHeaderAt은 클릭 좌표로 머리띠를 가린다", () => {
@@ -798,9 +834,9 @@ test("라벨 계획은 머리띠·잎·깊이 상한의 그룹을 모두 다룬�
   // 이름 + 섹터 평균 등락(시가총액 가중: (300×2.5 + 100×-1.2 + 200×0.3) / 600 = +1.15%).
   assert.equal(roots[0].upperLabel.formatter, "{n|Technology}{c|+1.15%}");
   assert.equal(roots[0].upperLabel.height, 28);
-  // 띠 색은 섹터의 등락 색이 아니라 무채색 슬레이트다 — 옆 종목 칸과 섞이지 않는다.
-  assert.equal(roots[0].itemStyle.borderColor, "#3b4251");
-  assert.notEqual(roots[0].itemStyle.borderColor, roots[0].itemStyle.color);
+  // 띠 색은 섹터 평균 등락 색 그대로다 — 색이 "이 섹터가 오늘 어땠는가"의 답이다. 경계는 바깥선이 따로 맡는다.
+  assert.equal(roots[0].itemStyle.borderColor, roots[0].itemStyle.color);
+  assert.equal(roots[0].itemStyle.color, heatmapColor(1.15));
   // 잎: 이름 + 등락률.
   const nvda = roots[0].children[0];
   assert.equal(nvda.label.show, true);

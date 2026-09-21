@@ -612,12 +612,11 @@
   const HEATMAP_SIZE_PER_ROOT_AREA = 0.105;
   // 섹터·산업 머리띠. 이름은 한 줄이고 이 띠 안에 들어가야 한다.
   const HEATMAP_HEADER_PX = 28;
-  // 섹터 이름은 지도에서 가장 먼저 읽혀야 하는 글자다. 예전에는 13px 흰 글자를 **섹터 평균 등락 색**의 띠 위에 얹어
-  // 옆의 종목 칸과 같은 색 계열이 되었고(IT 띠는 바로 아래 초록 칸과 거의 같았다) 글자도 작아 읽히지 않았다.
-  // 이제 띠는 등락 색이 아니라 **무채색 슬레이트**다 — 색은 종목 칸이 말하고 띠는 "여기서 섹터가 시작된다"만 말한다.
-  // 흰 글자 대비 약 10:1(AA 4.5:1의 두 배 이상)이고 라이트·다크 카드 배경 양쪽에서 띠가 보인다.
-  // 섹터의 평균 등락은 색이 아니라 **글자로** 띠에 적는다(`Financials  -0.71%`).
-  const HEATMAP_SECTOR_BAND_COLOR = "#3b4251";
+  // 섹터 이름은 지도에서 가장 먼저 읽혀야 하는 글자다. 머리띠는 **섹터 평균 등락 색**이고(시가총액 가중), 그 색은 색 그대로
+  // 남긴다 — 색이 바로 "이 섹터가 오늘 어땠는가"의 답이다. 예전에는 13px 흰 글자였고 섹터 경계가 종목 경계와 같은 얇은 선이라
+  // 띠가 옆 종목 칸에 섞였다. 그래서 **색은 그대로 두고 경계를 색과 따로** 준다: 섹터 바깥선(아래 heatmapSectorOutlines)이
+  // 등락 색과 무관한 무채색으로 섹터를 감싼다. 흰 글자는 등락 색 9단 모두에서 5.26:1 이상이다(heatmapColor).
+  const HEATMAP_SECTOR_OUTLINE_PX = 2;
   const HEATMAP_HEADER_MAX_LABEL_PX = 14;
   const HEATMAP_HEADER_MIN_LABEL_PX = 11;
   // 두 줄로 나눈 머리띠 이름의 하한. 한 줄보다 1px 작게 시작해 이 값까지만 내려간다.
@@ -831,8 +830,8 @@
       height: "100%",
       top: 0, left: 0, right: 0, bottom: 0,
       squareRatio: 1,
-      // 종목 칸: 테두리 없이 1px 틈만 둔다. 틈은 부모(섹터)의 borderColor — 어두운 슬레이트 — 로 비쳐 가는 선이 된다.
-      itemStyle: { borderColor: HEATMAP_SECTOR_BAND_COLOR, borderWidth: 0, gapWidth: 1 },
+      // 종목 칸: 테두리 없이 1px 틈만 둔다. 틈은 부모(섹터)의 borderColor — 섹터 색 — 로 비쳐 가는 선이 된다.
+      itemStyle: { borderColor: "transparent", borderWidth: 0, gapWidth: 1 },
       // 라벨은 노드마다 heatmapPlanLabels가 정한다. 여기서 자르거나 줄바꿈하지 않는다.
       // **padding 0.** 트리맵 라벨의 기본 padding은 5라서 ECharts가 글자에 쓸 수 있는 폭을 칸 폭보다 양쪽 5px씩
       // 줄인다 — 계획한 폭이 넉넉히 들어가는데도 `...`로 잘렸다(브라우저 실측: 여백 5px 이하에서 잘림 다수).
@@ -842,8 +841,8 @@
         // 보이지 않는 뿌리는 머리띠를 갖지 않는다 — 안 그러면 맨 위 26px이 빈 띠로 남는다.
         // 섹터 사이 틈. 카드 배경이 비쳐 나와 라이트·다크 어느 쪽에서도 섹터가 갈라져 보인다.
         { itemStyle: { borderWidth: 0, gapWidth: HEATMAP_SECTOR_GAP_PX }, upperLabel: { show: false } },
-        // 섹터 틀. 종목 칸을 한 묶음으로 두르고 위에 머리띠가 얹힌다.
-        { itemStyle: { borderColor: HEATMAP_SECTOR_BAND_COLOR, borderWidth: HEATMAP_SECTOR_FRAME_PX, gapWidth: 1 } },
+        // 섹터 틀. 종목 칸을 한 묶음으로 두르고 위에 머리띠가 얹힌다. 색은 노드마다 자기 섹터 색을 준다.
+        { itemStyle: { borderWidth: HEATMAP_SECTOR_FRAME_PX, gapWidth: 1 } },
       ],
     };
   }
@@ -908,8 +907,8 @@
       const rect = rectOf(node);
       const hasChildren = Array.isArray(node.children) && node.children.length > 0;
       if (hasChildren && level < depth) {
-        // 머리띠 색은 fill이 아니라 **틀·틈의 색(borderColor)**으로 칠해진다. 등락 색이 아니라 무채색 슬레이트를 준다.
-        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: HEATMAP_SECTOR_BAND_COLOR });
+        // 머리띠 색은 fill이 아니라 **틀·틈의 색(borderColor)**으로 칠해진다. 섹터 평균 등락 색을 그대로 준다.
+        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: node.itemStyle.color });
         const plan = heatmapHeaderPlan(node.name, heatmapChangeText(node._change), rect.width, measure);
         node.upperLabel = plan
           ? Object.assign({ show: true, height: HEATMAP_HEADER_PX }, heatmapHeaderLabel(plan))
@@ -929,6 +928,8 @@
       // 라벨은 시리즈 기본(show: false)을 따라 통째로 꺼진다 — 기업명이 사라지는 것으로 보였다(브라우저 실측).
       // 강조 상태의 표시 여부를 평상시와 같게 못 박고, 서식(formatter·rich)은 평상시 것을 그대로 물려받는다.
       node.emphasis = { label: { show: Boolean(plan) } };
+      // 깊이 상한에서 잎이 된 섹터(좁은 화면)는 틀이 있는 레벨이라 자기 색 틀을 준다 — 안 주면 시리즈 기본(투명)이 아니라 어두운 링이 생긴다.
+      if (hasChildren) node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: node.itemStyle.color });
     };
     roots.forEach((node) => walk(node, 1));
     return headers;
@@ -942,6 +943,34 @@
     return hit ? hit.id : "";
   }
 
+  /** 섹터 바깥선 — 등락 색과 **따로** 그리는 무채색 테두리.
+   *
+   *  트리맵은 머리띠·틀·틈을 모두 한 색(borderColor)으로 칠해서, 띠를 섹터 색으로 두면 테두리를 따로 줄 수 없다. 그래서
+   *  배치 선계산이 준 섹터 사각형 위에 `graphic` 사각형(채움 없음, 선만)을 얹는다. 클릭·hover는 통과한다(`silent`).
+   *  선은 사각형 안쪽으로 그려 이웃 섹터 쪽 틈(4px)을 침범하지 않는다. 좌표를 못 읽은 경우(추정으로 물러남)엔 없다.
+   *  색은 잉크 토큰이라 라이트에선 어둡고 다크에선 밝다 — 어느 쪽이든 섹터 색과도 카드 배경과도 갈린다.
+   */
+  function heatmapSectorOutlines(roots, rects, color) {
+    if (!rects || !color) return [];
+    const half = HEATMAP_SECTOR_OUTLINE_PX / 2;
+    return (roots || []).map((node) => rects.get(node.id)).filter(Boolean).map((rect) => ({
+      type: "rect",
+      silent: true,
+      z: 20,
+      shape: { x: rect.x + half, y: rect.y + half, width: Math.max(0, rect.width - HEATMAP_SECTOR_OUTLINE_PX), height: Math.max(0, rect.height - HEATMAP_SECTOR_OUTLINE_PX) },
+      style: { fill: "none", stroke: color, lineWidth: HEATMAP_SECTOR_OUTLINE_PX },
+    }));
+  }
+
+  /** `#rgb`·`#rrggbb`에 투명도를. 그 밖의 형식(rgb() 등)은 그대로 돌려준다. */
+  function heatmapWithAlpha(color, alpha) {
+    const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
+    if (!match) return color;
+    const hex = match[1].length === 3 ? match[1].replace(/./g, (c) => c + c) : match[1];
+    const value = parseInt(hex, 16);
+    return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+  }
+
   function heatmapTooltipTheme() {
     const css = getComputedStyle(document.documentElement);
     const token = (name, fallback) => {
@@ -952,6 +981,8 @@
       backgroundColor: token("--folio-surface-dark", "#101829"),
       borderColor: token("--folio-border-strong", "#c5ccd8"),
       color: token("--folio-ink-inverse", "#ffffff"),
+      // 섹터 바깥선. 라이트에선 어두운 잉크, 다크에선 밝은 잉크다.
+      outline: heatmapWithAlpha(token("--folio-ink", "#07111f"), 0.72),
     };
   }
 
@@ -1758,6 +1789,7 @@
           formatter: (params) => (params?.data?._row ? heatmapHoverText(params.data._row) : ""),
         },
         series: [series],
+        graphic: { elements: heatmapSectorOutlines(roots, rects, tooltip.outline) },
       }, { notMerge: true });
       stage.dataset.rendered = "true";
       card.dataset.heatmapCompact = heatmapCompact(stage) ? "true" : "false";
@@ -1950,8 +1982,10 @@
               horzLines: { color: theme.grid },
             },
           });
+        } else if (record.kind === "echarts") {
+          // 타일 색은 테마와 무관하지만 섹터 바깥선은 잉크 토큰이라 테마를 따른다.
+          record.redraw?.();
         }
-        // 히트맵(echarts)은 타일 색이 테마와 무관하고 툴팁은 두 테마 모두 어두운 면이라 다시 그릴 것이 없다.
       } catch (_) {}
     }
   }
@@ -2235,6 +2269,8 @@
     heatmapFallbackSize,
     heatmapPlanLabels,
     heatmapHeaderAt,
+    heatmapSectorOutlines,
+    heatmapWithAlpha,
     heatmapTickerLabel,
     heatmapGroupName,
     abbreviateHeatmapLabel,
