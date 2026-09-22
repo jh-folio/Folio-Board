@@ -1003,13 +1003,19 @@ def _invoke_agent_cli(
     reasoning_effort: str = "",
     facts_sink: dict | None = None,
     max_output_chars: int = MAX_OUTPUT_CHARS,
+    observe_result: bool = False,
+    result_sink: dict | None = None,
 ) -> str:
     """`facts_sink`는 순수 additive 관측 통로다: 값을 넘기지 않는 기존 호출자는
     이전과 완전히 같게 동작한다. 넘기면, 검색이 실제로 지원되는 요청이었을 때
     `facts_sink["webSearchFacts"]`에 `WebSearchFacts`를 채운다(관측 실패 시 기본값).
     호출마다 새로 만든 로컬 dict를 넘기는 것을 전제한다 — 동시 호출 간에 공유되는
     가변 상태를 두지 않기 위해서다(`serialize=False` 찾기 콜은 동시에 돌 수 있다).
+    `result_sink`는 별도의 메모리 전용 ExecutionResult 통로다. 응답 dict·보고서·
+    로그로 직렬화하지 않는다. 기존 facts_sink에는 허용된 종료/검색 사실만 둔다.
     """
+    if result_sink is not None:
+        result_sink.pop("result", None)
     is_antigravity = selected.get("id") == "antigravity"
     if is_antigravity and _AGY_FILE_READS_BLOCKED and _prompt_needs_file_read(prompt):
         # 이미 거부당한 것을 알고 있다. 팩을 만들고 수 분을 버린 뒤 같은 곳에서
@@ -1023,6 +1029,14 @@ def _invoke_agent_cli(
         web_search=effective_web_search,
         reasoning_effort=reasoning_effort,
     )
+    structured = (observe_result or result_sink is not None) and selected.get("id") in {"codex", "claude"}
+    if structured:
+        if selected["id"] == "codex" and "--json" not in command:
+            command.insert(-1, "--json")
+        elif selected["id"] == "claude":
+            command[command.index("--output-format") + 1] = "stream-json"
+            if "--verbose" not in command:
+                command.append("--verbose")
     proc = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -1046,18 +1060,38 @@ def _invoke_agent_cli(
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
+        if result_sink is not None:
+            from features.common.execution_result import ExecutionResult
+            from features.common.provider_result import ProviderPayload
+            result_sink["result"] = ExecutionResult(
+                transport_status="failed", completion_status="incomplete", stop_reason="other",
+                provider=ProviderPayload(raw_stop_reason="deadline_expired"),
+            )
         raise TimeoutError(f"Agent CLI 실행 시간이 {timeout}초를 초과했습니다.")
     finally:
         if job_id:
             with _PROCESS_LOCK:
                 _RUNNING_PROCESSES.pop(job_id, None)
-    if proc.returncode != 0:
+    observed_body = None
+    execution_result = None
+    if structured:
+        from features.common.cli_provider_result import observe_execution
+        execution_result = observe_execution(selected["id"], stdout, returncode=proc.returncode)
+        observed_body = execution_result.text
+        completion = {"completionStatus": execution_result.completion_status, "stopReason": execution_result.stop_reason}
+        if result_sink is not None:
+            result_sink["result"] = execution_result
+        if facts_sink is not None:
+            facts_sink["executionFacts"] = completion
+    if proc.returncode != 0 and not (structured and observed_body):
         error = (stderr or stdout or f"exit {proc.returncode}").strip()[-2000:]
         hint = rate_limit_hint(error)
         if hint is not None:
             raise AgentRateLimitError(f"Agent CLI 사용량 한도에 걸렸습니다. {hint}".strip(), hint)
         raise AgentProcessError(f"Agent CLI 실행 실패 (exit {proc.returncode}): {error}")
-    output = _strip_outer_fence(stdout)
+    if structured and not observed_body:
+        raise AgentProcessError("Agent CLI 완료 응답 본문을 확인하지 못했습니다.")
+    output = _strip_outer_fence(observed_body if structured else stdout)
     facts = WebSearchFacts()
     if effective_web_search:
         # 구조화 출력에서 최종 텍스트를 다시 뽑는다 — stream-json/--json으로 바꾼
@@ -1087,6 +1121,17 @@ def _invoke_agent_cli(
         raise RuntimeError("Agent CLI 결과가 허용 크기를 초과했습니다.")
     if facts_sink is not None:
         facts_sink["webSearchFacts"] = facts
+    if result_sink is not None:
+        from dataclasses import replace
+        from features.common.execution_result import ExecutionResult
+        from features.common.provider_result import ProviderPayload
+        result_sink["result"] = replace(
+            (execution_result or ExecutionResult(
+                transport_status="succeeded", provider=ProviderPayload(
+                    adapter=selected.get("id") if selected.get("id") in {"codex", "claude", "antigravity"} else "unknown",
+                ),
+            )).with_text(output), web_search=facts,
+        )
     return output
 
 
@@ -1155,9 +1200,15 @@ def _invoke_task_cli(
     *,
     task_policy: dict | None = None,
     web_search: bool = False,
+    facts_sink: dict | None = None,
+    result_sink: dict | None = None,
 ) -> str:
     """Invoke a task's selected adapter with its immutable model/effort."""
     kwargs = _task_cli_kwargs(task_policy)
+    if facts_sink is not None:
+        kwargs.update(facts_sink=facts_sink, observe_result=True)
+    if result_sink is not None:
+        kwargs["result_sink"] = result_sink
     if web_search:
         kwargs["web_search"] = True
     return _invoke_agent_cli(selected, prompt, timeout, job_id, **kwargs)
@@ -1168,6 +1219,8 @@ def run_agent_prompt(
     serialize: bool = True, web_search: bool = False, reasoning_effort: str = "",
     diagnostic_primary: bool = True, on_phase: Callable[[str], None] | None = None,
     max_output_chars: int = MAX_OUTPUT_CHARS,
+    observe_result: bool = False,
+    result_sink: dict | None = None,
 ) -> dict:
     """단일 프롬프트를 Agent CLI로 실행하고 텍스트 결과만 돌려준다(파일 쓰기 없음).
 
@@ -1180,6 +1233,11 @@ def run_agent_prompt(
     job_id = job_id or _PROMPT_JOB_ID.get()
     def check_cancelled():
         if job_id and (get_job(job_id) or {}).get("status") in {"cancelled", "cancel_requested"}:
+            if result_sink is not None:
+                from features.common.execution_result import ExecutionResult
+                result_sink["result"] = ExecutionResult(
+                    transport_status="cancelled", completion_status="incomplete", stop_reason="cancelled",
+                )
             raise RuntimeError("cancelled")
 
     check_cancelled()
@@ -1209,7 +1267,8 @@ def run_agent_prompt(
             facts_sink: dict = {}
             output = _invoke_agent_cli(
                 selected, prompt, effective_timeout, job_id, facts_sink=facts_sink,
-                max_output_chars=max_output_chars, **kwargs,
+                max_output_chars=max_output_chars, **({"observe_result": True} if observe_result else {}), **kwargs,
+                **({"result_sink": result_sink} if result_sink is not None else {}),
             )
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
         if budget:
@@ -1221,6 +1280,7 @@ def run_agent_prompt(
             "adapter": selected["id"],
             "webSearch": _used_web_search(selected, web_search),
             "webSearchFacts": web_search_facts.safe_projection(),
+            **({"executionFacts": facts_sink.get("executionFacts", {})} if observe_result else {}),
         }
     recorder, stage_id = diagnostic_stage_start("wait_engine")
     if on_phase is not None:
@@ -1251,7 +1311,8 @@ def run_agent_prompt(
             facts_sink: dict = {}
             output = _invoke_agent_cli(
                 selected, prompt, effective_timeout, job_id, facts_sink=facts_sink,
-                max_output_chars=max_output_chars, **kwargs,
+                max_output_chars=max_output_chars, **({"observe_result": True} if observe_result else {}), **kwargs,
+                **({"result_sink": result_sink} if result_sink is not None else {}),
             )
         diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
     except Exception as error:
@@ -1275,6 +1336,7 @@ def run_agent_prompt(
         "adapter": selected["id"],
         "webSearch": _used_web_search(selected, web_search),
         "webSearchFacts": web_search_facts.safe_projection(),
+            **({"executionFacts": facts_sink.get("executionFacts", {})} if observe_result else {}),
     }
 
 
@@ -1337,6 +1399,8 @@ def _run_agent_task_locked(
             # 있으면 충분하다고 판단한다. 웹은 별도 **찾기 과제**로 분리해야 작동하며,
             # 그 자리에서 `run_agent_prompt(..., web_search=True)`로 켠다
             # (`company_analysis/engine_calls.py`, `topic_report/web_lookup.py`).
+            company_facts = {} if (task_type == "company_analysis" or (task_type == "quality_repair" and (pack.get("internal") or {}).get("targetArtifactType") == "company_analysis")) else None
+            company_result = {}
             with _diagnostic_boundary("generate", "adapter"):
                 output = _invoke_task_cli(
                     selected,
@@ -1344,7 +1408,17 @@ def _run_agent_task_locked(
                     timeout,
                     job_id,
                     task_policy=task_policy,
+                    **({"facts_sink": company_facts, "result_sink": company_result} if company_facts is not None else {}),
                 )
+            if company_facts is not None:
+                pack["executionFacts"] = company_facts.get("executionFacts", {})
+                # Persist the returned body before optional repair/finalization.
+                # A later exception or process exit must not erase paid work.
+                from features.company_analysis.recovery import preserve_candidate
+                from features.company_analysis.service import ANALYSIS_REPORTS_DIR
+                raw_company = {**(pack.get("draftArtifact") or {}),
+                               "markdown": output, "executionFacts": pack["executionFacts"]}
+                preserve_candidate(ANALYSIS_REPORTS_DIR, raw_company)
             diagnostic_execution(final_engine="cli", adapter=str(selected["id"]))
             output_format = (pack.get("outputContract") or {}).get("format", "markdown")
             briefing_contract_failed = False
@@ -1406,6 +1480,8 @@ def _run_agent_task_locked(
                     pack.setdefault("draftArtifact", {})["validationStatus"] = "unassessed"
                     missing = []
                 if missing:
+                    retry_facts = {}
+                    retry_result = {}
                     progress("CLI 기업분석 구조를 보완해 다시 작성하고 있습니다.", 60, adapter=selected["id"])
                     try:
                         with _diagnostic_boundary("generate", "adapter"):
@@ -1415,10 +1491,14 @@ def _run_agent_task_locked(
                                 timeout,
                                 job_id,
                                 task_policy=task_policy,
+                                facts_sink=retry_facts,
+                                result_sink=retry_result,
                             )
                         # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
                         if len(company_missing_sections(retry)) < len(missing):
                             output = retry
+                            company_result = retry_result
+                            pack["executionFacts"] = retry_facts.get("executionFacts", {})
                     except (KeyboardInterrupt, SystemExit, CancelledError):
                         # Explicit cancellation/interruption is never a usable
                         # report and must not fall through to writeback.
@@ -1444,6 +1524,9 @@ def _run_agent_task_locked(
                 payload = _json_payload(output)
         else:
             payload = None
+            if company_facts is not None:
+                from features.common.report_citations import render_citation_links
+                output = render_citation_links(output, (pack.get("draftArtifact") or {}).get("sourceLedger"), execution=company_result.get("result"))
         if durable:
             schema.update_pack_status(pack_path, status="committing")
             parsed_task = TaskType(task_type)
@@ -1473,6 +1556,9 @@ def _run_agent_task_locked(
                 **({"policy": task_policy_metadata(task_policy)} if isinstance(task_policy, dict) else {}),
                 **summary,
             }
+            if company_facts is not None:
+                from features.company_analysis.recovery import discard_promoted
+                discard_promoted(ANALYSIS_REPORTS_DIR, raw_company)
             progress("Agent 결과 저장을 완료했습니다.", 100, **summary)
             return summary
         with _diagnostic_boundary("commit", "save"):
@@ -1480,6 +1566,11 @@ def _run_agent_task_locked(
                 result = agent_service.writeback_pack(pack, payload=payload)
             else:
                 result = agent_service.writeback_pack(pack, markdown=output)
+        if company_facts is not None and result.get("saved") is True:
+            from features.company_analysis.recovery import discard_promoted
+            discard_promoted(ANALYSIS_REPORTS_DIR, raw_company)
+        if company_facts is not None and result.get("saved") is False:
+            raise AgentOutputValidationError("기업분석을 정상본으로 저장하지 못했습니다. 보고서 목록의 복구 후보를 확인하세요.")
         summary = _result_summary(task_type, pack, result, selected["id"])
         schema.update_pack_status(pack_path, status="done", result=summary)
         progress("Agent 결과 저장을 완료했습니다.", 100, **summary)

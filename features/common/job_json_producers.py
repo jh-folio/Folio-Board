@@ -151,6 +151,8 @@ class JobJsonProducers:
         report = dict(request.report)
         if not report.get("id") and isinstance(report.get("company"), dict) and report.get("generatedAt"):
             report["id"] = analysis_report_id(report["company"], report["generatedAt"])
+        from features.company_analysis.recovery import preserve_candidate
+        preserve_candidate(self.data_root / "company-analysis", report)
         report = decorate_candidate("company_analysis", report, data_dir=self.data_root, generation_provenance=True)
         return self.workspace.stage(job, [company_spec(self.data_root, ReportJobRequest(report, request.terminal_result))], terminal_result=request.terminal_result)
 

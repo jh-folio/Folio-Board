@@ -19,6 +19,8 @@
 """
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import json
 import re
 from collections.abc import Callable, Iterable
@@ -132,7 +134,8 @@ def select_thesis(
         return {}
     try:
         payload = _extract_json(run_call(_PROMPT, _context(plan, usable, material_context)))
-    except Exception:  # noqa: BLE001 - 논지 선정 실패가 보고서를 죽이지 않는다
+    except Exception as error:  # noqa: BLE001 - 논지 선정 실패가 보고서를 죽이지 않는다
+        propagate_interruption(error)
         return {}
     known = known_source_ids(usable)
 

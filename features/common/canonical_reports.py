@@ -90,6 +90,13 @@ def prepare(
             validate_report_identity(report_kind, path, current)
         match write_kind:
             case WriteKind.CANONICAL:
+                if report_kind is ReportKind.COMPANY_ANALYSIS:
+                    from features.company_analysis.recovery import guard_canonical
+                    guard_canonical(path.parent, dict(candidate))
+                if report_kind is ReportKind.TOPIC_REPORT:
+                    from features.topic_report.execution import report_incomplete
+                    if report_incomplete(dict(candidate)):
+                        raise CanonicalValidationError("topic_report_incomplete", "딥 리서치 실행이 완료되지 않았습니다.")
                 target, target_revision, content_hash, changed = canonical_candidate(
                     current,
                     candidate,

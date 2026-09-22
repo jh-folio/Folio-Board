@@ -1,11 +1,12 @@
-"""Private, additive execution facts for future provider adapters.
+"""Private, additive execution facts shared by CLI provider adapters.
 
 `WebSearchFacts` is wired: `features/agent_mode/bridge.py` constructs it from
 the CLI adapter's own structured output for web-search lookup calls (claude
 `stream-json`, codex `--json`; 2026-09-12) and threads it through
 `run_agent_prompt()` -> `features/common/engine_lookup.py` ->
-`features/daily_briefing/web_lookup.py`. `ExecutionResult` and `UsageFacts`
-still have no persistence adapter. Existing tuple/string provider APIs keep
+`features/daily_briefing/web_lookup.py`. E0 result_sink opt-in transfers
+`ExecutionResult`, observed `UsageFacts` and a private `ProviderPayload` in memory.
+There is deliberately no private-payload persistence adapter. Tuple/string APIs keep
 their return values and exception behavior; callers opt in only when a trusted
 adapter can supply structured facts.
 """
@@ -15,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from features.common.diagnostics.schema import Failure, failure_fingerprint
+from features.common.provider_result import ProviderPayload
 
 TransportStatus = Literal["succeeded", "failed", "cancelled", "unknown"]
 CompletionStatus = Literal["completed", "incomplete", "failed", "unknown"]
@@ -96,6 +98,7 @@ class ExecutionResult:
     queued_ms: int | None = None
     execution_ms: int | None = None
     failure: Failure | None = None
+    provider: ProviderPayload | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.text is not None and not isinstance(self.text, str):
@@ -114,6 +117,14 @@ class ExecutionResult:
             raise ValueError("invalid_execution_facts")
         if self.failure is not None and not isinstance(self.failure, Failure):
             raise ValueError("invalid_execution_failure")
+        if self.provider is not None and not isinstance(self.provider, ProviderPayload):
+            raise ValueError("invalid_provider_payload")
+
+    def with_text(self, text: str) -> ExecutionResult:
+        """Re-anchor citations whenever a trusted consumer edits the body."""
+        return replace(self, text=text, provider=(
+            self.provider.remap(self.text or "", text) if self.provider else None
+        ))
 
     def safe_projection(self) -> dict[str, object]:
         """Return only approved facts; intentionally omit text and response ID."""

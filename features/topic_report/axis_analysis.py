@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import json
 import re
 from collections.abc import Callable, Iterable
@@ -241,7 +243,8 @@ def build_axis_briefs(
                     _axis_context(axis, questions, rows, material_context, asked, web_directive, axes),
                 )
             )
-        except Exception:
+        except Exception as error:
+            propagate_interruption(error)
             briefs.append(brief)
             continue
         known = {str(row.get("id") or "") for row in rows}

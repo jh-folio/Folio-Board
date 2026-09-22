@@ -394,11 +394,13 @@ def selected_cli_config():
 
 
 def request_cli_text(cfg, prompt, context, *, web_search=False, max_output_tokens=None,
-                     json_mode=False, include_usage=False, timeout_seconds=None):
+                     json_mode=False, include_usage=False, timeout_seconds=None, facts_sink=None,
+                     result_sink=None):
     """Execute through the existing CLI bridge; never resolve API credentials.
 
     CLI adapters do not promise an exact output token cap. Keep the caller's
     argument for compatibility, and let the bridge enforce its output bound.
+    result_sink is opt-in and memory-only; never serialize it into report data.
     """
     if cfg.get("mode") in {"api", "llm_api"}:
         raise ValueError("llm_api_removed")
@@ -412,7 +414,11 @@ def request_cli_text(cfg, prompt, context, *, web_search=False, max_output_token
         reasoning_effort=str(cfg.get("reasoningEffort") or ""),
         timeout=timeout_seconds or 300, web_search=web_search,
         diagnostic_primary=False,
+        **({"observe_result": True} if facts_sink is not None else {}),
+        **({"result_sink": result_sink} if result_sink is not None else {}),
     )
+    if facts_sink is not None:
+        facts_sink.update(response.get("executionFacts") or {})
     output = str(response.get("output") or "").strip()
     if not output:
         raise RuntimeError("cli_empty_response")

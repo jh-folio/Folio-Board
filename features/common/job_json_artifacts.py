@@ -47,6 +47,18 @@ class JobArtifactWorkspace:
         fault_hook: FaultHook | None = None,
     ) -> None:
         self.committer.commit(bundle, store, lifecycle, fault_hook=fault_hook)
+        # Recovery copies are independent from job-staging retention. Never
+        # remove them until the lifecycle has verified the canonical promotion.
+        from features.common.canonical_report_state import load_report
+        from features.company_analysis.recovery import discard_promoted
+        for artifact in bundle.artifacts:
+            if artifact.canonical is not None and artifact.canonical.report_kind is ReportKind.COMPANY_ANALYSIS:
+                try:
+                    report = load_report(artifact.exact_path)
+                    if report is not None:
+                        discard_promoted(artifact.exact_path.parent, report)
+                except (OSError, ValueError):
+                    pass
         # Projection is deliberately post-commit. A broken derived index must
         # never roll back an authoritative report JSON.
         try:

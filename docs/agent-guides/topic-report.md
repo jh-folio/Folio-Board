@@ -1,5 +1,13 @@
 # 테마분석 (Topic Report v2)
 
+## 딥 실행 E0 소비와 재개 입력 (2026-09-22)
+
+`approved_generation_support`의 작성/축/편집과 `deep_pipeline`의 보수는 공통 `result_sink`를 사용한다. private 결과는 `EngineOutput.execution` → `ApprovedGenerationOutcome.execution`으로 실행 중에만 전달하고 본문 수정 뒤 `with_text()`로 인용 위치를 재매핑한다. 보고서에는 기존 E0 `safe_projection()`만 `executionFacts`로 기록한다. provider 원본·session ID·native citation 원문은 JSON/진단에 직렬화하지 않는다.
+
+관측된 incomplete/failed/cancelled는 candidate valid 판정을 통과하지 못하며, canonical prepare와 기동 복구도 같은 사실을 확인한다. partial 초안을 형식/분량 기반 재시도나 에디터로 정상화하지 않는다. 보조 단계의 partial은 채택하지 않고, 취소/timeout은 보조 실패 fallback에 숨기지 않는다. unknown은 미확인으로 유지하여 옛 저장본과 미관측 CLI 호환을 보존한다.
+
+재개 fingerprint에 승인 자료의 원본/정규화 입력, 시장·매크로 입력, 시장 맥락과 웹 출처 지시를 포함한다. 실제 입력 내용이 달라지면 기존 단계는 재사용하지 않는다. 집필에도 해당 실행에서 확정한 웹 사용 여부를 전달한다. 새 조사 정책·새 보고서 버전·provider native resume를 도입하지 않으며 private 후보의 기존 job-context 정리 수명을 바꾸지 않는다.
+
 > 이 기능을 변경·검토할 때 해당 기능 README와 함께 읽는다. 다른 기능의 상세 문서를 일괄 로드하지 않는다.
 > 공통 규칙과 § 번호는 [AGENTS.md](../../AGENTS.md)를 참조한다. 코드 경로 표기는 저장소 루트 기준이다.
 

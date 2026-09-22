@@ -1,5 +1,22 @@
 # AI Agent Mode
 
+## 공통 CLI 결과 관측 (E0)
+
+기업분석의 기존 종료 관측은 공통 `ExecutionResult` parser를 사용한다. 내부 호출자는
+`run_agent_prompt(..., result_sink={})` 또는 `request_cli_text(..., result_sink={})`로
+본문·관측 usage·비공개 provider 자료를 메모리에서 받을 수 있다. 기본 반환 문자열/tuple과
+공개 응답 dict는 유지한다. `facts_sink`의 종료 상태와 `WebSearchFacts`도 호환된다.
+
+- `ProviderPayload`에는 실제 출력에서 읽은 adapter/model·종료 원인·텍스트/도구 블록·인용·session ID만 둔다. 요청 모델로 실제 모델을 추정하지 않고, reasoning 원문·도구 입력·원시 이벤트는 보관하지 않는다. adapter ID는 선택된 실행 어댑터이며 실제 upstream 제공자를 증명하지 않는다.
+- Claude 텍스트 블록의 native citation이 실제로 존재하면 본문 블록 위치와 원문 문서 위치를 구별해 보존한다. 같은 메시지 ID의 블록은 누적하고 하위 에이전트 메시지는 섞지 않는다. Codex Markdown 링크를 native citation으로 바꾸지 않는다. 없는 정보와 미확인 capability는 unknown이다.
+- 본문을 편집하는 소비자는 `ExecutionResult.with_text()`를 사용한다. 그대로 남은 유일한 인용 대상 문자열만 재매핑하고, 수정·삭제·중복된 대상은 위치를 미확인으로 바꾼다. 출처가 남았다고 새 문장을 뒷받침한다고 간주하지 않는다.
+- `safe_projection()`은 기존 진단 v1 필드 그대로다. private 객체·인용 URL/원문·모델 원문·response/session ID는 진단, Work Log, 공개 응답, 보고서 JSON에 자동 저장하지 않는다. 작업 종료 시 호출자 참조와 함께 해제하며 Folio의 별도 재개 파일은 만들지 않는다. 외부 CLI 자체 기록 정책을 바꾸지는 않는다.
+- `ContinuationLease`는 지원 adapter가 명시적으로 발급할 때 쓰는 owner-bound/단일 소비/최대 1시간 TTL 메모리 계약이다. 만료·취소·사용 뒤 토큰을 제거한다. 현재 Folio CLI bridge는 자동 provider 재개를 구현하지 않았으므로 `continuation_capability=unsupported`이고 lease를 발급하지 않는다. pause/tool_pending 관측과 재개 가능 여부는 별개다.
+- 실제 CLI 생성, native citation 영속화·reader/export 연결, Deep Research 재개 실행은 이 공통 계약의 로컬 fixture 검증과 구별한다.
+
+이벤트 형식 참고: [Codex JSONL](https://learn.chatgpt.com/docs/non-interactive-mode),
+[Claude complete-message stream](https://code.claude.com/docs/en/agent-sdk/streaming-output).
+
 기업분석의 선택적 구조 보완 재시도는 실패하거나 개선되지 않아도 먼저 받은 본문을 유지합니다.
 구조 검증을 수행하지 못한 결과는 검수 미완료 경고와 함께 저장 경로에 전달하며 통과로 표시하지 않습니다.
 취소된 기업분석 작업은 이 복구 경로를 통해 성공 저장으로 바꾸지 않습니다. 브리핑의 별도 생성·저장 계약은 변경하지 않습니다.
@@ -539,3 +556,7 @@ Agent는 선택 ticker를 서버 저장소에서 다시 조회하고 추천 없�
 ### 대화 관리
 
 목록·전환·제목 수정·보관·삭제를 도크가 소유한다. 삭제는 되돌릴 수 없어 확인을 받으며, 저장소도 `delete_session(confirmed=True)` 없이는 지우지 않는다.
+
+### E0 인용의 공개 투영
+
+기업분석 bridge는 private `result_sink`를 호출별로 유지하고 실제 채택된 재시도 결과만 인용 연결에 사용한다. pack에는 private 결과 객체를 넣지 않는다. 최종 Markdown에는 출처 원장과 연결되고 위치가 유효한 링크만 투영한다(`features/common/report_citations.py`). provider 세션 이어쓰기는 여전히 미지원이며, 기존 job/candidate 복구와 구분한다.

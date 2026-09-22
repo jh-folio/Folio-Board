@@ -15,6 +15,8 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -22,9 +24,36 @@ if _ROOT not in sys.path:
 from features.agent_mode import service as agent_service
 from features.company_analysis import generation_context as gen_ctx
 from features.company_analysis import generation_service
+from features.company_analysis import service as company_service
 from features.company_analysis.style import REQUIRED_SECTION_HEADINGS
 
 _CONTRACT_BLOCKS = ("분량 (섹션별 하한)", "이 보고서가 반드시 담아야 할 것")
+
+
+@pytest.mark.parametrize("style", ["beginner", "advanced"])
+@pytest.mark.parametrize("web_search", [False, True])
+def test_cli_entry_points_deliver_shared_focus_once_with_style_and_context(style, web_search):
+    """실제 로더부터 CLI 경계까지 검사하되 외부 호출·저장은 대체한다."""
+    focus = company_service.ANALYSIS_FOCUS_PROMPT_PATH.read_text(encoding="utf-8")
+    cfg = {"enabled": True, "provider": "codex", "model": "test-model", "effort": "high"}
+    with ExitStack() as stack:
+        for patcher in (*_stubbed(), patch.object(agent_service.A, "write_pack", return_value=Path("pack.json")),
+                        patch.object(gen_ctx.company_web, "lookup_company", return_value={})):
+            stack.enter_context(patcher)
+        pack, _ = agent_service.prepare_company_analysis_pack("HWM", analysis_style=style, web_search=web_search)
+    with (
+        patch.object(company_service, "selected_cli_config", return_value=cfg),
+        patch.object(company_service, "request_cli_text", return_value=(_draft(), "test-response", {})) as request,
+    ):
+        result, status = company_service.generate_llm_company_analysis(
+            "HWM", [], materials=_MATERIALS, context=pack["context"],
+            analysis_style=style, llm_override=True, web_search_override=web_search,
+        )
+    assert result is not None and status.startswith("ok_")
+    request.assert_called_once_with(cfg, pack["prompt"], pack["context"], web_search=web_search, include_usage=True, facts_sink={}, result_sink={})
+    assert pack["prompt"].count(focus) == 1
+    assert company_service.read_analysis_prompt(style) in pack["prompt"]
+    assert pack["outputContract"]["requiredSections"] == list(REQUIRED_SECTION_HEADINGS)
 
 _MATERIALS = {
     "context": "로컬 자료 컨텍스트",

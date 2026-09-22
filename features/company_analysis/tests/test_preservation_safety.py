@@ -17,6 +17,11 @@ from features.company_analysis.finalize import finalize_report
 from features.company_analysis.style import REQUIRED_SECTION_HEADINGS
 
 
+@pytest.fixture(autouse=True)
+def isolated_company_recovery(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "ANALYSIS_REPORTS_DIR", tmp_path / "company-analysis")
+
+
 def _draft(*, drop: tuple[str, ...] = ()) -> str:
     return "\n\n".join(
         f"## {heading}\n\n본문입니다."

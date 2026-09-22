@@ -11,6 +11,7 @@
 - SEC companyfacts, SEC 10-K HTML 상위 문단, 로컬 공식자료 fallback, 점수화된 보조 자료 순서다.
 - LLM 버전과 규칙 기반 버전 모두 같은 선별 결과를 사용해야 한다.
 - 기업분석은 `analysisStyle=beginner|advanced`를 지원한다. 두 모드는 서로 다른 완전한 prompt 파일을 사용하지만 같은 9개 섹션 골격, 자료 우선순위, no-fabrication, data gap 규칙을 유지해야 한다.
+- `service.read_company_analysis_prompt()`는 스타일 prompt에 재무 품질 지침과 `prompts/analysis_focus.md`를 한 번 결합한다. CLI pack과 `request_cli_text` 작성 경계 모두 이 로더를 사용한다. 기업 특성별 질문은 내부 집필 방향으로만 사용하며 목록·문답·중간 계획·신규 필드를 출력하지 않는다. 기존 섹션 전반에서 새 근거·의미·반대 설명을 연결하고 중요한 미확인과 공통 위험 점검을 유지한다. 조건은 출처 있는 수치 또는 확인 가능한 사건으로 쓰며 새 임계치를 만들지 않는다. 조건어 검사는 근거의 타당성을 검증하지 않는다. 추가 호출·계산·자료 수집·규칙 보고서 변경은 없다.
 - **beginner 프롬프트는 줄글 안에 스캔 경로를 둘 둔다**(0.6, 실측 A/B 비교 후). 각 문단은 그 문단의 관찰 사실을 담은 강한 첫 문장으로 시작하고(문단 내부 스캔), 0번을 제외한 각 섹션 제목 바로 다음 줄에 blockquote(`> `)로 2~3줄 섹션 요약을 둔다(섹션 간 스캔). 렌더러(`public/app.js`·`MarkdownRenderer.tsx`)가 "헤딩 바로 다음 blockquote"만 `.section-summary`로 스타일한다 — 본문 중간의 일반 인용과 구분하려면 이 순서(제목 → 요약 → 본문)를 반드시 지켜야 한다. §3 밸류에이션 표는 PER·PSR·EV/EBITDA·FCF Yield 같은 배수 뜻을 표 안 열이나 표 아래 한 줄로 밝히도록 명시한다 — 절대 원칙 7의 "처음 나오면 설명"이 실측에서 이 표에만 종종 안 지켜졌다. **볼드는 문단마다가 아니라 섹션당 1~2곳만 쓴다**(0.6 P3, 재수정). 처음에는 이 강한 첫 문장을 매 문단 볼드로도 표시했는데(P1 A/B 비교), 실제 8~9섹션짜리 전체 보고서로 보니 모든 문단이 볼드라 오히려 강조가 사라졌다(사용자 실측 지적: "너무 일관적으로 볼드만 넣어서 강조되는 느낌이 안 나네") — P1의 짧은 스니펫 비교로는 안 보이던 문제였다. 문장 자체는 계속 강하게 쓰되, 마크다운 볼드는 그 섹션에서 판단을 좌우하거나 가장 의외인 사실 1~2곳에만 남긴다.
 - **섹션 요약 blockquote와 소제목 사이 간격이 0이었다**(`public/styles.css`, 0.6 P3). `.markdown-brief h3 + p`·`h3 + ul`에는 0.58em 간격 규칙이 있었지만 blockquote는 그 목록에서 빠져 있었다 — `h3`가 `margin-bottom: 0`, `blockquote`가 `margin: 0 0 1em`(top 0)이라 섹션 요약이 추가된 이후로 소제목 바로 아래 blockquote는 계속 간격 없이 붙어 있었다. `h3 + blockquote`를 같은 규칙에 추가해 다른 헤딩-다음-요소 간격과 통일했다(0px → 약 10px, `getComputedStyle`로 확인).
 - 제공 자료가 부족하면 먼저 `features/company_analysis/data_gap_resolver.py`로 확인 경로와 미해결 항목을 구조화하고, 보고서 JSON에는 `dataGaps`와 `resolutionAttempts`를 보존한다.
@@ -43,3 +44,11 @@
 - **차트·본문 컨텍스트·규칙 보고서가 같은 DCF 객체를 읽는다**(`analysisCharts.dcf`). `financial_engine`의 옛 5년 평탄 모델은 제거했다 — 두 벌이 있으면 어느 표가 어느 모델에서 왔는지 알 수 없게 된다. 시장 데이터 캐시에 `beta`를 추가하며 `MARKET_CACHE_SHAPE`를 올렸다(안 올리면 beta 없는 옛 캐시가 TTL까지 내려와 할인율이 조용히 고정값으로 떨어진다).
 - **웹 검색 설정은 공통 resolver로 해석한다.** 요청의 `webSearch`가 생략되어 `None`이면 저장된 설정을 따르며, `bool_override(...) is True`로 축약해 검색을 끄지 않는다. 실제 전달값과 `webLookup`·`sourceLedger` 결과를 검증한다.
 - **기업분석도 웹으로 자료 공백을 메운다**(0.5.4). 로컬 색인은 보관 기간상 약 3개월이라 뉴스가 거의 없는 종목은 구조적으로 못 채운다(실측 로컬 문서 11/5/2/0건). 딥 리서치와 같은 **찾기 전용** 패스이며 최근 실적·가이던스·**경영진 실제 발언**을 찾는다. 발동 조건은 보조 자료 6건 미만이거나 실적·IR 갭이 있을 때라 대부분의 실행에서 호출이 늘지 않는다. **화자 귀속은 이름으로 본다** — `CFO`는 직함 목록에 넣지 않는다(기업분석 본문에서 그 세 글자는 대부분 영업현금흐름이라 재무표만 있어도 귀속이 통과한다). 초안이 고정 9섹션을 어기면 쓰기만 한 번 더 시키며(`draftGuard`) 실패한 초안은 되돌려 주지 않는다. 서술 요구(분석 범위 선언·조건형 시나리오)의 조건 낱말은 **품질 평가기가 세는 목록 그대로** 쓴다 — 넓히면 계약은 통과시키고 점수는 안 오르는 표현을 가르치게 된다.
+
+
+### 부분 완료와 복구 후보 (2026-09-21)
+
+- CLI 원문 이벤트는 저장하지 않고 공통 `cli_completion.py`가 관측한 종료 사실만 전달한다. Codex turn 완료/실패, Claude result/출력 한도/도구 대기를 구분하고 미관측은 unknown으로 둔다. native citation·provider continuation 전체(E0)는 이 최소 종료 관측과 별도다.
+- `finalize_report`는 provider 종료와 구조 누락을 `completion`에 구분한다. 본문 작성과 기업분석 quality repair에 적용한다. 불완전/실패 후보는 `canonical_reports.prepare`의 기업분석 전용 guard가 차단해 sync/job/quality 저장에서 정본을 덮어쓰지 못한다. 기존 CAS·revision·Overlay 계약은 유지한다.
+- 받은 CLI 본문 및 최종 저장 후보는 `company-analysis/recovery/`에 atomic write로 보관한다. 후보는 기존 목록/상세/삭제 API로 접근하며 saved=false와 고정 안내를 표시한다. 정본·Change Intelligence·Overlay 입력으로 자동 승격하지 않는다. 정상 커밋 증명 뒤 같은 본문의 복구 사본만 정리한다. 중단/실패 후보는 자동 삭제·자동 재실행하지 않는다.
+- 복구 보장은 후보의 원자적 쓰기 완료 이후부터다. provider 내부의 미반환 토큰이나 저장 장치 자체 실패까지 보장하지 않는다. 실제 CLI 생성/사용자 독해는 별도 선택이며 완료 조건이 아니다.

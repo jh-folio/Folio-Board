@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from features.common.execution_result import ExecutionResult
 from datetime import datetime
 from pathlib import Path
 
@@ -66,6 +69,7 @@ from features.topic_report.resolution_schema import ResearchPreview
 from features.topic_report.service import _build_llm_context, _read_prompt
 from features.topic_report.templates import compose_prompt
 from features.llm_settings.task_runtime import task_policy_metadata
+from features.topic_report.execution import ensure_active, incomplete
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,7 @@ class ApprovedGenerationOutcome:
     adapter: str
     generationMode: str
     mode: str
+    execution: ExecutionResult | None = field(default=None, repr=False)
 
 
 def _task_model(command: ApprovedGenerationInput) -> str:
@@ -111,6 +116,7 @@ def _resume_store(
     *,
     enabled: bool,
     selected_evidence_ids: list[str],
+    input_snapshot: dict | None = None,
 ) -> ResumeStore:
     approved = command.approved
     key = resume_key(approved.asOfDate, approved.planHash) if enabled else ""
@@ -124,6 +130,7 @@ def _resume_store(
             adapter=command.adapter,
             requested_mode=command.requestedMode,
             task_policy=command.taskPolicy,
+            input_snapshot=input_snapshot,
         )
         if key
         else "",
@@ -136,6 +143,7 @@ def build_approved_report(
     job_id: str,
     clock: Callable[[], datetime],
 ) -> ApprovedGenerationOutcome:
+    ensure_active(job_id)
     from features.llm_settings.task_runtime import generation_mode as policy_mode
     ai_enabled = (policy_mode(command.taskPolicy) == "llm_cli"
                   if isinstance(command.taskPolicy, dict) else command.requestedMode == "cli")
@@ -178,16 +186,25 @@ def build_approved_report(
     # 재개 체크포인트 — 초안 이전 단계(웹 조회·축 브리프·논지)를 남긴다. 사용량 한도로
     # 끊긴 실행을 다시 눌렀을 때 남은 단계부터 이어 가기 위해서다. 저장 실패는 생성을
     # 죽이지 않는다 — 못 남기면 다음 실행이 그 단계를 다시 할 뿐이고 그게 예전 동작이다.
-    resume = _resume_store(
-        command,
-        enabled=ai_enabled and approved.deepResearch and not command.preview.zeroEvidence.required,
-        selected_evidence_ids=selected,
-    )
     source_scope = load_source_scope() if use_web_search_for_analysis() else None
     web_directive = (
         render_scope_instruction(source_scope) + "\n\n" + render_web_search_directive(source_scope)
         if source_scope is not None
         else ""
+    )
+    resume = _resume_store(
+        command,
+        enabled=ai_enabled and approved.deepResearch and not command.preview.zeroEvidence.required,
+        selected_evidence_ids=selected,
+        input_snapshot={
+            "contract": "deep-cli-e0-1",
+            "evidence": evidence_items,
+            "admittedEvidence": rows,
+            "marketData": market_data,
+            "macroData": macro_data,
+            "marketState": command.marketState.context,
+            "webDirective": web_directive,
+        },
     )
     # 웹 조회 — **찾기와 쓰기를 분리한다.** 브리프 호출에 "필요하면 검색도 하라"를 얹는
     # 방식은 네 번 시도해 모두 실패했다(웹에서 온 URL 0~1건). 그건 쓰기 과제라 모델이
@@ -234,6 +251,7 @@ def build_approved_report(
                     axis_call,
                 )
             except Exception as error:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
+                propagate_interruption(error)
                 diagnostic_stage_failure(
                     current_diagnostic_recorder(), error, stage_id=None,
                     stage_code="context", boundary="generic",
@@ -270,6 +288,7 @@ def build_approved_report(
                 on_brief=resume.put_axis_brief,
             )
         except Exception as error:
+            propagate_interruption(error)
             diagnostic_stage_failure(
                 current_diagnostic_recorder(), error, stage_id=None,
                 stage_code="context", boundary="generic",
@@ -298,6 +317,7 @@ def build_approved_report(
                 material_context=market_data_to_markdown(market_data)[:2000],
             )
         except Exception as error:  # noqa: BLE001 - 논지 선정 실패가 보고서를 죽이지 않는다
+            propagate_interruption(error)
             diagnostic_stage_failure(
                 current_diagnostic_recorder(), error, stage_id=None,
                 stage_code="context", boundary="generic",
@@ -356,6 +376,7 @@ def build_approved_report(
     def _generate(extra: str = "") -> EngineOutput | None:
         """쓰기 호출 하나. 재시도가 같은 경로를 타야 컨텍스트가 갈리지 않는다."""
         nonlocal fallback_reason
+        ensure_active(job_id)
         full = "\n\n".join([context, extra]) if extra else context
         if attempted == "cli":
             try:
@@ -364,6 +385,7 @@ def build_approved_report(
                     "job_id": job_id,
                     "approved": approved,
                     "evidence_items": evidence_items,
+                    "web_search": source_scope is not None,
                 }
                 if approved.deepResearch:
                     cli_args["timeout_seconds"] = 1800
@@ -392,7 +414,7 @@ def build_approved_report(
     # 아니라 그 앞이다(근거 팩·웹 조회·축 브리프·논지 선정). 실측으로 같은 질문 4회 중
     # 2회가 못 쓸 초안이었고, 그중 한 번은 9분을 쓰고 아무것도 남기지 못했다.
     draft_guard_note: dict = {}
-    if approved.deepResearch and output is not None:
+    if approved.deepResearch and output is not None and not incomplete(output.execution):
         problems = draft_problems(output.markdown, min_chars=depth_policy["recommendedMinChars"])
         draft_guard_note = {"problems": problems, "retried": False, "outcome": ""}
         if problems:
@@ -407,7 +429,7 @@ def build_approved_report(
                 sections=list(approved.topicPlan.expectedSections),
             ))
             draft_guard_note["retried"] = True
-            if retry is not None:
+            if retry is not None and not incomplete(retry.execution):
                 chosen, reason = better_draft(
                     output.markdown, retry.markdown, min_chars=depth_policy["recommendedMinChars"],
                 )
@@ -446,7 +468,7 @@ def build_approved_report(
     # 꼬리 섹션 넷의 반복, 파월·월러 발언의 익명화). 금지는 코드가 집행하며
     # 계약을 어긴 편집본은 통째로 버리고 초안을 쓴다.
     edit_result: dict = {}
-    if approved.deepResearch and output is not None:
+    if approved.deepResearch and output is not None and not incomplete(output.execution):
         edit_result = edit_report(
             markdown,
             run_call=configured_editor_call(
@@ -613,6 +635,11 @@ def build_approved_report(
         "userContext": bool(approved.userContext),
         "personalOverlay": None,
     }
+    ensure_active(job_id)
+    if output is not None and output.execution is not None:
+        report["executionFacts"] = output.execution.with_text(markdown).safe_projection()
+    from features.common.report_citations import render_citation_links
+    report["markdown"] = render_citation_links(markdown, report.get("sourceLedger"), execution=output.execution if output is not None else None)
     return ApprovedGenerationOutcome(
         report=report,
         attemptedEngine=attempted,
@@ -621,4 +648,5 @@ def build_approved_report(
         adapter=final_adapter,
         generationMode=generation_mode,
         mode=mode,
+        execution=output.execution.with_text(markdown) if output is not None and output.execution is not None else None,
     )

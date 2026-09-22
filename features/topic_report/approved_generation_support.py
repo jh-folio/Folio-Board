@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from features.common.execution_result import ExecutionResult
+from features.topic_report.execution import ensure_active, propagate_interruption, require_complete
 
 from features.agent_mode import bridge as agent_bridge
 from features.agent_mode import schema as agent_schema
@@ -33,6 +35,7 @@ class EngineOutput:
     provider: str
     model: str
     responseId: str
+    execution: ExecutionResult | None = field(default=None, repr=False)
 
 
 def _topic(approved: ApprovedRequest) -> dict:
@@ -112,7 +115,9 @@ def attempt_cli(
     timeout_seconds: int | None = None,
     model: str = "",
     reasoning_effort: str = "",
+    web_search: bool | None = None,
 ) -> EngineOutput:
+    ensure_active(job_id)
     pack = agent_schema.build_pack(
         task_type="topic_report",
         artifact_type="topic_report",
@@ -128,7 +133,7 @@ def attempt_cli(
     )
     pack_path = agent_schema.write_pack(pack, owner_job_id=job_id)
     # 팩 안의 웹 검색 허가를 겉 지시가 덮지 않도록 같은 말을 밖에서도 한다.
-    web_search_enabled = use_web_search_for_analysis()
+    web_search_enabled = use_web_search_for_analysis() if web_search is None else bool(web_search)
     boundary = (
         "Use its approved plan, evidence, and context boundaries. If the pack contains a "
         "`## 웹 검색 사용` section, follow it: you may search the web within the listed sources "
@@ -144,6 +149,7 @@ def attempt_cli(
             "Return final Markdown only and do not write files.",
         ]
     )
+    result_sink = {}
     try:
         result = agent_bridge.run_agent_prompt(
             agent_prompt,
@@ -153,12 +159,14 @@ def attempt_cli(
             job_id=job_id,
             timeout=int(timeout_seconds or 0),
             web_search=web_search_enabled,
+            result_sink=result_sink,
         )
     except agent_bridge.AgentRateLimitError as error:
         # 사용량 한도는 코드 결함이 아니다. 이유를 보존해야 화면이 "한도, 리셋 뒤 다시"라고
         # 말할 수 있고, 재개 체크포인트가 남아 다음 실행이 이어받는다.
         raise EngineFailedError("cli_rate_limited") from error
     except RuntimeError as error:
+        propagate_interruption(error)
         message = str(error).casefold()
         unavailable = (
             "unavailable" in message
@@ -168,6 +176,7 @@ def attempt_cli(
         if unavailable:
             raise EngineUnavailableError("cli") from error
         raise EngineFailedError("cli") from error
+    ensure_active(job_id)
     output = str(result.get("output") or "").strip()
     if not output:
         raise EngineFailedError("cli")
@@ -177,6 +186,7 @@ def attempt_cli(
         provider="external_agent",
         model=str(model or ""),
         responseId="",
+        execution=result_sink.get("result"),
     )
 
 
@@ -209,8 +219,10 @@ def configured_editor_call(
     """
 
     def invoke(prompt: str, context: str) -> str:
+        ensure_active(job_id)
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_editor_disabled_in_tests")
+        result_sink = {}
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
@@ -219,7 +231,10 @@ def configured_editor_call(
             job_id=job_id,
             timeout=max(120, int(os.environ.get("TOPIC_EDITOR_CLI_TIMEOUT_SECONDS", "1200"))),
             web_search=False,
+            result_sink=result_sink,
         )
+        ensure_active(job_id)
+        require_complete(result_sink)
         return str(result.get("output") or "")
 
     return invoke
@@ -247,8 +262,10 @@ def configured_axis_call(
     resolved_web_search = use_web_search_for_analysis() if web_search is None else bool(web_search)
 
     def invoke(prompt: str, context: str) -> str:
+        ensure_active(job_id)
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_axis_analysis_disabled_in_tests")
+        result_sink = {}
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
@@ -257,7 +274,10 @@ def configured_axis_call(
             job_id=job_id,
             timeout=max(60, int(os.environ.get("TOPIC_AXIS_CLI_TIMEOUT_SECONDS", "600"))),
             web_search=resolved_web_search,
+            result_sink=result_sink,
         )
+        ensure_active(job_id)
+        require_complete(result_sink)
         return str(result.get("output") or "")
 
     return invoke

@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import re
 from collections.abc import Callable
 
@@ -235,7 +237,8 @@ def edit_report(
         return {"markdown": original, "status": "skipped", "violations": []}
     try:
         raw = run_call(PROMPT, _context(original, thesis, section_budgets))
-    except Exception:  # noqa: BLE001 - 편집 실패가 보고서를 죽이지 않는다
+    except Exception as error:  # noqa: BLE001 - 편집 실패가 보고서를 죽이지 않는다
+        propagate_interruption(error)
         return {"markdown": original, "status": "unavailable", "violations": []}
     edited = re.sub(r"^```(?:markdown)?\s*|\s*```$", "", str(raw or "").strip(), flags=re.IGNORECASE | re.DOTALL)
     violations = check_edit(original, edited)

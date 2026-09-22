@@ -1,4 +1,5 @@
 """Company analysis service — scoring, context building, report management, charts."""
+from concurrent.futures import CancelledError
 import datetime as dt
 import hashlib
 import json
@@ -66,6 +67,7 @@ SEC_CACHE_DIR = DATA_DIR / "sec-cache"
 DART_CACHE_DIR = DATA_DIR / "dart-cache"
 COMPANY_ANALYSIS_PROMPT_PATH = FEATURES_DIR / "company_analysis" / "prompt.md"
 FINANCIAL_QUALITY_PROMPT_PATH = FEATURES_DIR / "company_analysis" / "financial_quality_prompt.md"
+ANALYSIS_FOCUS_PROMPT_PATH = FEATURES_DIR / "company_analysis" / "prompts" / "analysis_focus.md"
 MARKET_MEMORY_DB_PATH = DATA_DIR / "market-memory.sqlite3"
 
 TRUSTED_SOURCES = {
@@ -175,6 +177,7 @@ def read_company_analysis_prompt(analysis_style="beginner"):
         prompt = read_analysis_prompt(analysis_style)
         if FINANCIAL_QUALITY_PROMPT_PATH.exists():
             prompt += "\n\n---\n\n" + FINANCIAL_QUALITY_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt += "\n\n---\n\n" + ANALYSIS_FOCUS_PROMPT_PATH.read_text(encoding="utf-8")
         return prompt
     except Exception:
         return ""
@@ -868,12 +871,17 @@ def generate_llm_company_analysis(
     web_status = "web_search" if web_search else "local_only"
     try:
         max_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000")))
-        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=web_search, include_usage=True)
+        facts = {}
+        result_sink = {}
+        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=web_search, include_usage=True, facts_sink=facts, result_sink=result_sink)
         if not text:
             return None, "empty_response"
         text = strip_llm_citation_markers(text)
+        from features.common.report_citations import render_citation_links
+        text = render_citation_links(text, source_ledger, execution=result_sink.get("result"))
         return {
             "markdown": text,
+            "executionFacts": facts,
             "provider": cfg["provider"],
             "model": cfg["model"],
             "usedDocs": used_docs,
@@ -882,6 +890,8 @@ def generate_llm_company_analysis(
             "webSearch": web_search,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=max_tokens),
         }, f"ok_{web_status}"
+    except (TimeoutError, CancelledError):
+        raise
     except Exception as error:
         # This is the primary provider boundary.  The caller deliberately
         # falls back to rules, so the exact typed cause must be observed here
@@ -948,23 +958,39 @@ def save_analysis_report(report):
     report["id"] = report.get("id") or rid
     report["saved"] = True
     path = ANALYSIS_REPORTS_DIR / f"{report['id']}.json"
+    from features.company_analysis.recovery import preserve_candidate
+    from features.common.canonical_report_io import safe_child_path
+    from features.common.canonical_report_types import CanonicalValidationError
+    # Validate before any durable write, including the recovery copy.
+    path = safe_child_path(ANALYSIS_REPORTS_DIR, f"{report['id']}.json")
+    recovery = preserve_candidate(ANALYSIS_REPORTS_DIR, report)
     # Manual POSTs without generation provenance/ChangeBasis remain ordinary
     # canonical saves and do not emit a synthetic change event.
     if isinstance(report.get("changeBasis"), dict):
         report["changeBasis"] = {**report["changeBasis"], "artifactId": report["id"]}
         report.pop("changeSummary", None)
         report = decorate_candidate("company_analysis", report, data_dir=DATA_DIR, generation_provenance=True)
-    prepared = prepare(
-        report_kind=ReportKind.COMPANY_ANALYSIS,
-        exact_path=path,
-        write_kind=WriteKind.CANONICAL,
-        candidate=report,
-    )
-    commit_sync(prepared)
+    try:
+        prepared = prepare(
+            report_kind=ReportKind.COMPANY_ANALYSIS,
+            exact_path=path,
+            write_kind=WriteKind.CANONICAL,
+            candidate=report,
+        )
+        commit_sync(prepared)
+    except CanonicalValidationError as error:
+        if error.code != "company_report_incomplete":
+            raise
+        return recovery
+    except OSError:
+        recovery["saveError"] = {"code": "save_failed", "message": "정상 보고서 저장에 실패했습니다. 복구 후보에서 다시 열 수 있습니다."}
+        return recovery
     projection = project_committed_report(MARKET_MEMORY_DB_PATH, path) if report.get("changeSummary") else {"status": "skipped"}
     committed = load_report(path)
     if committed is None:
         raise RuntimeError("canonical company report commit did not persist the report")
+    from features.company_analysis.recovery import discard_promoted
+    discard_promoted(ANALYSIS_REPORTS_DIR, committed)
     if report.get("changeSummary"):
         committed["changeIntelligence"] = {**(committed.get("changeIntelligence") or {}), "projectionStatus": projection.get("status"), "invalidationToken": projection.get("invalidationToken") or (committed.get("changeIntelligence") or {}).get("invalidationToken")}
     return committed
@@ -980,6 +1006,14 @@ def delete_analysis_report(report_id):
     )
 
     safe_id = str(report_id or "")
+    from features.company_analysis.recovery import candidate_path, is_recovery_id
+    if is_recovery_id(safe_id):
+        path = candidate_path(ANALYSIS_REPORTS_DIR, safe_id)
+        outcome = execute_report_delete(DeleteRequest(
+            root=path.parent, identity=f"company:{safe_id}",
+            primary_names=(path.name,), target_names=(path.name,),
+        ))
+        return {"deleted": outcome.deleted, "id": safe_id}
     try:
         path = resolve_exact_report_path(ANALYSIS_REPORTS_DIR.parent, ReportKind.COMPANY_ANALYSIS, safe_id)
     except CanonicalNotFoundError:
@@ -1000,9 +1034,15 @@ def delete_analysis_report(report_id):
 def list_analysis_reports():
     ANALYSIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
-    for path in sorted(ANALYSIS_REPORTS_DIR.glob("*.json"), reverse=True):
-        report = read_json(path, None)
-        if not report:
+    paths = list(ANALYSIS_REPORTS_DIR.glob("*.json"))
+    paths.extend((ANALYSIS_REPORTS_DIR / "recovery").glob("recovery-*.json"))
+    for path in sorted(paths, reverse=True):
+        if path.parent.name == "recovery":
+            from features.company_analysis.recovery import load_candidate
+            report = load_candidate(ANALYSIS_REPORTS_DIR, path.stem)
+        else:
+            report = read_json(path, None)
+        if not isinstance(report, dict) or not report:
             continue
         company = report.get("company", {})
         data_gaps = report.get("dataGaps") or {}
@@ -1013,6 +1053,8 @@ def list_analysis_reports():
                 "generatedAt": report.get("generatedAt", ""),
                 "query": report.get("query", ""),
                 "title": report.get("headline", ""),
+                **({"headline": report.get("headline", ""), "recoveryStored": True, "saved": False}
+                   if report.get("recoveryStored") is True else {}),
                 "company": company,
                 "mode": (report.get("generation") or {}).get("mode", ""),
                 "provider": (report.get("generation") or {}).get("provider", ""),
@@ -1027,6 +1069,9 @@ def list_analysis_reports():
 
 
 def get_analysis_report(report_id):
+    from features.company_analysis.recovery import load_candidate, is_recovery_id
+    if is_recovery_id(str(report_id)):
+        return load_candidate(ANALYSIS_REPORTS_DIR, str(report_id))
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(report_id or ""))
     if not safe_id:
         return None

@@ -119,6 +119,7 @@ def analyze_company(query, web_search_override=None, llm_override=None, analysis
             "prompt": read_company_analysis_prompt(analysis_style),
             "promptPath": llm_result.get("promptPath") or str(analysis_prompt_path(analysis_style)),
             "generation": generation,
+            "executionFacts": dict(llm_result.get("executionFacts") or {}),
             # 문서 목록은 LLM이 실제 인용한 것으로 좁히되(usedDocs), 웹 조회 인용은
             # `draft_artifact`와 같게 전달한다 — 3번째 인자를 빠뜨리면 API 생성본만
             # 참고자료에서 웹 인용이 사라진다(§6 규칙 14).

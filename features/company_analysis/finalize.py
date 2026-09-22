@@ -101,10 +101,11 @@ def finalize_report(
 ) -> dict:
     """계약을 검증하고 그 무게를 품질 점수에 반영한다.
 
-    어느 결함도 산출물을 되돌리지 않는다 — 기업분석에는 후보 구조가 없어 차단하면
-    사용자가 아무것도 받지 못한다. 품질이 아직 계산되지 않았으면 상한은 다음 호출로
+    본문은 보존하고 완료 상태를 표시한다. 불완전 결과의 정상본 승격은 저장 경계에서
+    차단하며 복구 후보로 남긴다. 품질이 아직 계산되지 않았으면 상한은 다음 호출로
     미룬다(`apply_report_ceiling`이 그때 다시 읽는다).
     """
+    from features.company_analysis.recovery import completion_summary
     report = dict(report or {})
     preexisting_unassessed = report.get("validationStatus") == "unassessed"
     if report.get("markdown"):
@@ -120,7 +121,9 @@ def finalize_report(
         # Explicit process interruption must remain observable to the caller.
         raise
     except Exception:
+        report["completion"] = completion_summary(report)
         return _mark_validation_unassessed(report)
+    report["completion"] = completion_summary(report)
     try:
         finalized = apply_report_ceiling(report)
     except (KeyboardInterrupt, SystemExit, CancelledError):

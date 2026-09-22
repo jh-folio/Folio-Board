@@ -62,10 +62,12 @@ def fingerprint(
     adapter: str,
     requested_mode: str,
     task_policy: dict | None = None,
+    input_snapshot: dict | None = None,
 ) -> str:
     """재개가 성립하는 조건. 하나라도 다르면 이어 쓰지 않는다."""
     payload = json.dumps(
         {
+            "inputSnapshot": input_snapshot,
             "planHash": str(plan_hash or ""),
             "asOfDate": str(as_of_date or ""),
             "evidence": [str(row or "") for row in selected_evidence_ids],
@@ -103,13 +105,13 @@ class ResumeStore:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.key and self.fingerprint)
+        return bool(_KEY.fullmatch(self.key) and self.key not in {".", ".."} and self.fingerprint)
 
     def _path(self) -> Path:
         return self.root / f"{self.key}.json"
 
     def _fresh(self, state: dict) -> bool:
-        if int(state.get("schemaVersion") or 0) != SCHEMA_VERSION:
+        if state.get("schemaVersion") != SCHEMA_VERSION:
             return False
         if str(state.get("fingerprint") or "") != self.fingerprint:
             return False
@@ -178,6 +180,8 @@ class ResumeStore:
 
     def put_web_lookup(self, lookup: dict) -> None:
         """축 하나의 조회 결과. 축 단위로 남겨야 중간에 끊겨도 앞부분이 산다."""
+        if lookup.get("status") != "ok":
+            return
         rows = [row for row in self.web_lookups() if row.get("axisKey") != lookup.get("axisKey")]
         self._merge("webLookups", [*rows, dict(lookup)])
 

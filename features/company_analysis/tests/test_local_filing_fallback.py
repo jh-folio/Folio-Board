@@ -141,7 +141,7 @@ def test_generate_llm_company_analysis_uses_selected_style_prompt(monkeypatch):
     def fake_config():
         return {"provider": "openai", "enabled": True, "apiKey": "test", "model": "test-model"}
 
-    def fake_openai(_cfg, prompt, context, web_search=False, include_usage=True):
+    def fake_openai(_cfg, prompt, context, web_search=False, include_usage=True, facts_sink=None, result_sink=None):
         captured["prompt"] = prompt
         captured["context"] = context
         return "## 분석 결과", "resp-1", {}

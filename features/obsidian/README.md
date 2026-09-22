@@ -120,3 +120,7 @@ py -3 features\obsidian\workflow\tests\test_validator.py
 - Obsidian 연동은 사용자가 버튼을 눌렀을 때만 실행합니다.
 - export 노트는 `primary_processed`, import 가능한 사용자 노트는 `user_synthesis` 계층을 유지합니다.
 - 파서는 Folio Board가 다루는 frontmatter 부분집합만 지원합니다. 복잡한 중첩 YAML은 대상이 아닙니다.
+
+### 보고서 인용 보존
+
+기업분석·딥 리서치 본문의 일반 Markdown 인용 링크를 그대로 내보낸다. 기업명 자동 wikilink는 기존 Markdown 링크의 라벨·URL 및 코드 내부를 바꾸지 않는다. 기존 사용자 노트와 자기참조 방지 frontmatter는 유지한다.

@@ -23,6 +23,7 @@ from features.topic_report.report_contract import (
 from features.topic_report.research_trace import build_research_trace_summary
 from features.topic_report.section_repair import merge_section_patches, parse_patch_response
 from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure
+from features.topic_report.execution import ensure_active, propagate_interruption, require_complete, report_incomplete
 
 
 class DeepResearchGenerationError(RuntimeError):
@@ -76,8 +77,10 @@ def _repair_payload(report: dict, validation: dict, sections: list[str], pass_no
 
 def configured_repair_call(command: ApprovedGenerationInput, *, job_id: str) -> RepairCall:
     def invoke(_pass_no: int, context: str) -> str:
+        ensure_active(job_id)
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise DeepResearchGenerationError("external_repair_disabled_in_tests")
+        result_sink = {}
         result = agent_bridge.run_agent_prompt(
             "Return JSON only for this bounded Deep Research section repair.\n\n" + context,
             adapter=command.adapter,
@@ -85,7 +88,10 @@ def configured_repair_call(command: ApprovedGenerationInput, *, job_id: str) -> 
             reasoning_effort=_task_reasoning_effort(command),
             job_id=job_id,
             timeout=max(60, int(os.environ.get("TOPIC_REPORT_REPAIR_CLI_TIMEOUT_SECONDS", "900"))),
+            result_sink=result_sink,
         )
+        ensure_active(job_id)
+        require_complete(result_sink)
         return str(result.get("output") or "")
     return invoke
 
@@ -107,7 +113,7 @@ def _quality(report: dict, markdown: str) -> dict:
 
 def _validate(report: dict) -> dict:
     plan = report.get("topicPlan") or {}
-    return validate_deep_report(
+    validation = validate_deep_report(
         str(report.get("markdown") or ""),
         source_ledger=list(report.get("sourceLedger") or []),
         depth_policy=dict(report.get("depthPolicy") or {}),
@@ -117,6 +123,11 @@ def _validate(report: dict) -> dict:
         research_questions=list(plan.get("researchQuestions") or []) or None,
         quote_sources=list((report.get("webLookup") or {}).get("speakerSources") or []),
     )
+    if report_incomplete(report):
+        validation["valid"] = False
+        validation.setdefault("defects", []).append({"code": "provider_incomplete", "category": "blocking", "section": ""})
+        validation.setdefault("metrics", {})["blockingCount"] = int(validation.get("metrics", {}).get("blockingCount") or 0) + 1
+    return validation
 
 
 def _missing_fixed_sections(markdown: str) -> list[str]:
@@ -135,6 +146,7 @@ def run_deep_pipeline(
     candidate_store: CandidateStore,
     repair_call: RepairCall | None = None,
 ) -> ApprovedGenerationOutcome:
+    ensure_active(job_id)
     if not command.approved.deepResearch:
         return outcome
     if outcome.finalEngine == "rules":
@@ -145,11 +157,18 @@ def run_deep_pipeline(
             [outcome.fallbackReason or ""],
         )
     report = dict(outcome.report)
+    from features.common.report_citations import render_citation_links, strip_citation_links
+    report["markdown"] = strip_citation_links(str(report.get("markdown") or ""))
+
+    def cited_copy(candidate):
+        return {**candidate, "markdown": render_citation_links(
+            str(candidate.get("markdown") or ""), candidate.get("sourceLedger"), execution=outcome.execution,
+        )}
     report["id"] = report_id
     validation = _validate(report)
     candidate_store.write(
         job_id, 0, report_id=report_id, accepted=bool(validation["valid"]), validation=validation,
-        provenance={"pass": 0, "engine": outcome.finalEngine}, report=report,
+        provenance={"pass": 0, "engine": outcome.finalEngine}, report=cited_copy(report),
     )
     if not validation["valid"]:
         # 초안 재시도 결과를 함께 싣는다. 실패한 잡은 보고서를 저장하지 않으므로
@@ -172,6 +191,7 @@ def run_deep_pipeline(
     attempted_repairs = accepted_repairs = 0
     repair_call = repair_call or configured_repair_call(command, job_id=job_id)
     for pass_no, limit in ((1, 3), (2, 2)):
+        ensure_active(job_id)
         sections = repairable_sections(best_validation, limit=limit)
         if not sections:
             break
@@ -189,14 +209,16 @@ def run_deep_pipeline(
             candidate_validation = _validate(candidate_report)
             accepted = candidate_validation["valid"] and candidate_improves(best_validation, candidate_validation)
         except (DeepResearchGenerationError, OSError, RuntimeError, TimeoutError, ValueError) as error:
+            propagate_interruption(error)
             diagnostic_stage_failure(
                 current_diagnostic_recorder(), error, stage_id=None,
                 stage_code="validate", boundary="validation",
             )
             candidate_validation = {"valid": False, "defects": [], "metrics": {"blockingCount": 1}}
+        ensure_active(job_id)
         candidate_store.write(
             job_id, pass_no, report_id=report_id, accepted=accepted, validation=candidate_validation,
-            provenance={"pass": pass_no, "engine": outcome.finalEngine}, report=candidate_report,
+            provenance={"pass": pass_no, "engine": outcome.finalEngine}, report=cited_copy(candidate_report),
         )
         if not accepted:
             break
@@ -235,14 +257,16 @@ def run_deep_pipeline(
             "validation": best_validation,
         },
     }
+    ensure_active(job_id)
     return ApprovedGenerationOutcome(
-        report=best_report,
+        report=cited_copy(best_report),
         attemptedEngine=outcome.attemptedEngine,
         finalEngine=outcome.finalEngine,
         fallbackReason=outcome.fallbackReason,
         adapter=outcome.adapter,
         generationMode=outcome.generationMode,
         mode=outcome.mode,
+        execution=outcome.execution.with_text(str(best_report.get("markdown") or "")) if outcome.execution is not None else None,
     )
 
 

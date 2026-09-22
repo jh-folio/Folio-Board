@@ -1237,6 +1237,7 @@ def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", w
 def write_company_analysis_from_markdown(pack: dict, markdown: str, *, persist: bool = True) -> dict:
     report = dict(pack.get("draftArtifact") or {})
     report["markdown"] = str(markdown or "").strip()
+    report["executionFacts"] = dict(pack.get("executionFacts") or {})
     report["generation"] = A.agent_generation(len(report.get("sources") or []), model=str(pack.get("executedAdapter") or ""))
     try:
         report = apply_quality_loop(
@@ -1838,6 +1839,9 @@ def write_quality_repair_from_markdown(pack: dict, markdown: str, *, persist: bo
         "qualityAfter": artifact["quality"],
         "generation": A.agent_generation(len(artifact.get("sources") or []), model=str(pack.get("executedAdapter") or "")),
     }
+    if artifact_type == "company_analysis":
+        artifact["executionFacts"] = dict(pack.get("executionFacts") or {})
+        artifact = finalize_company_report(artifact)
     if not persist:
         return artifact
     if artifact_type == "briefing":
