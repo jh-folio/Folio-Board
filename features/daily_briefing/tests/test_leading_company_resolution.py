@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from features.common.tests.company_listing_fixtures import company_listing_cache
+
 from features.daily_briefing.visuals import (
     collect_briefing_visuals,
     leading_company_subjects_from_markdown,
