@@ -1,11 +1,11 @@
-# Folio Board 0.3.0 Smoke Tests
+# Folio Board 0.6.0 Smoke Tests
 
 Run these checks against a clean local workspace or a synthetic packaged fixture. Do not use real credentials, private notes, portfolio data, or provider transcripts as evidence.
 
 ## Startup and identity
 
 1. Start Folio Board with `start.ps1`, `start.sh`, or `start-archive.cmd`.
-2. Open `http://127.0.0.1:8787/api/health` and confirm `status=ok`, `version=0.3.0`, the expected commit, PID, and workspace identity.
+2. Open `http://127.0.0.1:8787/api/health` and confirm `status=ok`, `version=0.6.0`, the expected commit, PID, and workspace identity.
 3. Confirm Home, Dashboard, Watchlist, Briefing, RSS Feed, Market Memory, Company Analysis, Deep Research, and Settings are visible.
 
 ## Appearance and responsive navigation
@@ -30,7 +30,7 @@ At desktop, tablet, and mobile widths:
 1. Enter an investment question and optional hypothesis context.
 2. Review the approved plan and evidence preview before generation.
 3. If a Smart Collection is selected, confirm only its ID/revision is sent from the browser and the saved definition is resolved again by the server.
-4. Execute once through Direct mode and once through a deterministic CLI fixture; both must use the same approved definition and resolved evidence.
+4. Execute through a deterministic CLI fixture using the approved definition and resolved evidence. For ordinary reports, separately verify the supported rules path with AI disabled. Deep Research must fail explicitly when no validated CLI candidate is available.
 5. If no usable external evidence exists, confirm generation is blocked until the evidence-limited fallback is explicitly approved.
 6. Reopen the saved report and verify the approved plan, external evidence ledger, data gaps, quality, execution provenance, Market State, hypothesis context, and Personal Overlay are visibly separate.
 
@@ -42,7 +42,7 @@ At desktop, tablet, and mobile widths:
 4. Inspect `/api/agent/work-log`: entries may contain only bounded task/status/timing/engine/artifact/proposal metadata. Prompts, replies, Markdown, diffs, attachments, paths, credentials, and raw provider output must be absent.
 5. Restart the server and confirm the same saved report, proposal state, Smart Collection revision, and Work Log metadata reopen safely.
 
-## Stage 0.3.0 integrated workflow matrix
+## Candidate integrated workflow matrix
 
 Run every scenario with a **synthetic fixture root**. Never point these checks at
 the real `data/`, `config/`, `research-inbox/`, `.env`, portfolio, watchlist, or

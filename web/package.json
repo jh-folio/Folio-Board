@@ -1,7 +1,7 @@
 {
   "name": "folio-board-web",
   "private": true,
-  "version": "0.5.4",
+  "version": "0.6.0",
   "type": "module",
   "description": "Folio Board React island shell (gradual adoption). Builds fixed-name bundles into ../public/react for the FastAPI static server to serve.",
   "scripts": {

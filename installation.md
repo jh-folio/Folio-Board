@@ -167,7 +167,7 @@ The guide does not appear if you already have research data, so updating never s
 
 ## Updating To A New Version
 
-Releases unzip into a **version-named folder** such as `FolioBoard-v0.5.4/`. The new folder starts with an empty `data/`, so your reports and collected articles do not follow automatically unless you tell them to.
+Releases unzip into a **version-named folder** such as `FolioBoard-v0.6.0/`. The new folder starts with an empty `data/`, so your reports and collected articles do not follow automatically unless you tell them to.
 
 ### If your data lives in the app folder (the default)
 
@@ -223,8 +223,8 @@ Development-only folders such as `web/`, `docs/`, and `plan/` are needed for sou
 Maintainers can create a clean user package from reviewed tracked inputs with:
 
 ```powershell
-py -3 scripts\package_release.py --version v0.5.4
-py -3 scripts\verify_release.py --release-dir dist\FolioBoard-v0.5.4
+py -3 scripts\package_release.py --version v0.6.0
+py -3 scripts\verify_release.py --release-dir dist\FolioBoard-v0.6.0
 ```
 
 The package includes the built React bundle, so normal users do not need Node.js. Deep Research remains local-first: its reports are stored under `data/topic-reports/`, Smart Collections under `data/smart-collections.json`, and Agent Work Log entries contain metadata only.
