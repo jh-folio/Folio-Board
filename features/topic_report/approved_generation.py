@@ -200,7 +200,9 @@ def build_approved_report(
             "contract": "deep-cli-e0-1",
             "evidence": evidence_items,
             "admittedEvidence": rows,
-            "marketData": market_data,
+            # Top-level asOf is the fetch clock, not an observation date.
+            # Keep every market observation (including its date) in the hash.
+            "marketData": {key: value for key, value in market_data.items() if key != "asOf"},
             "macroData": macro_data,
             "marketState": command.marketState.context,
             "webDirective": web_directive,

@@ -12,6 +12,13 @@ async function json(route: Route, body: unknown, status = 200, headers: Record<s
 async function inspectError(page: Page, selector: string, name: string, theme: string, project: string) {
   const panel = page.locator(selector);
   await panel.scrollIntoViewIfNeeded();
+  // Visibility becomes true during the reader's entrance fade. Axe must read
+  // the settled text, not a partially transparent animation frame.
+  await panel.evaluate(async (element) => {
+    const finite = element.getAnimations({ subtree: true }).filter((animation) =>
+      animation.effect?.getComputedTiming().iterations !== Infinity);
+    await Promise.all(finite.map((animation) => animation.finished.catch(() => undefined)));
+  });
   const box = await panel.boundingBox();
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);

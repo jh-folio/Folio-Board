@@ -268,6 +268,7 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
 
     Agent를 부르지 않고 저장된 projection만 읽는다(계획 C.2).
     """
+    requested_ticker = ticker
     ticker = M.normalize_ticker(ticker)
     today = _date(as_of) or _now().date()
     empty = {
@@ -286,12 +287,13 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
         return empty
     conn = ST.connect(db_path)
     try:
-        thesis = ST.get_thesis(conn, ticker)
+        thesis = ST.get_thesis(conn, requested_ticker)
         if not thesis:
             # thesis가 없어도 Vault 노트 유무는 알려준다 — 만드는 경로 안내가 달라진다.
             empty["ownership"] = {"source": "", "appOwned": False, "vaultNote": _vault_note(conn, ticker) or None,
                                   "syncPaused": False, "message": ""}
             return empty
+        ticker = thesis["ticker"]
         structured, invalid, templates = partition_checkpoints(
             thesis.get("next_checkpoints"),
             scope="thesis",

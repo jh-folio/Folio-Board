@@ -133,7 +133,13 @@ def test_us_heatmap_provider_reflects_toss_enriched_prices():
     assert result["rows"][0]["changePct"] == 5.0
 
 
-def test_default_us_heatmap_carries_bounded_future_universe_provenance_only():
+def test_default_us_heatmap_carries_bounded_future_universe_provenance_only(tmp_path, monkeypatch):
+    # Verify the shipped baseline/changeset, independent of a user's local
+    # snapshot or a previously imported workspace configuration.
+    from features.common.market_data import sp500_universe
+    for name in ("sp500_constituents.json", sp500_universe.SP500_CHANGESET_FILENAME):
+        (tmp_path / name).write_bytes((ROOT / "defaults" / "config" / name).read_bytes())
+    monkeypatch.setattr(sp500_universe, "resolve_config", lambda name: tmp_path / name)
     def prices(tickers, date):
         return {
             ticker: {

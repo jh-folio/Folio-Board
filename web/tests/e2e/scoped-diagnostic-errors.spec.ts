@@ -501,6 +501,8 @@ test.describe("0.6 scoped diagnostic errors", () => {
   });
 
   test("work log list, clear, and proposal failures are bounded and do not auto-retry or cross IDs", async ({ page }) => {
+    diagnosticFeature = "automation";
+    diagnosticNextAction = "inspect_result";
     let listCalls = 0;
     let clearCalls = 0;
     let proposalCalls = 0;

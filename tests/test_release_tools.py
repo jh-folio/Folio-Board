@@ -219,7 +219,15 @@ def test_package_build_creates_verified_zip(tmp_path: Path) -> None:
     # 부트스트랩이 아는 파일과 패키지 내용이 갈라지면 첫 실행이 조용히 깨진다.
     from features.common.config_bootstrap import DEFAULT_CONFIG_NAMES
 
-    assert set(DEFAULT_CONFIG_NAMES) == {path.name for path in (package_dir / "defaults" / "config").iterdir()}
+    # The dated membership changeset is immutable supporting data, not a
+    # mutable bootstrapped user setting; it still must ship byte-for-byte.
+    supplemental = "sp500_constituent_changes_2026.json"
+    assert set(DEFAULT_CONFIG_NAMES) | {supplemental} == {
+        path.name for path in (package_dir / "defaults" / "config").iterdir()
+    }
+    assert (package_dir / "defaults" / "config" / supplemental).read_bytes() == (
+        workspace / "defaults" / "config" / supplemental
+    ).read_bytes()
     # 셸 스크립트가 CRLF면 shebang이 `#!/bin/bash` + CR이 되어 macOS·Linux에서
     # `bad interpreter: /bin/bash^M`으로 실행 자체가 실패한다. 0.5.0 패키지의
     # start.sh가 실제로 CRLF 27줄이었다 — Windows 작업 트리에서 그대로 복사됐다.

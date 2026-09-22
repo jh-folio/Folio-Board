@@ -173,10 +173,10 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
         raise ValueError("ticker는 필수이며 형식이 올바라야 합니다.")
     conn = ST.connect(db_path)
     try:
-        existing = ST.get_thesis(conn, ticker) or {}
+        existing = ST.get_thesis(conn, data.get("ticker")) or {}
         raw_checkpoints, _ = _manual_field(data, "next_checkpoints", existing)
         thesis = M.Thesis(
-            ticker=ticker,
+            ticker=existing.get("ticker") or ticker,
             company=str(_manual_field(data, "company", existing)[0] or "").strip()[:120],
             core_thesis=str(_manual_field(data, "core_thesis", existing)[0] or "").strip()[:4000],
             key_assumptions=M._as_list(_manual_field(data, "key_assumptions", existing)[0]),
@@ -258,6 +258,7 @@ def run_thesis_delta(ticker: str, body: dict | None = None, db_path=None) -> dic
             thesis = ST.get_thesis(conn, ticker)
             if not thesis:
                 raise LookupError(f"Thesis not found: {ticker}")
+            ticker = thesis["ticker"]
             if reuse_latest:
                 latest = ST.latest_delta(conn, ticker)
                 if not latest:

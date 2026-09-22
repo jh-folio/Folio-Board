@@ -177,3 +177,37 @@ def test_real_generation_changes_resume_fingerprint_when_same_document_changes(t
     changed = replace(command, research=PreparedResearch(command.research.resolution, pack))
     generation.build_approved_report(changed, job_id=JOB_ID, clock=lambda: NOW)
     assert fingerprints[0] != fingerprints[1]
+
+
+def test_resume_ignores_fetch_clock_but_keeps_prices_and_observation_dates(tmp_path, monkeypatch):
+    from features.topic_report import approved_generation as generation
+    from features.topic_report.tests.test_approved_generation import prepared_input, fake_materials
+
+    market = {"asOf": "2026-07-16T10:00:00+09:00",
+              "tickers": {"TEST": {"price": 100, "asOf": "2026-07-15"}}}
+    monkeypatch.setattr(generation, "_materials",
+                        lambda approved, rows: (fake_materials(approved, rows)[0], market, {"ok": False}))
+    monkeypatch.setattr(generation, "resume_root", lambda: tmp_path / "resume")
+    monkeypatch.setattr(generation, "_read_prompt", lambda: "prompt")
+    monkeypatch.setattr(generation, "attempt_cli",
+                        lambda *a, **k: (_ for _ in ()).throw(support.EngineFailedError("cli")))
+    fingerprints = []
+    original = generation.resume_fingerprint
+
+    def record(**kwargs):
+        value = original(**kwargs)
+        fingerprints.append(value)
+        return value
+
+    monkeypatch.setattr(generation, "resume_fingerprint", record)
+    command = prepared_input(tmp_path, "cli")
+    generation.build_approved_report(command, job_id=JOB_ID, clock=lambda: NOW)
+    market["asOf"] = "2026-07-16T10:05:00+09:00"
+    generation.build_approved_report(command, job_id=JOB_ID, clock=lambda: NOW)
+    market["tickers"]["TEST"]["price"] = 101
+    generation.build_approved_report(command, job_id=JOB_ID, clock=lambda: NOW)
+    market["tickers"]["TEST"]["asOf"] = "2026-07-16"
+    generation.build_approved_report(command, job_id=JOB_ID, clock=lambda: NOW)
+    assert fingerprints[0] == fingerprints[1]
+    assert fingerprints[1] != fingerprints[2]
+    assert fingerprints[2] != fingerprints[3]

@@ -215,7 +215,7 @@ def test_sec_cache_does_not_persist_raw_fetch_exception(tmp_path: Path, monkeypa
 
 
 def test_api_keys_are_written_to_secret_store_not_dotenv(tmp_path: Path, monkeypatch) -> None:
-    marker = "SYNTHETIC_PRIVATE_OPENAI_API_KEY"
+    marker = "SYNTHETIC_PRIVATE_FRED_API_KEY"
     stored: dict[str, str] = {}
     monkeypatch.setattr(llm_client, "ROOT", tmp_path)
     monkeypatch.setattr(
@@ -226,41 +226,41 @@ def test_api_keys_are_written_to_secret_store_not_dotenv(tmp_path: Path, monkeyp
     )
 
     llm_client.write_env_values({
-        "OPENAI_API_KEY": marker,
-        "OPENAI_MODEL": "gpt-security-test",
+        "FRED_API_KEY": marker,
+        "SEC_USER_AGENT": "release-test@example.invalid",
     })
 
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert stored["OPENAI_API_KEY"] == marker
+    assert stored["FRED_API_KEY"] == marker
     assert marker not in env_text
-    assert "OPENAI_API_KEY=" not in env_text
-    assert "OPENAI_MODEL=gpt-security-test" in env_text
+    assert "FRED_API_KEY=" not in env_text
+    assert "SEC_USER_AGENT=release-test@example.invalid" in env_text
 
 
 def test_secret_store_loads_without_dotenv_file(tmp_path: Path, monkeypatch) -> None:
     marker = "SYNTHETIC_PRIVATE_STORED_API_KEY"
     monkeypatch.setattr(llm_client, "ROOT", tmp_path)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
     monkeypatch.setattr(
         llm_client,
         "_load_secret_value",
-        lambda key: marker if key == "OPENAI_API_KEY" else "",
+        lambda key: marker if key == "FRED_API_KEY" else "",
     )
 
     llm_client.load_dotenv()
 
-    assert llm_client.os.environ["OPENAI_API_KEY"] == marker
+    assert llm_client.os.environ["FRED_API_KEY"] == marker
 
 
 def test_legacy_dotenv_secrets_migrate_to_secret_store(tmp_path: Path, monkeypatch) -> None:
     marker = "SYNTHETIC_PRIVATE_LEGACY_API_KEY"
     stored: dict[str, str] = {}
     (tmp_path / ".env").write_text(
-        f"OPENAI_API_KEY={marker}\nOPENAI_MODEL=gpt-security-test\n",
+        f"FRED_API_KEY={marker}\nSEC_USER_AGENT=release-test@example.invalid\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(llm_client, "ROOT", tmp_path)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
     monkeypatch.setattr(
         llm_client,
         "_store_secret_value",
@@ -271,10 +271,10 @@ def test_legacy_dotenv_secrets_migrate_to_secret_store(tmp_path: Path, monkeypat
     llm_client.load_dotenv()
 
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert stored["OPENAI_API_KEY"] == marker
+    assert stored["FRED_API_KEY"] == marker
     assert marker not in env_text
-    assert "OPENAI_API_KEY=" not in env_text
-    assert "OPENAI_MODEL=gpt-security-test" in env_text
+    assert "FRED_API_KEY=" not in env_text
+    assert "SEC_USER_AGENT=release-test@example.invalid" in env_text
 
 
 def test_portfolio_price_cache_path_is_one_bounded_child(monkeypatch, tmp_path: Path) -> None:
@@ -294,11 +294,11 @@ def test_portfolio_price_cache_path_is_one_bounded_child(monkeypatch, tmp_path: 
 def test_failed_secret_migration_preserves_legacy_dotenv_value(tmp_path: Path, monkeypatch) -> None:
     marker = "SYNTHETIC_PRIVATE_UNMIGRATED_API_KEY"
     (tmp_path / ".env").write_text(
-        f"OPENAI_API_KEY={marker}\n",
+        f"FRED_API_KEY={marker}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(llm_client, "ROOT", tmp_path)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
     monkeypatch.setattr(
         llm_client,
         "_store_secret_value",
@@ -309,7 +309,7 @@ def test_failed_secret_migration_preserves_legacy_dotenv_value(tmp_path: Path, m
     llm_client.load_dotenv()
 
     assert marker in (tmp_path / ".env").read_text(encoding="utf-8")
-    assert llm_client.os.environ["OPENAI_API_KEY"] == marker
+    assert llm_client.os.environ["FRED_API_KEY"] == marker
 
 
 def test_automation_result_does_not_expose_raw_exception(monkeypatch) -> None:
@@ -331,13 +331,13 @@ def test_personal_overlay_status_does_not_expose_raw_exception(monkeypatch) -> N
     marker = "SYNTHETIC_PRIVATE_OVERLAY_EXCEPTION_DETAIL"
     monkeypatch.setattr(
         overlay_service,
-        "selected_llm_config",
-        lambda: {"enabled": True, "apiKey": "configured", "provider": "openai", "model": "test"},
+        "selected_cli_config",
+        lambda: {"enabled": True, "provider": "codex", "model": "test"},
     )
     monkeypatch.setattr(overlay_service, "read_prompt", lambda: "prompt")
     monkeypatch.setattr(
         overlay_service,
-        "request_llm_text",
+        "request_cli_text",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(marker)),
     )
 
@@ -360,13 +360,13 @@ def test_thesis_delta_status_does_not_expose_raw_exception(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         thesis_delta,
-        "selected_llm_config",
-        lambda: {"enabled": True, "apiKey": "configured", "provider": "openai", "model": "test"},
+        "selected_cli_config",
+        lambda: {"enabled": True, "provider": "codex", "model": "test"},
     )
     monkeypatch.setattr(thesis_delta, "read_prompt", lambda: "prompt")
     monkeypatch.setattr(
         thesis_delta,
-        "request_llm_text",
+        "request_cli_text",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(marker)),
     )
 
@@ -380,14 +380,14 @@ def test_market_memory_results_do_not_expose_raw_exceptions(monkeypatch) -> None
     marker = "SYNTHETIC_PRIVATE_MEMORY_EXCEPTION_DETAIL"
     monkeypatch.setattr(
         memory_service,
-        "selected_llm_config",
-        lambda: {"apiKey": "configured", "provider": "openai", "model": "test"},
+        "selected_cli_config",
+        lambda: {"enabled": True, "provider": "codex", "model": "test"},
     )
     monkeypatch.setattr(memory_service, "read_market_memory_prompt", lambda: "prompt")
     monkeypatch.setattr(memory_service, "build_memory_llm_context", lambda _date: ("context", [], "2026-01-01"))
     monkeypatch.setattr(
         memory_service,
-        "request_llm_text",
+        "request_cli_text",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(marker)),
     )
     monkeypatch.setattr(

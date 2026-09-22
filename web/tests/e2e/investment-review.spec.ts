@@ -97,7 +97,7 @@ test("challenge acknowledges accepted long-running job before terminal polling a
   const accepted: Array<{ scope?: unknown; message?: string }> = [];
   await openPortfolio(page, "light", review, accepted, undefined, true);
   await page.getByRole("button", { name: "이 리뷰의 가장 약한 전제를 찾아줘" }).click();
-  await expect(page.getByRole("status")).toContainText("반증 검토를 요청했습니다");
+  await expect(page.getByRole("main").getByRole("status")).toContainText("반증 검토를 요청했습니다");
   await expect.poll(() => accepted).toEqual([
     { scope: { kind: "investment_review", id: "2026-09-01", revision: 1, intent: "challenge" } },
     { message: "이 리뷰의 가장 약한 전제를 찾아줘" },
@@ -119,7 +119,7 @@ test("challenge preserves a server-persisted user turn when job submission fails
   await openPortfolio(page, "light", review, undefined, undefined, false, deletes, true);
   await page.getByRole("button", { name: "이 리뷰의 가장 약한 전제를 찾아줘" }).click();
   await expect.poll(() => deletes).toEqual(["challenge-thread"]);
-  await expect(page.getByRole("alert")).toContainText("질문은 대화에 저장되어 보존했습니다");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("질문은 대화에 저장되어 보존했습니다");
 });
 
 for (const theme of ["light", "dark"] as const) {

@@ -115,6 +115,23 @@ def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def _storage_ticker(conn, ticker: str) -> str:
+    """Resolve an existing key without renaming or merging legacy records."""
+    raw = str(ticker or "").strip().upper()
+    canonical = M.normalize_ticker(raw)
+    for key in dict.fromkeys((raw, canonical)):
+        if key and conn.execute("SELECT 1 FROM thesis WHERE ticker=?", (key,)).fetchone():
+            return key
+    if canonical:
+        matches = [row["ticker"] for row in conn.execute("SELECT ticker FROM thesis")
+                   if M.normalize_ticker(row["ticker"]) == canonical]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError("여러 기존 Thesis가 같은 티커에 연결됩니다. 기존 티커를 지정해 주세요.")
+    return canonical or raw
+
+
 def upsert_thesis(conn, thesis: M.Thesis) -> str:
     """Thesis를 ticker 기준으로 upsert. ticker 반환.
 
@@ -126,12 +143,11 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
     from features.common.research_schema.tracked_checkpoints import merge_with_templates
 
     row = thesis.to_row()
-    # PK는 정규화된 티커다 — 노트 색인과 같은 규칙(model.normalize_ticker). Vault
-    # frontmatter의 `005930.KS`와 노트의 `005930`이 다른 행이 되면 카드가 영영
-    # thesis를 못 찾는다. 정규화가 거부하는 표기는 저장하지 않는다.
+    # New rows use normalized keys; existing keys retain their history and owner.
     ticker = M.normalize_ticker(row["ticker"])
     if not ticker:
         raise ValueError("thesis.ticker가 비어 있거나 형식이 올바르지 않습니다.")
+    ticker = _storage_ticker(conn, row["ticker"])
     row["ticker"] = ticker
     now = _now()
     existing = conn.execute(
@@ -190,7 +206,7 @@ def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
     """
     conn.execute(
         "UPDATE thesis SET next_checkpoints_json=? WHERE ticker=?",
-        (json.dumps(checkpoints, ensure_ascii=False), str(ticker or "").upper()),
+        (json.dumps(checkpoints, ensure_ascii=False), _storage_ticker(conn, ticker)),
     )
     conn.commit()
 
@@ -217,8 +233,7 @@ def list_theses(conn, *, status=None) -> list:
 
 
 def get_thesis(conn, ticker: str):
-    # 조회도 저장과 같은 정규화를 쓴다 — `BRK.B`로 물어도 PK `BRK-B` 행을 찾아야 한다.
-    key = M.normalize_ticker(ticker) or str(ticker or "").strip().upper()
+    key = _storage_ticker(conn, ticker)
     row = conn.execute("SELECT * FROM thesis WHERE ticker=?", (key,)).fetchone()
     return _row_to_dict(row) if row else None
 
@@ -238,7 +253,7 @@ def save_delta(
     created_at: str | None = None,
 ) -> dict:
     """Persist one Thesis Delta row and return the stored row."""
-    ticker = str(ticker or "").strip().upper()
+    ticker = _storage_ticker(conn, ticker)
     if not ticker:
         raise ValueError("ticker는 필수입니다.")
     generated_at = str(delta.get("generatedAt") or _now())
@@ -325,7 +340,7 @@ def get_delta(conn, delta_id: str):
 def latest_delta(conn, ticker: str):
     row = conn.execute(
         "SELECT * FROM thesis_delta WHERE ticker=? ORDER BY generated_at DESC, created_at DESC LIMIT 1",
-        (str(ticker or "").upper(),),
+        (_storage_ticker(conn, ticker),),
     ).fetchone()
     return _delta_row_to_dict(row) if row else None
 
@@ -333,6 +348,6 @@ def latest_delta(conn, ticker: str):
 def list_deltas(conn, ticker: str, limit: int = 10) -> list:
     rows = conn.execute(
         "SELECT * FROM thesis_delta WHERE ticker=? ORDER BY generated_at DESC, created_at DESC LIMIT ?",
-        (str(ticker or "").upper(), int(limit or 10)),
+        (_storage_ticker(conn, ticker), int(limit or 10)),
     ).fetchall()
     return [_delta_row_to_dict(row) for row in rows]
