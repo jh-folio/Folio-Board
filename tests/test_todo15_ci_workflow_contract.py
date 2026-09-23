@@ -72,6 +72,7 @@ jobs:
         with:
           node-version: "22.17.0"
       - name: Regenerate runtime and test locks twice, normalize LF, and byte-compare
+        shell: bash
         run: |
           python -m pip install --require-hashes --no-deps -r requirements-bootstrap.lock.txt
           python -c "from shutil import copyfile; copyfile('requirements.lock.py312.txt', 'requirements.lock.py312.committed.txt')"
@@ -192,6 +193,12 @@ def workflow_contract_issues(source: str) -> list[str]:
         issues.append("matrix lock generation must set UV_NO_CONFIG=1")
     if BOOTSTRAP_INSTALL not in matrix:
         issues.append("matrix must hash-install the uv bootstrap lock")
+    if not re.search(
+        r"(?m)^\s+- name: Regenerate runtime and test locks[^\n]*\n(?:\s+#[^\n]*\n)*\s+shell:\s*bash\s*$",
+        matrix,
+    ):
+        # Windows' default pwsh keeps going after a failed compare and reports success.
+        issues.append("matrix lock regeneration must run under bash so a drift fails on every OS")
     if matrix.count(LOCK_COMPILE_FULL) != 2:
         issues.append("matrix must run the exact universal compile twice")
     if matrix.count(TEST_LOCK_COMPILE_FULL) != 2:
@@ -266,7 +273,8 @@ def test_validator_accepts_exact_compliant_workflow_shape() -> None:
         ("single_lock_regeneration", COMPLIANT_WORKFLOW.replace(f"          {LOCK_COMPILE_FULL}\n", "", 1)),
         ("test_lock_missing", COMPLIANT_WORKFLOW.replace(f"          {TEST_LOCK_COMPILE_FULL}\n", "", 1)),
         ("unhashed_install", COMPLIANT_WORKFLOW.replace("pip install --system --require-hashes", "pip install --system")),
-        ("no_byte_compare", COMPLIANT_WORKFLOW.replace("compare_lock_bytes.py", "accept_lock_without_compare.py")),
+        ("lock_step_default_shell", COMPLIANT_WORKFLOW.replace("        shell: bash\n", "", 1)),
+        ("no_byte_compare",COMPLIANT_WORKFLOW.replace("compare_lock_bytes.py", "accept_lock_without_compare.py")),
         ("dirty_worktree_force", COMPLIANT_WORKFLOW.replace("package_release.py --output dist/release", "package_release.py --force --output dist/release")),
     ],
     ids=lambda value: value if isinstance(value, str) and "\n" not in value else "workflow",
