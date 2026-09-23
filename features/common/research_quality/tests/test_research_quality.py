@@ -162,3 +162,23 @@ def test_not_executed_questions_do_not_zero_the_coverage_score():
     })
     only_high = run({"q1": {"level": "high", "question": "a"}})
     assert covered == only_high
+
+
+def test_artifact_lookup_ids_cannot_leave_the_report_folder(tmp_path, monkeypatch):
+    import json
+
+    from features.common.research_quality import service as quality_svc
+    from features.common.research_schema import service as schema_svc
+
+    briefings = tmp_path / "briefings"
+    briefings.mkdir()
+    (briefings / "2099-01-05.us.json").write_text(json.dumps({"date": "2099-01-05"}), encoding="utf-8")
+    (tmp_path / "portfolio.json").write_text(json.dumps({"positions": ["private"]}), encoding="utf-8")
+    monkeypatch.setattr(quality_svc, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(schema_svc, "DATA_DIR", tmp_path)
+
+    for hostile in ("../portfolio", "..\\portfolio"):
+        assert quality_svc._artifact_json_path("briefing", hostile) is None
+        assert schema_svc._find_json_report(briefings, hostile) is None
+    assert quality_svc._artifact_json_path("briefing", "2099-01-05.us").name == "2099-01-05.us.json"
+    assert schema_svc._find_json_report(briefings, "2099-01-05.us") == {"date": "2099-01-05"}

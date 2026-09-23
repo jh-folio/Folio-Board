@@ -50,6 +50,14 @@ CLI_DEFAULT_MODELS = {
 
 MAX_MODEL_ID_LENGTH = 128
 _MODEL_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789._:-")
+# A model ID becomes one argv element of a CLI command. On Windows an npm shim
+# (`codex.cmd`) runs through cmd.exe, which re-parses `&`, `|`, quotes, etc., and
+# a leading `-` would be read as another option. Only plain identifiers pass.
+_SAFE_CLI_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
+def is_safe_cli_model_id(value: str) -> bool:
+    return bool(_SAFE_CLI_MODEL_ID.fullmatch(str(value or "")))
 
 
 def _is_generation_model_id(value: str) -> bool:

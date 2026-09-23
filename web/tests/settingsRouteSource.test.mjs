@@ -108,7 +108,7 @@ test("each settings panel reports its own outcome next to its own button", async
   // 메시지가 54px에 떠 두 화면 반 위에 있다 — 보이지 않는 확인이다.
   assert.match(source, /function PanelNote/);
   for (const panel of ["agent", "api", "notion", "obsidian", "automation", "cache"]) {
-    assert.match(source, new RegExp(`<PanelNote note=\{note\} panel="${panel}" />`), panel);
+    assert.match(source, new RegExp(`<PanelNote note=\\{note\\} panel="${panel}" />`), panel);
   }
   // 페이지 전체를 못 불러온 것만 위에 남는다.
   assert.doesNotMatch(source, /\{status && <p/);

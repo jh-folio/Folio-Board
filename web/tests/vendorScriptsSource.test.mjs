@@ -51,7 +51,7 @@ test("ECharts bundle keeps its license notice and matches the pinned version", (
 test("Lightweight Charts copy is unmodified and keeps its license header", async () => {
   const bundle = await read("public/vendor/lightweight-charts.js");
   const version = pkg.devDependencies["lightweight-charts"];
-  assert.match(bundle.slice(0, 300), new RegExp(`Lightweight Charts™ v${version.replaceAll(".", "\.")}`));
+  assert.match(bundle.slice(0, 300), new RegExp(`Lightweight Charts™ v${version.replaceAll(".", "\\.")}`));
   assert.match(bundle.slice(0, 300), /Apache License 2\.0/);
   const upstream = await read(`web/node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js`).catch(() => null);
   if (upstream !== null) assert.equal(bundle, upstream, "copy differs from the npm release");

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from features.common.canonical_report_io import safe_child_path
 from features.common.market_data.tape import build_market_tape
 from features.common.research_schema.checkpoints import (
     checkpoints_from_markdown,
@@ -30,7 +31,11 @@ def _find_json_report(folder: Path, artifact_id: str) -> dict | None:
     artifact_id = str(artifact_id or "")
     if not artifact_id:
         return None
-    direct = folder / f"{artifact_id}.json"
+    try:
+        # The ID arrives from the URL; it may only name one file in this folder.
+        direct = safe_child_path(folder, f"{artifact_id}.json")
+    except ValueError:
+        return None
     if direct.exists():
         return _read_json(direct)
     for path in folder.glob("*.json"):

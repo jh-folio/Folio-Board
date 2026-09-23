@@ -33,6 +33,8 @@ GET  /api/research-quality/{artifact_type}/{artifact_id}
 POST /api/research-quality/recheck/{artifact_type}/{artifact_id}
 ```
 
+`artifact_id`는 보고서 폴더 안의 파일 이름 하나로만 해석한다(`safe_child_path`). 구분자·`..`가 들어간 ID는 찾지 않음(`None`)으로 끝나며, `research_schema.service._find_json_report`도 같은 규칙이다.
+
 ## 원칙
 
 - Canonical markdown은 품질 평가로 변경하지 않는다.

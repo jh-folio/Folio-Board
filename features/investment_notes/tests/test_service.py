@@ -226,3 +226,20 @@ def test_legacy_checkpoint_file_loads_without_a_persisted_migration(tmp_path):
     assert loaded["dueDate"] == ""
     assert loaded["lastCheckedDate"] == ""
     assert (legacy_path.read_bytes(), legacy_path.stat().st_mtime_ns) == before
+
+
+def test_note_ids_cannot_read_outside_the_notes_folder(tmp_path: Path):
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    outside = {"id": "secret", "title": "outside the notes folder", "body": "portfolio"}
+    (tmp_path / "portfolio.json").write_text(json.dumps(outside), encoding="utf-8")
+
+    with patch.object(service, "NOTES_DIR", notes_dir), patch.object(
+        service, "MARKET_MEMORY_DB_PATH", tmp_path / "memory.sqlite3"
+    ):
+        for hostile in ("../portfolio", "..\\portfolio", "..%2Fportfolio", "sub/../../portfolio"):
+            assert service.get_note(hostile) == {}
+            saved = service.save_note({"id": hostile, "title": "new", "body": "b"})
+            assert saved["title"] == "new"
+            assert saved["body"] != "portfolio"
+            assert (notes_dir / f"{saved['id']}.json").exists()

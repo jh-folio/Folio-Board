@@ -229,3 +229,23 @@ def test_claim_metadata_is_all_normalized_instead_of_silently_capped():
 
     assert len(claim_ledger["claims"]) == 25
     assert all(row["sourceIds"] == ["src_a"] for row in claim_ledger["claims"])
+
+
+def test_trailing_rule_strip_matches_the_old_regex_without_backtracking():
+    import random
+    import re
+    import time
+
+    from features.daily_briefing.service import _strip_trailing_rules
+
+    old = re.compile(r"(?:\n\s*---\s*)+$")
+    rng = random.Random(7)
+    pieces = ["\n", "---", " ", "\t", "x", "----", "\n\n", "-- -"]
+    for _ in range(4000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 12)))
+        assert _strip_trailing_rules(text).rstrip() == old.sub("", text).rstrip(), repr(text)
+
+    hostile = "body" + "\n---\n" * 40 + "x"
+    started = time.perf_counter()
+    assert _strip_trailing_rules(hostile) == hostile
+    assert time.perf_counter() - started < 0.1

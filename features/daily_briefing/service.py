@@ -308,6 +308,19 @@ _SOURCE_HEADING_LOOSE_RE = re.compile(
 )
 
 
+def _strip_trailing_rules(text: str) -> str:
+    """끝에 연달아 붙은 `---` 구분선 줄을 걷어낸다.
+
+    정규식 `(?:\\n\\s*---\\s*)+$`와 같은 결과지만, `\\s`가 줄바꿈까지 먹어 구분선이
+    수십 개 이어지면 지수적으로 되짚는다(22개에 0.8초). 줄 단위로 걸어 선형으로 둔다.
+    """
+    while True:
+        body, newline, last = text.rstrip().rpartition("\n")
+        if not newline or last.strip() != "---":
+            return text
+        text = body
+
+
 def strip_markdown_sources_section(markdown):
     """본문의 모든 참고자료 섹션을 떼어내고 다른 섹션은 보존한다."""
     text = str(markdown or "")
@@ -322,7 +335,7 @@ def strip_markdown_sources_section(markdown):
         tail = rest[next_heading.start():] if next_heading else ""
         head = text[:match.start()].rstrip()
         # 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게 한다.
-        head = re.sub(r"(?:\n\s*---\s*)+$", "", head).rstrip()
+        head = _strip_trailing_rules(head).rstrip()
         reduced = f"{head}\n\n{tail.lstrip()}".strip() if tail.strip() else head
         if reduced == text:
             return text.strip()

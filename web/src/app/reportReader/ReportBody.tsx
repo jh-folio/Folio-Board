@@ -16,6 +16,17 @@ type ReportBodyProps = {
 // 자유 꼬리 불허("Sources of Uncertainty"는 분석 섹션이라 자르면 안 된다).
 const REFERENCE_HEADING = /^#{1,3}\s*(?:\d+\.\s*)?(?:참고\s*자료|Sources(?:\s+Used)?)\s*(?:[—-]\s*(?:미국장|한국장|유럽장|일본장))?\s*(?:\([^)\n]{0,80}\))?\s*:?\s*$/im;
 
+// 끝에 연달아 붙은 `---` 구분선 줄을 걷어낸다. `/(?:\n\s*---\s*)+$/`와 같은 결과지만
+// `\s`가 줄바꿈까지 먹어 구분선이 수십 개면 지수적으로 되짚는다 — 줄 단위로 걷는다.
+function stripTrailingRules(text: string) {
+  for (;;) {
+    const trimmed = text.replace(/\s+$/, "");
+    const newline = trimmed.lastIndexOf("\n");
+    if (newline < 0 || trimmed.slice(newline + 1).trim() !== "---") return text;
+    text = trimmed.slice(0, newline);
+  }
+}
+
 export function stripInlineReferenceSections(markdown = "") {
   const normalized = markdown.replace(/\r\n/g, "\n");
   if (!REFERENCE_HEADING.test(normalized)) return markdown;
@@ -30,7 +41,7 @@ export function stripInlineReferenceSections(markdown = "") {
     const nextHeading = /^#{1,3}\s/m.exec(rest);
     const tail = nextHeading ? rest.slice(nextHeading.index) : "";
     // 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게.
-    const head = text.slice(0, match.index).replace(/\s+$/, "").replace(/(?:\n\s*---\s*)+$/, "").replace(/\s+$/, "");
+    const head = stripTrailingRules(text.slice(0, match.index).replace(/\s+$/, "")).replace(/\s+$/, "");
     const reduced = tail.trim() ? `${head}\n\n${tail.replace(/^\s+/, "")}`.trim() : head;
     if (reduced === text) return text.trim();
     text = reduced;

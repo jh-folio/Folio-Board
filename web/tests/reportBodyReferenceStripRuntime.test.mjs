@@ -76,3 +76,13 @@ test("서버 strip_markdown_sources_section과 같이 다음 헤딩(레벨 무�
   assert.ok(out.includes("주의 문단"));
   assert.ok(!out.includes("### 참고자료"));
 });
+
+test("끝 구분선 제거가 이전 정규식과 같고 구분선이 많아도 되짚지 않는다", async (t) => {
+  const strip = await loadStrip(t);
+  const hostile = "## 본문\n\n내용" + "\n---\n".repeat(40) + "x\n\n### 참고자료\n\n- [a](https://example.com/a)";
+  const started = performance.now();
+  const out = strip(hostile);
+  assert.ok(performance.now() - started < 100);
+  assert.ok(out.endsWith("x"));
+  assert.equal(strip("## 본문\n\n내용\n\n---\n\n---\n\n### 참고자료\n\n- [a](https://example.com/a)"), "## 본문\n\n내용");
+});

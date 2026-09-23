@@ -45,6 +45,8 @@ POST /api/investment-notes/{note_id}/thesis   # 이 노트로 Thesis 만들기/�
 
 기존 `/api/notes`는 호환 경로로 유지하지만 같은 native note 저장소를 사용합니다.
 
+`note_id`는 읽기·저장 모두 `[A-Za-z0-9_-]{1,96}`만 받습니다(`_clean_note_id`). 저장만 걸러 두면 `GET`의 `..\..\data\portfolio` 같은 ID가 노트 폴더 밖 JSON을 읽을 수 있었습니다. 저장은 처음부터 같은 규칙이었으므로 기존 노트 ID는 모두 통과합니다.
+
 ## 연결
 
 - 브리핑 reader 노트: `market_memo`

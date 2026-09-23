@@ -264,7 +264,7 @@ def _upsert_index(conn: sqlite3.Connection, note: dict, path: Path) -> None:
 def save_note(payload: dict | None, *, db_path: Path | None = None) -> dict:
     NOTES_DIR.mkdir(parents=True, exist_ok=True)
     existing = {}
-    raw_id = _clean_text((payload or {}).get("id") or (payload or {}).get("noteId"))
+    raw_id = _clean_note_id((payload or {}).get("id") or (payload or {}).get("noteId"))
     if raw_id and _note_path(raw_id).exists():
         existing = read_json(_note_path(raw_id), {})
     note = normalize_note(payload, existing)
@@ -289,7 +289,8 @@ def save_note(payload: dict | None, *, db_path: Path | None = None) -> dict:
 
 
 def get_note(note_id: str, *, notes_dir: Path | None = None, clock=None) -> dict:
-    note_id = _clean_text(note_id)
+    # Same rule as the write path: an ID is one file name inside the notes folder.
+    note_id = _clean_note_id(note_id)
     if not note_id:
         return {}
     note = read_json(_note_path(note_id, notes_dir), {})

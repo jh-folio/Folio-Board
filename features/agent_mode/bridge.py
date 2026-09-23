@@ -35,6 +35,7 @@ from features.common.jobs import (
 from features.common.shared_jobs_schema import TaskType
 from features.llm_settings.client import load_dotenv
 from features.common.workspace import data_dir
+from features.llm_settings.model_catalog import is_safe_cli_model_id
 from features.llm_settings.reasoning import is_supported_reasoning_effort
 from features.llm_settings.task_policy import CLI_REASONING_EFFORTS, TaskPolicyError
 from features.llm_settings.task_runtime import (
@@ -745,6 +746,9 @@ def _adapter_command(
 
     executable = adapter["executable"]
     model = str(model_override or "").strip() or configured_model(adapter["id"])
+    if model and not is_safe_cli_model_id(model):
+        # Fail closed before spawning, like an unsupported effort below.
+        raise ValueError(f"Unsupported model ID for CLI adapter: {adapter.get('id', '')}")
     effort = _cli_reasoning_effort(adapter.get("id", ""), reasoning_effort, model=model)
     if adapter["id"] == "antigravity":
         # agy는 단일 프롬프트를 인자(--print <prompt>)로 받아 비대화형 실행한다. 단, Windows

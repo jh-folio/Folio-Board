@@ -184,6 +184,22 @@ def test_cli_command_rejects_effort_unknown_to_selected_adapter():
         bridge._adapter_command(adapter, "PROMPT", reasoning_effort="xhigh")
 
 
+@pytest.mark.parametrize("model", ['x" & calc & "', "--dangerously-bypass-approvals-and-sandbox", "a b", "gpt|evil"])
+def test_cli_command_rejects_model_ids_that_are_not_plain_identifiers(model):
+    # A Dock request's model reaches argv; a `.cmd` shim would let cmd.exe re-parse it.
+    for adapter_id in ("codex", "claude", "antigravity"):
+        adapter = {"id": adapter_id, "executable": adapter_id, "available": True}
+        with pytest.raises(ValueError, match="Unsupported model ID"):
+            bridge._adapter_command(adapter, "PROMPT", model_override=model)
+
+
+def test_cli_command_accepts_catalog_and_alias_model_ids():
+    adapter = {"id": "claude", "executable": "claude", "available": True}
+    for model in ("claude-opus-5-5", "sonnet", "claude-sonnet-4-6"):
+        command = bridge._adapter_command(adapter, "PROMPT", model_override=model)
+        assert command[command.index("--model") + 1] == model
+
+
 def test_codex_cli_command_keeps_model_specific_effort_levels():
     adapter = {"id": "codex", "executable": "codex", "available": True}
 
