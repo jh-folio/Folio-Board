@@ -195,6 +195,11 @@ test("375px and landscape charts remain inside container", async ({ page }) => {
     const ticks = await chart.locator("svg text").evaluateAll(nodes => nodes.filter(node => Number(node.getAttribute("y")) > 240).map(node => { const box = node.getBoundingClientRect(); return { left: box.left, right: box.right }; }).sort((a, b) => a.left - b.left));
     for (let index = 1; index < ticks.length; index++) expect(ticks[index].left).toBeGreaterThanOrEqual(ticks[index - 1].right);
   }
+  // Linux system fonts are wider than Windows/macOS ones; the landscape side
+  // column overflowed by 4px only on Ubuntu CI. Widen text to reproduce that here.
+  await page.addStyleTag({ content: ".portfolio-backtest, .portfolio-backtest * { letter-spacing: 0.08em !important; }" });
+  await page.setViewportSize({ width: 812, height: 375 });
+  await expect.poll(() => page.locator(".portfolio-backtest").evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
 });
 
 test("different currencies and amounts never produce comparison winners", async ({ page }) => {

@@ -16246,6 +16246,12 @@ main.page {
    This section only owns result order, data reading, and responsive placement.
    ============================================================ */
 .portfolio-backtest-conditions .portfolio-backtest-fields .field { flex: 1 1 164px; min-inline-size: 0; }
+/* A date input's intrinsic width follows the system font. In the 200px side
+   column (landscape) Linux fonts pushed it — and the whole panel — 4px wide,
+   because `.field`'s auto track grows to that width. Let the track and the
+   input shrink to the column instead. */
+.portfolio-backtest-conditions .portfolio-backtest-fields .field { grid-template-columns: minmax(0, 1fr); }
+.portfolio-backtest-conditions .portfolio-backtest-fields .field > input { min-inline-size: 0; }
 .portfolio-backtest-conditions .portfolio-backtest-fields { align-items: end; }
 .portfolio-backtest-result-head {
   display: flex;
