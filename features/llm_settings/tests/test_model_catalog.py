@@ -26,19 +26,31 @@ class FakeResponse:
 def test_codex_fallback_is_newest_first_and_excludes_gpt_5_4():
     choices = model_catalog.CLI_MODEL_FALLBACKS["codex"]
 
-    assert choices[:4] == [
-        {"value": "gpt-6-astra", "label": "GPT-6 Astra"},
-        {"value": "gpt-6-sol", "label": "GPT-6 Sol"},
-        {"value": "gpt-6-luna", "label": "GPT-6 Luna"},
-        {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+    assert [item["value"] for item in choices] == [
+        "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+        "gpt-5.5", "gpt-5.4-mini",
     ]
-    values = {item["value"] for item in choices}
-    assert "gpt-5.5" in values
-    assert "gpt-5.6-sol" not in values
-    assert "gpt-5.6-luna" not in values
-    assert "gpt-5.4" not in values
-    assert "gpt-5.4-mini" in values
-    assert model_catalog.CLI_DEFAULT_MODELS["codex"] == "gpt-6-sol"
+    assert "gpt-5.4" not in {item["value"] for item in choices}
+    # The no-override default stays on a model older Codex CLIs still accept.
+    assert model_catalog.CLI_DEFAULT_MODELS["codex"] == "gpt-5.6-sol"
+
+
+def test_claude_fallback_lists_new_models_first_and_keeps_previous_ones():
+    assert [item["value"] for item in model_catalog.CLI_MODEL_FALLBACKS["claude"]] == [
+        "claude-opus-5-5", "claude-fable-5", "claude-sonnet-5", "claude-opus-5",
+        "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-4-6",
+    ]
+
+
+def test_every_listed_model_resolves_to_itself():
+    # A newer model is an addition, not a replacement: rewriting a working
+    # choice to a model the installed CLI does not know yet broke every
+    # scheduled run until the CLI was updated (2026-09-23).
+    assert model_catalog.DEPRECATED_MODEL_REPLACEMENTS == {}
+    for provider, choices in model_catalog.CLI_MODEL_FALLBACKS.items():
+        for item in choices:
+            assert model_catalog.normalize_model_id(provider, item["value"]) == item["value"]
 
 
 def test_cli_model_catalog_parses_stdout_and_keeps_fallback(tmp_path, monkeypatch):
@@ -86,8 +98,7 @@ def test_claude_cli_catalog_uses_help_model_hints_when_list_commands_are_missing
     assert catalog["source"] == "remote"
     assert "claude-fable-5" in values
     assert "claude-sonnet-5" in values
-    assert "claude-opus-5-5" in values
-    assert "claude-opus-5" not in values
+    assert "claude-opus-5" in values
 
 
 def test_claude_catalog_keeps_active_models_from_existing_cache(tmp_path, monkeypatch):
@@ -109,13 +120,15 @@ def test_claude_catalog_keeps_active_models_from_existing_cache(tmp_path, monkey
 
     catalog = model_catalog.discover_cli_models("claude", executable="claude")
 
+    # Curated choices come first (a cache can predate new models), then any
+    # other discovered IDs; a cached older model is kept, not rewritten.
     assert [item["value"] for item in catalog["modelChoices"]] == [
-        "claude-fable-5", "claude-sonnet-5", "claude-opus-5-5",
-        "claude-haiku-4-5", "claude-sonnet-4-6",
+        "claude-opus-5-5", "claude-fable-5", "claude-sonnet-5", "claude-opus-5",
+        "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-4-6",
     ]
 
 
-def test_claude_opus_selections_are_replaced_but_sonnet_is_preserved():
-    assert model_catalog.normalize_model_id("claude", "claude-opus-5") == "claude-opus-5-5"
-    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-5-5"
-    assert model_catalog.normalize_model_id("claude", "claude-sonnet-4-6") == "claude-sonnet-4-6"
+def test_saved_previous_selections_are_not_rewritten():
+    assert model_catalog.normalize_model_id("claude", "claude-opus-5") == "claude-opus-5"
+    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-4-8"
+    assert model_catalog.normalize_model_id("codex", "gpt-5.6-sol") == "gpt-5.6-sol"

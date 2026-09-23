@@ -234,7 +234,7 @@ Codex는 `codex login status`, Claude Code는 `claude auth status`로 인증 상
 FOLIO_AGENT_CODEX_COMMAND=C:\path\to\codex.exe
 FOLIO_AGENT_CLAUDE_COMMAND=C:\path\to\claude.exe
 AGENT_CLI_PROVIDER=auto|codex|claude
-FOLIO_AGENT_CODEX_MODEL=gpt-6-sol
+FOLIO_AGENT_CODEX_MODEL=gpt-5.6-sol
 FOLIO_AGENT_CLAUDE_MODEL=claude-sonnet-5
 AGENT_CLI_TIMEOUT_SECONDS=1800
 ```

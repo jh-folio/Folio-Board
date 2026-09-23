@@ -19,33 +19,33 @@ CACHE_PATH = data_dir() / "llm-model-cache.json"
 CLI_MODEL_FALLBACKS = {'codex': [{'value': 'gpt-6-astra', 'label': 'GPT-6 Astra'},
            {'value': 'gpt-6-sol', 'label': 'GPT-6 Sol'},
            {'value': 'gpt-6-luna', 'label': 'GPT-6 Luna'},
+           {'value': 'gpt-5.6-sol', 'label': 'GPT-5.6 Sol'},
            {'value': 'gpt-5.6-terra', 'label': 'GPT-5.6 Terra'},
+           {'value': 'gpt-5.6-luna', 'label': 'GPT-5.6 Luna'},
            {'value': 'gpt-5.5', 'label': 'GPT-5.5'},
            {'value': 'gpt-5.4-mini', 'label': 'GPT-5.4-mini'}],
- 'claude': [{'value': 'claude-fable-5', 'label': 'Claude Fable 5'},
+ 'claude': [{'value': 'claude-opus-5-5', 'label': 'Claude Opus 5.5'},
+            {'value': 'claude-fable-5', 'label': 'Claude Fable 5'},
             {'value': 'claude-sonnet-5', 'label': 'Claude Sonnet 5'},
-            {'value': 'claude-opus-5-5', 'label': 'Claude Opus 5.5'},
+            {'value': 'claude-opus-5', 'label': 'Claude Opus 5'},
             {'value': 'claude-haiku-4-5', 'label': 'Claude Haiku 4.5'},
+            {'value': 'claude-opus-4-8', 'label': 'Claude Opus 4.8'},
             {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6'}],
  'antigravity': [{'value': 'gemini-3.6-flash-medium', 'label': 'Gemini 3.6 Flash Medium'},
                  {'value': 'gemini-3.1-pro-high', 'label': 'Gemini 3.1 Pro High'},
                  {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6'}]}
 
-DEPRECATED_MODEL_REPLACEMENTS: dict[str, dict[str, str]] = {
-    "codex": {
-        "gpt-5.6-sol": "gpt-6-sol",
-        "gpt-5.6-luna": "gpt-6-luna",
-    },
-    "claude": {
-        "claude-opus-5": "claude-opus-5-5",
-        "claude-opus-4-8": "claude-opus-5-5",
-    },
-}
+# Only for IDs a provider has actually retired. A newer model is added to the
+# list above instead: rewriting a working choice to a model the installed CLI
+# does not know yet made every scheduled run fail (`unrecognized_model` from
+# Claude Code 2.1.273, "not supported" from Codex 0.154 — 2026-09-23).
+DEPRECATED_MODEL_REPLACEMENTS: dict[str, dict[str, str]] = {}
 
 # Display order follows recency. Keep a deliberate default for each adapter so
-# a reordered selector cannot silently change a no-override workflow.
+# a reordered selector cannot silently change a no-override workflow. The
+# default also stays on a model older CLIs know; newer models need a CLI update.
 CLI_DEFAULT_MODELS = {
-    "codex": "gpt-6-sol",
+    "codex": "gpt-5.6-sol",
 }
 
 MAX_MODEL_ID_LENGTH = 128
@@ -242,7 +242,7 @@ def _parse_claude_help_models(stdout: str) -> list[str]:
     if re.search(r"\bsonnet\b", text, re.I):
         out.append("claude-sonnet-5")
     if re.search(r"\bopus\b", text, re.I):
-        out.append("claude-opus-5-5")
+        out.append("claude-opus-5")
     return list(dict.fromkeys(out))
 
 
