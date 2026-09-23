@@ -189,8 +189,8 @@ def test_codex_cli_command_keeps_model_specific_effort_levels():
 
     for model, effort in [
         ("gpt-6-astra", "ultra"),
-        ("gpt-5.6-sol", "ultra"),
-        ("gpt-5.6-luna", "max"),
+        ("gpt-6-sol", "max"),
+        ("gpt-6-luna", "max"),
     ]:
         command = bridge._adapter_command(
             adapter,
@@ -204,7 +204,7 @@ def test_codex_cli_command_keeps_model_specific_effort_levels():
         bridge._adapter_command(
             adapter,
             "PROMPT",
-            model_override="gpt-5.6-luna",
+            model_override="gpt-6-luna",
             reasoning_effort="ultra",
         )
 

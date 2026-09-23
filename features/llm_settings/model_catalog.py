@@ -17,27 +17,35 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 CACHE_PATH = data_dir() / "llm-model-cache.json"
 
 CLI_MODEL_FALLBACKS = {'codex': [{'value': 'gpt-6-astra', 'label': 'GPT-6 Astra'},
-           {'value': 'gpt-5.6-sol', 'label': 'GPT-5.6 Sol'},
+           {'value': 'gpt-6-sol', 'label': 'GPT-6 Sol'},
+           {'value': 'gpt-6-luna', 'label': 'GPT-6 Luna'},
            {'value': 'gpt-5.6-terra', 'label': 'GPT-5.6 Terra'},
-           {'value': 'gpt-5.6-luna', 'label': 'GPT-5.6 Luna'},
            {'value': 'gpt-5.5', 'label': 'GPT-5.5'},
            {'value': 'gpt-5.4-mini', 'label': 'GPT-5.4-mini'}],
  'claude': [{'value': 'claude-fable-5', 'label': 'Claude Fable 5'},
             {'value': 'claude-sonnet-5', 'label': 'Claude Sonnet 5'},
-            {'value': 'claude-opus-5', 'label': 'Claude Opus 5'},
+            {'value': 'claude-opus-5-5', 'label': 'Claude Opus 5.5'},
             {'value': 'claude-haiku-4-5', 'label': 'Claude Haiku 4.5'},
-            {'value': 'claude-opus-4-8', 'label': 'Claude Opus 4.8'},
             {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6'}],
  'antigravity': [{'value': 'gemini-3.6-flash-medium', 'label': 'Gemini 3.6 Flash Medium'},
                  {'value': 'gemini-3.1-pro-high', 'label': 'Gemini 3.1 Pro High'},
                  {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6'}]}
 
-DEPRECATED_MODEL_REPLACEMENTS: dict[str, dict[str, str]] = {}
+DEPRECATED_MODEL_REPLACEMENTS: dict[str, dict[str, str]] = {
+    "codex": {
+        "gpt-5.6-sol": "gpt-6-sol",
+        "gpt-5.6-luna": "gpt-6-luna",
+    },
+    "claude": {
+        "claude-opus-5": "claude-opus-5-5",
+        "claude-opus-4-8": "claude-opus-5-5",
+    },
+}
 
 # Display order follows recency. Keep a deliberate default for each adapter so
 # a reordered selector cannot silently change a no-override workflow.
 CLI_DEFAULT_MODELS = {
-    "codex": "gpt-5.6-sol",
+    "codex": "gpt-6-sol",
 }
 
 MAX_MODEL_ID_LENGTH = 128
@@ -75,17 +83,35 @@ def normalize_model_id(provider: str, model_id: str) -> str:
 
 
 def _sanitize_choices(provider: str, choices: list[dict]) -> list[dict]:
-    deprecated = DEPRECATED_MODEL_REPLACEMENTS.get(str(provider or "").strip().lower(), {})
-    return [
-        item for item in choices
-        if str((item or {}).get("value") or "").strip() not in deprecated
-    ]
+    provider_id = str(provider or "").strip().lower()
+    replacements = DEPRECATED_MODEL_REPLACEMENTS.get(provider_id, {})
+    fallback_labels = {
+        str((item or {}).get("value") or "").strip(): str((item or {}).get("label") or "").strip()
+        for item in CLI_MODEL_FALLBACKS.get(provider_id, [])
+    }
+    normalized = []
+    for item in choices:
+        choice = item or {}
+        value = str(choice.get("value") or "").strip()
+        replacement = replacements.get(value)
+        if replacement:
+            value = replacement
+        label = fallback_labels.get(value) if replacement else ""
+        label = label or str(choice.get("label") or "").strip() or _label_for(value)
+        if value:
+            normalized.append({"value": value, "label": label})
+    return _dedupe_choices(normalized, [])
 
 
-def _sanitize_catalog(provider: str, catalog: dict) -> dict:
+def _sanitize_catalog(provider: str, catalog: dict, fallback: list[dict] | None = None) -> dict:
+    choices = _sanitize_choices(provider, list(catalog.get("modelChoices") or []))
+    if fallback:
+        # A cache can predate newly released built-in choices. Keep the curated
+        # fallback choices available and first, then retain other discovered IDs.
+        choices = _dedupe_choices(_sanitize_choices(provider, fallback), choices)
     return {
         **catalog,
-        "modelChoices": _sanitize_choices(provider, list(catalog.get("modelChoices") or [])),
+        "modelChoices": choices,
     }
 
 
@@ -157,7 +183,13 @@ def _get_any_cached(key: str) -> dict | None:
     return None
 
 
-def _cached_after_refresh_failure(key: str, provider: str, status: str, message: str) -> dict | None:
+def _cached_after_refresh_failure(
+    key: str,
+    provider: str,
+    status: str,
+    message: str,
+    fallback: list[dict],
+) -> dict | None:
     cached = _get_any_cached(key)
     if not cached:
         return None
@@ -166,7 +198,7 @@ def _cached_after_refresh_failure(key: str, provider: str, status: str, message:
         "source": "cache",
         "status": status,
         "message": message,
-    })
+    }, fallback)
 
 
 def _set_cached(key: str, entry: dict) -> dict:
@@ -202,7 +234,7 @@ def _parse_claude_help_models(stdout: str) -> list[str]:
     if re.search(r"\bsonnet\b", text, re.I):
         out.append("claude-sonnet-5")
     if re.search(r"\bopus\b", text, re.I):
-        out.append("claude-opus-5")
+        out.append("claude-opus-5-5")
     return list(dict.fromkeys(out))
 
 
@@ -224,7 +256,7 @@ def discover_cli_models(
     key = f"cli:{adapter}:{executable}"
     cached = _get_cached(key, refresh=refresh)
     if cached:
-        return _sanitize_catalog(adapter, cached)
+        return _sanitize_catalog(adapter, cached, fallback_choices)
     if not refresh:
         return _fallback_result(adapter, "cli", fallback_choices, "cached_missing", "저장된 모델 목록이 없어 기본 모델 목록을 사용합니다.")
     commands = [[executable, "models"], [executable, "model", "list"]]
@@ -247,7 +279,13 @@ def discover_cli_models(
                     return _set_cached(key, _remote_result(adapter, "cli", models, fallback_choices))
         except (OSError, subprocess.SubprocessError, TimeoutError):
             pass
-    cached = _cached_after_refresh_failure(key, adapter, "unsupported_cached", "CLI 모델 조회에 실패해 저장된 모델 목록을 유지합니다.")
+    cached = _cached_after_refresh_failure(
+        key,
+        adapter,
+        "unsupported_cached",
+        "CLI 모델 조회에 실패해 저장된 모델 목록을 유지합니다.",
+        fallback_choices,
+    )
     if cached:
         return cached
     return _fallback_result(adapter, "cli", fallback_choices, "unsupported", "CLI가 모델 목록 명령을 제공하지 않아 기본 모델 목록을 사용합니다.")

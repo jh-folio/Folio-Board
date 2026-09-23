@@ -25,6 +25,8 @@ REASONING_VALUES = (
 # than being presented with an unverified Max/Ultra option.
 CODEX_MODEL_REASONING_EFFORTS: dict[str, tuple[str, ...]] = {
     "gpt-6-astra": ("low", "medium", "high", "xhigh", "max", "ultra"),
+    "gpt-6-sol": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6-luna": ("low", "medium", "high", "xhigh", "max"),
     "gpt-5.6-sol": ("low", "medium", "high", "xhigh", "max", "ultra"),
     "gpt-5.6-terra": ("low", "medium", "high", "xhigh", "max", "ultra"),
     "gpt-5.6-luna": ("low", "medium", "high", "xhigh", "max"),

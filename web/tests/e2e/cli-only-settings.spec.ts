@@ -63,7 +63,7 @@ for (const theme of ["light", "dark"]) {
       }
       if (path === "/api/agent-bridge/settings") body = { provider: "codex", selectedAdapter: "codex", adapters: [{
         id: "codex", label: "Codex CLI", installed: true, available: true, authenticated: true, bridgeSupported: true,
-        model: "gpt-5.6-sol", modelChoices: [{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+        model: "gpt-6-sol", modelChoices: [{ value: "gpt-6-sol", label: "GPT-6 Sol" }],
       }] };
       if (path === "/api/automation/settings") body = { rss: { enabled: false }, marketMemory: { enabled: false }, briefingSchedules: [] };
       if (path === "/api/market-scope") body = { selected: ["us"], markets: [{ id: "us", label: "미국" }] };

@@ -63,7 +63,7 @@ const settings = {
 
 const agentSettings = {
   provider: "codex",
-  adapters: [{ id: "codex", label: "Codex CLI", installed: true, available: true, authenticated: true, modelChoices: [{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" }], model: "gpt-5.6-sol" }],
+  adapters: [{ id: "codex", label: "Codex CLI", installed: true, available: true, authenticated: true, modelChoices: [{ value: "gpt-6-sol", label: "GPT-6 Sol" }], model: "gpt-6-sol" }],
 };
 
 const automation = { rss: { enabled: false, intervalMinutes: 60, saveFullText: true, retentionDays: 30 }, marketMemory: { enabled: false, intervalMinutes: 1440, runAfterRss: false }, briefingSchedules: [], missedRuns: { catchUpHours: 3 } };

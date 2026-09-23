@@ -112,7 +112,7 @@ CLI 선택은 **범위가 둘**이다. 자리도 둘이고, 화면이 어느 쪽
 - 설치는 job이라 `/api/jobs/{id}`를 폴링하며 진행 문구를 그대로 보여준다. 서버가 설치 스크립트에 최대 600초를 주므로 폴링 마감도 그보다 길다(620초) — 폴링이 먼저 포기하면 실제로는 도는 설치가 화면에서만 실패로 보인다.
 - 상단바와 설정 탭은 **같은 값**을 본다. 한쪽에서 바꾸면 `folio:agent-settings-updated`로 다른 쪽도 즉시 따라온다.
 - 도크 선택은 요청의 `options.adapter`로만 전달되며 전역 설정을 저장하지 않는다. 전역과 다를 때 도크가 `이 대화만 ...로 돕니다`라고 밝힌다. 새 대화는 다시 전역 기본에서 시작한다.
-- 도크의 CLI·모델·노력은 **버튼 하나로 접어** 둔다. 도크는 384px이라 셋을 나란히 두면 폼이 461px로 벌어져 77px이 잘렸고, 줄바꿈을 허용해도 늘 두 줄이었다. 버튼에는 `Claude · Claude Opus 5 · 중간`처럼 요약을 그대로 적어 열지 않고도 무엇으로 도는지 읽힌다. 팝오버는 위로 열린다 — 도크 맨 아래라 아래로 열면 화면 밖이다.
+- 도크의 CLI·모델·노력은 **버튼 하나로 접어** 둔다. 도크는 384px이라 셋을 나란히 두면 폼이 461px로 벌어져 77px이 잘렸고, 줄바꿈을 허용해도 늘 두 줄이었다. 버튼에는 `Claude · Claude Opus 5.5 · 중간`처럼 요약을 그대로 적어 열지 않고도 무엇으로 도는지 읽힌다. 팝오버는 위로 열린다 — 도크 맨 아래라 아래로 열면 화면 밖이다.
 - 도크 헤더의 `대화 목록`·`새 대화`·`닫기`는 **아이콘 셋**이다. 글자 버튼으로 두면 385px 헤더에서 액션이 175px을 가져가 제목이 두 줄로 접히고 헤더가 107px까지 자란다 — 그만큼 대화가 아래로 밀린다. 아이콘으로 줄여 116px이 되고 제목은 한 줄로 선다(넘치면 말줄임). 이름은 툴팁과 `aria-label`이 진다.
 - 도크에서 CLI를 바꾸면 모델 목록이 통째로 달라지므로 모델도 그 CLI의 것으로 옮긴다. 이때도 전역 모델은 저장하지 않는다 — 저장하면 `이 대화에만`이 거짓이 되고 예약 브리핑의 모델까지 조용히 바뀐다.
 
@@ -233,7 +233,7 @@ Codex는 `codex login status`, Claude Code는 `claude auth status`로 인증 상
 FOLIO_AGENT_CODEX_COMMAND=C:\path\to\codex.exe
 FOLIO_AGENT_CLAUDE_COMMAND=C:\path\to\claude.exe
 AGENT_CLI_PROVIDER=auto|codex|claude
-FOLIO_AGENT_CODEX_MODEL=gpt-5.6-sol
+FOLIO_AGENT_CODEX_MODEL=gpt-6-sol
 FOLIO_AGENT_CLAUDE_MODEL=claude-sonnet-5
 AGENT_CLI_TIMEOUT_SECONDS=1800
 ```

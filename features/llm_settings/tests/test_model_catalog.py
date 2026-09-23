@@ -28,15 +28,17 @@ def test_codex_fallback_is_newest_first_and_excludes_gpt_5_4():
 
     assert choices[:4] == [
         {"value": "gpt-6-astra", "label": "GPT-6 Astra"},
-        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+        {"value": "gpt-6-sol", "label": "GPT-6 Sol"},
+        {"value": "gpt-6-luna", "label": "GPT-6 Luna"},
         {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
-        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
     ]
     values = {item["value"] for item in choices}
     assert "gpt-5.5" in values
+    assert "gpt-5.6-sol" not in values
+    assert "gpt-5.6-luna" not in values
     assert "gpt-5.4" not in values
     assert "gpt-5.4-mini" in values
-    assert model_catalog.CLI_DEFAULT_MODELS["codex"] == "gpt-5.6-sol"
+    assert model_catalog.CLI_DEFAULT_MODELS["codex"] == "gpt-6-sol"
 
 
 def test_cli_model_catalog_parses_stdout_and_keeps_fallback(tmp_path, monkeypatch):
@@ -84,7 +86,8 @@ def test_claude_cli_catalog_uses_help_model_hints_when_list_commands_are_missing
     assert catalog["source"] == "remote"
     assert "claude-fable-5" in values
     assert "claude-sonnet-5" in values
-    assert "claude-opus-5" in values
+    assert "claude-opus-5-5" in values
+    assert "claude-opus-5" not in values
 
 
 def test_claude_catalog_keeps_active_models_from_existing_cache(tmp_path, monkeypatch):
@@ -107,10 +110,12 @@ def test_claude_catalog_keeps_active_models_from_existing_cache(tmp_path, monkey
     catalog = model_catalog.discover_cli_models("claude", executable="claude")
 
     assert [item["value"] for item in catalog["modelChoices"]] == [
-        "claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-5",
+        "claude-fable-5", "claude-sonnet-5", "claude-opus-5-5",
+        "claude-haiku-4-5", "claude-sonnet-4-6",
     ]
 
 
-def test_active_claude_selections_are_not_rewritten():
-    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-4-8"
+def test_claude_opus_selections_are_replaced_but_sonnet_is_preserved():
+    assert model_catalog.normalize_model_id("claude", "claude-opus-5") == "claude-opus-5-5"
+    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-5-5"
     assert model_catalog.normalize_model_id("claude", "claude-sonnet-4-6") == "claude-sonnet-4-6"

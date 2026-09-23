@@ -196,7 +196,7 @@ const AMD_WORKSPACE_FIXTURE = {
 const AGENT_BRIDGE_SETTINGS = {
   provider: "codex",
   adapters: [
-    { id: "codex", label: "Codex CLI", model: "gpt-5.6-sol", modelChoices: [{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" }], bridgeSupported: true, supportsWebSearch: true },
+    { id: "codex", label: "Codex CLI", model: "gpt-6-sol", modelChoices: [{ value: "gpt-6-sol", label: "GPT-6 Sol" }], bridgeSupported: true, supportsWebSearch: true },
   ],
 };
 
