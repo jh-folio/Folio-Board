@@ -377,6 +377,16 @@ def _acquire_heatmap_prices(
             prices = {}
         missing = [symbol for symbol in symbols if not _valid_heatmap_price(prices.get(symbol), target)]
         warnings = []
+        recovered = sum(
+            1 for symbol in symbols
+            if isinstance(prices.get(symbol), dict)
+            and prices[symbol].get("closeSource") == REGULAR_MARKET_CLOSE_SOURCE
+            and symbol not in missing
+        )
+        if recovered:
+            warnings.append(
+                f"{recovered} symbols used the provider's regular-market close because the {target} daily bar close was empty"
+            )
         if missing:
             warnings.append(
                 f"heatmap incomplete: missing {len(missing)} symbols without a valid {target} close and previous close"
@@ -470,10 +480,7 @@ def _download_daily_batch(tickers: list[str], date: str, sequential: bool) -> di
     import yfinance as yf
 
     target_date = dt.date.fromisoformat(str(date)[:10])
-    provider_symbols = {
-        ticker: f"{ticker}.KS" if re.fullmatch(r"\d{6}", str(ticker or "")) else re.sub(r"[./]", "-", ticker)
-        for ticker in tickers
-    }
+    provider_symbols = {ticker: _yahoo_symbol(ticker) for ticker in tickers}
     frame = yf.download(
         list(provider_symbols.values()),
         start=(target_date - dt.timedelta(days=14)).isoformat(),
@@ -498,14 +505,164 @@ def _download_daily_batch(tickers: list[str], date: str, sequential: bool) -> di
     return output
 
 
+YAHOO_QUOTE_URL = "https://query2.finance.yahoo.com/v7/finance/quote"
+YAHOO_QUOTE_BATCH_SIZE = 100
+REGULAR_MARKET_CLOSE_SOURCE = "regular_market_quote"
+
+
+def _yahoo_symbol(ticker: str) -> str:
+    return f"{ticker}.KS" if re.fullmatch(r"\d{6}", str(ticker or "")) else re.sub(r"[./]", "-", ticker)
+
+
+def _quote_session_date(quote: dict) -> str | None:
+    """The exchange-local date of the quote's regular-market price."""
+    import pandas as pd
+
+    stamp = _safe_float(quote.get("regularMarketTime"))
+    if stamp is None:
+        return None
+    zone = str(quote.get("exchangeTimezoneName") or "America/New_York")
+    try:
+        return pd.Timestamp(stamp, unit="s", tz="UTC").tz_convert(zone).date().isoformat()
+    except Exception:
+        return None
+
+
+# Markets whose sessions the app calendar knows (`features/common/market_calendar`).
+QUOTE_TIMEZONE_MARKETS = {"America/New_York": "US", "Asia/Seoul": "KR"}
+
+
+def _regular_market_close_for(quote: dict, target: str, next_session: str | None) -> float | None:
+    """Recover ``target``'s close from a quote when the daily bar's close is empty.
+
+    Yahoo can publish a session's daily bar with open/high/volume but a null
+    close for many hours (2026-09-22: 485 of 500 S&P 500 bars), and drops that
+    row entirely once a later session exists — while the quote already carries
+    the closing price.  Use it only when the date is unambiguous: the quote
+    *is* the finished ``target`` session, or it is ``next_session`` (the
+    calendar's next trading day), whose previous close is ``target``'s close.
+    """
+    session = _quote_session_date(quote)
+    if session == target:
+        if str(quote.get("marketState") or "").upper() == "REGULAR":
+            return None  # still trading: the price is not a close yet
+        price = _safe_float(quote.get("regularMarketPrice"))
+    elif session and next_session and session == next_session:
+        price = _safe_float(quote.get("regularMarketPreviousClose"))
+    else:
+        return None  # a later session, or an unknown calendar: not target's close
+    return price if price is not None and price > 0 else None
+
+
+def _daily_closes(frame, symbol: str) -> dict[str, float]:
+    """Non-null daily closes for ``symbol`` keyed by date."""
+    if frame is None or getattr(frame, "empty", True):
+        return {}
+    subframe = frame
+    columns = getattr(frame, "columns", None)
+    if getattr(columns, "nlevels", 1) > 1:
+        if symbol not in {str(value) for value in columns.get_level_values(0)}:
+            return {}
+        subframe = frame[symbol]
+    closes = {}
+    for index, value in subframe["Close"].items():
+        close = _safe_float(value)
+        if close is not None:
+            closes[index.date().isoformat() if hasattr(index, "date") else str(index)[:10]] = close
+    return closes
+
+
+def _calendar_neighbours(market: str | None, target: str) -> tuple[str | None, str | None]:
+    """(previous, next) trading days around an open ``target``; (None, None) if unknown."""
+    if not market:
+        return None, None
+    from features.common.market_calendar import is_market_open, next_trading_day, previous_trading_day
+
+    day = dt.date.fromisoformat(target)
+    if not is_market_open(day, market):
+        return None, None
+    return previous_trading_day(day, market).isoformat(), next_trading_day(day, market).isoformat()
+
+
+def _fill_empty_daily_closes(tickers: list[str], date: str) -> dict[str, dict]:
+    """Fill heatmap prices whose daily bar exists but carries no close."""
+    import yfinance as yf
+    from yfinance.data import YfData
+
+    target = str(date)[:10]
+    provider_symbols = {ticker: _yahoo_symbol(ticker) for ticker in tickers if ticker}
+    if not provider_symbols:
+        return {}
+    quotes: dict[str, dict] = {}
+    data = YfData()
+    for chunk in _chunked(list(dict.fromkeys(provider_symbols.values())), YAHOO_QUOTE_BATCH_SIZE):
+        response = data.get(YAHOO_QUOTE_URL, params={
+            "symbols": ",".join(chunk),
+            "fields": "regularMarketPrice,regularMarketTime,regularMarketPreviousClose,marketState,exchangeTimezoneName",
+        })
+        for quote in ((response.json() or {}).get("quoteResponse") or {}).get("result") or []:
+            if isinstance(quote, dict) and quote.get("symbol"):
+                quotes[str(quote["symbol"])] = quote
+    latest = max((day for day in map(_quote_session_date, quotes.values()) if day), default=None)
+    if not latest:
+        return {}
+    target_date = dt.date.fromisoformat(target)
+    frame = yf.download(
+        list(quotes),
+        start=(target_date - dt.timedelta(days=14)).isoformat(),
+        end=(max(target_date, dt.date.fromisoformat(latest)) + dt.timedelta(days=1)).isoformat(),
+        interval="1d",
+        auto_adjust=False,
+        group_by="ticker",
+        threads=True,
+        progress=False,
+    )
+    neighbours: dict[str | None, tuple[str | None, str | None]] = {}
+    output = {}
+    for ticker, symbol in provider_symbols.items():
+        quote = quotes.get(symbol)
+        if not quote:
+            continue
+        market = QUOTE_TIMEZONE_MARKETS.get(str(quote.get("exchangeTimezoneName") or ""))
+        if market not in neighbours:
+            try:
+                neighbours[market] = _calendar_neighbours(market, target)
+            except Exception:
+                neighbours[market] = (None, None)
+        previous_session, next_session = neighbours[market]
+        close = _regular_market_close_for(quote, target, next_session)
+        closes = _daily_closes(frame, symbol)
+        if previous_session is None:
+            # Unknown calendar: only a same-session quote can be used, and the
+            # prior bar is the last close Yahoo has before target.
+            earlier = sorted(day for day in closes if day < target)
+            previous_session = earlier[-1] if earlier else None
+        previous = closes.get(previous_session) if previous_session else None
+        if close is None or previous is None or previous <= 0:
+            continue
+        output[ticker] = {
+            "close": close,
+            "previousClose": previous,
+            "asOf": target,
+            "provider": "yfinance",
+            "closeSource": REGULAR_MARKET_CLOSE_SOURCE,
+        }
+    return output
+
+
 def fetch_bulk_daily_prices(tickers: list[str], date: str) -> dict[str, dict]:
     if os.environ.get("PYTEST_CURRENT_TEST"):
         raise RuntimeError("market_data_network_disabled_in_tests")
-    output, _missing, _warnings = _recover_price_batches(
-        [str(ticker or "").strip() for ticker in tickers],
-        str(date)[:10],
-        _download_daily_batch,
-    )
+    target = str(date)[:10]
+    cleaned = [str(ticker or "").strip() for ticker in tickers]
+    output, _missing, _warnings = _recover_price_batches(cleaned, target, _download_daily_batch)
+    pending = [ticker for ticker in cleaned if ticker and not _valid_heatmap_price(output.get(ticker), target)]
+    if pending:
+        try:
+            output.update(_fill_empty_daily_closes(pending, target))
+        except Exception:
+            # Recovery is best effort; the symbols stay missing as before.
+            pass
     return output
 
 

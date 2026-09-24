@@ -715,3 +715,48 @@ def test_kospi_empty_krx_rows_use_static_fallback_universe(tmp_path):
     assert result["provider"] == "kospi200-static"
     assert result["rows"][0]["ticker"] == "005930"
     assert "returned no KOSPI200 rows" in result["warnings"][-1]
+
+
+def _quote(day_utc_time: str, state: str, price: float, previous: float) -> dict:
+    import datetime as dt
+
+    stamp = dt.datetime.fromisoformat(day_utc_time).replace(tzinfo=dt.timezone.utc).timestamp()
+    return {
+        "regularMarketTime": int(stamp),
+        "exchangeTimezoneName": "America/New_York",
+        "marketState": state,
+        "regularMarketPrice": price,
+        "regularMarketPreviousClose": previous,
+    }
+
+
+def test_regular_market_close_fills_only_an_unambiguous_session():
+    from features.common.market_data.market_universe import _regular_market_close_for
+
+    target, next_session = "2026-09-22", "2026-09-23"
+    # 16:00:02 EDT on the target session, after the close: the price is its close.
+    assert _regular_market_close_for(_quote("2026-09-22T20:00:02", "POST", 362.04, 369.95), target, next_session) == 362.04
+    # Same session while still trading is not a close.
+    assert _regular_market_close_for(_quote("2026-09-22T17:00:00", "REGULAR", 363.0, 369.95), target, next_session) is None
+    # The next session's previous close is the target close (Yahoo 2026-09-22 case).
+    assert _regular_market_close_for(_quote("2026-09-23T20:00:03", "PREPRE", 361.52, 362.04), target, next_session) == 362.04
+    # Two sessions later the previous close belongs to the next session, not target.
+    assert _regular_market_close_for(_quote("2026-09-24T20:00:03", "PREPRE", 360.0, 361.52), target, next_session) is None
+    # Without a calendar the next-session shortcut is never taken.
+    assert _regular_market_close_for(_quote("2026-09-23T20:00:03", "PREPRE", 361.52, 362.04), target, None) is None
+
+
+def test_heatmap_reports_symbols_filled_from_the_regular_market_close():
+    from features.common.market_data.market_universe import _acquire_heatmap_prices
+
+    def fetcher(symbols, date):
+        return {
+            "A": {"close": 101, "previousClose": 100, "asOf": date, "provider": "yfinance"},
+            "B": {"close": 51, "previousClose": 50, "asOf": date, "provider": "yfinance", "closeSource": "regular_market_quote"},
+        }
+
+    prices, missing, warnings = _acquire_heatmap_prices(["A", "B", "C"], "2026-09-22", None, fetcher)
+
+    assert set(prices) == {"A", "B"}
+    assert missing == ["C"]
+    assert any("1 symbols used the provider's regular-market close" in warning for warning in warnings)
