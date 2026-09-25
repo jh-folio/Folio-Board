@@ -4,6 +4,7 @@ import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
 import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
+import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
@@ -20,7 +21,7 @@ type WatchlistOverviewItem = {
   ticker?: string;
   companyName?: string;
   name?: string;
-  tags?: string[];
+  sector?: string;
   count?: number;
 };
 
@@ -44,6 +45,8 @@ type WatchlistDetail = {
   company?: WatchlistCompany;
   news?: WatchlistNews[];
   newsCount?: number;
+  /** 수집한 뉴스에서 집계된 주제. 회사 속성이 아니라 이 뉴스 묶음이 다루는 것이다. */
+  tags?: string[];
   warnings?: string[];
 };
 
@@ -284,10 +287,25 @@ export function WatchlistRoute() {
   }
 
   const newsRows = useMemo(() => sortNewsLatestFirst(detail?.news || []), [detail]);
+  // `Unclassified`는 분류를 못 했다는 내부 값이다. 6개를 넘기면 뉴스보다 주제가 길어진다.
+  const newsTopics = useMemo(
+    () => (detail?.tags || []).filter((tag) => tag && tag !== "Unclassified").slice(0, 6),
+    [detail],
+  );
   // 종목·테마 키워드 두 분기가 같은 뉴스 섹션을 쓴다. JSX를 두 벌 두면 한쪽만 고쳐진다.
   const newsSection = (
     <>
-      <div className="watchlist-detail-section__head"><h3>수집한 뉴스</h3></div>
+      <div className="watchlist-detail-section__head">
+        <h3>수집한 뉴스</h3>
+        {/* 주제는 아래 뉴스에서 집계한 값이라 그 목록 바로 위가 제 자리다. 카드에 두면
+            회사 속성인 섹터와 섞여, 매일 바뀌는 것과 안 바뀌는 것이 같은 모양이 된다. */}
+        {newsTopics.length > 0 && (
+          <p className="watchlist-news-topics">
+            <span className="watchlist-news-topics__label">주제</span>
+            {newsTopics.map((topic) => <span className="chip" key={topic}>{topic}</span>)}
+          </p>
+        )}
+      </div>
       {detailLoading ? (
         <p className="section-subtitle">관련 뉴스를 불러오는 중입니다.</p>
       ) : newsRows.length ? (
@@ -383,6 +401,11 @@ export function WatchlistRoute() {
                 <section className="watchlist-detail-section watchlist-detail-section--news">
                   {newsSection}
                 </section>
+                {/* 여기부터는 사실이 아니라 개인 판단이다(0.6 Stage C.2). 같은 구분 문법
+                    (제목 + 헤어라인 + 여백)을 쓰되 hypothesis 경계를 스스로 표시한다. */}
+                <section className="watchlist-detail-section watchlist-detail-section--thesis">
+                  <ThesisWorkspace ticker={detailTicker} companyName={detailCompanyName} />
+                </section>
               </div>
             ) : (
               <>
@@ -390,12 +413,6 @@ export function WatchlistRoute() {
                 <p className="section-subtitle">이 항목은 종목 코드가 없어 차트와 실적을 표시하지 않습니다.</p>
                 <section className="watchlist-detail-section">{newsSection}</section>
               </>
-            )}
-            {detailTicker && (
-              // 시세·지표·실적이 전부 yfinance라 문구 하나가 모달 전체를 대표한다.
-              // 기업분석은 SEC companyfacts를 최우선으로 쓰므로 같은 회사라도 값이
-              // 다를 수 있다 — 그 차이를 숨기지 않되, 각 패널마다 반복하지 않는다.
-              <p className="watchlist-detail-source">출처 yfinance — 기업분석(SEC 공시 기준)과 수치가 다를 수 있습니다.</p>
             )}
           </section>
         </div>
@@ -509,10 +526,13 @@ export function WatchlistRoute() {
                 <h3>{cardCompanyName(card)}</h3>
               </div>
               <div className="watchlist-card-meta">
-                {card.tags?.length ? (
-                  <div className="tags">
-                    {card.tags.slice(0, 5).map((tag) => <span className="tag" key={tag}>{tag}</span>)}
-                  </div>
+                {/* 카드에는 **잘 안 변하는 것**만 둔다. 뉴스에서 뽑은 주제 태그는 상세의
+                    `수집한 뉴스`로 옮겼다(2026-09-01 사용자 결정) — 그 태그는 매일 바뀌고
+                    카드끼리 겹쳐서(여러 종목이 나란히 `매출 성장`·`마진`) 훑는 데 도움이
+                    되지 않았고, 5칸 상한을 먹었다. 섹터는 회사 속성이라 남는다.
+                    `Unclassified`는 분류를 못 했다는 내부 값이라 화면에 쓰지 않는다. */}
+                {card.sector && card.sector !== "Unclassified" ? (
+                  <span className="chip">{card.sector}</span>
                 ) : null}
                 {/* 다음 실적. 제3자 예정치는 날짜가 움직이므로 확정과 구분해 보여준다. */}
                 {(() => {
@@ -530,7 +550,7 @@ export function WatchlistRoute() {
                     </span>
                   );
                 })()}
-                <span className="watchlist-news-count">{card.count || 0}건</span>
+                <span className="chip watchlist-news-count">{card.count || 0}건</span>
               </div>
             </article>
           );

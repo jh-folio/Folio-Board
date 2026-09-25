@@ -1,4 +1,5 @@
 """Company analysis service — scoring, context building, report management, charts."""
+from concurrent.futures import CancelledError
 import datetime as dt
 import hashlib
 import json
@@ -19,7 +20,13 @@ from features.company_analysis.filing_items import select_analysis_items, select
 from features.company_analysis.depth_policy import render_length_contract
 from features.company_analysis.report_contract import render_quality_requirements, render_source_contract
 from features.company_analysis.valuation import build_valuation_scenarios
+from features.company_analysis.valuation_basis import (
+    build_valuation_basis,
+    market_cashflow_is_compatible,
+    normalize_currency,
+)
 from features.company_analysis.dcf import build_dcf
+from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_prompt_path, read_analysis_prompt
 from features.company_analysis.report_rules import (
     _fcf_series,
@@ -29,17 +36,15 @@ from features.company_analysis.report_rules import (
     build_valuation_metrics,
     fetch_market_valuation_data,
 )
-from features.company_analysis.sec_companyfacts import build_companyfacts_summary
+from features.company_analysis.sec_companyfacts import SEC_FACTS_URL, build_companyfacts_summary
 from features.company_analysis.sec_filings import (
     ranked_10k_paragraphs,
     ranked_paragraphs_to_markdown,
     ranked_quarterly_report_paragraphs,
 )
 from features.llm_settings.client import (
-    request_claude,
-    request_gemini,
-    request_openai,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
     use_llm_analysis,
     use_web_search_for_analysis,
@@ -49,6 +54,7 @@ from features.common.quality_generation.preflight_enrichment import build_prefli
 from features.common.quality_generation.quality_targets import render_quality_target_context
 from features.common.quality_generation.telemetry import normalize_token_usage
 from features.common.web_search_scope import load_source_scope, render_scope_instruction
+from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure
 from features.market_memory.snapshot import render_market_memory_context
 from features.common.generation_engine import engine_detail, engine_label
 from features.common.workspace import data_dir
@@ -61,6 +67,7 @@ SEC_CACHE_DIR = DATA_DIR / "sec-cache"
 DART_CACHE_DIR = DATA_DIR / "dart-cache"
 COMPANY_ANALYSIS_PROMPT_PATH = FEATURES_DIR / "company_analysis" / "prompt.md"
 FINANCIAL_QUALITY_PROMPT_PATH = FEATURES_DIR / "company_analysis" / "financial_quality_prompt.md"
+ANALYSIS_FOCUS_PROMPT_PATH = FEATURES_DIR / "company_analysis" / "prompts" / "analysis_focus.md"
 MARKET_MEMORY_DB_PATH = DATA_DIR / "market-memory.sqlite3"
 
 TRUSTED_SOURCES = {
@@ -170,6 +177,7 @@ def read_company_analysis_prompt(analysis_style="beginner"):
         prompt = read_analysis_prompt(analysis_style)
         if FINANCIAL_QUALITY_PROMPT_PATH.exists():
             prompt += "\n\n---\n\n" + FINANCIAL_QUALITY_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt += "\n\n---\n\n" + ANALYSIS_FOCUS_PROMPT_PATH.read_text(encoding="utf-8")
         return prompt
     except Exception:
         return ""
@@ -617,6 +625,10 @@ def build_company_analysis_materials(query, docs, company=None):
     )
     selected = filing_used + support_used
     market_financial_data = fetch_market_valuation_data(company)
+    market_shares = market_financial_data.get("sharesOutstanding") if isinstance(market_financial_data, dict) else None
+    if market_shares is None:
+        market_shares = financial_engine.latest_value(sec_facts, "Shares Diluted")
+    valuation_basis = build_valuation_basis(sec_facts, market_financial_data, share_count=market_shares)
     computed_financial_table = build_financial_table(sec_facts, market_financial_data)
     computed_financial_quality = build_financial_quality_analysis(sec_facts, market_financial_data)
     computed_valuation = build_valuation_metrics(company, sec_facts, market_financial_data)
@@ -710,6 +722,7 @@ def build_company_analysis_materials(query, docs, company=None):
         "computedFinancialTable": computed_financial_table,
         "computedFinancialQuality": computed_financial_quality,
         "computedValuation": computed_valuation,
+        "valuationBasis": valuation_basis,
         "marketFinancialData": market_financial_data,
         "context": "\n".join(lines),
         "counts": counts,
@@ -795,12 +808,12 @@ def generate_llm_company_analysis(
     다시 조립하면 두 경로가 또 갈린다 — 실제로 그렇게 갈려서, 계약을 한쪽에만 붙인 채로
     보고서가 나갔다. `context=None`은 이 함수를 직접 부르는 옛 호출자를 위한 길이다.
     """
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     llm_on = use_llm_analysis() if llm_override is None else bool(llm_override)
     if not llm_on:
         return None, "disabled"
-    if not cfg["apiKey"]:
-        return None, f"missing_{cfg['provider']}_api_key"
+    if not cfg["enabled"]:
+        return None, "cli_disabled"
     prompt = read_company_analysis_prompt(analysis_style)
     if not prompt:
         return None, "missing_prompt"
@@ -858,17 +871,17 @@ def generate_llm_company_analysis(
     web_status = "web_search" if web_search else "local_only"
     try:
         max_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000")))
-        if cfg["provider"] == "gemini":
-            text, response_id, usage = request_gemini(cfg, prompt, context, web_search=web_search, include_usage=True)
-        elif cfg["provider"] == "claude":
-            text, response_id, usage = request_claude(cfg, prompt, context, web_search=web_search, include_usage=True)
-        else:
-            text, response_id, usage = request_openai(cfg, prompt, context, web_search=web_search, include_usage=True)
+        facts = {}
+        result_sink = {}
+        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=web_search, include_usage=True, facts_sink=facts, result_sink=result_sink)
         if not text:
             return None, "empty_response"
         text = strip_llm_citation_markers(text)
+        from features.common.report_citations import render_citation_links
+        text = render_citation_links(text, source_ledger, execution=result_sink.get("result"))
         return {
             "markdown": text,
+            "executionFacts": facts,
             "provider": cfg["provider"],
             "model": cfg["model"],
             "usedDocs": used_docs,
@@ -877,7 +890,16 @@ def generate_llm_company_analysis(
             "webSearch": web_search,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=max_tokens),
         }, f"ok_{web_status}"
-    except Exception:
+    except (TimeoutError, CancelledError):
+        raise
+    except Exception as error:
+        # This is the primary provider boundary.  The caller deliberately
+        # falls back to rules, so the exact typed cause must be observed here
+        # before its exception object is otherwise discarded.
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(), error,
+            stage_id=None, stage_code="generate", boundary="adapter",
+        )
         return None, "generation_failed"
 
 
@@ -936,23 +958,39 @@ def save_analysis_report(report):
     report["id"] = report.get("id") or rid
     report["saved"] = True
     path = ANALYSIS_REPORTS_DIR / f"{report['id']}.json"
+    from features.company_analysis.recovery import preserve_candidate
+    from features.common.canonical_report_io import safe_child_path
+    from features.common.canonical_report_types import CanonicalValidationError
+    # Validate before any durable write, including the recovery copy.
+    path = safe_child_path(ANALYSIS_REPORTS_DIR, f"{report['id']}.json")
+    recovery = preserve_candidate(ANALYSIS_REPORTS_DIR, report)
     # Manual POSTs without generation provenance/ChangeBasis remain ordinary
     # canonical saves and do not emit a synthetic change event.
     if isinstance(report.get("changeBasis"), dict):
         report["changeBasis"] = {**report["changeBasis"], "artifactId": report["id"]}
         report.pop("changeSummary", None)
         report = decorate_candidate("company_analysis", report, data_dir=DATA_DIR, generation_provenance=True)
-    prepared = prepare(
-        report_kind=ReportKind.COMPANY_ANALYSIS,
-        exact_path=path,
-        write_kind=WriteKind.CANONICAL,
-        candidate=report,
-    )
-    commit_sync(prepared)
+    try:
+        prepared = prepare(
+            report_kind=ReportKind.COMPANY_ANALYSIS,
+            exact_path=path,
+            write_kind=WriteKind.CANONICAL,
+            candidate=report,
+        )
+        commit_sync(prepared)
+    except CanonicalValidationError as error:
+        if error.code != "company_report_incomplete":
+            raise
+        return recovery
+    except OSError:
+        recovery["saveError"] = {"code": "save_failed", "message": "정상 보고서 저장에 실패했습니다. 복구 후보에서 다시 열 수 있습니다."}
+        return recovery
     projection = project_committed_report(MARKET_MEMORY_DB_PATH, path) if report.get("changeSummary") else {"status": "skipped"}
     committed = load_report(path)
     if committed is None:
         raise RuntimeError("canonical company report commit did not persist the report")
+    from features.company_analysis.recovery import discard_promoted
+    discard_promoted(ANALYSIS_REPORTS_DIR, committed)
     if report.get("changeSummary"):
         committed["changeIntelligence"] = {**(committed.get("changeIntelligence") or {}), "projectionStatus": projection.get("status"), "invalidationToken": projection.get("invalidationToken") or (committed.get("changeIntelligence") or {}).get("invalidationToken")}
     return committed
@@ -968,6 +1006,14 @@ def delete_analysis_report(report_id):
     )
 
     safe_id = str(report_id or "")
+    from features.company_analysis.recovery import candidate_path, is_recovery_id
+    if is_recovery_id(safe_id):
+        path = candidate_path(ANALYSIS_REPORTS_DIR, safe_id)
+        outcome = execute_report_delete(DeleteRequest(
+            root=path.parent, identity=f"company:{safe_id}",
+            primary_names=(path.name,), target_names=(path.name,),
+        ))
+        return {"deleted": outcome.deleted, "id": safe_id}
     try:
         path = resolve_exact_report_path(ANALYSIS_REPORTS_DIR.parent, ReportKind.COMPANY_ANALYSIS, safe_id)
     except CanonicalNotFoundError:
@@ -988,9 +1034,15 @@ def delete_analysis_report(report_id):
 def list_analysis_reports():
     ANALYSIS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     rows = []
-    for path in sorted(ANALYSIS_REPORTS_DIR.glob("*.json"), reverse=True):
-        report = read_json(path, None)
-        if not report:
+    paths = list(ANALYSIS_REPORTS_DIR.glob("*.json"))
+    paths.extend((ANALYSIS_REPORTS_DIR / "recovery").glob("recovery-*.json"))
+    for path in sorted(paths, reverse=True):
+        if path.parent.name == "recovery":
+            from features.company_analysis.recovery import load_candidate
+            report = load_candidate(ANALYSIS_REPORTS_DIR, path.stem)
+        else:
+            report = read_json(path, None)
+        if not isinstance(report, dict) or not report:
             continue
         company = report.get("company", {})
         data_gaps = report.get("dataGaps") or {}
@@ -1001,6 +1053,8 @@ def list_analysis_reports():
                 "generatedAt": report.get("generatedAt", ""),
                 "query": report.get("query", ""),
                 "title": report.get("headline", ""),
+                **({"headline": report.get("headline", ""), "recoveryStored": True, "saved": False}
+                   if report.get("recoveryStored") is True else {}),
                 "company": company,
                 "mode": (report.get("generation") or {}).get("mode", ""),
                 "provider": (report.get("generation") or {}).get("provider", ""),
@@ -1015,13 +1069,16 @@ def list_analysis_reports():
 
 
 def get_analysis_report(report_id):
+    from features.company_analysis.recovery import load_candidate, is_recovery_id
+    if is_recovery_id(str(report_id)):
+        return load_candidate(ANALYSIS_REPORTS_DIR, str(report_id))
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", str(report_id or ""))
     if not safe_id:
         return None
     return read_json(ANALYSIS_REPORTS_DIR / f"{safe_id}.json", None)
 
 
-def company_analysis_sources(materials, docs):
+def company_analysis_sources(materials, docs, web_items=None):
     sources = []
     seen = set()
 
@@ -1032,19 +1089,34 @@ def company_analysis_sources(materials, docs):
         seen.add(key)
         sources.append(source)
 
-    ranked = materials.get("rankedFiling", {}) or {}
-    metadata = ranked.get("metadata", {}) or {}
-    if metadata.get("url"):
+    def add_filing(result):
+        """연차(10-K/20-F)·분기(10-Q) 발췌 모두 같은 모양이다. 컨텍스트가 그 서술을
+        쓰는데 출처 목록에서 빠지면 독자는 근거를 열 수 없다.
+
+        `ok`가 아니면 넣지 않는다 — 컨텍스트도 "확보하지 못했습니다"로 적으므로,
+        fetch 실패한 문서를 출처로 올리면 목록과 본문이 어긋난다."""
+        result = result or {}
+        if not result.get("ok"):
+            return
+        meta = result.get("metadata", {}) or {}
+        if not meta.get("url"):
+            return
+        form = str(result.get("form") or meta.get("form") or "").strip()
         add({
             # 출처 표기는 실제 form을 따른다. 20-F 제출사의 근거를 "10-K"로 적으면
             # source ledger가 존재하지 않는 문서를 가리킨다.
-            "title": metadata.get("title") or f"SEC {metadata.get('form') or '10-K'} HTML",
+            "title": meta.get("title") or f"SEC {form or '10-K'} HTML",
             "source": "SEC EDGAR",
-            "date": metadata.get("filingDate", ""),
-            "url": metadata.get("url", ""),
+            "date": meta.get("filingDate", ""),
+            "url": meta.get("url", ""),
             "path": "",
-            "type": metadata.get("form") or "filing",
+            "type": form or "filing",
         })
+
+    add_filing(materials.get("rankedFiling"))
+    # 최근 10-Q MD&A 발췌는 연차보고서를 대체하지 않고 덧붙는 근거다. 컨텍스트의
+    # "## 최근 분기 공시 서술 (10-Q MD&A)"가 이 문서를 읽는다.
+    add_filing(materials.get("rankedQuarterlyFiling"))
     sec_facts = materials.get("secFacts", {}) or {}
     dart_facts = materials.get("dartFacts", {}) or {}
     if dart_facts.get("corpCode"):
@@ -1071,7 +1143,9 @@ def company_analysis_sources(materials, docs):
             "title": f"SEC companyfacts CIK {sec_facts.get('cik')}",
             "source": "SEC companyfacts",
             "date": "",
-            "url": f"https://data.sec.gov/submissions/CIK{sec_facts.get('cik')}.json",
+            # 링크는 실제로 companyfacts API를 가리켜야 한다. submissions URL을
+            # "companyfacts"로 적으면 독자가 연 자료가 재무 숫자의 출처가 아니다.
+            "url": SEC_FACTS_URL.format(cik=sec_facts.get("cik")),
             "path": "",
             "type": "financials",
         })
@@ -1089,6 +1163,8 @@ def company_analysis_sources(materials, docs):
             "path": "",
             "type": "market data",
         })
+    # 로컬 선별 자료가 먼저다 — 웹은 보완이지 대체가 아니다(Rule 9). 상한을 웹이
+    # 먼저 채우면 점수화된 로컬 리포트·기사가 밀린다.
     for d in docs:
         add({
             "title": d.get("title", ""),
@@ -1097,6 +1173,22 @@ def company_analysis_sources(materials, docs):
             "url": d.get("url", ""),
             "path": d.get("path", ""),
             "type": d.get("type", ""),
+        })
+        if len(sources) >= 16:
+            break
+    # 웹 조회로 실제 인용한 자료. 지금까지 sourceLedger에만 있어 reader·내보내기에서
+    # 빠졌다 — 본문이 근거로 쓴 것을 독자가 열 수 없었다.
+    for item in web_items or []:
+        url = str(item.get("url") or "")
+        if not url.startswith("http"):
+            continue
+        add({
+            "title": item.get("title", "") or url,
+            "source": item.get("source", "") or "웹 조회",
+            "date": item.get("date", ""),
+            "url": url,
+            "path": "",
+            "type": item.get("type", "") or "web_reference",
         })
         if len(sources) >= 16:
             break
@@ -1246,11 +1338,17 @@ def build_company_analysis_charts(materials):
         ]
     }
     market = materials.get("marketFinancialData") or fetch_market_valuation_data(company)
+    shares = market.get("sharesOutstanding") if market.get("ok") else None
+    if shares is None:
+        shares = financial_engine.latest_value(sec_summary, "Shares Diluted")
+    valuation_basis = build_valuation_basis(sec_summary, market, share_count=shares)
     # 재무 차트는 신고 통화, 주가 차트는 상장 통화다. 둘은 다를 수 있다
     # (ASML: 재무 EUR, 나스닥 ADR 주가 USD).
-    reporting_currency = str(sec_summary.get("currency") or "USD")
-    price_currency = str(market.get("currency") or reporting_currency) if market.get("ok") else reporting_currency
-    for row in market.get("cashflowRows", []) if market.get("ok") else []:
+    reporting_currency = str(valuation_basis.get("reportingCurrency") or sec_summary.get("currency") or "USD")
+    price_currency = str(valuation_basis.get("quoteCurrency") or market.get("currency") or reporting_currency) if market.get("ok") else reporting_currency
+    # yfinance cash-flow rows are only a valid continuation of SEC/DART rows
+    # when the provider's separate financial currency is known and matches.
+    for row in market.get("cashflowRows", []) if market.get("ok") and market_cashflow_is_compatible(valuation_basis) else []:
         year = str(row.get("year") or str(row.get("end", ""))[:4])
         if not re.fullmatch(r"\d{4}", year):
             continue
@@ -1261,14 +1359,22 @@ def build_company_analysis_charts(materials):
                     metric_maps[metric][year] = abs(float(value)) if metric == "Capital Expenditure" else float(value)
             except Exception:
                 pass
-    years = sorted(set().union(*[set(values.keys()) for values in metric_maps.values()]))[-5:]
+    # 손익 4종(실적 추이·마진 추이)과 현금흐름 2종은 **다른 폭**일 수 있다 — 현금흐름은
+    # yfinance cashflowRows로 보강돼(위) 손익 원자료보다 한 해 더 먼 과거를 가진 경우가
+    # 실측됐다(예: 000660 DART — 손익 3개년, 현금흐름 4개년). 예전에는 `years` 하나를
+    # 전 지표 union으로 잡아 그 최원년이 실적 추이·마진 추이에도 섞여 들어가, 4종 지표가
+    # 전부 없는데도 그 해가 라벨로 나오고 값은 전부 null이었다(차트에 빈 점 하나).
+    performance_metrics = ("Revenue", "Gross Profit", "Operating Income", "Net Income")
+    cashflow_metrics = ("Operating Cash Flow", "Capital Expenditure")
+    performance_years = sorted(set().union(*[set(metric_maps[m].keys()) for m in performance_metrics]))[-5:]
+    cashflow_years = sorted(set().union(*[set(metric_maps[m].keys()) for m in cashflow_metrics]))[-5:]
 
     charts = []
-    if years:
-        revenue = _series_for_years(metric_maps["Revenue"], years)
-        gross_profit = _series_for_years(metric_maps["Gross Profit"], years)
-        operating_income = _series_for_years(metric_maps["Operating Income"], years)
-        net_income = _series_for_years(metric_maps["Net Income"], years)
+    if performance_years:
+        revenue = _series_for_years(metric_maps["Revenue"], performance_years)
+        gross_profit = _series_for_years(metric_maps["Gross Profit"], performance_years)
+        operating_income = _series_for_years(metric_maps["Operating Income"], performance_years)
+        net_income = _series_for_years(metric_maps["Net Income"], performance_years)
         net_margin = _ratio_series(net_income, revenue)
         if _has_any_number(revenue) or _has_any_number(net_income):
             charts.append({
@@ -1276,7 +1382,7 @@ def build_company_analysis_charts(materials):
                 "title": "실적 추이",
                 "subtitle": "SEC companyfacts 연간 보고 기준",
                 "kind": "performance",
-                "years": years,
+                "years": performance_years,
                 "revenue": revenue,
                 "grossProfit": gross_profit,
                 "operatingIncome": operating_income,
@@ -1284,44 +1390,51 @@ def build_company_analysis_charts(materials):
                 "netMargin": net_margin,
                 "currency": reporting_currency,
             })
+    else:
+        revenue = gross_profit = operating_income = net_income = net_margin = []
 
-        # 분기 흐름은 연간 추세와 다른 질문에 답한다. 둘 다 그린다.
-        quarter_maps = {
-            metric: _metric_quarterly_map(sec_summary, metric)
-            for metric in ("Revenue", "Operating Income", "Net Income")
-        }
-        quarters = sorted({q for values in quarter_maps.values() for q in values})[-8:]
-        if quarters:
-            q_revenue = [_finite_number(quarter_maps["Revenue"].get(q)) for q in quarters]
-            q_operating = [_finite_number(quarter_maps["Operating Income"].get(q)) for q in quarters]
-            q_net = [_finite_number(quarter_maps["Net Income"].get(q)) for q in quarters]
-            if _has_any_number(q_revenue) or _has_any_number(q_net):
-                charts.append({
-                    "id": "quarterly",
-                    "title": "분기 흐름",
-                    "subtitle": "SEC companyfacts 분기 보고 기준",
-                    "kind": "quarterly",
-                    "years": quarters,
-                    "revenue": q_revenue,
-                    "operatingIncome": q_operating,
-                    "netIncome": q_net,
-                    "netMargin": _ratio_series(q_net, q_revenue),
-                    "currency": reporting_currency,
-                    # 분기는 계절성이 있어 직전 분기가 아니라 전년 동기와 비교한다.
-                    # 화면은 라벨(`2026 Q2`→`2025 Q2`)로 전년 동기를 찾는다 — 10-Q에는
-                    # Q4가 없어 고정 오프셋 4는 전년 동기가 아니다. 이 값은 옛 저장
-                    # 페이로드와의 호환으로만 남는다.
-                    "compareOffset": 4,
-                })
+    # 분기 흐름은 연간 추세와 다른 질문에 답한다. 둘 다 그린다.
+    quarter_maps = {
+        metric: _metric_quarterly_map(sec_summary, metric)
+        for metric in ("Revenue", "Operating Income", "Net Income")
+    }
+    quarters = sorted({q for values in quarter_maps.values() for q in values})[-8:]
+    if quarters:
+        q_revenue = [_finite_number(quarter_maps["Revenue"].get(q)) for q in quarters]
+        q_operating = [_finite_number(quarter_maps["Operating Income"].get(q)) for q in quarters]
+        q_net = [_finite_number(quarter_maps["Net Income"].get(q)) for q in quarters]
+        if _has_any_number(q_revenue) or _has_any_number(q_net):
+            charts.append({
+                "id": "quarterly",
+                "title": "분기 흐름",
+                "subtitle": "SEC companyfacts 분기 보고 기준",
+                "kind": "quarterly",
+                "years": quarters,
+                "revenue": q_revenue,
+                "operatingIncome": q_operating,
+                "netIncome": q_net,
+                "netMargin": _ratio_series(q_net, q_revenue),
+                "currency": reporting_currency,
+                # 분기는 계절성이 있어 직전 분기가 아니라 전년 동기와 비교한다.
+                # 화면은 라벨(`2026 Q2`→`2025 Q2`)로 전년 동기를 찾는다 — 10-Q에는
+                # Q4가 없어 고정 오프셋 4는 전년 동기가 아니다. 이 값은 옛 저장
+                # 페이로드와의 호환으로만 남는다.
+                "compareOffset": 4,
+            })
 
-        cfo = _series_for_years(metric_maps["Operating Cash Flow"], years)
-        capex_raw = _series_for_years(metric_maps["Capital Expenditure"], years)
+    if cashflow_years:
+        cfo = _series_for_years(metric_maps["Operating Cash Flow"], cashflow_years)
+        capex_raw = _series_for_years(metric_maps["Capital Expenditure"], cashflow_years)
         capex = [-abs(value) if value is not None else None for value in capex_raw]
         free_cash_flow = [
             (a - b) if a is not None and b is not None else None
             for a, b in zip(cfo, capex_raw)
         ]
-        fcf_margin = _ratio_series(free_cash_flow, revenue)
+        # margin의 분모는 cashflow_years에 맞춰 다시 읽는다 — performance_years와
+        # 폭이 다를 수 있어(위 주석) performance_years 정렬의 `revenue`를 그대로
+        # zip하면 해가 어긋난 값끼리 나뉜다.
+        revenue_for_cashflow = _series_for_years(metric_maps["Revenue"], cashflow_years)
+        fcf_margin = _ratio_series(free_cash_flow, revenue_for_cashflow)
         if _has_any_number(cfo) or _has_any_number(free_cash_flow):
             charts.append({
                 "id": "cashflow",
@@ -1331,7 +1444,7 @@ def build_company_analysis_charts(materials):
                     [("영업활동", cfo), ("설비투자", capex), ("잉여현금흐름", free_cash_flow)],
                 ),
                 "kind": "cashflow",
-                "years": years,
+                "years": cashflow_years,
                 "operatingCashFlow": cfo,
                 "capitalExpenditure": capex,
                 "freeCashFlow": free_cash_flow,
@@ -1339,6 +1452,7 @@ def build_company_analysis_charts(materials):
                 "currency": reporting_currency,
             })
 
+    if performance_years:
         gross_margin = _ratio_series(gross_profit, revenue)
         operating_margin = _ratio_series(operating_income, revenue)
         if _has_any_number(gross_margin) or _has_any_number(operating_margin):
@@ -1350,26 +1464,40 @@ def build_company_analysis_charts(materials):
                     [("매출총이익률", gross_margin), ("영업이익률", operating_margin), ("순이익률", net_margin)],
                 ),
                 "kind": "margins",
-                "years": years,
+                "years": performance_years,
                 "grossMargin": gross_margin,
                 "operatingMargin": operating_margin,
                 "netMargin": net_margin,
             })
 
-    shares = market.get("sharesOutstanding") if market.get("ok") else None
-    if shares is None:
-        shares = financial_engine.latest_value(sec_summary, "Shares Diluted")
     price = market.get("price") if market.get("ok") else None
     near_growth = financial_engine.growth_rate(_fcf_series(sec_summary, market))
     # **DCF도 한 곳에서 계산한다.** 차트·본문 컨텍스트·규칙 보고서가 이 객체를 읽는다.
-    dcf_model = build_dcf(
-        sec_summary,
-        price=price,
-        shares=shares,
-        market_cap=market.get("marketCap") if market.get("ok") else None,
-        beta=market.get("beta") if market.get("ok") else None,
-        currency=price_currency,
-    )
+    eligibility = valuation_basis.get("eligibility") or {}
+    dcf_eligibility = eligibility.get("dcf") or {}
+    market_value_eligibility = eligibility.get("marketMultiples") or {}
+    if dcf_eligibility.get("eligible"):
+        dcf_model = build_dcf(
+            sec_summary,
+            price=price if (eligibility.get("per") or {}).get("eligible") else None,
+            shares=shares,
+            # Do not feed an unverified provider marketCap into WACC.  The DCF
+            # core can safely derive cap from same-currency price × shares.
+            market_cap=(market.get("marketCap") if market.get("ok") and valuation_basis.get("marketValueCurrencyStatus") == "same" else None),
+            beta=market.get("beta") if market.get("ok") and market_value_eligibility.get("eligible") else None,
+            currency=reporting_currency,
+            risk_free=current_risk_free(reporting_currency),
+        )
+    else:
+        dcf_reason = dcf_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다."
+        dcf_model = {
+            "ok": False,
+            "status": "unavailable",
+            "reason": dcf_reason,
+            "unavailableReason": dcf_reason,
+            "reasonCodes": dcf_eligibility.get("reasonCodes", []),
+            "currency": normalize_currency(reporting_currency),
+        }
     scenario_rows = [
         {
             "name": item.get("name"),
@@ -1407,8 +1535,23 @@ def build_company_analysis_charts(materials):
                    financial_engine.latest_value(sec_summary, "EPS Basic")
     # **본문과 차트가 같은 객체를 읽는다.** 각자 계산하던 시절 한 보고서에 밸류에이션이
     # 두 벌 있었다(본문 EPS 5.54×30/45/60 vs 차트 EPS 4.081×54/73/94).
-    valuation = build_valuation_scenarios(
-        trailing_eps=trailing_eps, price=price, growth=near_growth, currency=price_currency,
+    per_eligibility = eligibility.get("per") or {}
+    valuation = (
+        build_valuation_scenarios(
+            trailing_eps=trailing_eps,
+            price=price,
+            growth=near_growth,
+            currency=price_currency,
+        )
+        if per_eligibility.get("eligible")
+        else {
+            "ok": False,
+            "status": "unavailable",
+            "reason": per_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다.",
+            "unavailableReason": per_eligibility.get("reason") or "필요한 단위 정보를 확인하지 못했습니다.",
+            "reasonCodes": per_eligibility.get("reasonCodes", []),
+            "currency": price_currency,
+        }
     )
     if valuation.get("scenarios"):
         charts.append({
@@ -1445,6 +1588,7 @@ def build_company_analysis_charts(materials):
         # 계산이 한 번만 일어나야 한다.
         "valuation": valuation,
         "dcf": dcf_model,
+        "valuationBasis": valuation_basis,
         "company": {"name": company.get("name", ""), "ticker": company.get("ticker", "")},
         "source": "SEC companyfacts + yfinance market data",
         # 차트 숫자는 전부 외부 provider에서 온다. 하나라도 NaN이면 보고서 저장이

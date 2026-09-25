@@ -132,6 +132,11 @@ class WorkLogEntry(StrictModel):
     proposalId: str | None
     proposalStatus: ProposalStatus | None
     resultStatus: ResultStatus | None
+    queueWaitMs: Annotated[int, Field(ge=0)] | None
+    contextMs: Annotated[int, Field(ge=0)] | None
+    cliMs: Annotated[int, Field(ge=0)] | None
+    postprocessMs: Annotated[int, Field(ge=0)] | None
+    totalMs: Annotated[int, Field(ge=0)] | None
 
 
 WORK_LOG_ENTRY_KEYS: Final = frozenset(WorkLogEntry.model_fields)

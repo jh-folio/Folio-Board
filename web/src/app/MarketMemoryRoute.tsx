@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useContentRevision } from "./useContentRevision";
 import { getJson, postJson, type JobStatus } from "../api";
 import { MarketStateDashboard } from "../islands/MarketStateDashboard";
 import { RouteHero } from "./RouteHero";
-import { InvestmentContextCard } from "./InvestmentContextCard";
+import { NarrativeVerificationPanel } from "./marketMemory/NarrativeVerificationPanel";
+import { InvestmentContextStrip, ownedTickersByState, useInvestmentContextSummary } from "./InvestmentContextCard";
 import { setReactAgentContextScope } from "./agentContext";
 import type { MarketStateContextProjection } from "./marketStateContext";
 import { AgentJobTerminalError, pollAgentJobUntilTerminal } from "./agentPolling";
@@ -72,6 +73,9 @@ export function MarketMemoryRoute() {
     return id ? { id, status: "running" } : null;
   });
   const pollController = useRef<AbortController | null>(null);
+  // 개인 맥락은 한 번 읽어 두 자리에 나눠 준다: "다음 확인" 아래 한 줄과, 그 흐름의 검증 알림 표시.
+  const contextSummary = useInvestmentContextSummary(refreshKey + contentRevision);
+  const ownedTickers = useMemo(() => ownedTickersByState(contextSummary), [contextSummary]);
   const handleMarketStateContext = useCallback((marketState: MarketStateContextProjection | null) => {
     setReactAgentContextScope("market-memory", {
       surface: "market_state",
@@ -214,11 +218,13 @@ export function MarketMemoryRoute() {
         </div>
       ) : null}
 
-      <InvestmentContextCard mode="market-memory" />
-
       <section className="market-state-dashboard react-market-memory-dashboard" aria-label="현재 중기 시장 상황">
-        <MarketStateDashboard key={`${refreshKey}:${contentRevision}`} onUpdate={runMarketMemoryUpdate} updating={busy} updateDisabled={Boolean(resumableJob)} onContext={handleMarketStateContext} />
+        <MarketStateDashboard key={`${refreshKey}:${contentRevision}`} onUpdate={runMarketMemoryUpdate} updating={busy} updateDisabled={Boolean(resumableJob)} onContext={handleMarketStateContext} personalContext={<InvestmentContextStrip summary={contextSummary} />} />
       </section>
+
+      {/* 위 카드는 스냅샷이 쓴 해석이고, 아래는 저장된 내러티브 상태의 규칙 판정이다.
+          같은 층이 아니므로 섞지 않고 자기 자리에서 보여준다(0.6 Stage C.1). */}
+      <NarrativeVerificationPanel refreshKey={refreshKey + contentRevision} ownedTickers={ownedTickers} />
     </div>
   );
 }

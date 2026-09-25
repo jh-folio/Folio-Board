@@ -232,6 +232,14 @@ function normalizedMarker(value: unknown): string {
   return stringValue(value).trim().toLowerCase().replace(/[\s_-]+/g, "");
 }
 
+// Every normalized (lowercased, spaces/`_`/`-` stripped) form this app has ever
+// written to `generated_by`. Keep in sync with
+// features/common/self_reference.py::SELF_GENERATED_MARKER_ALIASES — add a new
+// alias to both, in the same commit, if the display name changes again. Never
+// remove an old alias: a note exported years ago must stay excluded from
+// evidence forever (principle 5: 자기참조 금지, plan §4.3).
+const SELF_GENERATED_MARKER_ALIASES = new Set(["folioos", "folioboard"]);
+
 function revision(value: unknown): RevisionPayload | null {
   if (!isRecord(value)) return null;
   const number = numberValue(value.number);
@@ -297,7 +305,7 @@ function parseLedger(value: unknown): SourceLedgerItemPayload[] {
     const sourceLayer = stringValue(row.sourceLayer ?? row.source_layer).toLowerCase();
     const generatedBy = normalizedMarker(row.generatedBy ?? row.generated_by);
     return artifactType !== "user_note" && rowType !== "user_note" && evidenceRole !== "hypothesis"
-      && sourceLayer !== "hypothesis" && sourceLayer !== "primary_processed" && generatedBy !== "folioos";
+      && sourceLayer !== "hypothesis" && sourceLayer !== "primary_processed" && !SELF_GENERATED_MARKER_ALIASES.has(generatedBy);
   }).map((row) => ({
     sourceId: stringValue(row.sourceId), title: stringValue(row.title), source: stringValue(row.source), date: stringValue(row.date),
     evidenceRole: stringValue(row.evidenceRole), reliability: stringValue(row.reliability), usedInSections: strings(row.usedInSections),

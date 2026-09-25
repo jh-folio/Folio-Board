@@ -71,8 +71,8 @@ def test_official_holidays_are_confirmed_all_day_and_kind_holiday():
     from features.market_calendar.adapters.exchange import official_holiday_events
 
     events = official_holiday_events([2026])
-    # NYSE 10 + KRX 16(제9회 전국동시지방선거 포함) + 유럽 5개 venue 32 + JPX 19
-    assert len(events) == 77
+    # NYSE 10 + KRX 15(제9회 전국동시지방선거 포함, 9/28은 대체휴일이 아니라 제외) + 유럽 5개 venue 32 + JPX 19
+    assert len(events) == 76
     assert all(event["kind"] == "holiday" for event in events)
     assert all(event["status"] == "confirmed" for event in events)
     assert all(event["allDay"] for event in events)

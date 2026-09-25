@@ -84,4 +84,7 @@ def test_the_agent_docs_state_the_current_contract(doc):
     text = (ROOT / doc).read_text(encoding="utf-8")
 
     assert "종료 코드 3이 재시작 신호" not in text
-    assert "RESTART_EXIT_CODE" in text
+    assert "docs/agent-guides/server-restart.md" in text
+    contract = (ROOT / "docs/agent-guides/server-restart.md").read_text(encoding="utf-8")
+    assert "RESTART_EXIT_CODE" in contract
+    assert "재시작 신호는 7" in contract

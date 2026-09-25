@@ -1,1 +1,1 @@
-"""Local Folio OS automation settings and runners."""
+"""Local Folio Board automation settings and runners."""

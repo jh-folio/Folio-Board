@@ -85,22 +85,24 @@ def _fail_snapshot_commit(
     runtime: MarketSqlJobRuntime,
     job_id: str,
     attempt_id: str,
+    error: BaseException | None = None,
 ) -> None:
     try:
         runtime.attempts.fail(attempt_id, runtime.clock(), AttemptErrorCode.SAVE_FAILED)
     finally:
-        runtime.lifecycle.fail_commit(job_id)
+        runtime.lifecycle.fail_commit(job_id, error)
 
 
 def _fail_snapshot_run(
     runtime: MarketSqlJobRuntime,
     job_id: str,
     attempt_id: str,
+    error: BaseException | None = None,
 ) -> None:
     try:
         runtime.attempts.fail(attempt_id, runtime.clock(), AttemptErrorCode.VALIDATION_FAILED)
     finally:
-        runtime.lifecycle.fail_run(job_id)
+        runtime.lifecycle.fail_run(job_id, error)
 
 
 def run_market_memory_job(
@@ -111,8 +113,8 @@ def run_market_memory_job(
     job = _running_job(runtime, request.job_id, TaskType.MARKET_MEMORY_LLM)
     try:
         prepared = prepare_graph_plan(connection, request.entries, request.prepared_at)
-    except (sqlite3.Error, ReceiptVerificationError):
-        runtime.lifecycle.fail_run(request.job_id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        runtime.lifecycle.fail_run(request.job_id, error)
         raise
     projection = project_terminal_result(
         job,
@@ -151,8 +153,8 @@ def run_market_memory_job(
             request.operation_id,
         )
         proof = _completion_proof(runtime.lifecycle, request.job_id, verified)
-    except (sqlite3.Error, ReceiptVerificationError):
-        runtime.lifecycle.fail_commit(request.job_id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        runtime.lifecycle.fail_commit(request.job_id, error)
         raise
     runtime.lifecycle.complete(request.job_id, proof)
     return MarketMemoryJobResult(prepared.saved_count, prepared.target_hash)
@@ -167,8 +169,8 @@ def run_market_state_job(
     attempt = _attempt(runtime, request, AttemptMode.STANDALONE_JOB)
     try:
         prepared = prepare_snapshot_update(connection, request.payload, attempt.reference())
-    except (sqlite3.Error, ReceiptVerificationError):
-        _fail_snapshot_run(runtime, request.job_id, attempt.id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        _fail_snapshot_run(runtime, request.job_id, attempt.id, error)
         raise
     projection = project_terminal_result(
         job,
@@ -200,8 +202,8 @@ def run_market_state_job(
         )
         verified = recover_snapshot_update(connection, prepared)
         proof = _completion_proof(runtime.lifecycle, request.job_id, verified)
-    except (sqlite3.Error, ReceiptVerificationError):
-        _fail_snapshot_commit(runtime, request.job_id, attempt.id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        _fail_snapshot_commit(runtime, request.job_id, attempt.id, error)
         raise
     reconcile_snapshot_attempt(runtime.attempts, prepared, runtime.clock())
     runtime.lifecycle.complete(request.job_id, proof)
@@ -223,8 +225,8 @@ def run_combined_market_job(
             update_attempt_ref=attempt.reference(),
             prepared_at=request.prepared_at,
         )
-    except (sqlite3.Error, ReceiptVerificationError):
-        _fail_snapshot_run(runtime, request.job_id, attempt.id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        _fail_snapshot_run(runtime, request.job_id, attempt.id, error)
         raise
     projection = project_terminal_result(
         job,
@@ -265,8 +267,8 @@ def run_combined_market_job(
         )
         verified = recover_combined_update(connection, prepared)
         proof = _completion_proof(runtime.lifecycle, request.job_id, verified)
-    except (sqlite3.Error, ReceiptVerificationError):
-        _fail_snapshot_commit(runtime, request.job_id, attempt.id)
+    except (sqlite3.Error, ReceiptVerificationError) as error:
+        _fail_snapshot_commit(runtime, request.job_id, attempt.id, error)
         raise
     reconcile_snapshot_attempt(runtime.attempts, prepared.snapshot, runtime.clock())
     runtime.lifecycle.complete(request.job_id, proof)

@@ -1,0 +1,259 @@
+"""구조화 체크포인트 스키마·검증·병합 테스트.
+
+    py -3 features/common/research_schema/tests/test_tracked_checkpoints.py
+"""
+import os
+import sys
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from features.common.research_schema.tracked_checkpoints import (
+    MAX_CHECKPOINTS,
+    MAX_HISTORY,
+    append_history,
+    checkpoint_id,
+    checkpoint_label,
+    checkpoint_labels,
+    merge_checkpoint_lists,
+    merge_with_templates,
+    partition_checkpoints,
+    normalize_tracked_checkpoint,
+    split_checkpoints,
+)
+
+NOW = "2026-08-30T00:00:00+00:00"
+
+
+def _cp(**overrides):
+    base = {
+        "item": "전력 설비 기업 실적 가이던스 상향",
+        "direction": "supporting",
+        "matchers": {"tickers": ["gev"], "keywords": ["가이던스 상향", "전력설비"]},
+    }
+    base.update(overrides)
+    return base
+
+
+def test_normalize_keeps_schema_and_drops_unknown_keys():
+    out = normalize_tracked_checkpoint(_cp(전송되지않는키="x", status="confirmed"), now=NOW)
+    assert set(out) == {
+        "id", "item", "direction", "matchers", "dueBy", "status",
+        "createdAt", "lastVerdict", "history",
+    }
+    assert out["matchers"]["tickers"] == ["GEV"]           # 대문자 정규화
+    assert out["status"] == "confirmed"
+    assert out["createdAt"] == NOW
+    assert out["id"].startswith("cp_") and len(out["id"]) == 11
+
+
+def test_id_is_stable_for_same_item_and_matchers():
+    first = normalize_tracked_checkpoint(_cp(), now=NOW)
+    second = normalize_tracked_checkpoint(_cp(status="confirmed", createdAt="2026-01-01T00:00:00+00:00"), now=NOW)
+    assert first["id"] == second["id"]
+    other = normalize_tracked_checkpoint(_cp(item="다른 확인 항목"), now=NOW)
+    assert other["id"] != first["id"]
+    assert first["id"] == checkpoint_id("전력 설비 기업 실적 가이던스 상향", ["GEV"], ["가이던스 상향", "전력설비"])
+
+
+def test_unknown_enum_direction_drops_the_element():
+    """direction은 뜻이 뒤집히는 값이라 기본값을 주지 않는다."""
+    assert normalize_tracked_checkpoint(_cp(direction="긍정"), now=NOW) is None
+    assert normalize_tracked_checkpoint(_cp(direction=""), now=NOW) is None
+
+
+def test_unknown_status_and_verdict_fall_back_without_dropping():
+    out = normalize_tracked_checkpoint(
+        _cp(status="확인됨", lastVerdict={"verdict": "좋음", "at": NOW}), now=NOW
+    )
+    assert out["status"] == "open"
+    assert out["lastVerdict"] is None
+
+
+def test_untrusted_input_cannot_be_born_confirmed():
+    """생성 경로(LLM·수동 입력)는 status·이력·createdAt을 낼 수 없다 — 서버가 찍는다.
+    받으면 판정 pass가 다시 열 일 없는 '이미 확인됨' 체크포인트가 태어난다(§A.1 결정 1)."""
+    out = normalize_tracked_checkpoint(
+        _cp(
+            status="confirmed",
+            createdAt="2020-01-01T00:00:00+00:00",
+            lastVerdict={"verdict": "confirmed", "at": NOW, "evidence": []},
+            history=[{"at": NOW, "from": "open", "to": "confirmed", "verdict": "confirmed"}],
+        ),
+        now=NOW,
+        trusted=False,
+    )
+    assert out["status"] == "open"
+    assert out["createdAt"] == NOW
+    assert out["lastVerdict"] is None
+    assert out["history"] == []
+
+
+def test_scope_key_separates_identical_wording_across_states():
+    """스코프 정체성이 해시에 없으면 서로 다른 상태의 같은 문구 체크포인트가 같은
+    id를 받아, id로 dedupe하는 소비자가 남의 상태 체크포인트를 지운다."""
+    a = normalize_tracked_checkpoint(_cp(), scope_key="ai_power_bottleneck", now=NOW)
+    b = normalize_tracked_checkpoint(_cp(), scope_key="grid_capex", now=NOW)
+    assert a["id"] != b["id"]
+    assert a["id"] == normalize_tracked_checkpoint(_cp(), scope_key="ai_power_bottleneck", now=NOW)["id"]
+
+
+def test_item_length_and_keyword_rules():
+    long_item = normalize_tracked_checkpoint(_cp(item="가" * 200), now=NOW)
+    assert len(long_item["item"]) == 120
+    # keyword 1~6개, 각 2~40자
+    trimmed = normalize_tracked_checkpoint(
+        _cp(matchers={"keywords": ["a", "가" * 41, "정상 키워드", "정상 키워드", "둘째", "셋째", "넷째", "다섯", "여섯", "일곱"]}),
+        now=NOW,
+    )
+    assert len(trimmed["matchers"]["keywords"]) == 6
+    assert "a" not in trimmed["matchers"]["keywords"]
+    assert "가" * 41 not in trimmed["matchers"]["keywords"]
+    assert trimmed["matchers"]["keywords"].count("정상 키워드") == 1
+
+
+def test_state_label_keyword_is_rejected():
+    """상태 라벨 전문을 keyword로 쓰면 그 상태의 모든 근거가 매칭돼 과잉 확인이 된다."""
+    out = normalize_tracked_checkpoint(
+        _cp(matchers={"keywords": ["AI 데이터센터 전력 병목", "가이던스 상향"]}),
+        now=NOW,
+        forbidden_keywords=["AI데이터센터 전력병목"],   # 띄어쓰기가 달라도 같은 라벨이다
+    )
+    assert out["matchers"]["keywords"] == ["가이던스 상향"]
+    dropped = normalize_tracked_checkpoint(
+        _cp(matchers={"keywords": ["AI 데이터센터 전력 병목"]}),
+        now=NOW,
+        forbidden_keywords=["AI 데이터센터 전력 병목"],
+    )
+    assert dropped is None      # 남는 keyword가 없으면 그 체크포인트를 버린다
+
+
+def test_narrative_requires_keyword_thesis_requires_ticker_and_keyword():
+    no_keyword = _cp(matchers={"tickers": ["NVDA"], "keywords": []})
+    assert normalize_tracked_checkpoint(no_keyword, scope="narrative", now=NOW) is None
+    assert normalize_tracked_checkpoint(no_keyword, scope="thesis", now=NOW) is None
+
+    keyword_only = _cp(matchers={"keywords": ["가이던스 상향"]})
+    assert normalize_tracked_checkpoint(keyword_only, scope="narrative", now=NOW) is not None
+    # 티커만으로는 "그 회사 뉴스가 있다"이지 가설 신호가 아니다.
+    assert normalize_tracked_checkpoint(keyword_only, scope="thesis", now=NOW) is None
+    assert normalize_tracked_checkpoint(_cp(), scope="thesis", now=NOW) is not None
+
+
+def test_due_by_must_be_iso_date_after_creation():
+    assert normalize_tracked_checkpoint(_cp(dueBy="2026-09-15"), now=NOW)["dueBy"] == "2026-09-15"
+    assert normalize_tracked_checkpoint(_cp(dueBy="다음 분기"), now=NOW)["dueBy"] is None
+    assert normalize_tracked_checkpoint(_cp(dueBy="2026-08-01"), now=NOW)["dueBy"] is None
+
+
+def test_split_keeps_templates_and_reads_everything_stored():
+    stored = ["템플릿 문장 1", _cp(), {"item": "깨진 것", "direction": "??"}, "템플릿 문장 2"]
+    structured, templates = split_checkpoints(stored, now=NOW)
+    assert len(structured) == 1
+    assert templates == ["템플릿 문장 1", "템플릿 문장 2"]
+
+    # 읽기에는 상한이 없다 — 병합이 open을 보존해 8을 넘길 수 있는데 읽기가 자르면
+    # 9번째 open은 저장·표시되면서 영영 판정받지 못한다(2026-08-30 리뷰). 상한은
+    # 쓰기 경로(merge_checkpoint_lists)의 것이다.
+    many = [_cp(item=f"확인 항목 {i}") for i in range(12)]
+    structured, _ = split_checkpoints(many, now=NOW)
+    assert len(structured) == 12
+
+
+def test_merge_with_templates_preserves_structured_status():
+    stored = [_cp(status="confirmed", history=[{"at": NOW, "from": "open", "to": "confirmed", "verdict": "confirmed"}]), "어제 템플릿"]
+    merged = merge_with_templates(stored, ["오늘 템플릿 1", "오늘 템플릿 2"], now=NOW)
+    assert merged[0]["status"] == "confirmed"
+    assert len(merged[0]["history"]) == 1
+    assert merged[1:] == ["오늘 템플릿 1", "오늘 템플릿 2"]   # 어제 템플릿은 사라진다
+
+
+def test_merge_lists_inherits_status_and_history_for_same_id():
+    existing = [_cp(
+        status="challenged",
+        createdAt="2026-08-01T00:00:00+00:00",
+        lastVerdict={"verdict": "challenged", "at": "2026-08-20T00:00:00+00:00", "evidence": []},
+        history=[{"at": "2026-08-20T00:00:00+00:00", "from": "open", "to": "challenged", "verdict": "challenged"}],
+    )]
+    incoming = [_cp()]      # LLM이 같은 항목을 다시 냈다 — status는 판정 pass만 바꾼다
+    merged = merge_checkpoint_lists(existing, incoming, now=NOW)
+    assert len(merged) == 1
+    assert merged[0]["status"] == "challenged"
+    assert merged[0]["createdAt"] == "2026-08-01T00:00:00+00:00"
+    assert merged[0]["lastVerdict"]["verdict"] == "challenged"
+    assert len(merged[0]["history"]) == 1
+
+
+def test_merge_lists_keeps_open_leftovers_and_prunes_resolved():
+    leftovers = [
+        _cp(item="아직 열린 항목", status="open"),
+        _cp(item="해소된 항목", status="confirmed", createdAt="2026-01-01T00:00:00+00:00"),
+    ]
+    incoming = [_cp(item=f"새 항목 {i}") for i in range(7)]
+    merged = merge_checkpoint_lists(leftovers, incoming, now=NOW)
+    items = [cp["item"] for cp in merged]
+    assert len(merged) == MAX_CHECKPOINTS
+    assert "아직 열린 항목" in items       # open은 유지
+    assert "해소된 항목" not in items      # 해소된 것은 상한 안에서 정리
+
+
+def test_open_leftovers_survive_even_when_new_items_fill_the_cap():
+    """상한은 open을 자르는 칼이 아니다 — LLM이 8개를 새로 내도 해소되지 않은
+    기존 항목이 사라지면 사용자가 기다리던 확인이 소리 없이 증발한다(2026-08-30 리뷰)."""
+    leftovers = [_cp(item=f"열린 기존 {i}", status="open") for i in range(2)]
+    incoming = [_cp(item=f"새 항목 {i}") for i in range(8)]
+    merged = merge_checkpoint_lists(leftovers, incoming, now=NOW)
+    items = [cp["item"] for cp in merged]
+    assert len(merged) == 10                      # 8 상한을 넘더라도
+    assert "열린 기존 0" in items and "열린 기존 1" in items
+
+
+def test_partition_preserves_invalid_dicts_verbatim():
+    """저장된 dict의 재검증 실패는 규칙 쪽 변화다 — 버리면 체크포인트·이력이
+    소리 없이 사라진다. 판정에서만 빼고 원본은 돌려준다."""
+    broken = {"item": "방향 없음", "matchers": {"keywords": ["가이던스"]}}
+    structured, invalid, templates = partition_checkpoints([_cp(), broken, "템플릿"], now=NOW)
+    assert len(structured) == 1
+    assert invalid == [broken]
+    assert templates == ["템플릿"]
+    merged = merge_with_templates([_cp(), broken], ["오늘 템플릿"], now=NOW)
+    assert broken in merged                        # 갱신 병합도 보존한다
+
+
+def test_checkpoint_labels_guards_non_list_values():
+    """thesis 행의 next_checkpoints가 리스트가 아니어도 죽거나 dict 키 목록을
+    체크포인트로 내면 안 된다."""
+    assert checkpoint_labels(None) == []
+    assert checkpoint_labels("문장 하나") == []          # str은 원소 나열이 아니다
+    assert checkpoint_labels(123) == []
+    assert checkpoint_labels(_cp()) == ["전력 설비 기업 실적 가이던스 상향"]  # 단일 dict는 감싼다
+
+
+def test_history_cap_removes_oldest_first():
+    checkpoint = normalize_tracked_checkpoint(_cp(), now=NOW)
+    for i in range(MAX_HISTORY + 5):
+        append_history(checkpoint, at=f"2026-08-{i % 28 + 1:02d}T00:00:00+00:00", from_status="open", to_status="confirmed", verdict="confirmed")
+        checkpoint["history"][-1]["at"] = f"seq-{i}"
+    assert len(checkpoint["history"]) == MAX_HISTORY
+    assert checkpoint["history"][0]["at"] == "seq-5"
+
+
+def test_checkpoint_label_reads_both_shapes():
+    assert checkpoint_label("템플릿 문장") == "템플릿 문장"
+    assert checkpoint_label(_cp()) == "전력 설비 기업 실적 가이던스 상향"
+    assert checkpoint_label({"nothing": 1}) == ""
+    assert checkpoint_labels(["문장", _cp(), {"nothing": 1}]) == ["문장", "전력 설비 기업 실적 가이던스 상향"]
+
+
+def _run_all():
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for t in tests:
+        t()
+        print(f"PASS {t.__name__}")
+    print(f"\n{len(tests)}/{len(tests)} tests passed")
+    return True
+
+
+if __name__ == "__main__":
+    sys.exit(0 if _run_all() else 1)

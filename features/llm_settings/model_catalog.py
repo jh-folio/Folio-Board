@@ -1,7 +1,7 @@
-"""Dynamic model catalog discovery for LLM API and CLI providers.
+"""Dynamic model catalog discovery for CLI providers.
 
 The catalog is best-effort and cache-first. Normal settings reads reuse the last
-known catalog so UI startup never blocks on provider APIs or CLI subprocesses.
+known catalog so UI startup never blocks on CLI subprocesses.
 Manual refresh is the only path that reaches out to providers.
 """
 from __future__ import annotations
@@ -10,60 +10,54 @@ import datetime as dt
 import json
 import re
 import subprocess
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from features.common.workspace import data_dir
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CACHE_PATH = data_dir() / "llm-model-cache.json"
 
-API_MODEL_FALLBACKS = {
-    "openai": [
-        {"value": "gpt-5.5", "label": "GPT-5.5"},
-        {"value": "gpt-5.4", "label": "GPT-5.4"},
-        {"value": "gpt-5.4-mini", "label": "GPT-5.4-mini"},
-    ],
-    "gemini": [
-        {"value": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
-        {"value": "gemini-3.1-pro", "label": "Gemini 3.1 Pro"},
-    ],
-    "claude": [
-        {"value": "claude-fable-5", "label": "Claude Fable 5"},
-        {"value": "claude-sonnet-5", "label": "Claude Sonnet 5"},
-        {"value": "claude-opus-5", "label": "Claude Opus 5"},
-        {"value": "claude-haiku-4-5", "label": "Claude Haiku 4.5"},
-    ],
-}
+CLI_MODEL_FALLBACKS = {'codex': [{'value': 'gpt-6-astra', 'label': 'GPT-6 Astra'},
+           {'value': 'gpt-6-sol', 'label': 'GPT-6 Sol'},
+           {'value': 'gpt-6-luna', 'label': 'GPT-6 Luna'},
+           {'value': 'gpt-5.6-sol', 'label': 'GPT-5.6 Sol'},
+           {'value': 'gpt-5.6-terra', 'label': 'GPT-5.6 Terra'},
+           {'value': 'gpt-5.6-luna', 'label': 'GPT-5.6 Luna'},
+           {'value': 'gpt-5.5', 'label': 'GPT-5.5'},
+           {'value': 'gpt-5.4-mini', 'label': 'GPT-5.4-mini'}],
+ 'claude': [{'value': 'claude-opus-5-5', 'label': 'Claude Opus 5.5'},
+            {'value': 'claude-fable-5', 'label': 'Claude Fable 5'},
+            {'value': 'claude-sonnet-5', 'label': 'Claude Sonnet 5'},
+            {'value': 'claude-opus-5', 'label': 'Claude Opus 5'},
+            {'value': 'claude-haiku-4-5', 'label': 'Claude Haiku 4.5'},
+            {'value': 'claude-opus-4-8', 'label': 'Claude Opus 4.8'},
+            {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6'}],
+ 'antigravity': [{'value': 'gemini-3.6-flash-medium', 'label': 'Gemini 3.6 Flash Medium'},
+                 {'value': 'gemini-3.1-pro-high', 'label': 'Gemini 3.1 Pro High'},
+                 {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6'}]}
 
-DEPRECATED_MODEL_REPLACEMENTS = {
-    "claude": {
-        "claude-opus-4-8": "claude-opus-5",
-        "claude-sonnet-4-6": "claude-sonnet-5",
-    },
-}
+# Only for IDs a provider has actually retired. A newer model is added to the
+# list above instead: rewriting a working choice to a model the installed CLI
+# does not know yet made every scheduled run fail (`unrecognized_model` from
+# Claude Code 2.1.273, "not supported" from Codex 0.154 — 2026-09-23).
+DEPRECATED_MODEL_REPLACEMENTS: dict[str, dict[str, str]] = {}
 
-CLI_MODEL_FALLBACKS = {
-    "codex": [
-        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
-        {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
-        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
-        *API_MODEL_FALLBACKS["openai"],
-    ],
-    "claude": API_MODEL_FALLBACKS["claude"],
-    # agy는 모델 이름에 노력 단계를 함께 담는다(`...-high`). 단계 없는 예전 이름
-    # (`gemini-3.5-pro` 등)은 1.1.7이 "not recognized"로 거부하는데, 실시간 목록에
-    # 이 기본값이 덧붙어 선택지에 남아 있었다 — 고르면 실행 시점에 실패한다.
-    "antigravity": [
-        {"value": "gemini-3.1-pro-high", "label": "Gemini 3.1 Pro High"},
-        {"value": "gemini-3.6-flash-medium", "label": "Gemini 3.6 Flash Medium"},
-        {"value": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
-    ],
+# Display order follows recency. Keep a deliberate default for each adapter so
+# a reordered selector cannot silently change a no-override workflow. The
+# default also stays on a model older CLIs know; newer models need a CLI update.
+CLI_DEFAULT_MODELS = {
+    "codex": "gpt-5.6-sol",
 }
 
 MAX_MODEL_ID_LENGTH = 128
 _MODEL_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789._:-")
+# A model ID becomes one argv element of a CLI command. On Windows an npm shim
+# (`codex.cmd`) runs through cmd.exe, which re-parses `&`, `|`, quotes, etc., and
+# a leading `-` would be read as another option. Only plain identifiers pass.
+_SAFE_CLI_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
+def is_safe_cli_model_id(value: str) -> bool:
+    return bool(_SAFE_CLI_MODEL_ID.fullmatch(str(value or "")))
 
 
 def _is_generation_model_id(value: str) -> bool:
@@ -97,17 +91,35 @@ def normalize_model_id(provider: str, model_id: str) -> str:
 
 
 def _sanitize_choices(provider: str, choices: list[dict]) -> list[dict]:
-    deprecated = DEPRECATED_MODEL_REPLACEMENTS.get(str(provider or "").strip().lower(), {})
-    return [
-        item for item in choices
-        if str((item or {}).get("value") or "").strip() not in deprecated
-    ]
+    provider_id = str(provider or "").strip().lower()
+    replacements = DEPRECATED_MODEL_REPLACEMENTS.get(provider_id, {})
+    fallback_labels = {
+        str((item or {}).get("value") or "").strip(): str((item or {}).get("label") or "").strip()
+        for item in CLI_MODEL_FALLBACKS.get(provider_id, [])
+    }
+    normalized = []
+    for item in choices:
+        choice = item or {}
+        value = str(choice.get("value") or "").strip()
+        replacement = replacements.get(value)
+        if replacement:
+            value = replacement
+        label = fallback_labels.get(value) if replacement else ""
+        label = label or str(choice.get("label") or "").strip() or _label_for(value)
+        if value:
+            normalized.append({"value": value, "label": label})
+    return _dedupe_choices(normalized, [])
 
 
-def _sanitize_catalog(provider: str, catalog: dict) -> dict:
+def _sanitize_catalog(provider: str, catalog: dict, fallback: list[dict] | None = None) -> dict:
+    choices = _sanitize_choices(provider, list(catalog.get("modelChoices") or []))
+    if fallback:
+        # A cache can predate newly released built-in choices. Keep the curated
+        # fallback choices available and first, then retain other discovered IDs.
+        choices = _dedupe_choices(_sanitize_choices(provider, fallback), choices)
     return {
         **catalog,
-        "modelChoices": _sanitize_choices(provider, list(catalog.get("modelChoices") or [])),
+        "modelChoices": choices,
     }
 
 
@@ -179,7 +191,13 @@ def _get_any_cached(key: str) -> dict | None:
     return None
 
 
-def _cached_after_refresh_failure(key: str, provider: str, status: str, message: str) -> dict | None:
+def _cached_after_refresh_failure(
+    key: str,
+    provider: str,
+    status: str,
+    message: str,
+    fallback: list[dict],
+) -> dict | None:
     cached = _get_any_cached(key)
     if not cached:
         return None
@@ -188,7 +206,7 @@ def _cached_after_refresh_failure(key: str, provider: str, status: str, message:
         "source": "cache",
         "status": status,
         "message": message,
-    })
+    }, fallback)
 
 
 def _set_cached(key: str, entry: dict) -> dict:
@@ -196,89 +214,6 @@ def _set_cached(key: str, entry: dict) -> dict:
     cache[key] = entry
     _write_cache(cache)
     return entry
-
-
-def _api_request(provider: str, api_key: str) -> urllib.request.Request:
-    if provider == "openai":
-        return urllib.request.Request(
-            "https://api.openai.com/v1/models",
-            headers={"Authorization": f"Bearer {api_key}"},
-            method="GET",
-        )
-    if provider == "gemini":
-        return urllib.request.Request(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            headers={"x-goog-api-key": api_key},
-            method="GET",
-        )
-    if provider == "claude":
-        return urllib.request.Request(
-            "https://api.anthropic.com/v1/models",
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
-            method="GET",
-        )
-    raise ValueError(f"Unsupported LLM API provider: {provider}")
-
-
-def _generation_model_ids(provider: str, payload: dict) -> list[str]:
-    if provider == "openai":
-        rows = payload.get("data") if isinstance(payload, dict) else []
-        ids = [str(row.get("id") or "").strip() for row in rows or [] if isinstance(row, dict)]
-        return [model_id for model_id in ids if _is_generation_model_id(model_id)]
-    if provider == "gemini":
-        rows = payload.get("models") if isinstance(payload, dict) else []
-        out = []
-        for row in rows or []:
-            if not isinstance(row, dict):
-                continue
-            methods = row.get("supportedGenerationMethods") or []
-            if methods and "generateContent" not in methods:
-                continue
-            name = str(row.get("name") or "").strip().removeprefix("models/")
-            if name and _is_generation_model_id(name):
-                out.append(name)
-        return out
-    rows = payload.get("data") if isinstance(payload, dict) else []
-    ids = [str(row.get("id") or "").strip() for row in rows or [] if isinstance(row, dict)]
-    return [model_id for model_id in ids if _is_generation_model_id(model_id)]
-
-
-def discover_api_models(
-    provider: str,
-    *,
-    api_key: str = "",
-    refresh: bool = False,
-    timeout: int = 12,
-    urlopen=urllib.request.urlopen,
-    fallback: list[dict] | None = None,
-) -> dict:
-    provider = str(provider or "").strip().lower()
-    fallback_choices = fallback if fallback is not None else API_MODEL_FALLBACKS.get(provider, [])
-    if provider not in API_MODEL_FALLBACKS:
-        raise ValueError(f"Unsupported LLM API provider: {provider}")
-    if not api_key:
-        return _fallback_result(provider, "api", fallback_choices, "not_configured", "저장된 API Key가 없어 기본 모델 목록을 사용합니다.")
-    key = f"api:{provider}"
-    cached = _get_cached(key, refresh=refresh)
-    if cached:
-        return _sanitize_catalog(provider, cached)
-    if not refresh:
-        return _fallback_result(provider, "api", fallback_choices, "cached_missing", "저장된 모델 목록이 없어 기본 모델 목록을 사용합니다.")
-    try:
-        with urlopen(_api_request(provider, api_key), timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        models = _generation_model_ids(provider, payload)
-        if not models:
-            cached = _cached_after_refresh_failure(key, provider, "empty_cached", "Provider가 생성 모델을 반환하지 않아 저장된 모델 목록을 유지합니다.")
-            if cached:
-                return cached
-            return _fallback_result(provider, "api", fallback_choices, "empty", "Provider가 사용 가능한 생성 모델을 반환하지 않았습니다.")
-        return _set_cached(key, _remote_result(provider, "api", models, fallback_choices))
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
-        cached = _cached_after_refresh_failure(key, provider, "provider_error_cached", f"모델 목록 조회 실패로 저장된 모델 목록을 유지합니다: {type(exc).__name__}")
-        if cached:
-            return cached
-        return _fallback_result(provider, "api", fallback_choices, "provider_error", f"모델 목록 조회 실패: {type(exc).__name__}")
 
 
 def _parse_cli_models(stdout: str) -> list[str]:
@@ -329,7 +264,7 @@ def discover_cli_models(
     key = f"cli:{adapter}:{executable}"
     cached = _get_cached(key, refresh=refresh)
     if cached:
-        return _sanitize_catalog(adapter, cached)
+        return _sanitize_catalog(adapter, cached, fallback_choices)
     if not refresh:
         return _fallback_result(adapter, "cli", fallback_choices, "cached_missing", "저장된 모델 목록이 없어 기본 모델 목록을 사용합니다.")
     commands = [[executable, "models"], [executable, "model", "list"]]
@@ -352,7 +287,13 @@ def discover_cli_models(
                     return _set_cached(key, _remote_result(adapter, "cli", models, fallback_choices))
         except (OSError, subprocess.SubprocessError, TimeoutError):
             pass
-    cached = _cached_after_refresh_failure(key, adapter, "unsupported_cached", "CLI 모델 조회에 실패해 저장된 모델 목록을 유지합니다.")
+    cached = _cached_after_refresh_failure(
+        key,
+        adapter,
+        "unsupported_cached",
+        "CLI 모델 조회에 실패해 저장된 모델 목록을 유지합니다.",
+        fallback_choices,
+    )
     if cached:
         return cached
     return _fallback_result(adapter, "cli", fallback_choices, "unsupported", "CLI가 모델 목록 명령을 제공하지 않아 기본 모델 목록을 사용합니다.")

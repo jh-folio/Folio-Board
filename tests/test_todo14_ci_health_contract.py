@@ -69,7 +69,7 @@ def test_qa_helpers_are_explicitly_unpackageable(tmp_path: Path) -> None:
     assert "scripts" not in packaged_inputs
     assert not (set(QA_HELPERS) & packaged_inputs)
 
-    package = tmp_path / "FolioOS-test"
+    package = tmp_path / "FolioBoard-test"
     package.mkdir()
     (package / "VERSION").write_text("0.2.0\n", encoding="utf-8")
     (package / "BUILD.json").write_text(

@@ -17,7 +17,7 @@ import re
 import urllib.request
 from typing import Callable
 
-_USER_AGENT = "Mozilla/5.0 Folio-OS/1.0"
+_USER_AGENT = "Mozilla/5.0 Folio-Board/1.0"
 
 
 def fetch_wikipedia_html(url: str) -> str:

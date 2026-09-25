@@ -3,6 +3,7 @@ import {
   getJson,
   getHypothesisIntelligence,
   isActiveJobStatus,
+  promoteNoteToThesis,
   runThesisReview,
   updateHypothesisCheckpoint,
   type HypothesisCheckpoint,
@@ -104,6 +105,35 @@ export function HypothesisReviewCard({
     }
   }
 
+  async function promoteThesis(hasThesis: boolean) {
+    if (!identity.ticker || busy) return;
+    // 갱신은 기존 Thesis를 노트 내용으로 덮는다 — 명시적 action이라도 되돌릴 수 없는
+    // 쪽은 한 번 묻는다. 만들기(빈자리)는 잃을 것이 없으므로 바로 진행한다.
+    // 덮겠다는 의사는 요청이 싣는다(overwrite) — 서버 기본이 덮기면, 이 카드가 마지막으로
+    // 읽은 캐시가 "thesis 없음"인 사이 다른 탭이 만든 thesis를 확인 없이 덮는다.
+    if (hasThesis && !window.confirm(`${identity.ticker} Thesis를 이 노트 내용으로 덮어쓸까요?`)) return;
+    setBusy(true);
+    setStatus(hasThesis ? "Thesis를 갱신하는 중..." : "Thesis를 만드는 중...");
+    try {
+      const result = await promoteNoteToThesis(identity.id, hasThesis);
+      if (result.status === "skipped_existing") {
+        // 카드가 비어 있다고 알던 사이 다른 경로가 thesis를 만들었다 — 남의 내용을
+        // 확인 없이 덮지 않고, 최신 상태를 보여 준 뒤 사용자가 갱신으로 다시 누르게 한다.
+        const refreshedNow = await getHypothesisIntelligence(identity.id);
+        setIntelligence(refreshedNow);
+        setStatus("그 사이 이 종목의 Thesis가 생겼습니다. 내용을 확인한 뒤 갱신으로 진행하세요.");
+        return;
+      }
+      const refreshed = await getHypothesisIntelligence(identity.id);
+      setIntelligence(refreshed);
+      setStatus(result.status === "updated" ? "이 노트로 Thesis를 갱신했습니다." : "이 노트로 Thesis를 만들었습니다.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Thesis 등록에 실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runExplicitReview() {
     if (!intelligence?.thesis || !identity.ticker || busy) return;
     setBusy(true);
@@ -145,7 +175,16 @@ export function HypothesisReviewCard({
       ) : intelligence ? (
         <>
           {!intelligence.thesis && (
-            <p className="hypothesis-review-empty">연결된 Thesis가 없습니다.</p>
+            <>
+              <p className="hypothesis-review-empty">
+                연결된 Thesis가 없습니다. 이 노트를 Thesis로 등록하면 최신 근거로 검토할 수 있습니다.
+              </p>
+              <div className="hypothesis-review-actions">
+                <button type="button" onClick={() => promoteThesis(false)} disabled={busy}>
+                  {busy ? "등록 중..." : "이 노트로 Thesis 만들기"}
+                </button>
+              </div>
+            </>
           )}
           {!intelligence.latestDelta && (
             <p className="hypothesis-review-empty">최신 Delta가 없습니다. 최신 근거 검토를 명시적으로 실행하세요.</p>
@@ -167,6 +206,13 @@ export function HypothesisReviewCard({
             >
               {busy ? "확인 중..." : "체크포인트 확인"}
             </button>
+            {/* 빈 상태에는 바로 위에 `만들기`가 있다 — 같은 자리에 비활성 `갱신`까지
+                두면 할 수 있는 일이 두 개로 보인다. */}
+            {intelligence.thesis && (
+              <button type="button" onClick={() => promoteThesis(true)} disabled={busy}>
+                이 노트로 Thesis 갱신
+              </button>
+            )}
             <button type="button" onClick={onRequestAgent} disabled={!agentAvailable}>
               Agent에게 설명 요청
             </button>

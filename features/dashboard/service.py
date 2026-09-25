@@ -113,6 +113,9 @@ def build_cockpit_payload(data_dir: Path) -> dict:
     started = time.perf_counter()
     data_dir = Path(data_dir)
     db_path = data_dir / "market-memory.sqlite3"
+    # Keep the legacy change projection fields in this API response for older
+    # clients.  The current Research Cockpit does not render them; new briefing
+    # saves also stop creating briefing rows.
     events = _current_change_events(list_change_events(db_path, limit=24))
     changes = [row for row in events if row.get("status") in VISIBLE_CHANGE_STATUSES]
     quiet = [row for row in events if row.get("status") not in VISIBLE_CHANGE_STATUSES]

@@ -15,8 +15,11 @@ flows, sector index moves, and trading value were empty in every briefing alread
 """
 
 import datetime as dt
+import math
 from abc import ABC, abstractmethod
 from typing import Any
+
+from features.common.market_data.snapshot import calculate_price_returns
 
 
 class MarketDataProvider(ABC):
@@ -44,7 +47,7 @@ def _safe_float(value: Any) -> float | None:
     try:
         if value is None:
             return None
-        if value != value:
+        if value != value or not math.isfinite(float(value)):
             return None
         return float(value)
     except Exception:
@@ -118,20 +121,33 @@ class YFinanceKoreaMarketProvider(MarketDataProvider):
             rows = []
             for idx, close in zip(hist.index, hist["Close"].tolist()):
                 as_of = _iso_date(idx)
-                if as_of <= str(date)[:10]:
-                    rows.append((as_of, _safe_float(close)))
-            rows = [(d, c) for d, c in rows if c is not None]
-            if not rows:
+                rows.append((as_of, close))
+            calculated = calculate_price_returns(
+                rows,
+                ticker,
+                market="KR",
+                as_of_date=target,
+            )
+            if calculated.get("last") is None:
                 continue
-            as_of, close = rows[-1]
-            prev = rows[-2][1] if len(rows) >= 2 else None
-            change_pct = (close / prev - 1.0) * 100.0 if prev else None
             indices[label] = {
                 "label": label,
                 "ticker": ticker,
-                "asOfDate": as_of,
-                "close": close,
-                "changePct": change_pct,
+                "asOfDate": calculated["asOfDate"],
+                "close": calculated["last"],
+                "changePct": calculated["oneDayPct"],
+                "changeComparisonDate": calculated["oneDayComparisonDate"],
+                "changeComparisonValue": calculated["oneDayComparisonValue"],
+                "changeReason": calculated["oneDayReason"],
+                "comparisonSource": "yfinance",
+                "priceUnit": "points",
+                "comparisonUnit": "points",
+                "priceBasis": "unadjusted_close",
+                "comparisonBasis": "unadjusted_close",
+                "changeComparisonSource": "yfinance",
+                "changeComparisonUnit": "points",
+                "changeComparisonBasis": "unadjusted_close",
+                "dataQualityReasons": calculated["dataQualityReasons"],
                 "tradingValue": None,
             }
         payload["indices"] = indices
@@ -144,10 +160,9 @@ class YFinanceKoreaMarketProvider(MarketDataProvider):
 class TossOpenApiKoreaMarketProvider(MarketDataProvider):
     """Toss Open API readiness check for Korea aggregate market data.
 
-    Toss exposes stock/ETF prices and calendars for KR/US.  It does not expose
-    a documented KOSPI/KOSDAQ index aggregate in the current OpenAPI contract,
-    so this provider contributes readiness/warnings only.  Stock/ETF price
-    snapshots use the Toss client from the price-history and heatmap modules.
+    Toss exposes stock/ETF prices, calendars, and KOSPI/KOSDAQ market-indicator
+    candles. This aggregate-market provider still contributes readiness only;
+    native chart candles are wired through ``toss_open_api``/``chart_service``.
     """
 
     name = "toss_open_api"
@@ -160,7 +175,7 @@ class TossOpenApiKoreaMarketProvider(MarketDataProvider):
         return _empty_payload(
             date,
             self.name,
-            "Toss Open API configured; Korean aggregate index endpoint is not documented, falling back to yfinance",
+            "Toss Open API configured; aggregate market payload remains on yfinance (native chart uses Toss market-indicator candles)",
         )
 
 
@@ -207,19 +222,29 @@ def _fetch_usdkrw(date: str) -> dict:
     rows = []
     for idx, close in zip(hist.index, hist["Close"].tolist()):
         as_of = _iso_date(idx)
-        if as_of <= str(date)[:10]:
-            rows.append((as_of, _safe_float(close)))
-    rows = [(d, c) for d, c in rows if c is not None]
-    if not rows:
+        rows.append((as_of, close))
+    calculated = calculate_price_returns(
+        rows,
+        "USDKRW=X",
+        as_of_date=target,
+    )
+    if calculated.get("last") is None:
         return {"error": "no USD/KRW close data"}
-    as_of, close = rows[-1]
-    prev = rows[-2][1] if len(rows) >= 2 else None
     return {
         "USDKRW": {
             "label": "원·달러 환율",
-            "asOfDate": as_of,
-            "close": close,
-            "changePct": (close / prev - 1.0) * 100.0 if prev else None,
+            "asOfDate": calculated["asOfDate"],
+            "close": calculated["last"],
+            "changePct": None,
+            "changeComparisonDate": calculated["oneDayComparisonDate"],
+            "changeComparisonValue": calculated["oneDayComparisonValue"],
+            "changeReason": "unsupported_comparison_calendar",
+            "comparisonSource": "yfinance",
+            "priceUnit": "quote",
+            "comparisonUnit": "quote",
+            "priceBasis": "unadjusted_close",
+            "comparisonBasis": "unadjusted_close",
+            "dataQualityReasons": calculated["dataQualityReasons"],
             "source": "yfinance USDKRW=X",
         }
     }

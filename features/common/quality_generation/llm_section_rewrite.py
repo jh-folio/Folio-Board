@@ -6,14 +6,14 @@ import os
 
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
 from features.common.utils import clean_brief_text
-from features.llm_settings.client import extract_json_object, request_llm_text, selected_llm_config
+from features.llm_settings.client import extract_json_object, request_cli_text, selected_cli_config
 from features.common.quality_generation.preflight_enrichment import build_preflight_evidence_context
 from features.common.quality_generation.report_format import enforce_report_format, unwrap_markdown_payload
 from features.common.quality_generation.telemetry import normalize_token_usage
 from features.common.research_schema.data_gaps import data_gap_rows
 
 
-PROMPT = """당신은 Folio OS의 투자 리서치 품질 편집자입니다.
+PROMPT = """당신은 Folio Board의 투자 리서치 품질 편집자입니다.
 
 목표:
 - 기존 Canonical 보고서의 약한 섹션만 개선합니다.
@@ -35,7 +35,7 @@ JSON 객체 하나만 반환하세요.
 
 
 def _json_repair_prompt() -> str:
-    return """You convert a model response into valid JSON for Folio OS.
+    return """You convert a model response into valid JSON for Folio Board.
 
 Return only one JSON object:
 {
@@ -112,7 +112,7 @@ def _rewrite_context(artifact_type: str, artifact: dict, quality: dict, prefligh
     ])
 
 
-def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int) -> tuple[dict, dict, str]:
+def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int, allow_repair: bool = True) -> tuple[dict, dict, str]:
     """Parse section rewrite output, repairing common non-JSON responses once."""
     try:
         return _coerce_rewrite_payload(extract_json_object(text)), {}, ""
@@ -125,6 +125,8 @@ def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int) -> tuple[d
     except Exception:
         pass
 
+    if not allow_repair:
+        raise ValueError("rewrite_json_invalid")
     repair_context = "\n\n".join([
         "Original model output:",
         raw_text[:16000],
@@ -132,7 +134,7 @@ def _parse_rewrite_response(cfg: dict, text: str, *, max_tokens: int) -> tuple[d
         "Required JSON shape: {\"markdown\":\"...\", \"changedSections\":[], \"notes\":[]}",
     ])
     try:
-        repaired, _repair_id, repair_usage = request_llm_text(
+        repaired, _repair_id, repair_usage = request_cli_text(
             cfg,
             _json_repair_prompt(),
             repair_context,
@@ -163,6 +165,7 @@ def improve_sections_with_llm(
     weak_sections: list[dict],
     *,
     mode: str,
+    repair_budget=None,
 ) -> dict:
     artifact = dict(artifact or {})
     generation = artifact.get("generation") or {}
@@ -173,16 +176,28 @@ def improve_sections_with_llm(
             "repairReason": "llm_section_rewrite_skipped_non_llm_generation",
             "warnings": ["LLM 섹션 개선은 LLM으로 생성된 보고서에만 적용했습니다."],
         }
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     if not cfg.get("enabled"):
         return {"artifact": artifact, "repairApplied": False, "repairReason": "llm_disabled", "warnings": ["LLM 설정이 꺼져 있어 섹션 개선을 건너뜁니다."]}
-    if not cfg.get("apiKey"):
+    if not cfg.get("enabled"):
         return {"artifact": artifact, "repairApplied": False, "repairReason": f"missing_{cfg.get('provider')}_api_key", "warnings": ["선택한 LLM Provider API 키가 없어 섹션 개선을 건너뜁니다."]}
 
     max_tokens = int(os.environ.get("QUALITY_SECTION_REWRITE_MAX_OUTPUT_TOKENS", "4500"))
     context = _rewrite_context(artifact_type, artifact, quality, preflight, weak_sections)
+    request_options = {}
+    if artifact_type == "briefing":
+        if repair_budget is None:
+            from features.common.quality_generation.call_budget import SharedRepairBudget, current_briefing_budget
+            import time
+            repair_budget = current_briefing_budget() or SharedRepairBudget(deadline=time.monotonic() + 60)
+        repair_budget.check_active()
+        try:
+            repair_budget.claim("quality")
+        except RuntimeError:
+            return {"artifact": artifact, "repairApplied": False, "repairReason": "shared_repair_budget_exhausted", "warnings": []}
+        request_options["timeout_seconds"] = repair_budget.remaining_seconds()
     try:
-        text, response_id, usage = request_llm_text(
+        text, response_id, usage = request_cli_text(
             cfg,
             PROMPT,
             context,
@@ -190,8 +205,11 @@ def improve_sections_with_llm(
             max_output_tokens=max_tokens,
             json_mode=True,
             include_usage=True,
+            **request_options,
         )
-        raw, repair_usage, repaired_text = _parse_rewrite_response(cfg, text, max_tokens=max_tokens)
+        if artifact_type == "briefing":
+            repair_budget.check_active()
+        raw, repair_usage, repaired_text = _parse_rewrite_response(cfg, text, max_tokens=max_tokens, allow_repair=artifact_type != "briefing")
         markdown = str(raw.get("markdown") or "").strip()
         if len(markdown) < 400:
             return {"artifact": artifact, "repairApplied": False, "repairReason": "llm_section_rewrite_empty", "warnings": ["LLM 섹션 개선 결과가 너무 짧아 적용하지 않았습니다."]}
@@ -211,6 +229,10 @@ def improve_sections_with_llm(
                 "warnings": guard.warnings + [f"형식 검사: {issue}" for issue in guard.issues[:3]],
             }
         markdown = guard.markdown
+        if artifact_type == "briefing":
+            from features.common.quality_generation.repair_grounding import preserves_briefing_input
+            if not preserves_briefing_input(artifact.get("markdown", ""), markdown, artifact.get("sources") or []):
+                return {"artifact": artifact, "repairApplied": False, "repairReason": "rewrite_outside_input", "warnings": []}
         updated = {**artifact, "markdown": markdown}
         updated["checkpoints"] = checkpoints_from_markdown(
             markdown,
@@ -235,6 +257,8 @@ def improve_sections_with_llm(
             "warnings": guard.warnings,
         }
     except Exception:
+        if artifact_type == "briefing":
+            repair_budget.check_active()
         return {
             "artifact": artifact,
             "repairApplied": False,

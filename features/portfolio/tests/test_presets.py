@@ -27,8 +27,6 @@ def saved(monkeypatch):
         ],
     }
     monkeypatch.setattr(service, "portfolio_summary", lambda: snapshot)
-    stored = {}
-    monkeypatch.setattr(service, "save_portfolio_preset", lambda payload: stored.update(payload) or payload)
     return snapshot
 
 
@@ -45,7 +43,7 @@ def test_an_explicit_target_wins_over_the_current_weight(saved):
 
     preset = service.preset_from_current_portfolio()
     weights = {row["ticker"]: row["weight"] for row in preset["positions"]}
-    assert weights["NVDA"] == 0.4
+    assert weights["NVDA"] == 0.25
     assert weights["MSFT"] == 0.20
 
 
@@ -59,9 +57,11 @@ def test_positions_without_a_quote_are_left_out(saved):
 
 def test_an_empty_portfolio_makes_an_empty_preset(monkeypatch):
     monkeypatch.setattr(service, "portfolio_summary", lambda: {"positions": []})
-    monkeypatch.setattr(service, "save_portfolio_preset", lambda payload: payload)
 
-    assert service.preset_from_current_portfolio()["positions"] == []
+    draft = service.preset_from_current_portfolio()
+    assert draft["draft"] is True
+    assert "id" not in draft and "revision" not in draft
+    assert draft["positions"] == []
 
 
 @pytest.fixture

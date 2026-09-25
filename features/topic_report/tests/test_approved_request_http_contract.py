@@ -37,7 +37,7 @@ def execution_body(envelope: dict[str, JsonValue]) -> dict[str, JsonValue]:
         "approvedRequest": deepcopy(envelope["approvedRequest"]),
         "approval": {"id": approval["id"], "token": approval["token"]},
         "execution": {
-            "mode": "direct",
+            "mode": "auto",
             "adapter": "auto",
             "fallbackPolicy": "rules_on_engine_failure",
         },

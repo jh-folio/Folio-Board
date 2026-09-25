@@ -56,14 +56,17 @@ export function chartGroupsForSection(
   sectionIndex: number,
   payload?: AnalysisChartsPayload,
   usedChartIds = new Set<string>(),
+  { allowFallback = true }: { allowFallback?: boolean } = {},
 ) {
   const available = availableChartIds(payload);
   const titleAndBody = section.title;
   const matched: string[] = [];
 
   for (const rule of CHART_SECTION_RULES) {
-    const isMatch = rule.patterns.some((pattern) => pattern.test(titleAndBody))
-      || rule.fallbackIndex === sectionIndex;
+    const semantic = rule.patterns.some((pattern) => pattern.test(titleAndBody));
+    // **의미 매칭이 인덱스 fallback을 이긴다.** fallback을 먼저 소비하면 "기업 개요"
+    // (index 1)가 뒤의 "실적과 재무 품질" 차트를 가져가 실적 섹션엔 cashflow만 남는다.
+    const isMatch = semantic || (allowFallback && rule.fallbackIndex === sectionIndex);
     if (!isMatch) continue;
     for (const id of rule.ids) {
       if (available.has(id) && !usedChartIds.has(id)) matched.push(id);
@@ -72,20 +75,52 @@ export function chartGroupsForSection(
   return matched;
 }
 
+// "##" 섹션의 순서 위치. 서론(intro)이 앞에 붙어도 fallbackIndex가 밀리지 않게
+// 배열 인덱스가 아니라 헤딩 순번으로 fallback을 맞춘다.
+function headingOrdinals(sections: AnalysisSection[]): Map<number, number> {
+  const map = new Map<number, number>();
+  let ordinal = 0;
+  sections.forEach((section, index) => {
+    if (section.key === "intro") return;
+    map.set(index, ordinal);
+    ordinal += 1;
+  });
+  return map;
+}
+
+// 2-pass 배정: 전체 섹션의 의미 매칭을 먼저 끝내고, 남은 차트만 고정 위치 fallback으로.
+export function assignSectionCharts(sections: AnalysisSection[], payload?: AnalysisChartsPayload) {
+  const used = new Set<string>();
+  const bySection = new Map<number, string[]>();
+  const ordinals = headingOrdinals(sections);
+  const put = (index: number, ids: string[]) => {
+    if (!ids.length) return;
+    const bucket = bySection.get(index) || [];
+    for (const id of ids) if (!used.has(id)) { bucket.push(id); used.add(id); }
+    bySection.set(index, bucket);
+  };
+  for (const allowFallback of [false, true]) {
+    sections.forEach((section, index) => {
+      put(index, chartGroupsForSection(section, ordinals.get(index) ?? -1, payload, used, { allowFallback }));
+    });
+  }
+  return { bySection, used };
+}
+
 export function remainingChartIds(payload?: AnalysisChartsPayload, usedChartIds = new Set<string>()) {
   return Array.from(availableChartIds(payload)).filter((id) => !usedChartIds.has(id));
 }
 
 export function CompanyAnalysisBody({ markdown, charts }: { markdown: string; charts?: AnalysisChartsPayload }) {
   const sections = splitAnalysisSections(markdown);
-  const usedChartIds = new Set<string>();
   if (!sections.length) return <AnalysisCharts payload={charts} />;
+
+  const { bySection, used: usedChartIds } = assignSectionCharts(sections, charts);
 
   return (
     <>
       {sections.map((section, index) => {
-        const chartIds = chartGroupsForSection(section, index, charts, usedChartIds);
-        chartIds.forEach((id) => usedChartIds.add(id));
+        const chartIds = bySection.get(index) || [];
         return (
           <div className="company-analysis-section" key={section.key}>
             <ReportBody markdown={section.markdown} />

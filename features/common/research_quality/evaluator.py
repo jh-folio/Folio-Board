@@ -12,6 +12,7 @@ from features.common.utils import now_iso
 from features.common.research_quality.schema import grade_from_score, level_from_ratio, risk_level, status_from_score
 from features.common.research_quality.source_grounding import evaluate_source_grounding
 from features.common.research_schema.data_gaps import data_gap_rows
+from features.common.research_schema.tracked_checkpoints import checkpoint_labels
 
 _WEIGHTS = {
     "topic_answered": 12,
@@ -72,7 +73,9 @@ def _artifact_markdown(artifact_type: str, artifact: dict) -> str:
             "## 근거",
             str(artifact.get("rationale") or artifact.get("conclusion") or ""),
             "## 다음 체크포인트",
-            "\n".join(f"- {x}" for x in (artifact.get("nextCheckpoints") or [])),
+            # 구조화 체크포인트(dict)가 섞인 목록이다 — 그대로 f-string에 넣으면 dict
+            # repr이 평가용 markdown에 실려 품질 점수가 서식 잡음에 흔들린다.
+            "\n".join(f"- {x}" for x in checkpoint_labels(artifact.get("nextCheckpoints"))),
         ])
     return str((artifact or {}).get("markdown") or "")
 
@@ -120,6 +123,7 @@ def evaluate_report(
     evidence_items: list | None = None,
     data_gaps: list | None = None,
     market_tape: dict | None = None,
+    verified_claims: list | None = None,
     artifact_type: str = "topic_report",
 ) -> dict:
     md = markdown or ""
@@ -138,7 +142,7 @@ def evaluate_report(
     answered = 0.0
     if _has_section(low, "executive"):
         answered += 0.6
-    if any(term in md for term in ("현재 판단", "판정", "결론", "요약")):
+    if any(term in md for term in ("현재 판단", "판정", "결론", "정리", "요약")):
         answered += 0.4
     scores["topic_answered"] = min(1.0, answered)
     if answered < 0.6:
@@ -198,9 +202,25 @@ def evaluate_report(
     else:
         scores["source_diversity"] = 1.0
 
-    numbers = len(re.findall(r"\d+(?:\.\d+)?%?", md))
-    scores["numeric_support"] = min(1.0, numbers / 25)
-    if numbers < 5 and artifact_type not in {"regime_state"}:
+    # Briefings have a final deterministic fact validator.  Count only its
+    # distinct factKey/kind pairs so URLs, dates, reference titles, and
+    # repeated raw numbers cannot manufacture numeric support.  Other
+    # artifacts retain the historical evaluator rule for compatibility.
+    raw_numbers = len(re.findall(r"\d+(?:\.\d+)?%?", md))
+    if artifact_type == "briefing":
+        distinct_facts = {
+            (str(row.get("factKey") or ""), str(row.get("kind") or ""))
+            for row in (verified_claims or [])
+            if isinstance(row, dict)
+            and str(row.get("factKey") or "").strip()
+            and str(row.get("kind") or "").strip()
+        }
+        numeric_count = len(distinct_facts)
+        scores["numeric_support"] = min(1.0, numeric_count / 5)
+    else:
+        numeric_count = raw_numbers
+        scores["numeric_support"] = min(1.0, raw_numbers / 25)
+    if numeric_count < 5 and artifact_type not in {"regime_state"}:
         warnings.append("숫자 근거가 부족합니다.")
 
     counter = 0.0
@@ -247,7 +267,7 @@ def evaluate_report(
         if isinstance(gap, dict) and gap.get("suggestedAction"):
             suggested.append(str(gap["suggestedAction"]))
 
-    if total_docs == 0 and numbers > 12:
+    if total_docs == 0 and raw_numbers > 12:
         scores["hallucination_risk"] = 0.3
         warnings.append("근거 자료 없이 수치가 많습니다. 추정 여부를 확인하세요.")
     elif data_gaps and any(g.get("severity") in {"high", "blocking"} for g in data_gaps if isinstance(g, dict)):
@@ -328,6 +348,7 @@ def evaluate_report(
 def evaluate_artifact(artifact_type: str, artifact: dict) -> dict:
     artifact = artifact or {}
     markdown = _artifact_markdown(artifact_type, artifact)
+    final_validation = artifact.get("finalValidation") or {}
     return evaluate_report(
         markdown,
         evidence_summary=_artifact_evidence_summary(artifact_type, artifact),
@@ -338,5 +359,6 @@ def evaluate_artifact(artifact_type: str, artifact: dict) -> dict:
         evidence_items=artifact.get("evidenceItems") or [],
         data_gaps=data_gap_rows(artifact.get("dataGaps")),
         market_tape=artifact.get("marketTape") or {},
+        verified_claims=final_validation.get("verifiedClaims") or [],
         artifact_type=artifact_type,
     )

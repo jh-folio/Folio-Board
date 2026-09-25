@@ -13,11 +13,13 @@ import re
 SESSION_STATUSES = {"active", "archived"}
 # 주제 없는 일반 대화. 도크에서 그냥 시작한 대화가 여기 들어간다.
 UNSCOPED_KIND = "general"
-SCOPE_KINDS = {UNSCOPED_KIND, "watchlist", "portfolio", "briefing", "company_analysis", "topic_report", "market_memory", "change"}
+SCOPE_KINDS = {UNSCOPED_KIND, "watchlist", "portfolio", "briefing", "company_analysis", "topic_report", "market_memory", "change", "investment_review"}
+SCOPE_INTENTS = {"", "challenge"}
 NOTE_TYPES = {"company_thesis", "portfolio_decision", "investment_note"}
 MAX_MESSAGES = 500
 MAX_SESSION_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE_CHARS = 12_000
+_REVIEW_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def clean_id(value: object) -> str:
@@ -37,11 +39,25 @@ def normalize_scope(value: dict | None) -> dict:
     if kind not in SCOPE_KINDS:
         kind = UNSCOPED_KIND
     tickers = value.get("tickers") if isinstance(value.get("tickers"), list) else []
+    intent = clean_text(value.get("intent"), 24).lower()
+    if intent not in SCOPE_INTENTS:
+        intent = ""
+    try:
+        revision = max(0, int(value.get("revision") or 0))
+    except (TypeError, ValueError):
+        revision = 0
+    identifier = clean_text(value.get("id") or value.get("reportId"), 160)
+    if kind == "investment_review" and _REVIEW_DATE_RE.fullmatch(identifier) is None:
+        identifier = ""
     return {
         "kind": kind,
-        "id": clean_text(value.get("id") or value.get("reportId"), 160),
+        "id": identifier,
         "marketScope": clean_text(value.get("marketScope"), 16).lower(),
         "tickers": [clean_text(ticker, 24).upper() for ticker in tickers if clean_text(ticker, 24)][:20],
+        "intent": intent,
+        # Used only by the immutable-at-open investment review challenge.  It
+        # is a public revision number, not an internal input fingerprint.
+        "revision": revision if kind == "investment_review" else 0,
     }
 
 

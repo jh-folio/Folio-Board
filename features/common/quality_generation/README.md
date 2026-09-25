@@ -1,12 +1,12 @@
 # Quality Generation
 
-Quality Generation은 보고서가 생성되기 전에 품질 목표와 자료 보강 경로를 알려주고, 생성된 뒤에는 `research_quality` 평가 결과를 바탕으로 약한 섹션만 제한적으로 보강하는 공통 레이어입니다.
+Quality Generation은 보고서가 생성되기 전에 품질 목표와 자료 보강 경로를 알려주는 공통 레이어입니다. 브리핑 production 저장 경로는 authored Markdown을 보존하며 semantic quality 평가·문체 검사·수리·모델 호출을 수행하지 않습니다.
 
 ## 흐름
 
 ```text
-quality targets -> preflight -> evidence coverage block -> generation -> research_quality
-  -> weak section detector -> optional LLM section rewrite -> qualityGeneration telemetry
+quality targets -> preflight -> evidence coverage block -> generation
+  -> qualityGeneration telemetry (briefing production: content not assessed)
 ```
 
 `quality_targets.py`는 보고서 유형별로 필요한 evidence mix, 자료 수집 경로, 필수 출력 요소, source boundary를 정의합니다. 브리핑, 기업분석, 테마분석은 모두 이 블록을 LLM context에 받아 첫 초안부터 같은 기준으로 쓰이도록 합니다.
@@ -19,6 +19,8 @@ quality targets -> preflight -> evidence coverage block -> generation -> researc
 - 재작성은 기존 `sourceLedger`, `evidenceItems`, `dataGaps`, quality warnings, preflight risks 범위 안에서만 합니다.
 - 새 숫자, 새 출처, 새 주장을 만들지 않습니다.
 - 보강 후보가 quality score/status를 낮추거나 weak section을 늘리면 적용하지 않습니다.
+- 브리핑 production 저장은 quality/fact/style/model 보수를 호출하지 않고 `SharedRepairBudget`를 사용하지 않습니다. 명시적 사용자 `quality_repair` 작업은 일반 생성과 분리합니다.
+- 브리핑의 `qualityGeneration`은 `contentAssessment: not_assessed`, `qualityBefore/After: null`, `repairApplied: false`를 기록해 이전 semantic 결과를 되살리지 않습니다. 본문과 구조·출처 렌더링은 보존합니다.
 - 사용자 노트는 항상 `hypothesis`이며 evidence가 아닙니다.
 - `qualityGeneration`에는 token usage/estimate, evidence coverage, weak sections before/after, quality before/after를 남깁니다.
 

@@ -40,6 +40,8 @@ test("Work Log hides controls that cannot act on the current data", async () => 
   // 필터와 새로고침은 한 줄을 공유한다. 접힌 머리말 아래에 빈 행이 생기면 안 된다.
   assert.match(source, /className="work-log-toolbar"/);
   assert.match(source, /data-qa="work-log-refresh"[\s\S]*?aria-label="작업 기록 새로고침"/);
+  assert.match(source, /setDetailRefreshKey\(\(key\) => key \+ 1\)/);
+  assert.match(source, /<DiagnosticDetail jobId=\{entry\.jobId\} revision=\{entry\.updatedAt\} refreshKey=\{detailRefreshKey\} \/>/);
 });
 
 test("proposal bodies are loaded only after an explicit proposal GET", async () => {

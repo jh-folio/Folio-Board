@@ -186,6 +186,21 @@ def get_session(data_dir: Path, session_id: str) -> dict:
         return public_session(_read(path)) if path.exists() else {}
 
 
+def get_message(data_dir: Path, session_id: str, message_id: str) -> dict | None:
+    """One message, for the Dock's bounded fetch after a job completes.
+
+    Messages already carry no private fields (see `append_assistant_message`),
+    so — unlike `get_session()` — nothing needs filtering here.
+    """
+    path = _path(data_dir, session_id)
+    with _lock(path):
+        session = _read(path) if path.exists() else {}
+    for row in session.get("messages") or []:
+        if row.get("id") == message_id:
+            return row
+    return None
+
+
 def _private_session(data_dir: Path, session_id: str) -> tuple[Path, dict]:
     path = _path(data_dir, session_id)
     value = _read(path)
@@ -301,7 +316,10 @@ def append_user_message(data_dir: Path, session_id: str, content: str, *, operat
         return {"session": public_session(session), "message": message, "idempotent": False}
 
 
-def append_assistant_message(data_dir: Path, session_id: str, user_message_id: str, content: str, *, engine: str = "rules") -> dict:
+def append_assistant_message(
+    data_dir: Path, session_id: str, user_message_id: str, content: str, *,
+    engine: str = "rules", search: dict | None = None,
+) -> dict:
     path = _path(data_dir, session_id)
     with _lock(path):
         path, session = _private_session(data_dir, session_id)
@@ -312,6 +330,11 @@ def append_assistant_message(data_dir: Path, session_id: str, user_message_id: s
             if message.get("id") == user_message_id:
                 message["status"] = "answered"
         assistant = {"id": "msg-" + uuid.uuid4().hex, "role": "assistant", "content": clean_text(content, 24_000), "createdAt": _now(), "status": "complete", "inReplyTo": user_message_id, "engine": clean_text(engine, 30), "sourceLayer": "source_grounded_consultation", "reuseAsEvidence": False}
+        if isinstance(search, dict):
+            # Agent Dock Stage D — bounded search metadata only (policy/enum
+            # values + at most 8 already-audited URLs). Never the query, the
+            # provider's raw event, or unaudited pages.
+            assistant["search"] = search
         session.setdefault("messages", []).append(assistant)
         session["messageCount"] = len(session["messages"])
         session["revision"] = int(session.get("revision") or 0) + 1
@@ -356,6 +379,10 @@ def update_session(data_dir: Path, session_id: str, payload: dict) -> dict:
         return public_session(session)
 
 
+class ConsultationNotEmptyError(RuntimeError):
+    """A persisted user turn is history, not disposable setup state."""
+
+
 def delete_session(data_dir: Path, session_id: str, *, confirmed: bool) -> bool:
     if not confirmed:
         raise PermissionError("consultation_delete_confirmation_required")
@@ -363,5 +390,13 @@ def delete_session(data_dir: Path, session_id: str, *, confirmed: bool) -> bool:
     with _lock(path):
         if not path.exists():
             return False
+        # A failed job can follow an already durable user-message append.  Do
+        # not let the UI's best-effort cleanup erase that question; only a
+        # genuinely empty freshly-created thread is eligible for this route.
+        session = _read(path)
+        if not session:
+            raise ConsultationNotEmptyError("consultation_delete_state_unavailable")
+        if session.get("messages"):
+            raise ConsultationNotEmptyError("consultation_not_empty")
         path.unlink()
         return True

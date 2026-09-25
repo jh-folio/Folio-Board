@@ -167,14 +167,13 @@ class JobArtifactCommitter:
             except OSError as exc:
                 raise JobArtifactValidationError("job staging cleanup failed") from exc
 
-    def commit(
+    def _commit_proven(
         self,
         bundle: StagedJobBundle,
         store: SharedJobStore,
-        lifecycle: JobPrivateLifecycle,
         *,
-        fault_hook: FaultHook | None = None,
-    ) -> None:
+        fault_hook: FaultHook | None,
+    ) -> ArtifactCompletionProof:
         try:
             store.claim_committing(bundle.job.id, bundle.intent)
         except JobCommitClaimError:
@@ -195,7 +194,48 @@ class JobArtifactCommitter:
         _call(fault_hook, "artifacts_written")
         self._cleanup_stage(bundle.job.id)
         _call(fault_hook, "staging_cleaned")
-        proof = self._completion_proof(bundle, store, completed_journal)
+        return self._completion_proof(bundle, store, completed_journal)
+
+    def commit(
+        self,
+        bundle: StagedJobBundle,
+        store: SharedJobStore,
+        lifecycle: JobPrivateLifecycle,
+        *,
+        fault_hook: FaultHook | None = None,
+    ) -> None:
+        # Deliberately before claim/journal: a stale staged candidate must not
+        # become recoverable intent, and must not mutate its authoritative
+        # target.  JSON promotion still owns base-hash/CAS validation below.
+        try:
+            for artifact in bundle.artifacts:
+                if artifact.pre_promotion_validator is not None:
+                    artifact.pre_promotion_validator()
+        except JobArtifactConflictError:
+            self._cleanup_stage(bundle.job.id)
+            raise
+        # The common JSON lifecycle is the authoritative commit boundary for
+        # every staged report.  It owns the diagnostic stage so it can close
+        # it after proof verification but before `complete_artifact` invokes
+        # the private terminal observer.
+        from features.common.jobs import diagnostic_stage_end, diagnostic_stage_failure, diagnostic_stage_start
+
+        diagnostic_recorder, diagnostic_stage = diagnostic_stage_start("commit")
+        try:
+            proof = self._commit_proven(bundle, store, fault_hook=fault_hook)
+        except Exception as error:
+            diagnostic_stage_failure(
+                diagnostic_recorder,
+                error,
+                stage_id=diagnostic_stage,
+                stage_code="commit" if diagnostic_stage is not None else None,
+                boundary="save",
+            )
+            # The authoritative job remains COMMITTING for recovery.  Preserve
+            # this real crash/interruption gap as an open stage; closing it
+            # would falsely claim the durable boundary completed.
+            raise
+        diagnostic_stage_end(diagnostic_recorder, diagnostic_stage, "commit")
         lifecycle.complete_artifact(store, bundle.job.id, proof)
         _call(fault_hook, "job_terminal")
         self._journal_path(bundle.job.id).unlink(missing_ok=True)

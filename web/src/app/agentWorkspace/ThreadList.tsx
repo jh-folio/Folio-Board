@@ -12,12 +12,18 @@ const SCOPE_LABELS: Record<string, string> = {
   company_analysis: "기업 분석",
   topic_report: "딥 리서치",
   market_memory: "시장 내러티브",
+  investment_review: "투자 리뷰",
   change: "변화",
 };
 
 export function scopeChipLabel(scope: ConsultationSession["scope"] | undefined): string {
   if (!scope || scope.kind === "general") return "";
   const base = SCOPE_LABELS[scope.kind] || scope.kind;
+  // market-memory stateId는 저장소 식별자라 사용자용 대화 칩에 노출하지 않는다.
+  if (scope.kind === "market_memory") return base;
+  // Date/revision is the human-visible identity of a stored review.  Never
+  // surface its internal input fingerprint in a conversation chip.
+  if (scope.kind === "investment_review") return scope.id ? `${scope.id} · r${scope.revision || 0}` : base;
   // 티커가 있으면 그게 가장 알아보기 쉬운 표시다.
   const subject = (scope.tickers && scope.tickers[0]) || scope.id || "";
   return subject ? `${subject}` : base;

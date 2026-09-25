@@ -1,13 +1,32 @@
-import type { AgentAdapterSettings, AgentJob, AgentSettings, RecentReport } from "./types";
+import type { AgentAdapterSettings, AgentJob, AgentModelChoice, AgentSettings, RecentReport } from "./types";
 
 const PROVIDERS = new Set(["codex", "claude", "antigravity"]);
 const AGENT_MANAGED_JOB_KINDS = new Set(["agent_bridge", "rss"]);
 
-export function effortLabel(value: string) {
-  if (value === "high") return "높음";
-  if (value === "low") return "낮음";
-  if (value === "max") return "최대";
-  return "중간";
+// 어댑터·모델 정보가 아직 없을 때만 쓰는 자리표시자(설정을 못 불러왔을 때 등) — 실제
+// 값은 항상 서버(features/llm_settings/reasoning.py)가 계산해 보내는 adapter별
+// reasoningChoices/reasoningByModel을 그대로 쓴다.
+const FALLBACK_EFFORT_CHOICES: AgentModelChoice[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+];
+
+/** 이 CLI(모델)가 실제로 받는 노력 단계 목록 — Codex는 low를 "Light"로 부르고
+ *  ultra까지, Claude는 "Low"로 부르고 대개 max까지처럼 어댑터·모델마다 이름과
+ *  범위가 다르다. `provider_default`(제공자 기본값)는 여기서는 안 보여준다 —
+ *  이 화면은 항상 명시적인 단계 하나를 보낸다. */
+export function reasoningChoicesFor(adapter: AgentAdapterSettings | null, model: string): AgentModelChoice[] {
+  const byModel = adapter?.reasoningByModel?.[model] || [];
+  const source = byModel.length ? byModel : adapter?.reasoningChoices || [];
+  const explicit = source.filter((choice) => choice?.value && choice.value !== "provider_default");
+  const deduped = explicit.filter((choice, index, all) => all.findIndex((item) => item.value === choice.value) === index);
+  return deduped.length ? deduped : FALLBACK_EFFORT_CHOICES;
+}
+
+export function effortLabel(adapter: AgentAdapterSettings | null, model: string, value: string) {
+  return reasoningChoicesFor(adapter, model).find((choice) => choice.value === value)?.label || value;
 }
 
 export function elapsedSeconds(startedAt: number) {

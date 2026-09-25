@@ -1,8 +1,8 @@
-# CLI Briefing API Parity Implementation Plan
+# CLI Briefing Shared Contract Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make CLI-authored briefings satisfy the same active prompt, evidence context, section structure, summary/prose format, and visual-placement contract as API-authored briefings.
+**Goal:** Make CLI-authored briefings satisfy the same active prompt, evidence context, section structure, summary/prose format, and visual-placement contract defined by the shared report contract.
 
 **Architecture:** Add a focused `briefing_contract.py` module shared by context-pack creation, bridge validation, and writeback defense. The bridge validates Markdown before writeback, retries the same CLI adapter once with explicit violations, and refuses to overwrite the saved report if the retry still fails.
 
@@ -130,9 +130,9 @@ Expected: PASS.
 - Modify: `features/agent_mode/README.md`
 - Modify: `docs/superpowers/specs/2026-06-21-cli-briefing-contract-design.md`
 
-- [x] **Step 1: Document API-parity contract and retry behavior**
+- [x] **Step 1: Document shared report contract and retry behavior**
 
-State that CLI and API use the same active prompt/context/evidence, malformed CLI Markdown is retried once, and invalid retry output is not saved.
+State that CLI generation uses the shared active prompt/context/evidence, malformed CLI Markdown is retried once, and invalid retry output is not saved.
 
 - [x] **Step 2: Run all verification commands**
 

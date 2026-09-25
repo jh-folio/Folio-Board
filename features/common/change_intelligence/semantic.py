@@ -76,6 +76,8 @@ def _context_payload(items: list[dict]) -> dict:
 
 
 def _validate_verdicts(raw: dict, items: list[dict]) -> dict[str, dict]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("units"), list):
+        return {}
     allowed_titles = {
         str(row.get("id")): set((row.get("contextDocs") or []) + (row.get("previousContextDocs") or []))
         for row in items
@@ -88,8 +90,9 @@ def _validate_verdicts(raw: dict, items: list[dict]) -> dict[str, dict]:
         verdict = str(unit.get("verdict") or "")
         if unit_id not in allowed_titles or verdict not in SEMANTIC_VERDICTS:
             continue
+        cited_titles = unit.get("citedTitles")
         cited = [
-            title for title in (unit.get("citedTitles") or [])
+            title for title in (cited_titles if isinstance(cited_titles, list) else [])
             if isinstance(title, str) and title in allowed_titles[unit_id]
         ][:3]
         verdicts[unit_id] = {
@@ -113,7 +116,19 @@ def _cli_semantic_call():
     def call(prompt: str, context: str) -> dict:
         # 이 함수는 브리핑 생성 잡의 커밋 단계에서 불린다 — 그 잡이 이미
         # `_RUN_SEMAPHORE`를 쥐고 있으므로 다시 잡으면 잡 스레드가 영원히 멈춘다.
-        result = run_agent_prompt(f"{prompt}\n\n{context}", serialize=False)
+        from features.llm_settings.task_runtime import current_task_policy
+        policy = current_task_policy()
+        options = {}
+        if isinstance(policy, dict) and policy.get("mode") == "cli":
+            options = {
+                "adapter": str(policy.get("provider") or ""),
+                "model": str(policy.get("model") or ""),
+                "reasoning_effort": str(policy.get("reasoningEffort") or ""),
+            }
+        result = run_agent_prompt(
+            f"{prompt}\n\n{context}", serialize=False,
+            diagnostic_primary=False, **options,
+        )
         return extract_json_object(str(result.get("output") or ""))
 
     return call
@@ -126,37 +141,34 @@ def evaluate_semantic_changes(summary: dict, *, llm_call=None) -> dict:
         return {"status": "no_eligible_items", "verdicts": {}}
     if llm_call is None:
         from features.llm_settings.client import (
-            LlmRequestError,
-            extract_json_object,
-            request_llm_text,
-            selected_llm_config,
+                    extract_json_object,
+            request_cli_text,
+            selected_cli_config,
         )
 
-        cfg = selected_llm_config()
-        if cfg.get("apiKey"):
-            def llm_call(prompt: str, context: str) -> dict:
-                text, _response_id, _usage = request_llm_text(
-                    cfg, prompt, context,
-                    web_search=False, max_output_tokens=MAX_OUTPUT_TOKENS,
-                    json_mode=True, include_usage=True,
-                )
-                return extract_json_object(text)
+        from features.llm_settings.task_runtime import current_task_policy, generation_mode
+        policy = current_task_policy()
+        bound_mode = generation_mode(policy) if isinstance(policy, dict) else None
+        if bound_mode == "rules":
+            return {"status": "not_evaluated", "verdicts": {}, "reason": "generation_rules_mode"}
+        # A CLI task must not validate an unused global API model/effort.
+        # Frozen per-task routing takes precedence over unrelated API keys.
+        try:
+            cfg = policy if bound_mode == "llm_cli" else selected_cli_config()
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError):
+            return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_configuration_invalid"}
+        from features.llm_settings.client import default_generation_mode
 
-            provider, model = cfg.get("provider", ""), cfg.get("model", "")
-        else:
-            # 키가 없으면 CLI를 본다. 어느 쪽도 없을 때만 판정을 접는다.
-            from features.llm_settings.client import default_generation_mode
-
-            if default_generation_mode() != "llm_cli":
-                return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
-            try:
-                llm_call = _cli_semantic_call()
-            except Exception:  # noqa: BLE001 - 어댑터를 못 고르면 판정만 접는다
-                return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
-            provider, model = "agent_cli", ""
+        if (bound_mode is None and default_generation_mode() != "llm_cli"):
+            return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+        try:
+            llm_call = _cli_semantic_call()
+        except Exception:  # noqa: BLE001 - 어댑터를 못 고르면 판정만 접는다
+            return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_unavailable"}
+        provider, model = "agent_cli", ""
         try:
             raw = llm_call(SEMANTIC_PROMPT, json.dumps(_context_payload(items), ensure_ascii=False))
-        except (LlmRequestError, KeyError, TypeError, ValueError, OSError, RuntimeError):
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError):
             return {"status": "not_evaluated", "verdicts": {}, "reason": "llm_failed"}
     else:
         provider, model = "injected", ""

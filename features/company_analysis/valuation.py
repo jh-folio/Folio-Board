@@ -86,6 +86,14 @@ def render_valuation_contract(valuation: dict) -> str:
     """생성 컨텍스트에 실을 블록. 본문이 **다시 계산하지 못하게** 값을 통째로 준다."""
     scenarios = (valuation or {}).get("scenarios") or []
     if not scenarios:
+        if (valuation or {}).get("status") == "unavailable":
+            reason = valuation.get("reason") or "필요한 단위 정보를 확인하지 못했습니다."
+            return "\n".join([
+                "## 밸류에이션 시나리오",
+                "",
+                f"- PER 시나리오를 계산하지 않음 — {reason}",
+                "- 계산하지 않은 주가·주당 가치 숫자를 추정하거나 다시 계산하지 마세요.",
+            ])
         return ""
     eps = valuation.get("eps") or {}
     lines = [

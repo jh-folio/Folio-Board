@@ -89,6 +89,7 @@ test.describe("public workspace quality gate", () => {
   test("theme selection persists and updates the resolved document theme", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Settings interaction is covered once on desktop.");
     await openRoute(page, "settings");
+    await page.getByRole("group", { name: "설정 하위 탭" }).getByRole("button", { name: "관리", exact: true }).click();
     // `exact`가 없으면 상단바 전환 버튼의 접근성 이름("…누르면 다크")까지 걸린다.
     await page.getByRole("button", { name: "다크", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -102,6 +103,7 @@ test.describe("public workspace quality gate", () => {
     // 테마는 하루에도 여러 번 바꾸는 설정인데 설정 화면을 열어야만 닿았다. 상단바 메뉴는
     // 같은 저장소를 쓰므로 두 화면이 갈라지면 안 된다.
     await openRoute(page, "settings");
+    await page.getByRole("group", { name: "설정 하위 탭" }).getByRole("button", { name: "관리", exact: true }).click();
     await page.getByRole("button", { name: "라이트", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 

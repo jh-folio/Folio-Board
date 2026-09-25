@@ -47,6 +47,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Regenerate runtime and test locks twice, normalize LF, and byte-compare
+        # bash stops at the first failed command. Windows' default pwsh does not,
+        # so a lock drift there was printed but the step still passed.
+        shell: bash
         run: |
           python -m pip install --require-hashes --no-deps -r requirements-bootstrap.lock.txt
           python -c "from shutil import copyfile; copyfile('requirements.lock.py312.txt', 'requirements.lock.py312.committed.txt')"
@@ -151,7 +154,7 @@ jobs:
         run: |
           # Read the release name from VERSION so a version bump cannot leave the
           # verify/scan/upload steps pointing at a package that no longer exists.
-          name="FolioOS-v$(cat VERSION)"
+          name="FolioBoard-v$(cat VERSION)"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           python scripts/package_release.py --output dist/release
           python scripts/verify_release.py --release-dir "dist/release/$name" --expected-commit "${{ github.sha }}"

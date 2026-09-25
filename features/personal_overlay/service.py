@@ -16,6 +16,14 @@ from pathlib import Path
 from features.common.canonical_identity import ReportKind
 from features.common.canonical_report_types import WriteKind
 from features.common.canonical_reports import commit_sync, prepare
+from features.common.jobs import (
+    current_diagnostic_recorder,
+    diagnostic_execution,
+    diagnostic_stage,
+    diagnostic_stage_end,
+    diagnostic_stage_failure,
+    diagnostic_stage_start,
+)
 from features.common.utils import read_json
 from features.daily_briefing.schema import (
     SINGLE_MARKET_SCOPES,
@@ -24,8 +32,8 @@ from features.daily_briefing.schema import (
     normalize_market_scope,
 )
 from features.llm_settings.client import (
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
 )
 from features.common.quality_generation.telemetry import normalize_token_usage
@@ -75,11 +83,19 @@ def _gather_hypotheses(kind: str, canonical: dict) -> list:
     # Vault 미설정/미존재 등으로 스캔이 실패해도 기존 인덱스로 조회를 계속한다.
     try:
         scan_vault()
-    except Exception:
+    except Exception as error:
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(), error,
+            stage_id=None, stage_code="context", boundary="generic",
+        )
         pass
     try:
         return list_hypotheses(ticker=ticker) if ticker else list_hypotheses()
-    except Exception:
+    except Exception as error:
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(), error,
+            stage_id=None, stage_code="context", boundary="generic",
+        )
         return []
 
 
@@ -150,25 +166,33 @@ def generate_overlay(canonical: dict, hypotheses: list, *, kind="briefing", llm_
     """(overlay, status) 반환. canonical markdown은 읽기만 한다."""
     # 연결할 노트가 없으면 LLM을 호출하지 않는다(빈 비교는 의미가 없고 토큰만 낭비).
     if not hypotheses:
+        diagnostic_execution(final_engine="rules")
         return _fallback_overlay([]), "no_notes"
-    cfg = selected_llm_config()
+    cfg = selected_cli_config()
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
+        diagnostic_execution(final_engine="rules")
         return _fallback_overlay(hypotheses), "disabled"
-    if not cfg["apiKey"]:
-        return _fallback_overlay(hypotheses), f"missing_{cfg['provider']}_api_key"
+    if not cfg["enabled"]:
+        diagnostic_execution(final_engine="rules")
+        return _fallback_overlay(hypotheses), "cli_disabled"
     prompt = read_prompt()
     if not prompt:
+        diagnostic_execution(final_engine="rules")
         return _fallback_overlay(hypotheses), "missing_prompt"
     context = _build_context(canonical, hypotheses, kind)
     web_search = bool(web_search_override) if web_search_override is not None else False
     try:
-        text, _rid, usage = request_llm_text(cfg, prompt, context, web_search=web_search, json_mode=True, include_usage=True)
+        text, _rid, usage = request_cli_text(cfg, prompt, context, web_search=web_search, json_mode=True, include_usage=True)
         if not text:
+            diagnostic_execution(
+                attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed",
+            )
             return _fallback_overlay(hypotheses), "empty_response"
-        raw = json.loads(text)
-        markdown = strip_llm_citation_markers(str(raw.get("markdown", "") or ""))
-        overlay = S.normalize_overlay(raw, linked_notes=_linked_notes(hypotheses), markdown=markdown)
+        with diagnostic_stage("validate", boundary="validation"):
+            raw = json.loads(text)
+            markdown = strip_llm_citation_markers(str(raw.get("markdown", "") or ""))
+            overlay = S.normalize_overlay(raw, linked_notes=_linked_notes(hypotheses), markdown=markdown)
         overlay["generation"] = {
             "mode": "llm",
             "provider": cfg.get("provider", ""),
@@ -176,8 +200,18 @@ def generate_overlay(canonical: dict, hypotheses: list, *, kind="briefing", llm_
             "responseId": _rid,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text),
         }
+        diagnostic_execution(attempted_engine="cli", final_engine="cli")
         return overlay, "ok"
-    except Exception:
+    except Exception as error:
+        # The fallback is an existing public contract.  Retain only the typed
+        # cause at the producer catch; never retain provider text or JSON.
+        diagnostic_stage_failure(
+            current_diagnostic_recorder(), error,
+            stage_id=None, stage_code="generate", boundary="adapter",
+        )
+        diagnostic_execution(
+            attempted_engine="cli", final_engine="rules", fallback_reason="engine_failed",
+        )
         return _fallback_overlay(hypotheses), "generation_failed"
 
 
@@ -246,13 +280,22 @@ def _briefing_overlay_path(date: str, market_scope: str = "both", kind: str = "d
 
 
 def attach_overlay_to_briefing(date: str, *, market_scope="both", kind="daily", llm_override=None, web_search_override=None) -> dict:
-    path = _briefing_overlay_path(date, market_scope, kind)
-    canonical = read_json(path, None)
-    if not canonical:
-        raise FileNotFoundError(f"Briefing not found: {date}")
-    hyps = _gather_hypotheses("briefing", canonical)
-    overlay, status = generate_overlay(canonical, hyps, kind="briefing",
-                                       llm_override=llm_override, web_search_override=web_search_override)
+    with diagnostic_stage("context"):
+        path = _briefing_overlay_path(date, market_scope, kind)
+        canonical = read_json(path, None)
+        if not canonical:
+            raise FileNotFoundError(f"Briefing not found: {date}")
+        hyps = _gather_hypotheses("briefing", canonical)
+    recorder, stage_id = diagnostic_stage_start("generate")
+    try:
+        overlay, status = generate_overlay(canonical, hyps, kind="briefing",
+                                           llm_override=llm_override, web_search_override=web_search_override)
+    except Exception as error:
+        diagnostic_stage_failure(recorder, error, stage_id=stage_id,
+                                 stage_code="generate" if stage_id is not None else None, boundary="generic")
+        diagnostic_stage_end(recorder, stage_id, "generate")
+        raise
+    diagnostic_stage_end(recorder, stage_id, "generate")
     updated = with_overlay(canonical, overlay, status=status)
     # 통째 write_json으로 되쓰지 않는다. generate_overlay(LLM 수십 초) 사이에 예약 생성·
     # 제안 승인이 같은 파일을 새 canonicalRevision으로 커밋할 수 있는데, 읽어 둔 dict을
@@ -269,12 +312,21 @@ def attach_overlay_to_briefing(date: str, *, market_scope="both", kind="daily", 
 
 def attach_overlay_to_report(report_id: str, *, llm_override=None, web_search_override=None) -> dict:
     from features.company_analysis.service import get_analysis_report
-    canonical = get_analysis_report(report_id)
-    if not canonical:
-        raise FileNotFoundError(f"Analysis report not found: {report_id}")
-    hyps = _gather_hypotheses("analysis", canonical)
-    overlay, status = generate_overlay(canonical, hyps, kind="analysis",
-                                       llm_override=llm_override, web_search_override=web_search_override)
+    with diagnostic_stage("context"):
+        canonical = get_analysis_report(report_id)
+        if not canonical:
+            raise FileNotFoundError(f"Analysis report not found: {report_id}")
+        hyps = _gather_hypotheses("analysis", canonical)
+    recorder, stage_id = diagnostic_stage_start("generate")
+    try:
+        overlay, status = generate_overlay(canonical, hyps, kind="analysis",
+                                           llm_override=llm_override, web_search_override=web_search_override)
+    except Exception as error:
+        diagnostic_stage_failure(recorder, error, stage_id=stage_id,
+                                 stage_code="generate" if stage_id is not None else None, boundary="generic")
+        diagnostic_stage_end(recorder, stage_id, "generate")
+        raise
+    diagnostic_stage_end(recorder, stage_id, "generate")
     updated = with_overlay(canonical, overlay, status=status)
     commit_sync(prepare(
         report_kind=ReportKind.COMPANY_ANALYSIS,

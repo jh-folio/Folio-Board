@@ -82,7 +82,19 @@ _BRIEFING_IDENTITY_RE = re.compile(
 
 def _briefing_file_variants(date_text: str, scope: str = "") -> set[str]:
     stem = f"{date_text}.{scope}" if scope else date_text
-    return {f"{stem}.json", f"{stem}.visuals.json", f"{stem}.visuals.json.gz"}
+    # Daily and weekly reports share the same deletion identity.  Keep both
+    # filename families in the validation allowlist; the concrete delete
+    # request still carries the exact files selected by the service.
+    stems = (stem, f"{stem}.weekly")
+    return {
+        filename
+        for candidate in stems
+        for filename in (
+            f"{candidate}.json",
+            f"{candidate}.visuals.json",
+            f"{candidate}.visuals.json.gz",
+        )
+    }
 
 
 def _is_exact_candidate(identity: str, name: str) -> bool:

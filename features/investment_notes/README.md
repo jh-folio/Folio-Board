@@ -1,6 +1,6 @@
 # Investment Notes
 
-Folio OS 내부에서 운용하는 Agent-assisted 투자 생각 정리 레이어입니다. Obsidian이 없어도 보고서 옆 노트 패널에서 브리핑, Market Memory, 기업분석 보고서를 참고해 사용자의 판단을 정리하고 다시 불러올 수 있게 합니다.
+Folio Board 내부에서 운용하는 Agent-assisted 투자 생각 정리 레이어입니다. Obsidian이 없어도 보고서 옆 노트 패널에서 브리핑, Market Memory, 기업분석 보고서를 참고해 사용자의 판단을 정리하고 다시 불러올 수 있게 합니다.
 
 0.2 화면에서는 "Thesis", "Note Link", "Personal Overlay" 같은 내부 용어를 전면에 내세우지 않습니다. 노트 패널은 두 개의 탭으로 구성합니다.
 
@@ -40,9 +40,12 @@ GET  /api/investment-notes
 GET  /api/investment-notes/{note_id}
 GET  /api/investment-notes/linked
 POST /api/investment-notes
+POST /api/investment-notes/{note_id}/thesis   # 이 노트로 Thesis 만들기/갱신
 ```
 
 기존 `/api/notes`는 호환 경로로 유지하지만 같은 native note 저장소를 사용합니다.
+
+`note_id`는 읽기·저장 모두 `[A-Za-z0-9_-]{1,96}`만 받습니다(`_clean_note_id`). 저장만 걸러 두면 `GET`의 `..\..\data\portfolio` 같은 ID가 노트 폴더 밖 JSON을 읽을 수 있었습니다. 저장은 처음부터 같은 규칙이었으므로 기존 노트 ID는 모두 통과합니다.
 
 ## 연결
 
@@ -52,6 +55,13 @@ POST /api/investment-notes
 - 과거 일반 메모/호환 경로: `investment_note`
 
 Obsidian workflow는 계속 유지하되, 기본 저장 경로는 Folio native note입니다.
+
+### company_thesis 노트 → Thesis 레지스트리 (0.6 Stage B)
+
+- 종목 코드가 있는 `company_thesis` 노트를 저장하면, 그 종목에 Thesis가 **없을 때만** 자동으로 등록됩니다. 이미 있으면 노트 저장이 Thesis를 덮지 않습니다 — 덮는 것은 `이 노트로 Thesis 갱신` action(`POST /api/investment-notes/{note_id}/thesis`)뿐입니다.
+- 예전에는 Obsidian Vault 노트만 레지스트리와 동기화돼서, 앱 안에서만 쓰는 사용자는 노트를 성실히 써도 Thesis가 생기지 않았고 같은 화면의 `가설 검토 상태` 카드가 계속 "연결된 Thesis가 없습니다"를 표시했습니다.
+- 등록 로직은 `features/thesis_tracking/native_notes.py`가 갖습니다. **등록 실패가 노트 저장을 되돌리지 않습니다** — 레지스트리 등록은 노트의 부가물입니다.
+- 노트는 계속 hypothesis 계층이며(`reuseAsEvidence: false`), Thesis 등록이 이 경계를 바꾸지 않습니다.
 
 ## Note Intelligence (0.2.1)
 

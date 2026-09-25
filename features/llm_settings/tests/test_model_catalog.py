@@ -19,47 +19,38 @@ class FakeResponse:
         return self.body.encode("utf-8")
 
 
-def test_openai_model_catalog_normalizes_remote_models_and_keeps_fallback(tmp_path, monkeypatch):
-    monkeypatch.setattr(model_catalog, "CACHE_PATH", tmp_path / "llm-model-cache.json")
-
-    def fake_urlopen(_request, timeout=0):
-        assert timeout
-        return FakeResponse('{"data":[{"id":"gpt-6.1"},{"id":"whisper-1"},{"id":"gpt-5.5"}]}')
-
-    catalog = model_catalog.discover_api_models(
-        "openai",
-        api_key="sk-test",
-        refresh=True,
-        urlopen=fake_urlopen,
-        fallback=[{"value": "gpt-5.5", "label": "GPT-5.5"}, {"value": "gpt-5.4", "label": "GPT-5.4"}],
-    )
-
-    assert catalog["source"] == "remote"
-    assert [item["value"] for item in catalog["modelChoices"]][:3] == ["gpt-6.1", "gpt-5.5", "gpt-5.4"]
-    assert "whisper-1" not in {item["value"] for item in catalog["modelChoices"]}
 
 
-def test_api_model_catalog_falls_back_without_api_key():
-    catalog = model_catalog.discover_api_models(
-        "claude",
-        api_key="",
-        fallback=[{"value": "claude-opus-5", "label": "Claude Opus 5"}],
-    )
-
-    assert catalog["source"] == "fallback"
-    assert catalog["status"] == "not_configured"
-    assert catalog["modelChoices"] == [{"value": "claude-opus-5", "label": "Claude Opus 5"}]
 
 
-def test_codex_fallback_includes_gpt_5_6_family_in_role_order():
+def test_codex_fallback_is_newest_first_and_excludes_gpt_5_4():
     choices = model_catalog.CLI_MODEL_FALLBACKS["codex"]
 
-    assert choices[:3] == [
-        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
-        {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
-        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+    assert [item["value"] for item in choices] == [
+        "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+        "gpt-5.5", "gpt-5.4-mini",
     ]
-    assert "gpt-5.5" in {item["value"] for item in choices}
+    assert "gpt-5.4" not in {item["value"] for item in choices}
+    # The no-override default stays on a model older Codex CLIs still accept.
+    assert model_catalog.CLI_DEFAULT_MODELS["codex"] == "gpt-5.6-sol"
+
+
+def test_claude_fallback_lists_new_models_first_and_keeps_previous_ones():
+    assert [item["value"] for item in model_catalog.CLI_MODEL_FALLBACKS["claude"]] == [
+        "claude-opus-5-5", "claude-fable-5", "claude-sonnet-5", "claude-opus-5",
+        "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-4-6",
+    ]
+
+
+def test_every_listed_model_resolves_to_itself():
+    # A newer model is an addition, not a replacement: rewriting a working
+    # choice to a model the installed CLI does not know yet broke every
+    # scheduled run until the CLI was updated (2026-09-23).
+    assert model_catalog.DEPRECATED_MODEL_REPLACEMENTS == {}
+    for provider, choices in model_catalog.CLI_MODEL_FALLBACKS.items():
+        for item in choices:
+            assert model_catalog.normalize_model_id(provider, item["value"]) == item["value"]
 
 
 def test_cli_model_catalog_parses_stdout_and_keeps_fallback(tmp_path, monkeypatch):
@@ -110,12 +101,12 @@ def test_claude_cli_catalog_uses_help_model_hints_when_list_commands_are_missing
     assert "claude-opus-5" in values
 
 
-def test_claude_catalog_filters_deprecated_models_from_existing_cache(tmp_path, monkeypatch):
+def test_claude_catalog_keeps_active_models_from_existing_cache(tmp_path, monkeypatch):
     cache_path = tmp_path / "llm-model-cache.json"
     cache_path.write_text(json.dumps({
-        "api:claude": {
+        "cli:claude:claude": {
             "provider": "claude",
-            "transport": "api",
+            "transport": "cli",
             "source": "remote",
             "status": "available",
             "modelChoices": [
@@ -127,89 +118,17 @@ def test_claude_catalog_filters_deprecated_models_from_existing_cache(tmp_path, 
     }), encoding="utf-8")
     monkeypatch.setattr(model_catalog, "CACHE_PATH", cache_path)
 
-    catalog = model_catalog.discover_api_models("claude", api_key="test-key")
+    catalog = model_catalog.discover_cli_models("claude", executable="claude")
 
-    assert [item["value"] for item in catalog["modelChoices"]] == ["claude-opus-5"]
-
-
-def test_deprecated_claude_selections_migrate_to_current_family():
-    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-5"
-    assert model_catalog.normalize_model_id("claude", "claude-sonnet-4-6") == "claude-sonnet-5"
-
-
-def test_model_catalog_uses_cached_models_without_refresh(tmp_path, monkeypatch):
-    cache_path = tmp_path / "llm-model-cache.json"
-    cache_path.write_text(json.dumps({
-        "api:openai": {
-            "provider": "openai",
-            "transport": "api",
-            "source": "remote",
-            "status": "available",
-            "message": "cached",
-            "modelChoices": [{"value": "gpt-cached", "label": "GPT Cached"}],
-            "checkedAt": "2020-01-01T00:00:00+00:00",
-        }
-    }), encoding="utf-8")
-    monkeypatch.setattr(model_catalog, "CACHE_PATH", cache_path)
-
-    def should_not_call(*_args, **_kwargs):
-        raise AssertionError("model discovery should only run on manual refresh")
-
-    catalog = model_catalog.discover_api_models(
-        "openai",
-        api_key="sk-test",
-        urlopen=should_not_call,
-        fallback=[{"value": "gpt-5.5", "label": "GPT-5.5"}],
-    )
-
-    assert catalog["source"] == "remote"
-    assert [item["value"] for item in catalog["modelChoices"]] == ["gpt-cached"]
+    # Curated choices come first (a cache can predate new models), then any
+    # other discovered IDs; a cached older model is kept, not rewritten.
+    assert [item["value"] for item in catalog["modelChoices"]] == [
+        "claude-opus-5-5", "claude-fable-5", "claude-sonnet-5", "claude-opus-5",
+        "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-4-6",
+    ]
 
 
-def test_model_catalog_does_not_discover_without_refresh_when_cache_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(model_catalog, "CACHE_PATH", tmp_path / "missing-cache.json")
-
-    def should_not_call(*_args, **_kwargs):
-        raise AssertionError("model discovery should only run on manual refresh")
-
-    catalog = model_catalog.discover_api_models(
-        "openai",
-        api_key="sk-test",
-        urlopen=should_not_call,
-        fallback=[{"value": "gpt-5.5", "label": "GPT-5.5"}],
-    )
-
-    assert catalog["source"] == "fallback"
-    assert catalog["status"] == "cached_missing"
-    assert [item["value"] for item in catalog["modelChoices"]] == ["gpt-5.5"]
-
-
-def test_model_catalog_keeps_cached_models_when_manual_refresh_fails(tmp_path, monkeypatch):
-    cache_path = tmp_path / "llm-model-cache.json"
-    cache_path.write_text(json.dumps({
-        "api:openai": {
-            "provider": "openai",
-            "transport": "api",
-            "source": "remote",
-            "status": "available",
-            "message": "cached",
-            "modelChoices": [{"value": "gpt-cached", "label": "GPT Cached"}],
-            "checkedAt": "2020-01-01T00:00:00+00:00",
-        }
-    }), encoding="utf-8")
-    monkeypatch.setattr(model_catalog, "CACHE_PATH", cache_path)
-
-    def failing_urlopen(*_args, **_kwargs):
-        raise TimeoutError("slow provider")
-
-    catalog = model_catalog.discover_api_models(
-        "openai",
-        api_key="sk-test",
-        refresh=True,
-        urlopen=failing_urlopen,
-        fallback=[{"value": "gpt-5.5", "label": "GPT-5.5"}],
-    )
-
-    assert catalog["source"] == "cache"
-    assert catalog["status"] == "provider_error_cached"
-    assert [item["value"] for item in catalog["modelChoices"]] == ["gpt-cached"]
+def test_saved_previous_selections_are_not_rewritten():
+    assert model_catalog.normalize_model_id("claude", "claude-opus-5") == "claude-opus-5"
+    assert model_catalog.normalize_model_id("claude", "claude-opus-4-8") == "claude-opus-4-8"
+    assert model_catalog.normalize_model_id("codex", "gpt-5.6-sol") == "gpt-5.6-sol"

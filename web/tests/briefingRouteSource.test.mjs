@@ -86,7 +86,8 @@ test("Briefing route owns reader actions and native note persistence", async () 
   assert.match(source, /ReaderActionGroup title="내보내기"/);
   assert.match(source, /message: `\$\{readerTitle\}/);
   assert.match(source, /KST 발행/);
-  assert.match(source, /meta=\{`\$\{formatArchiveDate\(publicationDate\)\} KST 발행`\}/);
+  assert.match(source, /meta=\{`보고서 날짜/);
+  assert.match(source, /생성 시각 미상/);
   assert.match(source, /autoSubmit: true/);
   assert.doesNotMatch(source, />\s*목록\s*</);
 });
@@ -133,8 +134,9 @@ test("브리핑 삭제는 응답을 확인하고 multi를 날짜 전체로 지�
   const source = await readFile(new URL("../src/app/BriefingRoute.tsx", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("async function deleteBriefing"), source.indexOf("async function generateBriefing"));
 
-  // 응답을 안 보면 400·404가 성공처럼 보이고 목록만 그대로 다시 그려진다.
-  assert.match(body, /if \(!res\.ok\)/);
+  // 공통 HTTP helper가 비정상 응답을 거부하고, 정상 JSON도 삭제 확정을 확인한다.
+  assert.match(body, /await deleteJson</);
+  assert.match(body, /result\.deleted !== true/);
   // `multi`는 서버가 아는 단일 시장이 아니라 `?market=multi`가 400이었다.
   // 통합 범위이므로 그 날짜 전체를 지운다.
   assert.match(body, /scope === "both" \|\| scope === "all" \|\| scope === "multi"/);

@@ -30,12 +30,9 @@ from pathlib import Path
 from typing import Mapping
 
 from qa_deep_research_fixtures import (
-    FakeApi,
     Fixture,
     database_counts,
     prepare_fixture,
-    start_fake_api,
-    stop_fake_api,
 )
 from qa_dev_surface_support import (
     HttpResult,
@@ -206,7 +203,7 @@ def _assert_no_report(session: Session, report_id: str, requests: list[JsonValue
 
 def _copy_clean_marker(runtime: Path) -> bool:
     marker = runtime / ".folio-qa-owned"
-    return marker.is_file() and marker.read_text(encoding="utf-8") == "folio-os-0-2-0\n"
+    return marker.is_file() and marker.read_text(encoding="utf-8") == "folio-board-0-2-0\n"
 
 
 def _remove_owned(runtime: Path) -> None:
@@ -393,13 +390,13 @@ def _submit_and_read(
     return job, report.payload
 
 
-def _run_full(session: Session, process: subprocess.Popen[str], output, port: int, environment: Mapping[str, str], fake: FakeApi, requests: list[JsonValue], responses: list[JsonValue], restarts: list[JsonValue], spawned: list[subprocess.Popen[str]]) -> tuple[subprocess.Popen[str], list[JsonValue]]:
+def _run_full(session: Session, process: subprocess.Popen[str], output, port: int, environment: Mapping[str, str], requests: list[JsonValue], responses: list[JsonValue], restarts: list[JsonValue], spawned: list[subprocess.Popen[str]]) -> tuple[subprocess.Popen[str], list[JsonValue]]:
     checks: list[JsonValue] = []
     first = _call(session, "POST", "/api/topic-reports/plan", _plan_body(), requests, responses)
     if first.status != 200:
         raise QaFailure("plan_direct_status")
-    direct_job, direct_report = _submit_and_read(session, first.payload, "direct", "auto", requests, responses)
-    checks.append({"step": "direct_done", "jobId": direct_job.get("id"), "reportId": _report_id(direct_job)})
+    direct_job, direct_report = _submit_and_read(session, first.payload, "auto", "auto", requests, responses)
+    checks.append({"step": "default_cli_done", "jobId": direct_job.get("id"), "reportId": _report_id(direct_job)})
     process = _restart(session, process, output, port, environment, restarts, requests, responses, spawned)
     reopened = _call(session, "GET", f"/api/topic-reports/{_report_id(direct_job)}", None, requests, responses)
     if reopened.status != 200:
@@ -411,8 +408,8 @@ def _run_full(session: Session, process: subprocess.Popen[str], output, port: in
     direct_provenance = _provenance(direct_report)
     cli_provenance = _provenance(cli_report)
     if _hash(direct_provenance) != _hash(cli_provenance):
-        raise QaFailure("direct_cli_provenance_mismatch")
-    checks.append({"step": "direct_cli_parity", "directJob": direct_job.get("id"), "cliJob": cli_job.get("id"), "provenanceHash": _hash(direct_provenance)})
+        raise QaFailure("default_explicit_cli_provenance_mismatch")
+    checks.append({"step": "default_explicit_cli_parity", "directJob": direct_job.get("id"), "cliJob": cli_job.get("id"), "provenanceHash": _hash(direct_provenance)})
     _add_live_rss(session.fixture)
     _import_rss(session, requests, responses)
     collection = _collection(session, requests, responses)
@@ -429,7 +426,7 @@ def _run_full(session: Session, process: subprocess.Popen[str], output, port: in
     unusable = resolution.get("unusableCandidates")
     if not isinstance(unusable, list) or len(unusable) != 1:
         raise QaFailure("unindexed_rss_not_visible")
-    before_submit = _call(session, "POST", "/api/topic-reports", _execution(constrained.payload, "direct", "auto"), requests, responses)
+    before_submit = _call(session, "POST", "/api/topic-reports", _execution(constrained.payload, "auto", "auto"), requests, responses)
     if before_submit.status != 409 or before_submit.payload.get("error") != "evidence_confirmation_required":
         raise QaFailure("unindexed_rss_entered_pack")
     _touch_live_rss(session.fixture)
@@ -500,7 +497,7 @@ def _run_full(session: Session, process: subprocess.Popen[str], output, port: in
     indexed_universe = indexed_resolution.get("executionUniverseIds")
     if indexed_unusable != [] or not isinstance(indexed_universe, list) or indexed_universe.count(live_index_id) != 1 or indexed_universe.count("doc-allowed") != 1:
         raise QaFailure("indexed_collection_resolution_mismatch")
-    indexed_job, indexed_report = _submit_and_read(session, indexed.payload, "direct", "auto", requests, responses)
+    indexed_job, indexed_report = _submit_and_read(session, indexed.payload, "auto", "auto", requests, responses)
     persisted_research = indexed_report.get("researchResolution")
     if not isinstance(persisted_research, dict):
         raise QaFailure("research_resolution_missing")
@@ -553,7 +550,7 @@ def _run_full(session: Session, process: subprocess.Popen[str], output, port: in
     fault_plan = _call(session, "POST", "/api/topic-reports/plan", _plan_body(collection_ref=collection_ref, question="QA crash after artifact"), requests, responses)
     if fault_plan.status != 200:
         raise QaFailure("fault_plan_status")
-    fault_submit = _call(session, "POST", "/api/topic-reports", _execution(fault_plan.payload, "direct", "auto"), requests, responses)
+    fault_submit = _call(session, "POST", "/api/topic-reports", _execution(fault_plan.payload, "auto", "auto"), requests, responses)
     if fault_submit.status != 202:
         raise QaFailure("fault_submit_status")
     fault_job_id = _job_id(fault_submit)
@@ -578,7 +575,7 @@ def _run_full(session: Session, process: subprocess.Popen[str], output, port: in
     stale = _call(session, "POST", "/api/topic-reports/plan", _plan_body(question="QA stale approval"), requests, responses)
     if stale.status != 200:
         raise QaFailure("stale_plan_status")
-    stale_exec = _execution(stale.payload, "direct", "auto")
+    stale_exec = _execution(stale.payload, "auto", "auto")
     stale_approved = stale_exec["approvedRequest"]
     if isinstance(stale_approved, dict):
         stale_approved["question"] = "QA stale changed"
@@ -586,8 +583,6 @@ def _run_full(session: Session, process: subprocess.Popen[str], output, port: in
     if conflict.status != 409:
         raise QaFailure("stale_approval_not_rejected")
     checks.append({"step": "stale_approval", "status": conflict.status, "error": conflict.payload.get("error")})
-    mode_path = fake.modePath
-    mode_path.write_text("ok", encoding="utf-8")
     (session.fixture.adapters / "cli-mode.txt").write_text("slow", encoding="utf-8")
     session.environment["QA_FAKE_CLI_MODE_FILE"] = str(session.fixture.adapters / "cli-mode.txt")
     report_count_before_cancel = _report_file_count(session.fixture)
@@ -682,8 +677,8 @@ def _red_green_inventory(attempt: Path) -> dict[str, JsonValue]:
 def _adversarial_classes(attempt: Path) -> list[JsonValue]:
     result_path = str(attempt / "result.json")
     return [
-        {"class": "direct_http_execution", "check": "direct_done", "evidence": result_path},
-        {"class": "cli_http_execution_and_parity", "check": "direct_cli_parity", "evidence": result_path},
+        {"class": "default_cli_http_execution", "check": "default_cli_done", "evidence": result_path},
+        {"class": "cli_http_execution_and_parity", "check": "default_explicit_cli_parity", "evidence": result_path},
         {"class": "unindexed_rss_confirmation_gate", "check": "rss_unindexed_then_indexed", "evidence": result_path},
         {"class": "indexed_rss_representative_admission", "check": "collection_constrained_report", "evidence": result_path},
         {"class": "duplicate_url_and_off_filter_exclusion", "check": "collection_constrained_report", "evidence": result_path},
@@ -728,7 +723,6 @@ def run(source_root: Path, attempt_dir: Path) -> int:
     restarts: list[JsonValue] = []
     spawned: list[subprocess.Popen[str]] = []
     process: subprocess.Popen[str] | None = None
-    fake: FakeApi | None = None
     fixture: Fixture | None = None
     failure: str | None = None
     passed = False
@@ -741,19 +735,11 @@ def run(source_root: Path, attempt_dir: Path) -> int:
         if runtime.exists() or not attempt.is_dir():
             raise QaFailure("ownership_runtime_exists")
         fixture = prepare_fixture(source_root, runtime)
-        fake = start_fake_api(runtime / "fake-api-mode.txt")
-        (fake.modePath).write_text("ok", encoding="utf-8")
         environment.update(
             {
                 "PYTHONPATH": os.pathsep.join((str(runtime), str(fixture.workspace), os.environ.get("PYTHONPATH", ""))),
-                "QA_FAKE_API_URL": fake.url,
-                "OPENAI_RESPONSES_URL": fake.url,
-                "FOLIO_OPENAI_BASE_URL": fake.url,
-                "OPENAI_API_BASE_URL": fake.url,
-                "OPENAI_API_KEY": "qa-fake-api-key",
-                "LLM_PROVIDER": "openai",
                 "AI_AGENT_ENABLED": "1",
-                "AI_AGENT_MODE": "api",
+                "AI_AGENT_MODE": "cli",
                 "STARTUP_REGIME_REFRESH": "0",
                 "FOLIO_AGENT_CODEX_COMMAND": str(fixture.adapters / "qa_fake_cli.cmd"),
                 "AGENT_CLI_PROVIDER": "codex",
@@ -771,7 +757,7 @@ def run(source_root: Path, attempt_dir: Path) -> int:
             "marker": ".folio-qa-owned",
             "port": port,
             "protectedRoots": fixture.protected,
-            "fakeAdapters": {"api": fake.url, "cli": str(fixture.adapters / "qa_fake_cli.cmd")},
+            "fakeAdapters": {"cli": str(fixture.adapters / "qa_fake_cli.cmd")},
             "requiredArtifacts": ["manifest.json", "requests.jsonl", "responses.jsonl", "rss-trace.jsonl", "stores.json", "server.json", "restart.json", "stop.json", "cleanup-receipt.json", "result.json"],
         }
         _write(attempt / "manifest.json", manifest)
@@ -780,7 +766,7 @@ def run(source_root: Path, attempt_dir: Path) -> int:
             spawned.append(process)
             wait_real_app_ready(process, f"http://127.0.0.1:{port}")
             session = Session(fixture, attempt, f"http://127.0.0.1:{port}", environment)
-            process, checks = _run_full(session, process, output, port, environment, fake, requests, responses, restarts, spawned)
+            process, checks = _run_full(session, process, output, port, environment, requests, responses, restarts, spawned)
         passed = True
     except (QaFailure, OSError, ValueError, json.JSONDecodeError, urllib.error.URLError) as error:
         failure = str(error)
@@ -800,8 +786,6 @@ def run(source_root: Path, attempt_dir: Path) -> int:
             }
         if fixture is not None:
             _restore_index_backup(fixture.data / "research-index.sqlite3")
-        if fake is not None:
-            stop_fake_api(fake)
         if fixture is not None:
             cleanup_receipt["protectedRootsUnchanged"] = _protected_ok(fixture.protected)
             cleanup_receipt["markerOwned"] = _copy_clean_marker(runtime)

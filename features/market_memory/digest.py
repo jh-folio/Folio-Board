@@ -136,6 +136,10 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
     # 활성/관찰 상태의 추세·근거 카운트는 규칙 기반으로 함께 갱신한다.
     # 화면에서 상태별 수동 갱신 버튼을 없앤 대신 이 경로가 자동으로 처리한다.
     regime_refresh = {"ok": False, "count": 0}
+    # 저장해 둔 "다음 확인"을 새 근거와 대조한다. 규칙 기반이라 LLM 호출이 없고,
+    # 근거 행이 방금 갱신된 뒤라야 대조할 것이 있으므로 추세 갱신 뒤에 돈다.
+    checkpoint_verdicts = {"ok": False, "checkpointCount": 0, "changeCount": 0}
+    thesis_verdicts = {"ok": False, "indexLoaded": False, "checkpointCount": 0, "changeCount": 0}
     if refresh_regimes:
         try:
             from features.market_memory.regime_v2 import refresh_all_regimes
@@ -143,6 +147,37 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
             regime_refresh = {"ok": bool(result.get("ok")), "count": int(result.get("count") or 0)}
         except Exception:
             regime_refresh = {"ok": False, "count": 0, "error": "regime_refresh_failed"}
+        try:
+            from features.market_memory.checkpoint_verdicts import run_checkpoint_verdicts
+            verdicts = run_checkpoint_verdicts(MARKET_MEMORY_DB_PATH)
+            checkpoint_verdicts = {
+                "ok": bool(verdicts.get("ok")),
+                "checkpointCount": int(verdicts.get("checkpointCount") or 0),
+                "changeCount": int(verdicts.get("changeCount") or 0),
+            }
+        except Exception as exc:  # noqa: BLE001 - 판정 실패가 수집 잡을 죽이지 않는다
+            # 예외 종류는 코드 식별자라 남긴다 — "failed" 한 단어면 기능 전체가 죽어도
+            # 원인을 찾을 단서가 없다(원문 메시지는 담지 않는다, RSS 수집 실패와 같은 규칙).
+            checkpoint_verdicts = {
+                "ok": False, "checkpointCount": 0, "changeCount": 0,
+                "error": f"checkpoint_verdicts_failed:{type(exc).__name__}",
+            }
+        # thesis 체크포인트는 같은 자리에서, 다른 풀(연구 인덱스 문서)로 판정한다.
+        # 대상이 0건이면 인덱스를 열지 않으므로 기본 비용이 없다.
+        try:
+            from features.thesis_tracking.checkpoint_verdicts import run_thesis_checkpoint_verdicts
+            thesis_result = run_thesis_checkpoint_verdicts(MARKET_MEMORY_DB_PATH)
+            thesis_verdicts = {
+                "ok": bool(thesis_result.get("ok")),
+                "indexLoaded": bool(thesis_result.get("indexLoaded")),
+                "checkpointCount": int(thesis_result.get("checkpointCount") or 0),
+                "changeCount": int(thesis_result.get("changeCount") or 0),
+            }
+        except Exception as exc:  # noqa: BLE001 - 판정 실패가 수집 잡을 죽이지 않는다
+            thesis_verdicts = {
+                "ok": False, "indexLoaded": False, "checkpointCount": 0, "changeCount": 0,
+                "error": f"thesis_checkpoint_verdicts_failed:{type(exc).__name__}",
+            }
     return {
         "ok": True,
         "digestCount": len(digest),
@@ -150,4 +185,6 @@ def run_rss_market_memory_update(date: str = "", items: list[dict] | None = None
         "saved": saved,
         "digest": digest,
         "regimeRefresh": regime_refresh,
+        "checkpointVerdicts": checkpoint_verdicts,
+        "thesisCheckpointVerdicts": thesis_verdicts,
     }

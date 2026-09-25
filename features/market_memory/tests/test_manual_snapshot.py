@@ -266,6 +266,7 @@ def test_rss_and_index_prerequisite_automation_create_no_attempt(
         "run_rss_market_memory_update",
         lambda: calls.append("index-memory") or {"ok": True},
     )
+    monkeypatch.setattr(automation_service, "default_generation_mode", lambda: "rules")
     monkeypatch.setattr(automation_service, "_append_run", lambda _row: None)
     attempt_path = tmp_path / "market-state-update-attempts.json"
 

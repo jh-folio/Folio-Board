@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getJson } from "../../api";
+import { compactAmount } from "../charts/chartFormat";
 import { ddayLabel, formatEarningsDate } from "../watchlistEarnings";
 
 /** 발표된 실적과 다음 발표 컨센서스.
@@ -7,9 +8,10 @@ import { ddayLabel, formatEarningsDate } from "../watchlistEarnings";
  * **상세를 열 때만 부른다.** 티커당 provider 호출이라 카드 그리드에 걸면 종목 수만큼
  * 네트워크가 된다 — 목록에는 시장 캘린더에서 온 D-day 배지만 남긴다.
  *
- * 숫자는 yfinance다. 기업분석은 SEC companyfacts를 최우선으로 쓰므로(§6 절대 규칙 6)
- * 같은 앱 안에서 값이 다를 수 있다 — 출처 문구는 모달 하단에 하나만 둔다(지표·차트도
- * 같은 출처라 패널마다 반복하면 소음이다).
+ * 숫자의 출처는 이 패널 payload가 밝힌 provider로만 표시한다. 기업분석은 SEC
+ * companyfacts를 최우선으로 쓰므로(§6 절대 규칙 6) 같은 앱 안에서 값이 다를 수 있다.
+ * 모달 전역 문구로 다른 패널의 출처를 대신 주장하지 않으며, 모르는 provider는 안전한
+ * 일반 문구로 축소한다.
  */
 
 type EarningsRow = {
@@ -63,26 +65,10 @@ const BASIS_DELTA_LABELS: Record<Basis, string> = {
   priorYear: "작년 동기보다",
 };
 
-const COMPACT_UNITS: ReadonlyArray<{ limit: number; suffix: string }> = [
-  { limit: 1e12, suffix: "조" },
-  { limit: 1e8, suffix: "억" },
-];
-
-/** 매출은 조·억 단위가 아니면 자릿수만으로는 읽히지 않는다(삼성전자 133,873,444,000,000). */
-export function compactAmount(value: number | null | undefined, currency = "USD"): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  if (currency === "KRW" || currency === "JPY") {
-    for (const unit of COMPACT_UNITS) {
-      if (Math.abs(value) >= unit.limit) {
-        return `${(value / unit.limit).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}${unit.suffix}`;
-      }
-    }
-    return value.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
-  }
-  const scaled = Math.abs(value) >= 1e9 ? { div: 1e9, suffix: "B" } : Math.abs(value) >= 1e6 ? { div: 1e6, suffix: "M" } : null;
-  return scaled
-    ? `${(value / scaled.div).toLocaleString("en-US", { maximumFractionDigits: 2 })}${scaled.suffix}`
-    : value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+export function panelProviderCopy(provider?: string): string {
+  if (provider === "toss_open_api") return "Toss Open API";
+  if (provider === "yfinance") return "yfinance";
+  return "시장 데이터 제공자";
 }
 
 export function formatEps(value: number | null | undefined, currency = "USD"): string {
@@ -195,7 +181,7 @@ export function EarningsPanel({ ticker }: { ticker: string }) {
     return (
       <div className="watchlist-earnings-panel">
         <h3>실적</h3>
-        <p className="section-subtitle">이 종목의 실적 데이터를 받지 못했습니다. (출처 {payload?.provider || "yfinance"})</p>
+        <p className="section-subtitle">이 종목의 실적 데이터를 받지 못했습니다. (출처 {panelProviderCopy(payload?.provider)})</p>
       </div>
     );
   }
@@ -217,6 +203,7 @@ export function EarningsPanel({ ticker }: { ticker: string }) {
           기업분석 열기
         </button>
       </div>
+      {payload && <p className="section-subtitle">출처 {panelProviderCopy(payload.provider)}</p>}
 
       {next.date && (
         <div className="watchlist-earnings-next">

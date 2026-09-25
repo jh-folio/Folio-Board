@@ -831,7 +831,7 @@ from __future__ import annotations
 
 VALID_MARKET_SCOPES = {"us", "kr", "both"}
 VALID_BRIEFING_TYPES = {"default", "market_focused", "concise"}
-VALID_GENERATION_MODES = {"rules", "llm_api", "llm_cli"}
+VALID_GENERATION_MODES = {"rules", "llm_cli"}
 VALID_QUALITY_MODES = {"diagnose_only", "llm_section_improve", "strict"}
 
 

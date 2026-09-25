@@ -16,15 +16,16 @@ test("Dashboard renders the cockpit only", async () => {
   assert.doesNotMatch(source, /오늘의 투자 리뷰/);
 });
 
-test("cockpit panel order puts today's schedule before price movement", async () => {
+test("cockpit omits the retired content-change feed", async () => {
   const source = await readFile(new URL("../src/app/dashboard/ResearchCockpit.tsx", import.meta.url), "utf8");
 
-  const feed = source.indexOf("<ChangeFeed");
+  assert.doesNotMatch(source, /ChangeFeed|changeCounts|오늘의 변화 요약|무엇이 달라졌나/);
+  assert.match(source, /<StoryShare/);
+  const story = source.indexOf("<StoryShare");
   const calendar = source.indexOf("<MarketCalendar");
   const chart = source.indexOf("<NativeMarketChart");
-  assert.ok(feed >= 0 && calendar > feed, "변화 피드가 먼저다");
+  assert.ok(story >= 0 && calendar > story, "이야기 비중이 일정 전에 온다");
   assert.ok(chart > calendar, "일정이 차트보다 위다 — 오늘 무엇을 지켜볼지가 가격 움직임보다 먼저 필요하다");
-  // 브리핑 lineage가 시장 단위라 개별 보유 티커와 걸리지 않아 늘 비어 있었다.
   assert.doesNotMatch(source, /InvestmentImplications/);
 });
 

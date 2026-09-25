@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from features.common.canonical_identity import ReportKind
+from features.common.canonical_report_io import safe_child_path
 from features.common.canonical_report_state import load_report
 from features.common.canonical_report_types import WriteKind
 from features.common.canonical_reports import commit_sync, prepare
@@ -18,7 +19,11 @@ DATA_DIR = data_dir()
 
 def _find_json_path(folder: Path, artifact_id: str) -> Path | None:
     artifact_id = str(artifact_id or "")
-    direct = folder / f"{artifact_id}.json"
+    try:
+        # The ID arrives from the URL; it may only name one file in this folder.
+        direct = safe_child_path(folder, f"{artifact_id}.json")
+    except ValueError:
+        return None
     if direct.exists():
         return direct
     for path in folder.glob("*.json"):

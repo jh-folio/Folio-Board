@@ -1,12 +1,8 @@
-"""Investment Review service — Step 8.
+"""Investment Review v2 route/service boundary.
 
-기존 산출물(regime_v2 / thesis_tracking / Step6 checkpoints)과 사용자 데이터
-(portfolio / watchlist / obsidian note_index)를 하나의 투자 리뷰로 집계한다.
-
-- LLM 없이 규칙 기반으로 동작한다(원칙: LLM-free fallback).
-- 집계는 주입식 순수 함수로 분리해 테스트가 DB 없이 가능하게 한다.
-- 일 1회 생성 후 data/investment-review/{date}.json 캐시. 실패/미존재 시 최신 저장본 + stale.
-- Canonical 보고서를 수정하지 않는다(Personal Overlay 계층).
+The dated JSON authority is assembled in :mod:`review_v2`; this module keeps
+FastAPI-compatible entrypoints thin.  Reads never generate or rewrite, and
+only explicit generation touches ``data/investment-review/{date}.json``.
 """
 from __future__ import annotations
 
@@ -20,8 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from features.common.canonical_report_io import safe_child_path
-from features.investment_review.schema import normalize_review
+from features.investment_review.schema import empty_review, normalize_review
 from features.common.workspace import data_dir
+from features.common.jobs import diagnostic_stage_end, diagnostic_stage_failure, diagnostic_stage_start
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = data_dir()
@@ -43,7 +40,16 @@ def normalize_review_date(value) -> str:
         return _today()
     if not REVIEW_DATE_RE.fullmatch(text):
         raise ValueError("invalid_review_date")
+    try:
+        dt.date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("invalid_review_date") from exc
     return text
+
+
+def _cache_path(date: str) -> Path:
+    """Compatibility-only path guard; v2 no longer has a cache writer."""
+    return safe_child_path(REVIEW_DIR, f"{date}.json")
 
 
 def _today() -> str:
@@ -833,21 +839,6 @@ class InvestmentContextService:
 # 캐싱
 # ---------------------------------------------------------------------------
 
-def _cache_path(date: str) -> Path:
-    # normalize_review_date()가 이미 형식을 막지만, 경로 조립은 별도로도 봉쇄한다.
-    return safe_child_path(REVIEW_DIR, f"{date}.json")
-
-
-def _load_cached(date: str) -> dict | None:
-    path = _cache_path(date)
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
 def _load_latest() -> dict | None:
     if not REVIEW_DIR.exists():
         return None
@@ -863,118 +854,116 @@ def _load_latest() -> dict | None:
     return None
 
 
-def _save_cache(date: str, review: dict) -> None:
-    try:
-        REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-        _cache_path(date).write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+def _v2_data_dir() -> Path:
+    """Keep the historical module globals patchable in focused tests."""
+    return DATA_DIR
 
-
-# ---------------------------------------------------------------------------
-# 공개 진입점
-# ---------------------------------------------------------------------------
 
 def build_review(
-    *,
-    date: str | None = None,
-    include_portfolio: bool = True,
-    include_watchlist: bool = True,
-    include_obsidian: bool = True,
-    use_llm: bool = False,
-    force_refresh: bool = False,
-    persist: bool = True,
+    *, date: str | None = None, include_portfolio: bool = True,
+    include_watchlist: bool = False, include_obsidian: bool = False,
+    use_llm: bool = False, force_refresh: bool = False, persist: bool = True,
 ) -> dict:
-    requested = normalize_review_date(date)
-    if not force_refresh:
-        cached = _load_cached(requested)
-        if cached:
-            return normalize_review(cached, date=requested)
+    """Build through the single v2 pipeline for rules, API and CLI drafts.
 
-    warnings: list = []
-    # 집계 입력(regime/thesis/portfolio/watchlist/notes)은 전부 현재 시점 조회이고 as-of
-    # 질의 경로가 없다. 그래서 어떤 날짜를 요청받아도 결과는 오늘의 판단이다.
-    today = _today()
-    date = requested
-    if requested != today:
-        warnings.append(
+    ``include_watchlist`` remains accepted for compatibility but v2 deliberately
+    excludes it from `positionReviews`; the Portfolio review only owns holdings.
+    """
+    from features.investment_review.review_v2 import build_candidate, finalize_and_commit
+    requested = normalize_review_date(date)
+    # The generation inputs are current authorities, not historical snapshots.
+    # Preserve the established safety rule: an explicit persisted historical
+    # date cannot masquerade as an as-of reconstruction.  CLI drafts retain
+    # their requested label because their caller owns the eventual target.
+    storage_date = _today() if persist and requested != _today() else requested
+    context_recorder, context_stage = diagnostic_stage_start("context")
+    try:
+        candidate = build_candidate(
+            _v2_data_dir(), REVIEW_DIR, storage_date, include_portfolio=include_portfolio,
+            include_watchlist=include_watchlist, include_obsidian=include_obsidian,
+        )
+    except Exception as error:
+        diagnostic_stage_failure(
+            context_recorder, error, stage_id=context_stage,
+            stage_code="context" if context_stage is not None else None,
+            boundary="generic",
+        )
+        diagnostic_stage_end(context_recorder, context_stage, "context")
+        raise
+    diagnostic_stage_end(context_recorder, context_stage, "context")
+    if requested != _today():
+        candidate.setdefault("warnings", []).append(
             f"이 리뷰는 현재 데이터로 집계했습니다. {requested} 시점 데이터로 재구성한 것이 아닙니다."
         )
         if persist:
-            # 저장은 파일명이 곧 날짜라, 다른 날짜로 저장하면 오늘의 판단이 그 날짜의
-            # 판단으로 굳는다(미래 날짜는 `_load_latest()`까지 영구 선점한다).
-            warnings.append(f"요청한 {requested} 대신 오늘({today}) 리뷰로 저장했습니다.")
-            date = today
-    regime_states = _load_regime_states(warnings)
-    theses, deltas = _load_theses_with_deltas(warnings)
-    positions = _load_positions(warnings) if include_portfolio else []
-    watchlist = _load_watchlist(warnings) if include_watchlist else []
-    notes = _load_notes(warnings) if include_obsidian else []
-
-    market_state = build_market_state(regime_states)
-    thesis_changes = build_thesis_changes(theses, deltas)
-    portfolio_impacts = build_portfolio_impacts(positions, watchlist, regime_states, thesis_changes)
-    key_checkpoints = aggregate_checkpoints(list(deltas.values()), regime_states)
-    linked_notes = build_linked_notes(notes)
-    stats = build_stats(market_state, thesis_changes, portfolio_impacts, key_checkpoints)
-    exposure = build_exposure(portfolio_impacts)
-    summary = build_summary(market_state)
-    market_tape = build_dashboard_tape(date, warnings)
-    recent_reports = _load_recent_reports(warnings)
-
-    if not market_state and not thesis_changes:
-        warnings.append("집계할 시장 내러티브/Thesis 데이터가 없습니다. 브리핑·기업분석·내러티브를 먼저 생성하세요.")
-
-    review = {
-        "date": date,
-        "generatedAt": _now_iso(),
-        "mode": "rule",  # LLM 보강은 후속 (현재 규칙 기반)
-        "summary": summary,
-        "marketTape": market_tape,
-        "stats": stats,
-        "exposure": exposure,
-        "recentReports": recent_reports,
-        "marketState": market_state,
-        "thesisChanges": thesis_changes,
-        "portfolioImpacts": portfolio_impacts,
-        "keyCheckpoints": key_checkpoints,
-        "linkedNotes": linked_notes,
-        "qualitySummary": {},
-        "warnings": warnings,
-        "stale": False,
-    }
-    review["markdown"] = render_markdown(review)
-    review = normalize_review(review, date=date)
+            candidate["warnings"].append(f"요청한 {requested} 대신 오늘({_today()}) 리뷰로 저장했습니다.")
     if persist:
-        _save_cache(date, review)
-    return review
+        commit_recorder, commit_stage = diagnostic_stage_start("commit")
+        try:
+            result = finalize_and_commit(_v2_data_dir(), REVIEW_DIR, candidate)
+        except Exception as error:
+            diagnostic_stage_failure(
+                commit_recorder, error, stage_id=commit_stage,
+                stage_code="commit" if commit_stage is not None else None,
+                boundary="save",
+            )
+            diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+            raise
+        diagnostic_stage_end(commit_recorder, commit_stage, "commit")
+        return result
+    return candidate
+
+
+def _effective_view(raw: dict, date: str) -> dict:
+    """Normalize and derive state in memory.  It never writes or fetches quotes."""
+    from features.investment_review.review_v2 import build_input_basis, effective_freshness, find_previous, gather_inputs
+    view = normalize_review(raw, date=date)
+    if view.get("sourceSchemaVersion") == 1:
+        return view
+    selection_version = str((view.get("inputBasis") or {}).get("reportSelectionVersion") or "")
+    inputs = gather_inputs(_v2_data_dir(), analytics_authority=(view.get("inputBasis") or {}).get("analytics"),
+                           report_selection_version=selection_version)
+    basis = build_input_basis(inputs, previous=find_previous(REVIEW_DIR, date))
+    state, freshness, reasons = effective_freshness(view, basis)
+    view["reviewState"] = state
+    view["freshness"] = freshness
+    view["staleReasons"] = reasons
+    view["stale"] = state == "stale"
+    return view
 
 
 def get_review(date: str | None = None) -> dict:
-    date = normalize_review_date(date)
-    cached = _load_cached(date)
-    if cached:
-        return normalize_review(cached, date=date)
-    if date == _today():
-        return build_review(date=date)
-    latest = _load_latest()
-    if latest:
-        latest = normalize_review(latest)
-        latest["stale"] = True
-        latest.setdefault("warnings", []).append(
-            f"{date} 리뷰 저장본이 없어 최신 저장본({latest.get('date')})을 표시합니다."
-        )
-        return latest
-    return build_review(date=date)
+    """Read exactly one stored snapshot (or a non-persisted empty view).
+
+    The old implementation created today's review during GET.  The Portfolio
+    tab is now a reader; only the explicit generate action is allowed to write.
+    """
+    from features.investment_review.review_v2 import load_raw
+    if date is None or str(date).strip() == "":
+        latest = _load_latest()
+        if not latest:
+            return empty_review(_today())
+        selected = normalize_review_date(latest.get("date") or _today())
+        return _effective_view(latest, selected)
+    selected = normalize_review_date(date)
+    raw = load_raw(REVIEW_DIR, selected)
+    return _effective_view(raw, selected) if raw else empty_review(selected)
 
 
 def generate_review(body: dict | None = None) -> dict:
     body = body or {}
     return build_review(
-        date=body.get("date"),
-        include_portfolio=body.get("includePortfolio", True),
-        include_watchlist=body.get("includeWatchlist", True),
-        include_obsidian=body.get("includeObsidian", True),
-        use_llm=body.get("useLlm", False),
-        force_refresh=body.get("forceRefresh", True),
+        date=body.get("date"), include_portfolio=body.get("includePortfolio", True),
+        include_watchlist=body.get("includeWatchlist", False), include_obsidian=body.get("includeObsidian", False),
+        force_refresh=True, persist=True,
     )
+
+
+def mark_reviewed(date: str, expected_review_revision: object) -> dict:
+    from features.investment_review.review_v2 import mark_reviewed as _mark
+    return _mark(_v2_data_dir(), REVIEW_DIR, normalize_review_date(date), expected_review_revision)
+
+
+def review_history() -> dict:
+    from features.investment_review.review_v2 import list_history
+    return {"items": list_history(REVIEW_DIR)}

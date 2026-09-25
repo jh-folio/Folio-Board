@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import os
-import urllib.error
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from features.common.execution_result import ExecutionResult
+from features.topic_report.execution import ensure_active, propagate_interruption, require_complete
 
 from features.agent_mode import bridge as agent_bridge
 from features.agent_mode import schema as agent_schema
 from features.common.research_schema.evidence import evidence_items_from_list
 from features.llm_settings.client import (
-    LlmRequestError,
-    request_llm_text,
-    selected_llm_config,
-    use_llm_analysis,
     use_web_search_for_analysis,
 )
 from features.topic_report.approved_schema import ApprovedRequest
@@ -38,6 +35,7 @@ class EngineOutput:
     provider: str
     model: str
     responseId: str
+    execution: ExecutionResult | None = field(default=None, repr=False)
 
 
 def _topic(approved: ApprovedRequest) -> dict:
@@ -106,35 +104,6 @@ def _materials(approved: ApprovedRequest, rows: list[dict]) -> tuple[dict, dict,
     return topic, market_data, macro_data
 
 
-def attempt_direct(prompt: str, context: str, *, max_output_tokens: int = 9000, timeout_seconds: int | None = None) -> EngineOutput:
-    config = selected_llm_config()
-    if not use_llm_analysis() or not config.get("apiKey") or not prompt:
-        raise EngineUnavailableError("api")
-    try:
-        text, response_id, _usage = request_llm_text(
-            config,
-            prompt,
-            context,
-            web_search=use_web_search_for_analysis(),
-            max_output_tokens=max_output_tokens,
-            timeout_seconds=timeout_seconds,
-            include_usage=True,
-        )
-    except (LlmRequestError, urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
-        raise EngineFailedError("api") from error
-    if not str(text or "").strip():
-        raise EngineFailedError("api")
-    provider = str(config.get("provider") or "")
-    adapters = {"openai": "openai_api", "gemini": "gemini_api", "claude": "claude_api"}
-    return EngineOutput(
-        markdown=str(text).strip(),
-        adapter=adapters.get(provider, "openai_api"),
-        provider=provider,
-        model=str(config.get("model") or ""),
-        responseId=str(response_id or ""),
-    )
-
-
 def attempt_cli(
     prompt: str,
     context: str,
@@ -144,7 +113,11 @@ def attempt_cli(
     approved: ApprovedRequest,
     evidence_items: list[dict],
     timeout_seconds: int | None = None,
+    model: str = "",
+    reasoning_effort: str = "",
+    web_search: bool | None = None,
 ) -> EngineOutput:
+    ensure_active(job_id)
     pack = agent_schema.build_pack(
         task_type="topic_report",
         artifact_type="topic_report",
@@ -160,7 +133,7 @@ def attempt_cli(
     )
     pack_path = agent_schema.write_pack(pack, owner_job_id=job_id)
     # 팩 안의 웹 검색 허가를 겉 지시가 덮지 않도록 같은 말을 밖에서도 한다.
-    web_search_enabled = use_web_search_for_analysis()
+    web_search_enabled = use_web_search_for_analysis() if web_search is None else bool(web_search)
     boundary = (
         "Use its approved plan, evidence, and context boundaries. If the pack contains a "
         "`## 웹 검색 사용` section, follow it: you may search the web within the listed sources "
@@ -170,21 +143,30 @@ def attempt_cli(
     )
     agent_prompt = "\n".join(
         [
-            "Write the final Folio OS Topic Report from this approved context pack.",
+            "Write the final Folio Board Topic Report from this approved context pack.",
             f"Read the UTF-8 pack at: {pack_path}",
             boundary,
             "Return final Markdown only and do not write files.",
         ]
     )
+    result_sink = {}
     try:
         result = agent_bridge.run_agent_prompt(
             agent_prompt,
             adapter=adapter,
+            model=model,
+            reasoning_effort=reasoning_effort,
             job_id=job_id,
             timeout=int(timeout_seconds or 0),
             web_search=web_search_enabled,
+            result_sink=result_sink,
         )
+    except agent_bridge.AgentRateLimitError as error:
+        # 사용량 한도는 코드 결함이 아니다. 이유를 보존해야 화면이 "한도, 리셋 뒤 다시"라고
+        # 말할 수 있고, 재개 체크포인트가 남아 다음 실행이 이어받는다.
+        raise EngineFailedError("cli_rate_limited") from error
     except RuntimeError as error:
+        propagate_interruption(error)
         message = str(error).casefold()
         unavailable = (
             "unavailable" in message
@@ -194,6 +176,7 @@ def attempt_cli(
         if unavailable:
             raise EngineUnavailableError("cli") from error
         raise EngineFailedError("cli") from error
+    ensure_active(job_id)
     output = str(result.get("output") or "").strip()
     if not output:
         raise EngineFailedError("cli")
@@ -201,8 +184,9 @@ def attempt_cli(
         markdown=output,
         adapter=str(result.get("adapter") or adapter),
         provider="external_agent",
-        model="",
+        model=str(model or ""),
         responseId="",
+        execution=result_sink.get("result"),
     )
 
 
@@ -214,11 +198,18 @@ __all__ = [
     "_normalized_evidence",
     "_topic",
     "attempt_cli",
-    "attempt_direct",
 ]
 
 
-def configured_editor_call(approved: ApprovedRequest, *, requested_mode: str, adapter: str, job_id: str) -> AxisCall:
+def configured_editor_call(
+    approved: ApprovedRequest,
+    *,
+    requested_mode: str,
+    adapter: str,
+    job_id: str,
+    model: str = "",
+    reasoning_effort: str = "",
+) -> AxisCall:
     """리서치 에디터 호출. 축 분석과 같은 엔진이되 세 가지가 다르다.
 
     - 출력이 보고서 전문이라 토큰 한도가 훨씬 크다(축 브리프는 2,500이면 족하다).
@@ -228,28 +219,22 @@ def configured_editor_call(approved: ApprovedRequest, *, requested_mode: str, ad
     """
 
     def invoke(prompt: str, context: str) -> str:
+        ensure_active(job_id)
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_editor_disabled_in_tests")
-        if requested_mode == "direct":
-            config = selected_llm_config()
-            if not use_llm_analysis() or not config.get("apiKey"):
-                raise EngineUnavailableError("api")
-            text, _response_id = request_llm_text(
-                config,
-                prompt,
-                context,
-                web_search=False,
-                max_output_tokens=16_000,
-                timeout_seconds=max(120, int(os.environ.get("TOPIC_EDITOR_API_TIMEOUT_SECONDS", "600"))),
-            )
-            return str(text or "")
+        result_sink = {}
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
+            model=model,
+            reasoning_effort=reasoning_effort,
             job_id=job_id,
             timeout=max(120, int(os.environ.get("TOPIC_EDITOR_CLI_TIMEOUT_SECONDS", "1200"))),
             web_search=False,
+            result_sink=result_sink,
         )
+        ensure_active(job_id)
+        require_complete(result_sink)
         return str(result.get("output") or "")
 
     return invoke
@@ -262,6 +247,8 @@ def configured_axis_call(
     adapter: str,
     job_id: str,
     web_search: bool | None = None,
+    model: str = "",
+    reasoning_effort: str = "",
 ) -> AxisCall:
     """축별 분석 호출. 보고서 본문 생성과 같은 엔진을 쓰되 팩 없이 프롬프트만 보낸다.
 
@@ -275,29 +262,22 @@ def configured_axis_call(
     resolved_web_search = use_web_search_for_analysis() if web_search is None else bool(web_search)
 
     def invoke(prompt: str, context: str) -> str:
+        ensure_active(job_id)
         if os.environ.get("PYTEST_CURRENT_TEST"):
             raise RuntimeError("external_axis_analysis_disabled_in_tests")
-        if requested_mode == "direct":
-            config = selected_llm_config()
-            if not use_llm_analysis() or not config.get("apiKey"):
-                raise EngineUnavailableError("api")
-            text, _response_id = request_llm_text(
-                config,
-                prompt,
-                context,
-                web_search=resolved_web_search,
-                max_output_tokens=2_500,
-                json_mode=True,
-                timeout_seconds=max(60, int(os.environ.get("TOPIC_AXIS_API_TIMEOUT_SECONDS", "240"))),
-            )
-            return str(text or "")
+        result_sink = {}
         result = agent_bridge.run_agent_prompt(
             prompt + "\n\n" + context,
             adapter=adapter,
+            model=model,
+            reasoning_effort=reasoning_effort,
             job_id=job_id,
             timeout=max(60, int(os.environ.get("TOPIC_AXIS_CLI_TIMEOUT_SECONDS", "600"))),
             web_search=resolved_web_search,
+            result_sink=result_sink,
         )
+        ensure_active(job_id)
+        require_complete(result_sink)
         return str(result.get("output") or "")
 
     return invoke

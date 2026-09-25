@@ -15,8 +15,9 @@
 1. `FOLIO_HOME` 환경변수 — 직접 정하고 싶은 사람용. 화면에 노출하지 않는다.
 2. 앱 폴더의 `workspace.json` 표지 — 옮기기가 성공했을 때만 쓰인다.
 3. 앱 폴더 `data/`에 파일이 있으면 앱 폴더 — 지금 쓰는 설치를 그대로 둔다.
-4. `~/Documents/FolioOS`에 자료가 있으면 거기 — **옮긴 사용자가 새 버전을 풀었을
-   때 자료를 자동으로 다시 찾는 지점이다.** 이 규칙이 없으면 옮겨도 업데이트 때
+4. `~/Documents/FolioBoard`(새 이름) 또는 `~/Documents/FolioOS`(구 이름, 새 이름에
+   자료가 없을 때만)에 자료가 있으면 거기 — **옮긴 사용자가 새 버전을 풀었을 때
+   자료를 자동으로 다시 찾는 지점이다.** 이 규칙이 없으면 옮겨도 업데이트 때
    빈 워크스페이스를 보게 되어 옮긴 의미가 없다.
 5. 아니면 앱 폴더 — 기본값. 아무것도 새로 만들지 않는다.
 
@@ -27,6 +28,16 @@
 3번이 4번보다 먼저인 이유: 표지 없는 옛 앱 폴더를 직접 실행했다면 그 폴더의 자료를
 쓰는 것이 맞다. 표지는 배포 zip에 없으므로 새 버전 폴더에는 처음부터 없고, 그
 경우 빈 `data/`를 지나 4번이 문서 폴더를 찾는다.
+
+**4번은 탐색(읽기)이고, 옮기기 목적지(쓰기)는 별도다** (2026-09 리네이밍, 표시명
+`Folio OS` → `Folio Board`). `documents_workspace()`는 옮기기를 눌렀을 때만 쓰는
+목적지 함수라 새 이름(`FolioBoard`) 하나만 돌려준다. 탐색은 `~/Documents/FolioOS`에
+자료를 옮겨 둔 기존 사용자를 계속 찾아야 하므로 `discover_documents_workspace()`가
+새 이름 → 구 이름 순으로, 폴더 **존재**가 아니라 `has_user_data()`(자료 **유무**)로
+후보를 본다. 이름만 바꾸면(새 상수 하나로 두 역할을 겸하면) 자료를 옮겨 둔 사용자가
+새 버전을 풀었을 때 탐색이 `~/Documents/FolioBoard`만 찾다 못 찾고 5번(앱 폴더,
+빈 워크스페이스)으로 떨어진다 — 자료는 `~/Documents/FolioOS`에 멀쩡히 있는데
+못 찾는, 바로 위 문단이 경고하는 그 실패다.
 """
 from __future__ import annotations
 
@@ -38,7 +49,11 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parents[2]
 
 WORKSPACE_DIR_NAMES = ("data", "research-inbox", "config")
-DOCUMENTS_FOLDER_NAME = "FolioOS"
+DOCUMENTS_FOLDER_NAME = "FolioBoard"
+# 탐색 후보 순서: 새 이름을 먼저 보고, 옮겨 둔 자료를 잃지 않도록 구 이름을 계속
+# 본다(모듈 docstring 4번). 이동 목적지(`documents_workspace()`)는 이 목록을 쓰지
+# 않고 `DOCUMENTS_FOLDER_NAME` 하나만 돌려준다 — 둘을 하나로 합치지 않는다.
+DOCUMENTS_FOLDER_DISCOVERY_ORDER = (DOCUMENTS_FOLDER_NAME, "FolioOS")
 MARKER_NAME = "workspace.json"
 
 
@@ -74,7 +89,13 @@ def documents_root() -> Path:
 
 
 def documents_workspace() -> Path:
-    """옮기기를 선택했을 때의 목적지."""
+    """옮기기를 선택했을 때의 목적지. 새 이름(`FolioBoard`) 하나만 돌려준다.
+
+    탐색(기존 자료를 다시 찾는 것)은 이 함수를 쓰지 않는다 —
+    `discover_documents_workspace()`를 쓴다. 둘을 하나로 합치면 이름을 바꿀 때
+    목적지와 탐색이 함께 바뀌어, 구 이름 폴더에 자료를 옮겨 둔 사용자가 새 버전을
+    풀었을 때 탐색이 새 이름만 찾다가 못 찾는다(모듈 docstring 참고).
+    """
     return documents_root() / DOCUMENTS_FOLDER_NAME
 
 
@@ -138,6 +159,26 @@ def _has_files(directory: Path) -> bool:
         return False
 
 
+def discover_documents_workspace() -> Path | None:
+    """탐색(읽기) 전용: `DOCUMENTS_FOLDER_DISCOVERY_ORDER`(새 이름 → 구 이름) 순으로
+    보고, 자료가 있는 첫 후보를 돌려준다. 아무 후보에도 자료가 없으면 None.
+
+    `has_user_data()`로 판정한다 — `.exists()`로 물으면 무슨 이유로든 생긴 빈
+    `~/Documents/FolioBoard`가 자료가 든 `~/Documents/FolioOS`를 가릴 수 있다.
+    둘 다 자료가 있으면 새 이름이 이긴다(먼저 확인하므로) — `FolioBoard`는 사용자가
+    새 버전에서 직접 옮겼을 때만 생기는 폴더라 더 최근의 의사이기 때문이다.
+
+    이 함수는 폴더를 새로 만들지 않는다. `documents_workspace()`(이동 목적지)와는
+    다른 함수다 — 섞어 쓰지 않는다.
+    """
+    root = documents_root()
+    for name in DOCUMENTS_FOLDER_DISCOVERY_ORDER:
+        candidate = root / name
+        if has_user_data(candidate):
+            return candidate
+    return None
+
+
 @functools.cache
 def workspace_root() -> Path:
     """사용자 자료가 있는 폴더. 위 docstring의 순서를 따른다.
@@ -162,8 +203,8 @@ def workspace_root() -> Path:
     if has_user_data(APP_ROOT):
         return APP_ROOT
 
-    documents = documents_workspace()
-    if has_user_data(documents):
+    documents = discover_documents_workspace()
+    if documents is not None:
         return documents
 
     # 사용자 자료가 어디에도 없다. 서버가 만든 파일이라도 있는 쪽을 이어 쓴다 —

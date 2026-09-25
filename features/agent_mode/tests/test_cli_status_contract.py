@@ -33,7 +33,7 @@ def test_the_version_gate_is_gone():
     """**버전 숫자로 능력을 판정하지 않는다.**
 
     예전에는 `AGY_HEADLESS_FIXED = (1, 1, 7)` 이상이면 브리지를 열었다. 그 근거는 짧은
-    프롬프트 하나가 stdout으로 돌아온 것이었는데, 정작 Folio OS의 Agent task는 전부
+    프롬프트 하나가 stdout으로 돌아온 것이었는데, 정작 Folio Board의 Agent task는 전부
     컨텍스트 팩 **파일을 읽는 것으로 시작**한다. 그 경로는 재보지 않았고 1.1.12는 그
     읽기를 거부한다 — 버전 비교로는 볼 수 없는 종류의 문제였다.
 
@@ -104,4 +104,6 @@ def test_the_dock_never_saves_a_conversation_choice_as_the_default():
     ).read_text(encoding="utf-8")
 
     assert "if (providerOverride || !adapter?.id || !nextModel) return;" in source
-    assert "options: { model, effort, adapter: providerOverride }" in source
+    # Agent Dock Stage E: searchPolicy joined the same per-conversation options
+    # object (not a separately-saved global setting).
+    assert "options: { model, effort, adapter: providerOverride, searchPolicy }" in source

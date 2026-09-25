@@ -39,12 +39,11 @@ def _clean_text(value) -> str:
 
 
 def _clean_ticker(value) -> str:
-    raw = _clean_text(value).upper().lstrip("$")
-    korean = re.fullmatch(r"(\d{6})(?:\.(?:KS|KQ))?", raw)
-    if korean:
-        return korean.group(1)
-    raw = raw.replace(".", "-")
-    return raw if re.fullmatch(r"[A-Z0-9-]{1,12}", raw) else ""
+    # 규칙 소유자는 thesis 모델이다 — 노트 색인과 thesis PK가 join 키라 두 곳이 각자
+    # 정규화하면 같은 회사가 두 행으로 갈라진다(0.6 Stage B 리뷰).
+    from features.thesis_tracking.model import normalize_ticker
+
+    return normalize_ticker(_clean_text(value))
 
 
 def _clean_note_id(value) -> str:
@@ -265,7 +264,7 @@ def _upsert_index(conn: sqlite3.Connection, note: dict, path: Path) -> None:
 def save_note(payload: dict | None, *, db_path: Path | None = None) -> dict:
     NOTES_DIR.mkdir(parents=True, exist_ok=True)
     existing = {}
-    raw_id = _clean_text((payload or {}).get("id") or (payload or {}).get("noteId"))
+    raw_id = _clean_note_id((payload or {}).get("id") or (payload or {}).get("noteId"))
     if raw_id and _note_path(raw_id).exists():
         existing = read_json(_note_path(raw_id), {})
     note = normalize_note(payload, existing)
@@ -276,11 +275,22 @@ def save_note(payload: dict | None, *, db_path: Path | None = None) -> dict:
         _upsert_index(conn, note, path)
     finally:
         conn.close()
+    # company_thesis 노트는 thesis 레지스트리의 빈자리를 자동으로 채운다(0.6 §8.2).
+    # 이미 thesis가 있으면 덮지 않는다 — 갱신은 명시적 action뿐이다. 실패해도
+    # 노트 저장을 되돌리지 않는다(등록은 노트의 부가물이다).
+    if note.get("noteType") == "company_thesis" and note.get("ticker"):
+        from features.thesis_tracking.native_notes import link_note_on_save
+
+        # thesis 레지스트리는 이 노트 색인과 **같은 DB**에 있다 — 호출자가 준 경로를
+        # 그대로 넘긴다. 레지스트리 기본 경로를 따로 열면 임시 DB로 격리한 호출자
+        # (테스트 포함)가 실제 워크스페이스에 쓰게 된다.
+        link_note_on_save(note, db_path=db_path or MARKET_MEMORY_DB_PATH)
     return public_note(note)
 
 
 def get_note(note_id: str, *, notes_dir: Path | None = None, clock=None) -> dict:
-    note_id = _clean_text(note_id)
+    # Same rule as the write path: an ID is one file name inside the notes folder.
+    note_id = _clean_note_id(note_id)
     if not note_id:
         return {}
     note = read_json(_note_path(note_id, notes_dir), {})

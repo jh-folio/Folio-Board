@@ -23,6 +23,7 @@ def repair_payload(body: dict | None = None) -> dict:
         mode="llm_section_improve",
         preflight=preflight,
         context=body.get("context") or {},
+        allow_briefing_repair=artifact_type == "briefing",
     )
     return {
         "artifact": updated,

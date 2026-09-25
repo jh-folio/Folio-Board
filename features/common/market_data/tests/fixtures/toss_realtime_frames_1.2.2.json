@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "restOpenApiVersion": "1.2.14",
+    "asyncApiVersion": "1.2.2",
+    "source": "pinned_extracted_fixture",
+    "network": "forbidden"
+  },
+  "frames": {
+    "declaration": [{"type": "trade:us", "codes": ["AAPL"]}, {"type": "trade:kr", "codes": ["005930"]}],
+    "subscriptions": {"type": "subscriptions", "subscribed": ["trade:us:AAPL"], "rejected": [{"target": "trade:kr:005930", "code": "stock-not-found", "message": "provider-only"}]},
+    "message": {"type": "message", "topic": "trade:us:AAPL", "data": {"price": "210.5", "volume": "20", "timestamp": "2026-06-18T23:30:00+09:00", "currency": "USD"}},
+    "error": {"type": "error", "error": {"code": "server-shutdown", "message": "provider-only"}},
+    "rateLimitError": {"type": "error", "error": {"code": "rate-limit-exceeded", "message": "provider-only"}},
+    "pong": {"type": "pong"},
+    "ping": "PING"
+  }
+}

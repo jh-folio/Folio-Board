@@ -1,6 +1,7 @@
 import sys
 import os
 import threading
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -101,6 +102,58 @@ def test_antigravity_command_uses_current_long_model_flag_and_print_prompt():
     assert "-m" not in command
 
 
+@pytest.mark.parametrize("web_search", [False, True])
+def test_claude_authors_without_plan_or_inherited_write_tools(web_search):
+    command = bridge._adapter_command(
+        {"id": "claude", "executable": "claude"}, model_override="sonnet", web_search=web_search,
+    )
+    assert command[command.index("--permission-mode") + 1] == "dontAsk"
+    expected = {"Read", "Glob", "Grep"} | ({"WebSearch"} if web_search else set())
+    assert set(command[command.index("--tools") + 1].split(",")) == expected
+    assert set(command[command.index("--allowedTools") + 1].split(",")) == expected
+    assert command[command.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+    assert "--strict-mcp-config" in command
+    assert "bypassPermissions" not in command and "plan" not in command
+
+
+def test_inline_briefing_preserves_prepared_writer_input_without_draft_charts():
+    pack = {
+        "taskType": "briefing", "agentInstructions": "evidence only",
+        "prompt": "Korean authoring template", "context": "Exact writer evidence source:test-1\nmarket facts",
+        "outputContract": {"format": "markdown", "minimumCharacters": 2500},
+        "writeBackContract": {"method": "markdown"},
+        "internal": {"privateChartData": "DO_NOT_SEND_INTERNAL_CHARTS"},
+        "draftArtifact": {"markdown": "DO_NOT_SEND_DRAFT"},
+    }
+    prompt = bridge._agent_prompt(Path("private-pack.json"), pack, inline_briefing=True)
+    for key in ("agentInstructions", "prompt", "context"):
+        assert pack[key] in prompt
+    assert '"minimumCharacters": 2500' in prompt
+    assert "private-pack.json" not in prompt and "DO_NOT_SEND" not in prompt
+    assert "Do not enter plan mode" in prompt
+
+
+def test_claude_briefing_dispatch_delivers_inline_evidence_to_writer(tmp_path):
+    pack = {"taskType": "briefing", "artifactId": "2099-12-31",
+            "context": "prepared pinned evidence", "prompt": "report template",
+            "outputContract": briefing_output_contract("both")}
+    adapter = {"id": "claude", "label": "Claude", "executable": "claude", "available": True}
+    with (
+        patch.object(bridge, "_select_adapter", return_value=adapter),
+        patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, tmp_path / "pack.json")),
+        patch.object(bridge, "_invoke_agent_cli", return_value=_valid_briefing_output()) as invoke,
+        patch.object(bridge.schema, "update_pack_status"),
+        patch.object(bridge.job_runtime, "is_durable_job", return_value=True),
+        patch.object(bridge.job_runtime, "commit_json_output", return_value={"artifactId": "2099-12-31"}) as commit,
+    ):
+        bridge.run_agent_task("briefing", {}, job_id="test-claude-inline")
+    assert invoke.call_count == 1
+    assert pack["context"] in invoke.call_args.args[1]
+    assert pack["prompt"] in invoke.call_args.args[1]
+    assert "pack.json" not in invoke.call_args.args[1]
+    assert commit.call_args.kwargs["contract_failed"] is False
+
+
 def test_codex_command_uses_current_exec_flags_without_removed_approval_option():
     adapter = {"id": "codex", "executable": "codex", "available": True}
     with patch("features.agent_mode.setup.configured_model", return_value="gpt-5.4"):
@@ -110,6 +163,66 @@ def test_codex_command_uses_current_exec_flags_without_removed_approval_option()
         "--model", "gpt-5.4", "-",
     ]
     assert "--ask-for-approval" not in command
+
+
+def test_cli_command_carries_supported_task_reasoning_effort_without_mutating_global_config():
+    adapters = (
+        ({"id": "codex", "executable": "codex", "available": True}, "high", ["-c", "model_reasoning_effort=high"]),
+        ({"id": "claude", "executable": "claude", "available": True}, "max", ["--effort", "max"]),
+        ({"id": "antigravity", "executable": "agy", "available": True}, "medium", ["--effort", "medium"]),
+    )
+    with patch("features.agent_mode.setup.configured_model", return_value="task-model"):
+        for adapter, effort, expected in adapters:
+            command = bridge._adapter_command(adapter, "PROMPT", reasoning_effort=effort)
+            for item in expected:
+                assert item in command
+
+
+def test_cli_command_rejects_effort_unknown_to_selected_adapter():
+    adapter = {"id": "antigravity", "executable": "agy", "available": True}
+    with pytest.raises(ValueError, match="Unsupported reasoning effort"):
+        bridge._adapter_command(adapter, "PROMPT", reasoning_effort="xhigh")
+
+
+@pytest.mark.parametrize("model", ['x" & calc & "', "--dangerously-bypass-approvals-and-sandbox", "a b", "gpt|evil"])
+def test_cli_command_rejects_model_ids_that_are_not_plain_identifiers(model):
+    # A Dock request's model reaches argv; a `.cmd` shim would let cmd.exe re-parse it.
+    for adapter_id in ("codex", "claude", "antigravity"):
+        adapter = {"id": adapter_id, "executable": adapter_id, "available": True}
+        with pytest.raises(ValueError, match="Unsupported model ID"):
+            bridge._adapter_command(adapter, "PROMPT", model_override=model)
+
+
+def test_cli_command_accepts_catalog_and_alias_model_ids():
+    adapter = {"id": "claude", "executable": "claude", "available": True}
+    for model in ("claude-opus-5-5", "sonnet", "claude-sonnet-4-6"):
+        command = bridge._adapter_command(adapter, "PROMPT", model_override=model)
+        assert command[command.index("--model") + 1] == model
+
+
+def test_codex_cli_command_keeps_model_specific_effort_levels():
+    adapter = {"id": "codex", "executable": "codex", "available": True}
+
+    for model, effort in [
+        ("gpt-6-astra", "ultra"),
+        ("gpt-6-sol", "max"),
+        ("gpt-6-luna", "max"),
+    ]:
+        command = bridge._adapter_command(
+            adapter,
+            "PROMPT",
+            model_override=model,
+            reasoning_effort=effort,
+        )
+        assert ["-c", f"model_reasoning_effort={effort}"] == command[command.index("-c") : command.index("-c") + 2]
+
+    with pytest.raises(ValueError, match="Unsupported reasoning effort"):
+        bridge._adapter_command(
+            adapter,
+            "PROMPT",
+            model_override="gpt-6-luna",
+            reasoning_effort="ultra",
+        )
 
 
 def test_bridge_parses_fenced_json_object():
@@ -195,6 +308,7 @@ def test_run_agent_task_captures_output_and_delegates_writeback():
         adapter = {"id": "codex", "label": "Codex CLI", "executable": sys.executable, "available": True}
         command = [sys.executable, "-c", "print('## Test Briefing\\n\\nAgent output')"]
         with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge, "_adapter_command", return_value=command),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
@@ -492,7 +606,10 @@ def test_briefing_agent_prompt_embeds_full_output_contract():
             "kr": "Korea Market Briefing — 2026.08.04 장중",
         },
     )
-    prompt = bridge._agent_prompt(Path("pack.json"), {"outputContract": contract})
+    # 실제 호출부(A.build_pack)는 항상 taskType을 싣는다 — 이 필드가 브리핑 전용
+    # 지시문(분량 하한·마켓 타이틀 서식 등)의 게이트다(company_analysis 등 다른
+    # taskType으로 새는 것을 막는다, 실측 P3).
+    prompt = bridge._agent_prompt(Path("pack.json"), {"taskType": "briefing", "outputContract": contract})
     assert "0. 오늘의 미국장 성격" in prompt
     assert "6. 다음 한국장 체크포인트" in prompt
     assert "10000" in prompt
@@ -500,6 +617,25 @@ def test_briefing_agent_prompt_embeds_full_output_contract():
     assert "# US Market Briefing — 2026.08.03 마감" in prompt
     assert "# Korea Market Briefing — 2026.08.04 장중" in prompt
     assert "기업명" in prompt
+
+
+def test_company_analysis_agent_prompt_does_not_leak_briefing_instructions():
+    """requiredSections를 채우는 taskType이 briefing 하나가 아니다 — company_analysis도
+    §6 규칙 14용 'requiredSections'(0.5.4)를 쓴다. 예전엔 taskType 게이트가 없어
+    브리핑 전용 지시(분량 0자·마켓 타이틀 서식·"blockquotes 금지")가 새어 들어갔다
+    (실측 P3: SK하이닉스·RIVN 둘 다). 마지막 항목은 §글쓰기 방식의 섹션 요약
+    blockquote 규칙과 정면으로 충돌해 그 준수율을 13/16으로 끌어내렸다."""
+    from features.company_analysis.style import REQUIRED_SECTION_HEADINGS
+
+    contract = {"format": "markdown", "analysisStyle": "beginner", "requiredSections": list(REQUIRED_SECTION_HEADINGS)}
+    prompt = bridge._agent_prompt(Path("pack.json"), {"taskType": "company_analysis", "outputContract": contract})
+    assert "핵심 판단" in prompt  # 필수 섹션 목록 자체는 여전히 실린다
+    assert "축약" in prompt
+    assert "Minimum report length: 0 characters" not in prompt
+    assert "오늘의" not in prompt
+    assert "마감" not in prompt
+    assert "blockquotes" not in prompt
+    assert "주도한 기업" not in prompt
 
 
 def test_briefing_contract_rejects_missing_title_date_and_company_names():
@@ -566,6 +702,7 @@ def test_run_agent_task_does_not_retry_invalid_briefing_or_writeback():
         adapter = {"id": "codex", "label": "Codex CLI", "executable": "codex", "available": True}
         invalid = "# Daily Market Briefing\n\n## US Market Briefing\n짧은 요약"
         with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
             patch.object(bridge, "_invoke_agent_cli", return_value=invalid) as invoke,
@@ -593,6 +730,7 @@ def test_run_agent_task_never_writes_briefing_after_invalid_output():
         adapter = {"id": "codex", "label": "Codex CLI", "executable": "codex", "available": True}
         invalid = "# Daily Market Briefing\n\n## US Market Briefing\n짧은 요약"
         with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
             patch.object(bridge, "_select_adapter", return_value=adapter),
             patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
             patch.object(bridge, "_invoke_agent_cli", side_effect=[invalid, invalid]) as invoke,
@@ -659,3 +797,139 @@ if __name__ == "__main__":
     test_bridge_parses_fenced_json_object()
     test_configured_provider_does_not_fall_back_to_another_cli()
     test_run_agent_task_captures_output_and_delegates_writeback()
+
+
+def test_durable_briefing_contract_violation_falls_back_to_rules_instead_of_failing():
+    """토큰을 쓴 실행을 계약 위반 하나로 버리지 않는다 — 규칙 대체로 커밋한다.
+
+    비-durable 경로는 규칙 대체를 태울 커밋 경로가 없어 그대로 거절한다(위 두 테스트).
+    """
+    with TemporaryDirectory() as tmp:
+        pack = {
+            "taskType": "briefing",
+            "artifactType": "briefing",
+            "artifactId": "2099-12-31",
+            "title": "Test Briefing",
+            "outputContract": briefing_output_contract("both"),
+            "draftArtifact": {"date": "2099-12-31"},
+        }
+        pack_path = Path(tmp) / "pack.json"
+        pack_path.write_text("{}", encoding="utf-8")
+        adapter = {"id": "codex", "label": "Codex CLI", "executable": "codex", "available": True}
+        invalid = "# Daily Market Briefing\n\n## US Market Briefing\n짧은 요약"
+        seen = {}
+
+        def _commit(job_id, task_type, pack, *, markdown, payload, contract_failed=False):
+            seen["contractFailed"] = contract_failed
+            seen["markdown"] = markdown
+            return {"artifactId": "2099-12-31"}
+
+        with (
+            patch.object(bridge, "_briefing_mcp_server_names", return_value=frozenset()),
+            patch.object(bridge, "_select_adapter", return_value=adapter),
+            patch.object(bridge.agent_service, "prepare_pack", return_value=(pack, pack_path)),
+            patch.object(bridge, "_invoke_agent_cli", return_value=invalid) as invoke,
+            patch.object(bridge.agent_service, "writeback_pack") as writeback,
+            patch.object(bridge.schema, "update_pack_status"),
+            patch.object(bridge.job_runtime, "is_durable_job", return_value=True),
+            patch.object(bridge.job_runtime, "commit_json_output", side_effect=_commit),
+        ):
+            summary = bridge.run_agent_task("briefing", {}, job_id="durable-contract-job")
+        assert seen["contractFailed"] is True
+        assert invoke.call_count == 1
+        writeback.assert_not_called()
+        assert summary["artifactId"] == "2099-12-31"
+
+
+class TestRunAgentPromptOnPhase:
+    """Agent Dock Stage A: 세마포어 대기와 실제 실행을 `on_phase`로 실시간 구분한다."""
+
+    def test_on_phase_fires_wait_engine_then_generate_in_order(self):
+        adapter = {"id": "codex", "executable": "codex"}
+        seen: list[str] = []
+        with (
+            patch.object(bridge, "_select_adapter", return_value=adapter),
+            patch.object(bridge, "_invoke_agent_cli", return_value="ok"),
+        ):
+            bridge.run_agent_prompt("p", job_id="j-phase", on_phase=seen.append)
+        assert seen == ["wait_engine", "generate"]
+
+    def test_omitting_on_phase_behaves_exactly_as_before(self):
+        adapter = {"id": "codex", "executable": "codex"}
+        with (
+            patch.object(bridge, "_select_adapter", return_value=adapter),
+            patch.object(bridge, "_invoke_agent_cli", return_value="ok"),
+        ):
+            result = bridge.run_agent_prompt("p", job_id="j-no-phase")
+        assert result["output"] == "ok"
+
+    def test_a_second_caller_observes_wait_engine_while_the_first_holds_the_semaphore(self):
+        """실측 재현: job은 `running`이어도 실제로는 다른 Agent CLI 호출 뒤에서
+        기다릴 수 있다 — 그 대기가 이제 `on_phase("wait_engine")`으로 관측된다."""
+        adapter = {"id": "codex", "executable": "codex"}
+        first_entered_generate = threading.Event()
+        release_first = threading.Event()
+        timings: dict[str, float] = {}
+
+        def slow_invoke(selected, prompt, timeout, job_id="", **kwargs):
+            first_entered_generate.set()
+            release_first.wait(timeout=2)
+            return "first-output"
+
+        def fast_invoke(selected, prompt, timeout, job_id="", **kwargs):
+            return "second-output"
+
+        def on_phase_second(phase):
+            timings[phase] = time.monotonic()
+            if phase == "wait_engine":
+                # 관측된 뒤에도 첫 호출이 실제로 더 붙들고 있다는 걸 증명하도록 살짝 쉰다.
+                time.sleep(0.1)
+                release_first.set()
+
+        with patch.object(bridge, "_select_adapter", return_value=adapter):
+            with patch.object(bridge, "_invoke_agent_cli", side_effect=slow_invoke):
+                first_thread = threading.Thread(target=lambda: bridge.run_agent_prompt("p1", job_id="j1"))
+                first_thread.start()
+                assert first_entered_generate.wait(timeout=2)
+
+            with patch.object(bridge, "_invoke_agent_cli", side_effect=fast_invoke):
+                result = bridge.run_agent_prompt("p2", job_id="j2", on_phase=on_phase_second)
+
+        first_thread.join(timeout=2)
+        assert not first_thread.is_alive()
+        assert result["output"] == "second-output"
+        assert set(timings) == {"wait_engine", "generate"}
+        # 두 번째 호출의 generate는 첫 호출이 세마포어를 놓아준 뒤에만 올 수 있다 —
+        # wait_engine 관측과 generate 사이에 실제 대기 시간이 있었다는 뜻이다. 임계값은
+        # 위 100ms 대비 넉넉한 여유를 둬 부하 상태의 전체 스위트 실행에서도 안 흔들리게 한다.
+        assert timings["generate"] - timings["wait_engine"] >= 0.06
+
+
+class TestResolveEffectiveWebSearch:
+    """Agent Dock Stage D: searchPolicy를 실제 adapter capability와 맞춰 해석한다."""
+
+    def test_off_never_searches_regardless_of_adapter(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "codex"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("off", "codex")
+        assert (effective, adapter_id, blocked) == (False, "", None)
+
+    def test_on_with_a_supported_adapter_searches_and_is_not_blocked(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "codex"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("on", "codex")
+        assert (effective, adapter_id, blocked) == (True, "codex", None)
+
+    def test_on_with_antigravity_is_blocked_before_any_cli_call(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "antigravity"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("on", "antigravity")
+        assert (effective, adapter_id, blocked) == (False, "antigravity", "unsupported")
+
+    def test_auto_with_antigravity_degrades_silently_not_blocked(self):
+        """실측 확인된 계획 §5.3 차이: `auto`는 지원 안 되면 조용히 검색 없이 진행한다."""
+        with patch.object(bridge, "_select_adapter", return_value={"id": "antigravity"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("auto", "antigravity")
+        assert (effective, adapter_id, blocked) == (False, "antigravity", None)
+
+    def test_an_unknown_policy_string_is_treated_as_off(self):
+        with patch.object(bridge, "_select_adapter", return_value={"id": "codex"}):
+            effective, adapter_id, blocked = bridge.resolve_effective_web_search("everything", "codex")
+        assert (effective, adapter_id, blocked) == (False, "", None)

@@ -1,4 +1,4 @@
-"""features.common.research_schema — Folio OS 공통 구조화 데이터 스키마 (Step 6).
+"""features.common.research_schema — Folio Board 공통 구조화 데이터 스키마 (Step 6).
 
 대시보드(Step 8)와 품질 평가(Step 7)가 마크다운 파싱 없이 읽을 수 있도록
 checkpoint / evidence / source ledger / data gap / market tape의 최소 공통 구조를 제공한다.

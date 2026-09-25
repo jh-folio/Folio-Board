@@ -17,6 +17,7 @@ from features.common.canonical_identity import (
 from features.common.canonical_report_state import load_report
 from features.common.canonical_report_types import WriteKind
 from features.common.canonical_reports import commit_sync, prepare
+from features.common.jobs import current_diagnostic_recorder, diagnostic_stage, diagnostic_stage_end, diagnostic_stage_failure, diagnostic_stage_start
 from features.common.change_intelligence.service import decorate_candidate, project_committed_report
 from features.common.market_data.tape import build_market_tape
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
@@ -29,9 +30,8 @@ from features.common.quality_generation.prompt_hints import render_prompt_hints
 from features.common.quality_generation.quality_targets import render_quality_target_context
 from features.common.quality_generation.telemetry import normalize_token_usage
 from features.llm_settings.client import (
-    LlmRequestError,
-    request_llm_text,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
     use_llm_analysis,
     use_web_search_for_analysis,
@@ -313,8 +313,10 @@ def _build_llm_context(
 
 
 REQUIRED_TAIL_SECTIONS = (
+    # "결론"은 0.6 Phase 1(2026-09-13)부터 고정 헤딩 이름이 아니다(topic_schema.py
+    # 참고) — 이름을 특정할 수 없는 검사는 여기서 뺀다. 잘림 감지는 여전히 유효하다:
+    # 이 둘이 있으면 뒤 내용도 대개 함께 있다.
     "앞으로 확인할 체크포인트",
-    "결론",
     "Source & Data Notes",
 )
 
@@ -357,7 +359,7 @@ def _continuation_context(topic: dict, date: str, markdown: str) -> str:
         f"보고서 날짜: {date}",
         "아래 보고서는 모델 출력 길이 제한 때문에 후반부가 누락되었거나 중간에서 끊겼을 수 있습니다.",
         "기존 내용을 반복하지 말고, 끊긴 지점부터 이어서 작성하세요.",
-        "반드시 남은 섹션을 완성하세요: 9. 앞으로 확인할 체크포인트, 10. 결론, 11. Source & Data Notes.",
+        "반드시 남은 섹션을 완성하세요: 앞으로 확인할 체크포인트, 질문에 대한 직접적인 답을 담은 마지막 본문 섹션(제목 자유), Source & Data Notes.",
         "최종 답변에는 이어지는 Markdown 본문만 출력하세요.",
         "",
         "## 기존 보고서 마지막 부분",
@@ -478,7 +480,15 @@ def generate_topic_report(
     })
 
     # 4. LLM generation — 공통 prompt + report_type별 지침 결합 (Phase 3)
-    cfg = selected_llm_config()
+    try:
+        cfg = selected_cli_config()
+    except Exception:
+        # 아래는 `cfg`가 실패하더라도 규칙 기반으로 떨어지도록 설계돼 있는데
+        # (`generation = {"mode": "rules", ...}`), 정작 그 `cfg` 자체가 설정값
+        # 오류(예: 지원 안 되는 `AI_AGENT_REASONING_EFFORT`)로 예외를 던지면
+        # 이 함수 전체가 그 순간 죽어 규칙 생성까지 막혔다. 빈 설정으로 두면
+        # 아래 `cfg.get("enabled")`가 falsy가 되어 의도한 대로 규칙 경로로 간다.
+        cfg = {}
     prompt = _read_prompt()
     report_type = (topic_plan or {}).get("reportType") or topic.get("report_type", "")
     if prompt:
@@ -487,7 +497,7 @@ def generate_topic_report(
 
     llm_on = use_llm_analysis() if llm_override is None else bool(llm_override)
     markdown = None
-    if llm_on and cfg.get("apiKey") and prompt:
+    if llm_on and cfg.get("enabled") and prompt:
         context = _build_llm_context(
             topic, market_data, macro_data, docs, memories, user_context, date,
             data_gaps=evidence_pack["dataGaps"] if evidence_pack else None,
@@ -524,7 +534,7 @@ def generate_topic_report(
         # Web search only as supplement — try local first
         try:
             max_tokens = int(os.environ.get("TOPIC_REPORT_MAX_OUTPUT_TOKENS", "9000"))
-            text, response_id, usage = request_llm_text(
+            text, response_id, usage = request_cli_text(
                 cfg, prompt, context,
                 web_search=use_web,
                 max_output_tokens=max_tokens,
@@ -537,7 +547,7 @@ def generate_topic_report(
                 if _topic_report_looks_cut(markdown):
                     try:
                         cont_context = _continuation_context(topic, date, markdown)
-                        cont_text, _cont_response_id, continuation_usage = request_llm_text(
+                        cont_text, _cont_response_id, continuation_usage = request_cli_text(
                             cfg,
                             prompt,
                             cont_context,
@@ -571,12 +581,12 @@ def generate_topic_report(
                     )
                 if generation["mayBeTruncated"]:
                     generation["message"] += " · 후반 섹션이 일부 누락됐을 수 있습니다."
-        except LlmRequestError:
+        except (RuntimeError, OSError):
             generation["message"] = f"{cfg.get('provider', '')} LLM 호출 실패로 규칙 기반 보고서로 대체했습니다."
         except Exception:
             generation["message"] = "LLM 호출에 실패했습니다."
-    elif not cfg.get("apiKey"):
-        generation["message"] = f"{cfg.get('provider', '')} API 키가 없어 규칙 기반 보고서를 생성했습니다."
+    elif not cfg.get("enabled"):
+        generation["message"] = "AI가 꺼져 있어 규칙 기반 보고서를 생성했습니다."
     elif not llm_on:
         generation["message"] = "LLM이 꺼져 있어 규칙 기반 보고서를 생성했습니다."
 
@@ -861,39 +871,49 @@ def attach_overlay_to_topic_report(report_id: str, *, llm_override=None, web_sea
     )
     from features.obsidian.importer.service import list_hypotheses, scan_vault
 
-    path = _find_report_path(report_id)
-    if not path:
-        raise FileNotFoundError(f"Topic report not found: {report_id}")
-    canonical = load_report(path)
-    if canonical is None:
-        raise FileNotFoundError(f"Topic report not found: {report_id}")
+    with diagnostic_stage("context"):
+        path = _find_report_path(report_id)
+        if not path:
+            raise FileNotFoundError(f"Topic report not found: {report_id}")
+        canonical = load_report(path)
+        if canonical is None:
+            raise FileNotFoundError(f"Topic report not found: {report_id}")
 
-    # 테마 보고서는 단일 티커가 아니므로, plan의 candidateTickers로 노트를 모으고
-    # 없으면 전체 hypothesis를 연결한다.
-    tickers = list((canonical.get("topicPlan") or {}).get("candidateTickers") or {})
-    hyps: list = []
-    try:
-        scan_vault()
-    except Exception:
-        pass
-    seen: set[str] = set()
-    try:
-        if tickers:
-            for ticker in tickers:
-                for note in list_hypotheses(ticker=ticker):
-                    nid = note.get("note_id") or note.get("rel_path")
-                    if nid and nid not in seen:
-                        seen.add(nid)
-                        hyps.append(note)
-        if not hyps:
+        # 테마 보고서는 단일 티커가 아니므로, plan의 candidateTickers로 노트를 모으고
+        # 없으면 전체 hypothesis를 연결한다.
+        tickers = list((canonical.get("topicPlan") or {}).get("candidateTickers") or {})
+        hyps: list = []
+        try:
+            scan_vault()
+        except Exception as error:
+            diagnostic_stage_failure(current_diagnostic_recorder(), error, stage_id=None, stage_code="context", boundary="generic")
+        seen: set[str] = set()
+        try:
+            if tickers:
+                for ticker in tickers:
+                    for note in list_hypotheses(ticker=ticker):
+                        nid = note.get("note_id") or note.get("rel_path")
+                        if nid and nid not in seen:
+                            seen.add(nid)
+                            hyps.append(note)
+            if not hyps:
+                hyps = _gather_hypotheses("topic", canonical)
+        except Exception as error:
+            diagnostic_stage_failure(current_diagnostic_recorder(), error, stage_id=None, stage_code="context", boundary="generic")
             hyps = _gather_hypotheses("topic", canonical)
-    except Exception:
-        hyps = _gather_hypotheses("topic", canonical)
 
-    overlay, status = generate_overlay(
-        canonical, hyps, kind="topic",
-        llm_override=llm_override, web_search_override=web_search_override,
-    )
+    recorder, stage_id = diagnostic_stage_start("generate")
+    try:
+        overlay, status = generate_overlay(
+            canonical, hyps, kind="topic",
+            llm_override=llm_override, web_search_override=web_search_override,
+        )
+    except Exception as error:
+        diagnostic_stage_failure(recorder, error, stage_id=stage_id,
+                                 stage_code="generate" if stage_id is not None else None, boundary="generic")
+        diagnostic_stage_end(recorder, stage_id, "generate")
+        raise
+    diagnostic_stage_end(recorder, stage_id, "generate")
     updated = with_overlay(canonical, overlay, status=status)
     commit_sync(prepare(
         report_kind=ReportKind.TOPIC_REPORT,

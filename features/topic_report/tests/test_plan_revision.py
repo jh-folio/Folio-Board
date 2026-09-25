@@ -216,7 +216,7 @@ def test_a_revision_instruction_edits_the_plan_in_place(service, monkeypatch):
     seen = {}
 
     monkeypatch.setattr(client, "use_llm_analysis", lambda: True)
-    monkeypatch.setattr(client, "selected_llm_config", lambda: {"apiKey": ""})
+    monkeypatch.setattr(client, "selected_cli_config", lambda: {"apiKey": ""})
     monkeypatch.setattr(bridge, "bridge_status", lambda *a, **k: {"available": True})
 
     def fake_prompt(prompt, **_kwargs):

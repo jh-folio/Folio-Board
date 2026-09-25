@@ -1,4 +1,85 @@
-# Investment Review — 투자 리뷰 대시보드 (Step 8)
+# Investment Review — Portfolio 투자 리뷰 (v2)
+
+`data/investment-review/{date}.json`은 Portfolio 하위 탭이 읽는 날짜별 Personal
+Overlay snapshot이다. 새 `portfolio_report`나 Canonical `ReportKind`는 만들지 않는다.
+구조화 필드가 권위이며 `markdown`은 이를 읽기 좋게 표현한 파생 필드다.
+
+## v2 저장·상태 계약
+
+- v2는 `schemaVersion=2`, `sourceSchemaVersion=2`, 같은 날짜에서 단조 증가하는
+  `reviewRevision`, `reviewState=draft|reviewed|stale|due`, `reviewedAt`,
+  `previousReviewedAt`을 저장한다. 재생성은 `draft`로 돌아가고 이전 확인 시각만 넘긴다.
+- `inputBasis`는 Portfolio revision, Thesis/Delta identity, 현재 Market State lineage,
+  checkpoint watermark, 실제 사용한 Canonical identity, analytics/backtest method를
+  fingerprint로 묶는다. quote/FX provider 관측 시각은 권위가 없으므로
+  `marketData.status=partial`로 남긴다.
+- `positionReviews`는 **현재 보유**만 다룬다. Watchlist를 합치지 않으며 내러티브
+  노출은 Thesis `linked_regimes` 또는 manual regime-thesis link만 쓴다. evidence-derived
+  `linkedCompanies`는 절대 연결 근거가 아니다.
+- correlation/volatility contribution은 현재 holdings·통화·method/window와 맞는
+  **저장된** backtest가 있을 때만 참조한다. 다시 돌리거나 수치를 꾸미지 않는다.
+- 이전 비교는 같은 날 revision이 아니라 가장 최근 `date < current.date` snapshot 하나다.
+  비교 불가한 legacy/identity/method 차이는 `uncertainties`로 남긴다.
+
+v1 파일은 열 때만 `sourceSchemaVersion=1`, revision 0, legacy input basis와 stale
+상태로 메모리 정규화한다. GET은 파일을 다시 쓰거나 생성하지 않는다. 명시적 `오늘 리뷰
+갱신`만 v2 revision 1을 저장한다. `검토 완료`는
+`POST /api/investment-review/{date}/reviewed {expectedReviewRevision}`의 CAS write이며,
+상태·확인시각만 바꾼다.
+
+직접 rules 생성은 shared artifact lock 안에서 마지막 input fingerprint를 다시 읽는다.
+생성 중 입력이 바뀌면 같은 날짜의 candidate를 `stale`과
+`input_changed_during_generation`으로 저장해 사용자가 원인을 볼 수 있다. 반대로 CLI Job은
+staging과 promotion 사이에 오래 멈출 수 있어, promotion 직전 authority fingerprint가 다르면
+`investment_review_external_input_changed_reopen_generation` conflict로 **아무 리뷰 파일도
+쓰지 않고** 재생성을 요구한다. recovery도 같은 검사를 하므로 stale staged artifact를 승격하지
+않는다. immutable stage manifest/journal 재설계는 이 Stage E 범위 밖이다.
+
+Agent 반박은 `{kind: investment_review, id: date, revision: reviewRevision,
+intent: challenge}`의 별도 scope다. 매 turn 정확한 파일·revision을 다시 읽고 불일치하면
+`review_changed_reopen_challenge` gap만 반환한다. 일반 Portfolio 대화로 폴백하지 않는다.
+
+## U.5 입력 범위와 표시 계약
+
+- 새 명시적 생성은 `inputBasis.reportSelectionVersion=u5-v1`을 저장한다. 버전 없는
+  기존 v2는 읽기·검토 완료·직접 저장·CLI 승격·복구 모두 기존 자료 선택과 fingerprint를
+  유지한다. GET으로 옛 파일을 다시 쓰지 않는다.
+- 종목 직접 기업분석/테마 자료를 시장 배경보다 먼저 선별한다. 포지션당 자료 8개,
+  합집합 24개가 상한이며 `inputBasis.canonicalReports`는 실제 상세가 소비한 합집합이다.
+  제목·자료 종류 같은 표시 정보는 fingerprint에 넣지 않는다.
+- 상세는 최대 24포지션, 최소 목록 `positionRoster`는 최대 100포지션이다. `coverage`는
+  전체·포함·제외 수를 분리한다. 상세 선별은 시계가 흘렀다는 이유만으로 fingerprint가
+  바뀌지 않아야 하며, 화면의 기한 경과 우선순위는 저장 권위를 바꾸지 않는다.
+- `thesisPresent`와 `latestReviewPresent`로 투자 논리 미작성, 최신 검토 미작성,
+  검토 후 자료 부족을 구분한다. 읽기 실패와 옛 저장본의 미확인 상태는 false로 추정하지 않는다.
+- 새 생성의 요약은 보유·상세 범위와 준비 상태·위험 판정의 규칙 집계다. 입력이 없는데
+  검토 완료처럼 설명하지 않으며, 옛 저장 요약은 읽기에서 재작성하지 않는다.
+- `freshness.dueCount`는 이전 검토/생성 이후 새로 도래한 항목이라는 기존 뜻을 유지한다.
+  `overdueUnresolvedCount`는 저장 snapshot의 고유한 비종결 체크포인트 중 기한 경과 수다.
+  날짜만 있는 기한은 한국 시간 해당 날짜가 끝난 뒤, 시각이 있는 기한은 평가 시각 이하일 때
+  경과로 센다. 시차 없는 시각은 한국 시간이다. `evaluatedAt`은 서버 평가 시각이며
+  기한 경과 0건이 현재 전체 미완료 0건을 뜻하지 않는다.
+- Agent 반박은 정확한 날짜/revision의 최소 종목 목록·coverage·핵심 반증을 우선 보존한다.
+  일반 시장/화면 보고서 맥락으로 넓히지 않으며, 입력 상한에 따른 생략은 data gap으로 밝힌다.
+
+## 화면과 API
+
+화면은 판단 요약·지난 리뷰 이후 변화와 핵심 반증/불확실성을 먼저 읽고 행동하는 순서다.
+중요 위험은 접지 않으며 상세 포지션·연결 자료·이력은 필요할 때 펼친다. 생성·검토 완료·
+정확한 날짜/revision 반박은 서로 실행 잠금을 공유한다. 빈 상태의 보유 화면 바로가기는
+탭 이동만 하고 생성하거나 저장하지 않는다. 저장된 리뷰는 현재 보유가 비어 있어도 읽을 수 있다.
+
+```text
+GET  /api/investment-review            # 저장본 + read-time freshness, 생성 없음
+GET  /api/investment-review/history    # 날짜별 snapshot 메타데이터
+GET  /api/investment-review/{date}     # 정확한 날짜, 없으면 empty response
+POST /api/investment-review/generate   # 명시적 rules-based 갱신
+POST /api/investment-review/{date}/reviewed
+```
+
+# 이전 Investment Review 설명 (역사 기록 — 현재 계약 아님)
+
+> 이 아래는 v1의 홈·캐시·API를 보존한 역사 기록이다. 현재 동작은 이 문서 맨 앞의 v2 저장·상태 계약과 5개 Investment Review API를 따른다. v1 저장본은 재작성하지 않고 읽을 때만 legacy/stale로 해석한다. Investment Context는 현재 Investment Review와 별개인 읽기 전용 projection이다.
 
 여러 기능을 하나의 **투자 리뷰 홈**으로 집계한다.
 
@@ -74,7 +155,7 @@ Canonical 보고서나 외부 evidence를 수정하지 않는다.
 - 입력 저장소 watermark가 바뀐 경우에만 메모리 캐시를 다시 계산하며 별도 context 파일을 쓰지 않는다.
 - Home, Market Memory, Smart Collection, Deep Research가 같은 projection과 route link를 재사용한다.
 
-## API
+## 역사 기록: v1 API (현재 사용 금지)
 
 ```text
 GET  /api/investment-review            # 오늘(또는 최신) 리뷰

@@ -42,7 +42,7 @@ def moved(tmp_path, monkeypatch):
 def test_moving_to_documents_copies_everything_and_keeps_the_original(moved, tmp_path):
     result = service.move_workspace("documents")
 
-    target = tmp_path / "home" / "Documents" / "FolioOS"
+    target = tmp_path / "home" / "Documents" / "FolioBoard"
     assert result["restartRequired"] is True
     assert (target / "data" / "portfolio.json").read_text(encoding="utf-8") == '{"holdings": []}'
     assert (target / "data" / "briefings" / "2026-08-08.json").exists()
@@ -58,7 +58,7 @@ def test_the_marker_makes_the_next_start_use_the_new_location(moved, tmp_path):
     service.move_workspace("documents")
     workspace.reset_cache()
 
-    target = tmp_path / "home" / "Documents" / "FolioOS"
+    target = tmp_path / "home" / "Documents" / "FolioBoard"
     assert workspace.workspace_root() == target
     assert workspace.data_dir() == target / "data"
     assert workspace.is_outside_app_folder()
@@ -93,7 +93,7 @@ def test_the_cleanup_does_not_reach_the_copy_that_was_just_made(moved, tmp_path)
 
     service.move_workspace("documents")
     copied = (
-        tmp_path / "home" / "Documents" / "FolioOS" / "research-inbox" / "rss"
+        tmp_path / "home" / "Documents" / "FolioBoard" / "research-inbox" / "rss"
         / "2020-01-02 09-00-00 - BBC - ancient.md"
     )
     assert copied.exists()
@@ -126,7 +126,7 @@ def test_moving_back_to_the_app_folder_clears_the_marker(moved):
 
 def test_a_destination_with_files_needs_an_explicit_merge(moved, tmp_path):
     """합치면 그쪽에만 있던 파일이 남는다 — 지운 보고서가 되살아난다. 조용히 하지 않는다."""
-    target = tmp_path / "home" / "Documents" / "FolioOS"
+    target = tmp_path / "home" / "Documents" / "FolioBoard"
     (target / "data").mkdir(parents=True)
     (target / "data" / "old.json").write_text("{}", encoding="utf-8")
 
@@ -159,7 +159,7 @@ def test_a_full_disk_stops_before_copying_anything(moved, monkeypatch, tmp_path)
     with pytest.raises(service.WorkspaceMoveError, match="공간이 부족"):
         service.move_workspace("documents")
 
-    assert not (tmp_path / "home" / "Documents" / "FolioOS" / "data" / "portfolio.json").exists()
+    assert not (tmp_path / "home" / "Documents" / "FolioBoard" / "data" / "portfolio.json").exists()
 
 
 def test_the_same_place_and_nested_places_are_refused(moved, monkeypatch):
@@ -179,7 +179,44 @@ def test_the_payload_tells_the_screen_where_things_are(moved, tmp_path):
     assert payload["canMoveToAppFolder"] is False
     assert payload["fileCount"] == 3
     assert payload["totalBytes"] > 0
-    assert payload["documentsPath"] == str(tmp_path / "home" / "Documents" / "FolioOS")
+    # 아직 아무 문서 폴더에도 자료가 없다 — documentsPath는 이동 목적지(새 이름)를
+    # 보여준다. "옮길 위치"로 화면이 쓰는 값이다.
+    assert payload["documentsPath"] == str(tmp_path / "home" / "Documents" / "FolioBoard")
+
+
+def test_a_legacy_documents_folder_in_use_reports_itself_not_the_new_destination(tmp_path, monkeypatch):
+    """구 문서 폴더(`~/Documents/FolioOS`)를 쓰는 사용자의 설정 화면(§4.4).
+
+    갓 푼 앱 폴더(`data/`가 빈 껍데기뿐)라 3번 규칙이 걸리지 않고 4번(문서 폴더)이
+    워크스페이스를 잡는다. 이동 버튼이 없고(`canMoveToDocuments` 거짓),
+    `documentsPath`는 실제 쓰는 폴더와 같아야 한다 — 쓰지도 않는
+    `~/Documents/FolioBoard`를 보여주면 안 된다. 그리고 이 조회만으로
+    `~/Documents/FolioBoard`가 생기면 안 된다(탐색은 아무것도 만들지 않는다).
+    """
+    app = tmp_path / "FolioBoard-v0.6.0"
+    for name in workspace.WORKSPACE_DIR_NAMES:
+        (app / name).mkdir(parents=True)
+
+    legacy = tmp_path / "home" / "Documents" / "FolioOS"
+    (legacy / "data").mkdir(parents=True)
+    (legacy / "data" / "portfolio.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(workspace, "APP_ROOT", app)
+    monkeypatch.setattr(service, "APP_ROOT", app)
+    monkeypatch.setattr(workspace, "documents_root", lambda: tmp_path / "home" / "Documents")
+    monkeypatch.delenv("FOLIO_HOME", raising=False)
+    monkeypatch.delenv("OneDrive", raising=False)
+    workspace.reset_cache()
+    try:
+        assert workspace.workspace_root() == legacy
+
+        payload = service.workspace_payload()
+        assert payload["outsideAppFolder"] is True
+        assert payload["canMoveToDocuments"] is False
+        assert payload["documentsPath"] == str(legacy)
+        assert not (tmp_path / "home" / "Documents" / "FolioBoard").exists()
+    finally:
+        workspace.reset_cache()
 
 
 def test_folio_home_blocks_moving_instead_of_lying(moved, monkeypatch, tmp_path):
@@ -223,7 +260,7 @@ def test_a_live_sqlite_wal_does_not_fail_the_move(moved, tmp_path):
 
     result = service.move_workspace("documents")
 
-    target = tmp_path / "home" / "Documents" / "FolioOS"
+    target = tmp_path / "home" / "Documents" / "FolioBoard"
     # 곁다리는 따라가지 않는다. SQLite가 목적지에서 다시 만든다.
     assert not (target / "data" / "research-index.sqlite3-wal").exists()
     assert not (target / "data" / "research-index.sqlite3-shm").exists()
@@ -278,7 +315,7 @@ class TestMoveDoesNotLoseData:
 
     def test_a_stale_sidecar_at_the_destination_is_removed(self, moved, tmp_path):
         """목적지에 남은 남의 `-wal`은 새로 복사한 본체 위로 재생되어 옛 자료를 되살린다."""
-        target = tmp_path / "home" / "Documents" / "FolioOS"
+        target = tmp_path / "home" / "Documents" / "FolioBoard"
         (target / "data").mkdir(parents=True)
         import sqlite3
 
@@ -335,7 +372,7 @@ class TestMoveDoesNotLoseData:
 
     def test_the_merge_warning_names_the_destructive_half(self, moved, tmp_path):
         """`copytree`는 같은 이름 파일을 덮어쓴다. 경고문이 그 사실을 먼저 말해야 한다."""
-        target = tmp_path / "home" / "Documents" / "FolioOS" / "data"
+        target = tmp_path / "home" / "Documents" / "FolioBoard" / "data"
         target.mkdir(parents=True)
         (target / "portfolio.json").write_text('{"holdings": ["기존"]}', encoding="utf-8")
 
@@ -346,7 +383,7 @@ class TestMoveDoesNotLoseData:
 
     def test_a_marker_that_cannot_be_deleted_fails_loudly(self, moved, monkeypatch, tmp_path):
         """삭제 실패를 삼키면 "앱 폴더로 되돌렸습니다"라고 말해 놓고 문서 폴더를 계속 쓴다."""
-        documents = tmp_path / "home" / "Documents" / "FolioOS"
+        documents = tmp_path / "home" / "Documents" / "FolioBoard"
         for name in workspace.WORKSPACE_DIR_NAMES:
             (documents / name).mkdir(parents=True)
         (documents / "data" / "portfolio.json").write_text("{}", encoding="utf-8")

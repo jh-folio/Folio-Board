@@ -1,4 +1,4 @@
-"""Create a clean Folio OS user release package.
+"""Create a clean Folio Board user release package.
 
 The package is driven by release-manifest.json. Only the explicit runtime
 surface is copied, empty first-run data directories are created, the result is
@@ -328,7 +328,7 @@ def build_package(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Package Folio OS runtime files from tracked inputs.")
+    parser = argparse.ArgumentParser(description="Package Folio Board runtime files from tracked inputs.")
     parser.add_argument("--version", default=DEFAULT_VERSION, help=f"Package version suffix (default: {DEFAULT_VERSION}).")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_ROOT, help="Output root under dist/.")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST, help="Release manifest path.")

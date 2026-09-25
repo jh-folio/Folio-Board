@@ -1,13 +1,13 @@
 # Obsidian Integration
 
-Obsidian Integration은 Folio OS와 로컬 Obsidian Vault 사이의 양방향 흐름을 담당합니다.
+Obsidian Integration은 Folio Board와 로컬 Obsidian Vault 사이의 양방향 흐름을 담당합니다.
 
 ```text
-Folio OS Canonical 보고서 → Obsidian Markdown 내보내기
-사용자 Obsidian 노트(thesis/memo/review) → Folio OS hypothesis로 회수
+Folio Board Canonical 보고서 → Obsidian Markdown 내보내기
+사용자 Obsidian 노트(thesis/memo/review) → Folio Board hypothesis로 회수
 ```
 
-Folio OS가 내보낸 노트는 다시 evidence로 쓰지 않고, 사용자가 직접 쓴 노트만 Personal Overlay와 Thesis Tracking의 hypothesis 입력으로 사용합니다.
+Folio Board가 내보낸 노트는 다시 evidence로 쓰지 않고, 사용자가 직접 쓴 노트만 Personal Overlay와 Thesis Tracking의 hypothesis 입력으로 사용합니다. 이 판정은 `generated_by` 값을 직접 비교하지 않고 존재 유무로만 하므로, 이름이 `Folio OS`였던 과거 내보내기도 계속 걸러집니다(아래 "사용자 노트 회수").
 
 ## 하위 폴더
 
@@ -27,7 +27,7 @@ Vault 경로는 설정 탭에서 저장하며 위치는 아래 파일입니다.
 data/obsidian-settings.json
 ```
 
-이 파일은 사용자 설정이므로 명시 요청 없이 삭제하지 않습니다. Vault는 프로젝트 폴더 바깥에 두는 것을 권장합니다. 그래야 Folio OS가 내보낸 노트가 다시 `research-inbox` 자료처럼 인덱싱되는 자기참조를 피할 수 있습니다.
+이 파일은 사용자 설정이므로 명시 요청 없이 삭제하지 않습니다. Vault는 프로젝트 폴더 바깥에 두는 것을 권장합니다. 그래야 Folio Board가 내보낸 노트가 다시 `research-inbox` 자료처럼 인덱싱되는 자기참조를 피할 수 있습니다.
 
 ## 내보내기
 
@@ -45,10 +45,12 @@ data/obsidian-settings.json
 내보내는 노트에는 항상 자기참조 방지 마커가 붙습니다.
 
 ```yaml
-generated_by: Folio OS
+generated_by: Folio Board
 source_layer: primary_processed
 reuse_as_evidence: false
 ```
+
+과거(리네이밍 전)에 내보낸 노트는 `generated_by: Folio OS`를 그대로 갖고 있습니다. 재내보내기 전까지 값을 일괄 갱신하지 않으며, importer는 신·구 값을 똑같이 자기참조로 인식합니다.
 
 재내보내기 시 `---\n## 사용자 메모\n` 구분자 이하의 사용자 작성 내용은 보존합니다. 회사명·별칭은 `[[wikilink]]`로 자동 변환하며, 긴 이름부터 처리해 부분 매칭을 줄입니다.
 
@@ -61,7 +63,7 @@ reuse_as_evidence: false
 | 조건 | layer | importable |
 | --- | --- | --- |
 | `type: company_thesis`, `market_memo`, `topic_review` 또는 `source_layer: user_synthesis` | `hypothesis` | true |
-| Folio OS 생성 노트 또는 `reuse_as_evidence: false` | `self_generated` | false |
+| Folio Board(구 Folio OS 포함) 생성 노트 또는 `reuse_as_evidence: false` | `self_generated` | false |
 | 그 외 | `unknown` | false |
 
 사용자 노트는 evidence가 아니라 hypothesis입니다. Personal Overlay와 Thesis Delta는 이 노트를 옹호하지 않고 최신 외부 자료와 대조합니다.
@@ -117,4 +119,8 @@ py -3 features\obsidian\workflow\tests\test_validator.py
 
 - Obsidian 연동은 사용자가 버튼을 눌렀을 때만 실행합니다.
 - export 노트는 `primary_processed`, import 가능한 사용자 노트는 `user_synthesis` 계층을 유지합니다.
-- 파서는 Folio OS가 다루는 frontmatter 부분집합만 지원합니다. 복잡한 중첩 YAML은 대상이 아닙니다.
+- 파서는 Folio Board가 다루는 frontmatter 부분집합만 지원합니다. 복잡한 중첩 YAML은 대상이 아닙니다.
+
+### 보고서 인용 보존
+
+기업분석·딥 리서치 본문의 일반 Markdown 인용 링크를 그대로 내보낸다. 기업명 자동 wikilink는 기존 Markdown 링크의 라벨·URL 및 코드 내부를 바꾸지 않는다. 기존 사용자 노트와 자기참조 방지 frontmatter는 유지한다.

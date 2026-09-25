@@ -22,6 +22,11 @@ from features.common.workspace import data_dir
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = data_dir() / "market-memory.sqlite3"
 
+# thesis 행의 소유자(`source`) — 누가 덮어써도 되는지를 정한다.
+# Vault 동기화는 자기가 만든 것만 덮는다(빈자리는 자동으로 채운다).
+# 빈 문자열은 소유자를 기록하지 않던 아주 오래된 행이다.
+VAULT_OWNED_SOURCES = frozenset({"obsidian", ""})
+
 
 def connect(db_path=None) -> sqlite3.Connection:
     if db_path == ":memory:":
@@ -110,15 +115,57 @@ def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def _storage_ticker(conn, ticker: str) -> str:
+    """Resolve an existing key without renaming or merging legacy records."""
+    raw = str(ticker or "").strip().upper()
+    canonical = M.normalize_ticker(raw)
+    for key in dict.fromkeys((raw, canonical)):
+        if key and conn.execute("SELECT 1 FROM thesis WHERE ticker=?", (key,)).fetchone():
+            return key
+    if canonical:
+        matches = [row["ticker"] for row in conn.execute("SELECT ticker FROM thesis")
+                   if M.normalize_ticker(row["ticker"]) == canonical]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError("여러 기존 Thesis가 같은 티커에 연결됩니다. 기존 티커를 지정해 주세요.")
+    return canonical or raw
+
+
 def upsert_thesis(conn, thesis: M.Thesis) -> str:
-    """Thesis를 ticker 기준으로 upsert. ticker 반환."""
+    """Thesis를 ticker 기준으로 upsert. ticker 반환.
+
+    `next_checkpoints`는 통째로 덮지 않는다 — 저장돼 있던 **구조화 체크포인트(dict)는
+    보존**하고 들어온 문자열 목록만 갈아끼운다. Thesis 모델은 문자열 리스트라 노트
+    재동기화(`get_thesis_bundle`이 읽을 때마다 돈다)가 덮어쓰면 판정 status·이력이
+    매 조회마다 증발한다 — `refresh_regime_state`에서 고친 것과 같은 결함의 thesis판.
+    """
+    from features.common.research_schema.tracked_checkpoints import merge_with_templates
+
     row = thesis.to_row()
-    ticker = row["ticker"]
+    # New rows use normalized keys; existing keys retain their history and owner.
+    ticker = M.normalize_ticker(row["ticker"])
     if not ticker:
-        raise ValueError("thesis.ticker가 비어 있습니다.")
+        raise ValueError("thesis.ticker가 비어 있거나 형식이 올바르지 않습니다.")
+    ticker = _storage_ticker(conn, row["ticker"])
+    row["ticker"] = ticker
     now = _now()
-    existing = conn.execute("SELECT first_seen FROM thesis WHERE ticker=?", (ticker,)).fetchone()
+    existing = conn.execute(
+        "SELECT first_seen, next_checkpoints_json FROM thesis WHERE ticker=?", (ticker,)
+    ).fetchone()
     first_seen = existing["first_seen"] if existing else now
+    try:
+        stored_checkpoints = json.loads(existing["next_checkpoints_json"]) if existing else []
+    except Exception:
+        stored_checkpoints = []
+    row["next_checkpoints"] = merge_with_templates(
+        stored_checkpoints,
+        [x for x in row.get("next_checkpoints") or [] if isinstance(x, str)],
+        scope="thesis",
+        scope_key=ticker,
+        # 티커·회사명은 keyword가 될 수 없다 — 풀이 이미 그 종목이라 전부 매칭된다.
+        forbidden_keywords=[ticker, row.get("company")],
+    )
     values = {
         "ticker": ticker,
         "company": row["company"],
@@ -147,6 +194,23 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
     return ticker
 
 
+def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
+    """`next_checkpoints_json`만 제자리 교체한다(판정 pass 전용).
+
+    `upsert_thesis`를 쓰지 않는 것은 그쪽이 문자열 목록을 받는 노트 동기화 경로라서다.
+    판정은 dict 원소의 `status`·`history`만 바꾸므로 나머지 필드를 건드릴 이유가 없고,
+    **`last_reviewed_at`도 `updated_at`도 바꾸지 않는다** — 기계 판정은 사용자의 검토가
+    아니다. `updated_at`을 올리면 `last_reviewed_at`이 빈 thesis에서 Delta의
+    `since_last_review`가 updated_at으로 물러나(delta.py) 방금 돈 기계 판정을 사용자
+    검토로 읽고, 검토 창이 1일로 접혀 `insufficient_evidence`가 된다(2026-08-30 리뷰).
+    """
+    conn.execute(
+        "UPDATE thesis SET next_checkpoints_json=? WHERE ticker=?",
+        (json.dumps(checkpoints, ensure_ascii=False), _storage_ticker(conn, ticker)),
+    )
+    conn.commit()
+
+
 def _row_to_dict(row) -> dict:
     d = dict(row)
     for field_name, col in _LIST_COLS.items():
@@ -169,7 +233,8 @@ def list_theses(conn, *, status=None) -> list:
 
 
 def get_thesis(conn, ticker: str):
-    row = conn.execute("SELECT * FROM thesis WHERE ticker=?", (str(ticker or "").upper(),)).fetchone()
+    key = _storage_ticker(conn, ticker)
+    row = conn.execute("SELECT * FROM thesis WHERE ticker=?", (key,)).fetchone()
     return _row_to_dict(row) if row else None
 
 
@@ -188,7 +253,7 @@ def save_delta(
     created_at: str | None = None,
 ) -> dict:
     """Persist one Thesis Delta row and return the stored row."""
-    ticker = str(ticker or "").strip().upper()
+    ticker = _storage_ticker(conn, ticker)
     if not ticker:
         raise ValueError("ticker는 필수입니다.")
     generated_at = str(delta.get("generatedAt") or _now())
@@ -275,7 +340,7 @@ def get_delta(conn, delta_id: str):
 def latest_delta(conn, ticker: str):
     row = conn.execute(
         "SELECT * FROM thesis_delta WHERE ticker=? ORDER BY generated_at DESC, created_at DESC LIMIT 1",
-        (str(ticker or "").upper(),),
+        (_storage_ticker(conn, ticker),),
     ).fetchone()
     return _delta_row_to_dict(row) if row else None
 
@@ -283,6 +348,6 @@ def latest_delta(conn, ticker: str):
 def list_deltas(conn, ticker: str, limit: int = 10) -> list:
     rows = conn.execute(
         "SELECT * FROM thesis_delta WHERE ticker=? ORDER BY generated_at DESC, created_at DESC LIMIT ?",
-        (str(ticker or "").upper(), int(limit or 10)),
+        (_storage_ticker(conn, ticker), int(limit or 10)),
     ).fetchall()
     return [_delta_row_to_dict(row) for row in rows]

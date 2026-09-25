@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Folio OS</title>
+    <title>Folio Board</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <script src="/theme-bootstrap.js"></script>
     <link rel="stylesheet" href="/styles.css" />
@@ -12,8 +12,9 @@
   <body>
     <div id="folioReactRoot"></div>
 
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- 차트 라이브러리는 앱 폴더에서 서빙한다(오프라인에서도 뜬다). 다시 만드는 법: web/ 에서 npm run build:vendor -->
+    <script src="/vendor/echarts.js"></script>
+    <script src="/vendor/lightweight-charts.js"></script>
     <script src="/briefing-visuals.js"></script>
     <script src="/app.js"></script>
     <script type="module" src="/react/folio-react.js"></script>

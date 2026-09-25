@@ -176,17 +176,15 @@ def _required_prefixes(artifact_type: str, original: str) -> list[str]:
             "## Source & Data Notes",
         ]
     if artifact_type == "topic_report":
+        # 머리 1개(Executive Summary)·꼬리 3개만 이름이 고정이다(0.6 Phase 1,
+        # 2026-09-13). 본문 섹션 이름은 분석축이 정하므로 여기서 미리 알 수 없어
+        # 목록에 넣지 않는다 — 예전 "현재 상황/작동 경로/수혜·피해" 같은 기본값을
+        # 넣어 두면 실제로는 다른 축 이름을 쓰는 대부분의 보고서에서 항상 불일치로
+        # 잡혔다. "시나리오"·"결론"도 이제 이름을 강제하지 않으므로 뺐다.
         return [
             "## Executive Summary",
-            "## 질문 정의와 분석 범위",
-            "## 핵심 데이터 대시보드",
-            "## 현재 상황",
-            "## 작동 경로",
-            "## 수혜/피해 자산과 기업",
             "## 반론과 리스크",
-            "## 시나리오",
             "## 앞으로 확인할 체크포인트",
-            "## 결론",
             "## Source & Data Notes",
         ]
     if artifact_type == "company_analysis":
@@ -232,7 +230,10 @@ def detect_report_format_issues(artifact_type: str, original: str, candidate: st
         if artifact_type == "company_analysis" and original_has_spec < 5:
             missing = []
             ok = True
-        if artifact_type == "topic_report" and original_has_spec < 5:
+        # topic_report는 이제 고정 이름이 4개뿐이라(위 _required_prefixes) 옛 11개
+        # 기준의 "5개 미만이면 건너뛴다" 문턱을 그대로 두면 항상 건너뛰게 된다.
+        # 목록 크기에 비례해 2로 낮춘다.
+        if artifact_type == "topic_report" and original_has_spec < 2:
             missing = []
             ok = True
         if not ok:

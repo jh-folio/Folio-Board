@@ -8,6 +8,10 @@ type AgentRunCardProps = {
   state?: "pending" | "done" | "error";
   title: string;
   meta?: string;
+  /** Real phase + elapsed time once the first poll tick arrives (Agent Dock
+   *  Stage C). Falls back to a generic hint before that, so the card never
+   *  shows an empty line. */
+  pendingHint?: string;
 };
 
 type InlinePart =
@@ -117,14 +121,14 @@ export function AgentMessageContent({ text = "" }: AgentMessageContentProps) {
   return <div className="agent-chat-markdown">{nodes}</div>;
 }
 
-export function AgentRunCard({ state = "pending", title, meta }: AgentRunCardProps) {
+export function AgentRunCard({ state = "pending", title, meta, pendingHint }: AgentRunCardProps) {
   return (
     <div className={`agent-run-card ${state}`}>
       <span className="agent-run-icon" aria-hidden="true" />
       <div>
         <strong>
           {title}
-          {state === "pending" && <span className="agent-run-eta">보통 40~60초</span>}
+          {state === "pending" && <span className="agent-run-eta">{pendingHint || "보통 40~60초"}</span>}
         </strong>
         {meta && <span>{meta}</span>}
       </div>

@@ -110,6 +110,43 @@ def test_normalize_agent_options_clamps_effort_and_attachments():
     assert len(options["attachments"][0]["content"]) == 4000
 
 
+def test_normalize_agent_options_accepts_response_depth_as_the_canonical_name():
+    """Agent Dock Stage B: `responseDepth`가 정식 이름, `effort`는 하위 호환 별칭이다."""
+    only_depth = normalize_agent_options({"responseDepth": "high"})
+    assert only_depth["responseDepth"] == "high"
+    assert only_depth["effort"] == "high"  # existing readers of `effort` keep working
+
+    only_effort = normalize_agent_options({"effort": "low"})
+    assert only_effort["responseDepth"] == "low"
+    assert only_effort["effort"] == "low"
+
+    both_given = normalize_agent_options({"responseDepth": "max", "effort": "low"})
+    assert both_given["responseDepth"] == "max"
+    assert both_given["effort"] == "max"
+
+
+def test_normalize_agent_options_accepts_the_full_provider_reasoning_range():
+    """Codex는 xhigh/ultra까지 노력 단계를 낸다(features/llm_settings/reasoning.py) —
+    이 정규화가 low/medium/high/max로만 좁혀 놓으면 Dock에서 그 단계를 골라도
+    조용히 medium으로 깎여, 실제 CLI에는 다른 값이 전달된다(§6 규칙14와 같은 유형).
+    """
+    xhigh = normalize_agent_options({"effort": "xhigh"})
+    assert xhigh["effort"] == "xhigh"
+    assert xhigh["responseDepth"] == "xhigh"
+
+    ultra = normalize_agent_options({"effort": "ultra"})
+    assert ultra["effort"] == "ultra"
+    assert ultra["responseDepth"] == "ultra"
+
+
+def test_normalize_agent_options_defaults_search_policy_to_off():
+    """Agent Dock Stage D: 안 보내거나 모르는 값이면 기존 동작(검색 없음)을 유지한다."""
+    assert normalize_agent_options({})["searchPolicy"] == "off"
+    assert normalize_agent_options({"searchPolicy": "nonsense"})["searchPolicy"] == "off"
+    assert normalize_agent_options({"searchPolicy": "auto"})["searchPolicy"] == "auto"
+    assert normalize_agent_options({"searchPolicy": "ON"})["searchPolicy"] == "on"
+
+
 def test_companion_reply_echoes_normalized_options():
     result = agent_companion_reply(
         "이 화면 요약해줘?",

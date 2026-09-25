@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useContentRevision } from "./useContentRevision";
 import { engineNote, groupMeta, listDate } from "./savedListFormat";
 import { useCompanyResolution } from "./companyAnalysis/useCompanyResolution";
-import { getJson, isActiveJobStatus, postJson, type JobStatus } from "../api";
+import { deleteJson, getJson, isAbortError, isActiveJobStatus, postJson, type JobStatus } from "../api";
 import { openReactAgentDock, setReactAgentContextScope } from "./agentContext";
 import { PROPOSAL_LIFECYCLE_EVENT, proposalTargetsContext, type ProposalLifecycleResult } from "./agentProposalLifecycle";
 import { CompanyAnalysisBody } from "./reportReader/CompanyAnalysisBody";
@@ -12,6 +12,7 @@ import { ReportReaderShell } from "./reportReader/ReportReaderShell";
 import { RouteHero } from "./RouteHero";
 import { parsePersonalOverlayPayload } from "./deepResearchPayload";
 import { ANALYSIS_HANDOFF_KEY } from "./watchlist/EarningsPanel";
+import { captureReportError, ReportErrorDiagnostic, reportErrorMessage, type CapturedReportError } from "./reportErrorDiagnostic";
 
 type AnalysisViewMode = "recent" | "company" | "month";
 type AnalysisStyle = "beginner" | "advanced";
@@ -255,20 +256,85 @@ export function CompanyAnalysisRoute() {
   const [generating, setGenerating] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
   const [error, setError] = useState("");
+  const [generationError, setGenerationError] = useState<CapturedReportError | null>(null);
+  const [generationErrorMessage, setGenerationErrorMessage] = useState("");
+  const generationOperationId = useRef(0);
+  const [listErrorMessage, setListErrorMessage] = useState("");
+  const [listErrorDiagnostic, setListErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const [readErrorMessage, setReadErrorMessage] = useState("");
+  const [readErrorDiagnostic, setReadErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState("");
+  const [actionErrorDiagnostic, setActionErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const listRequestId = useRef(0);
+  const listController = useRef<AbortController | null>(null);
+  const readRequestId = useRef(0);
+  const actionRequestId = useRef(0);
+  const actionController = useRef<AbortController | null>(null);
   const [status, setStatus] = useState("");
   const [proposalReloadKey, setProposalReloadKey] = useState(0);
 
+  function clearGenerationDiagnostic() {
+    setGenerationError(null);
+    setGenerationErrorMessage("");
+  }
+
+  function beginGenerationDiagnostic() {
+    generationOperationId.current += 1;
+    clearGenerationDiagnostic();
+    return generationOperationId.current;
+  }
+
+  function invalidateGenerationDiagnostic() {
+    generationOperationId.current += 1;
+    clearGenerationDiagnostic();
+  }
+
+  function beginReportAction() {
+    actionController.current?.abort();
+    const id = ++actionRequestId.current;
+    const controller = new AbortController();
+    actionController.current = controller;
+    setActionErrorMessage("");
+    setActionErrorDiagnostic(null);
+    return { id, controller };
+  }
+
+  function isCurrentReportAction(id: number, controller: AbortController) {
+    return id === actionRequestId.current && actionController.current === controller && !controller.signal.aborted;
+  }
+
+  function invalidateReportAction() {
+    actionRequestId.current += 1;
+    actionController.current?.abort();
+    actionController.current = null;
+    setActionErrorMessage("");
+    setActionErrorDiagnostic(null);
+    setActionBusy("");
+  }
+
   const loadReports = useCallback(async () => {
+    const requestId = ++listRequestId.current;
+    listController.current?.abort();
+    const controller = new AbortController();
+    listController.current = controller;
     setLoading(true);
-    setError("");
+    setListErrorMessage("");
+    setListErrorDiagnostic(null);
     try {
-      const payload = await getJson<AnalysisReport[]>("/api/analysis-reports");
+      const payload = await getJson<AnalysisReport[]>("/api/analysis-reports", { signal: controller.signal });
+      if (controller.signal.aborted || requestId !== listRequestId.current) return;
       setReports(Array.isArray(payload) ? payload : []);
       setReactAgentContextScope("analysis", { surface: "analysis", viewId: "analysis", reportKind: "", reportId: "" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "기업 분석 목록을 불러오지 못했습니다.");
+      if (isAbortError(err, controller.signal) || requestId !== listRequestId.current) return;
+      const message = reportErrorMessage(err, "기업 분석 목록을 불러오지 못했습니다.");
+      setListErrorMessage(message);
+      setListErrorDiagnostic(captureReportError(err, requestId));
     } finally {
-      setLoading(false);
+      if (requestId === listRequestId.current) {
+        listController.current = null;
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -307,12 +373,20 @@ export function CompanyAnalysisRoute() {
 
   useEffect(() => {
     let alive = true;
+    let controller: AbortController | null = null;
     async function loadDetail(reportId: string) {
+      const requestId = ++readRequestId.current;
+      const requestController = new AbortController();
+      controller = requestController;
       setLoading(true);
+      invalidateGenerationDiagnostic();
+      invalidateReportAction();
+      setReadErrorMessage("");
+      setReadErrorDiagnostic(null);
       setError("");
       try {
-        const report = await getJson<AnalysisReport>(`/api/analysis-reports/${encodeURIComponent(reportId)}?includePersonal=true`);
-        if (!alive) return;
+        const report = await getJson<AnalysisReport>(`/api/analysis-reports/${encodeURIComponent(reportId)}?includePersonal=true`, { signal: requestController.signal });
+        if (!alive || requestController.signal.aborted || requestId !== readRequestId.current) return;
         setSelected(report);
         setReactAgentContextScope("analysis", {
           surface: "analysis_reader",
@@ -322,22 +396,31 @@ export function CompanyAnalysisRoute() {
           ticker: tickerOf(report),
         });
       } catch (err) {
-        if (!alive) return;
+        if (!alive || isAbortError(err, requestController.signal) || requestId !== readRequestId.current) return;
+        const message = reportErrorMessage(err, "저장된 기업 분석 보고서를 열지 못했습니다.");
+        setReadErrorMessage(message);
+        setReadErrorDiagnostic(captureReportError(err, requestId));
         setSelected(null);
-        setError(err instanceof Error ? err.message : "저장된 기업 분석 보고서를 열지 못했습니다.");
+        setError(message);
       } finally {
-        if (alive) setLoading(false);
+        if (alive && requestId === readRequestId.current && !requestController.signal.aborted) setLoading(false);
       }
     }
 
     if (detailId) {
       loadDetail(detailId);
     } else {
+      invalidateReportAction();
+      readRequestId.current += 1;
+      setReadErrorMessage("");
+      setReadErrorDiagnostic(null);
       setSelected(null);
       setReactAgentContextScope("analysis", { surface: "analysis", viewId: "analysis", reportKind: "", reportId: "" });
     }
     return () => {
       alive = false;
+      controller?.abort();
+      readRequestId.current += 1;
     };
   }, [detailId, proposalReloadKey]);
 
@@ -346,6 +429,7 @@ export function CompanyAnalysisRoute() {
     const trimmed = query.trim();
     if (!trimmed) return;
     setGenerating(true);
+    const operationId = beginGenerationDiagnostic();
     setError("");
     setStatus("기업 자료를 읽고 분석 보고서를 생성하는 중입니다.");
     try {
@@ -365,12 +449,28 @@ export function CompanyAnalysisRoute() {
       } else {
         report = response;
       }
-      await loadReports();
-      setStatus("기업 분석 보고서를 생성하고 자동 저장했습니다.");
+      // Show the returned candidate before refreshing the feed. A list refresh
+      // is secondary: it must not hide a usable report or turn its generation
+      // into a failure. Only an explicit `saved: true` proves that the detail
+      // URL points at durable storage.
       setSelected(report);
-      if (report.id) setAnalysisHash(report.id);
+      const saved = report.saved === true;
+      if (saved && report.id) setAnalysisHash(report.id);
+      try {
+        await loadReports();
+      } catch {
+        // loadReports normally reports its own bounded list error; keep this
+        // guard for injected/transport failures after the report is visible.
+      }
+      setStatus(saved
+        ? "기업 분석 보고서를 생성하고 자동 저장했습니다."
+        : "기업 분석 보고서는 생성했지만 저장 여부를 확인하지 못했습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "기업 분석 생성에 실패했습니다.");
+      if (isAbortError(err) || operationId !== generationOperationId.current) return;
+      setGenerationError(captureReportError(err, operationId));
+      const message = reportErrorMessage(err, "기업 분석 생성에 실패했습니다.");
+      setGenerationErrorMessage(message);
+      setError(message);
       setStatus("");
     } finally {
       setGenerating(false);
@@ -382,39 +482,65 @@ export function CompanyAnalysisRoute() {
     setAnalysisHash(reportId);
   }
 
+  function closeSelectedReport() {
+    // An unsaved candidate has no detail hash to clear. Reset local selection
+    // explicitly so closing still works when the URL was already unchanged.
+    setSelected(null);
+    setAnalysisHash();
+  }
+
   async function deleteReport(report: AnalysisReport) {
     if (!report.id) return;
     if (!window.confirm(`${reportLabel(report)} 보고서를 삭제할까요?`)) return;
+    const action = beginReportAction();
     setActionBusy(`delete-${report.id}`);
+    invalidateGenerationDiagnostic();
     setError("");
     try {
-      const res = await fetch(`/api/analysis-reports/${encodeURIComponent(report.id)}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`삭제 실패: ${res.status}`);
+      const result = await deleteJson<{ readonly deleted?: boolean }>(`/api/analysis-reports/${encodeURIComponent(report.id)}`, {}, { signal: action.controller.signal });
+      if (!result || result.deleted !== true) throw new Error("기업 분석 삭제 결과를 확인하지 못했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller)) return;
       if (selected?.id === report.id) setAnalysisHash();
       await loadReports();
       setStatus("저장된 기업 분석 보고서를 삭제했습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "보고서 삭제에 실패했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller) || isAbortError(err, action.controller.signal)) return;
+      setActionErrorDiagnostic(captureReportError(err, action.id));
+      const message = reportErrorMessage(err, "보고서 삭제에 실패했습니다.");
+      setActionErrorMessage(message);
+      setError(message);
     } finally {
-      setActionBusy("");
+      if (isCurrentReportAction(action.id, action.controller)) {
+        actionController.current = null;
+        setActionBusy("");
+      }
     }
   }
 
   async function exportAnalysis(target: "notion" | "obsidian") {
     if (!selected) return;
+    const action = beginReportAction();
     setActionBusy(target);
     setStatus(target === "notion" ? "Notion으로 내보내는 중..." : "Obsidian으로 내보내는 중...");
     try {
       const result = target === "notion"
-        ? await postJson<ExportResult>("/api/export-notion/analysis", selected)
-        : await postJson<ExportResult>("/api/export-obsidian/analysis", selected);
+        ? await postJson<ExportResult>("/api/export-notion/analysis", selected, { signal: action.controller.signal })
+        : await postJson<ExportResult>("/api/export-obsidian/analysis", selected, { signal: action.controller.signal });
+      if (!isCurrentReportAction(action.id, action.controller)) return;
       setStatus(target === "notion"
         ? `Notion으로 내보냈습니다${result.title ? `: ${result.title}` : ""}`
         : `Obsidian으로 내보냈습니다${result.company || result.filename ? `: ${result.company || result.filename}` : ""}`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "내보내기에 실패했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller) || isAbortError(err, action.controller.signal)) return;
+      setActionErrorDiagnostic(captureReportError(err, action.id));
+      const message = reportErrorMessage(err, "내보내기에 실패했습니다.");
+      setActionErrorMessage(message);
+      setStatus(message);
     } finally {
-      setActionBusy("");
+      if (isCurrentReportAction(action.id, action.controller)) {
+        actionController.current = null;
+        setActionBusy("");
+      }
     }
   }
 
@@ -494,7 +620,9 @@ export function CompanyAnalysisRoute() {
   if (selected) {
     return (
       <div className="react-company-analysis-route" data-company-analysis-route>
-        {error && <p className="react-dashboard-error">{error}</p>}
+        {readErrorMessage && <p className="react-dashboard-error">{readErrorMessage}</p>}
+        {error && !readErrorMessage && <p className="react-dashboard-error">{error}</p>}
+        {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
         <ReportReaderShell
           eyebrow={`COMPANY ANALYSIS${tickerOf(selected) ? ` · ${tickerOf(selected)}` : ""}`}
           title={readerContent.title}
@@ -508,13 +636,13 @@ export function CompanyAnalysisRoute() {
           }}
           breadcrumb={(
             <>
-              <button type="button" onClick={() => setAnalysisHash()}>
+              <button type="button" onClick={closeSelectedReport}>
                 기업 분석
               </button>
               <span>{readerContent.title}</span>
             </>
           )}
-          onClose={() => setAnalysisHash()}
+          onClose={closeSelectedReport}
           actionSlot={(
             <>
               <ReaderActionGroup title="AI">
@@ -560,6 +688,8 @@ export function CompanyAnalysisRoute() {
               )}
               {selected.generation?.message && <p className="react-reader-status">{selected.generation.message}</p>}
               {status && <p className="react-reader-status">{status}</p>}
+              {actionErrorMessage && <p className="react-reader-status react-dashboard-error">{actionErrorMessage}</p>}
+              {actionErrorDiagnostic && <ReportErrorDiagnostic diagnostic={actionErrorDiagnostic} />}
             </>
           )}
           noteIdentity={{
@@ -671,7 +801,15 @@ export function CompanyAnalysisRoute() {
         </button>
       </form>
 
-      {error && <p className="react-dashboard-error">{error}</p>}
+      {generationErrorMessage && <p className="react-dashboard-error">{generationErrorMessage}</p>}
+      {generationError && <ReportErrorDiagnostic diagnostic={generationError} />}
+      {readErrorMessage && <p className="react-dashboard-error">{readErrorMessage}</p>}
+      {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
+      {listErrorMessage && <p className="react-dashboard-error">{listErrorMessage}</p>}
+      {listErrorDiagnostic && <ReportErrorDiagnostic diagnostic={listErrorDiagnostic} />}
+      {!selected && actionErrorMessage && <p className="react-dashboard-error">{actionErrorMessage}</p>}
+      {!selected && actionErrorDiagnostic && <ReportErrorDiagnostic diagnostic={actionErrorDiagnostic} />}
+      {error && !generationErrorMessage && !readErrorMessage && !listErrorMessage && !actionErrorMessage && <p className="react-dashboard-error">{error}</p>}
       {status && <p className="react-dashboard-warning">{status}</p>}
 
       {/* 찾기 바(zone ②). 검색은 패널 안, `보기`는 패널 밖에 떠 있었다. */}

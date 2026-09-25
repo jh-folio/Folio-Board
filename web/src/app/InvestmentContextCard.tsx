@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getJson,
@@ -57,6 +57,36 @@ function sourceLabel(source: InvestmentTickerContext["source"]) {
   return source === "portfolio" ? "포트폴리오" : "워치리스트";
 }
 
+// 포트폴리오 종목은 포트폴리오로, 워치리스트에 있는 종목은 워치리스트로 간다. 예전에는
+// 포트폴리오 종목이 시장 내러티브로 가서, 그 화면에서 누르면 제자리에 머물렀다.
+export function investmentContextLink(context: InvestmentTickerContext) {
+  return context.source === "portfolio"
+    ? { href: "#/portfolio", label: "포트폴리오에서 보기" }
+    : { href: "#/watchlist", label: "워치리스트에서 보기" };
+}
+
+// 주의로 분류된 이유(전환·약화)만 이름 옆에 붙인다. 안정·강화는 이 카드에 오른 이유가 아니다.
+const MOMENTUM_NOTE: Record<string, string> = { turning: "전환", fading: "약화" };
+
+function driverText(context: InvestmentTickerContext, limit: number) {
+  return context.marketDrivers.slice(0, limit).map((driver) => {
+    const note = MOMENTUM_NOTE[driver.momentum];
+    return note ? `${driver.label}(${note})` : driver.label;
+  });
+}
+
+/** 시장 내러티브 상태 ID → 그 흐름과 닿은 내 종목. 이름이 아니라 ID로만 잇는다. */
+export function ownedTickersByState(summary: InvestmentContextSummary | null): Record<string, string[]> {
+  const byState: Record<string, string[]> = {};
+  for (const context of summary?.watchContexts || []) {
+    for (const driver of context.marketDrivers) {
+      const tickers = byState[driver.stateId] || (byState[driver.stateId] = []);
+      if (!tickers.includes(context.ticker)) tickers.push(context.ticker);
+    }
+  }
+  return byState;
+}
+
 function contextsFor(
   summary: InvestmentContextSummary,
   mode: InvestmentContextMode,
@@ -69,14 +99,15 @@ function contextsFor(
 }
 
 function rowMeta(context: InvestmentTickerContext) {
-  const drivers = context.marketDrivers.map((driver) => driver.label).slice(0, 2);
   const details = [
     sourceLabel(context.source),
-    ...drivers,
+    ...driverText(context, 2),
     context.dueCheckpoints.length ? `확인 예정 ${context.dueCheckpoints.length}` : "",
   ].filter(Boolean);
   return details.join(" · ");
 }
+
+const CONTEXT_FOOTNOTE = "내 포트폴리오·워치리스트 기준 참고 정보예요. 보고서 근거로는 쓰지 않아요.";
 
 function ExplanationReply({ reply }: { readonly reply: string }) {
   const lines = reply.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -138,41 +169,73 @@ export function InvestmentContextCardView({
         {dismissible && onDismiss ? <button type="button" className="btn btn--icon investment-context-dismiss" aria-label="개인 맥락 카드 닫기" onClick={onDismiss}>×</button> : null}
       </div>
 
+      {/* 확인 예정은 있을 때만 말한다. "확인 예정 0"은 읽을 것이 없는 숫자다. */}
       <div className="investment-context-summary" aria-label="개인 맥락 요약">
         <span>연결 {contexts.length}</span>
-        <span>확인 예정 {dueCount}</span>
+        {dueCount ? <span>확인 예정 {dueCount}</span> : null}
       </div>
 
       <ul className="investment-context-ledger">
-        {contexts.map((context) => (
-          <li key={context.ticker}>
-            <div>
-              <strong>{context.ticker}</strong>
-              <small>{rowMeta(context)}</small>
-            </div>
-            <div className="investment-context-row-actions">
-              {mode === "deep-research" && onReference ? (
-                <button type="button" onClick={() => onReference(context)}>질문에 참고</button>
-              ) : (
-                <a href={context.source === "watchlist" || context.source === "both" ? "#/watchlist" : "#/market-memory"}>
-                  연결 보기
-                </a>
-              )}
-              {onExplain ? (
-                <button
-                  type="button"
-                  disabled={Boolean(explainingTicker)}
-                  title={explainingTicker && explainingTicker !== context.ticker ? "다른 종목 설명이 끝나면 누를 수 있어요" : undefined}
-                  onClick={() => onExplain(context)}
-                >
-                  {explainingTicker === context.ticker ? "설명 중…" : "Agent로 위험 설명"}
-                </button>
-              ) : null}
-            </div>
-          </li>
-        ))}
+        {contexts.map((context) => {
+          const link = investmentContextLink(context);
+          return (
+            <li key={context.ticker}>
+              <div>
+                <strong>{context.ticker}</strong>
+                <small>{rowMeta(context)}</small>
+              </div>
+              <div className="investment-context-row-actions">
+                {mode === "deep-research" && onReference ? (
+                  <button className="btn btn--sm" type="button" onClick={() => onReference(context)}>질문에 참고</button>
+                ) : (
+                  <a className="btn btn--sm btn--text" href={link.href}>{link.label}</a>
+                )}
+                {onExplain ? (
+                  <ExplainButton context={context} explainingTicker={explainingTicker} onExplain={onExplain} />
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
       </ul>
 
+      <ExplanationSection explanation={explanation} explanationError={explanationError} />
+
+      {mode === "home" ? (
+        <nav className="investment-context-links" aria-label="연결된 리서치 화면">
+          <a className="btn btn--sm btn--text" href="#/market-memory">시장 내러티브</a>
+          <a className="btn btn--sm btn--text" href="#/deep-research">딥 리서치</a>
+        </nav>
+      ) : null}
+      <small className="investment-context-boundary">{CONTEXT_FOOTNOTE}</small>
+    </aside>
+  );
+}
+
+function ExplainButton({ context, explainingTicker, onExplain }: {
+  readonly context: InvestmentTickerContext;
+  readonly explainingTicker: string;
+  readonly onExplain: (context: InvestmentTickerContext) => void;
+}) {
+  return (
+    <button
+      className="btn btn--sm"
+      type="button"
+      disabled={Boolean(explainingTicker)}
+      title={explainingTicker && explainingTicker !== context.ticker ? "다른 종목 설명이 끝나면 누를 수 있어요" : undefined}
+      onClick={() => onExplain(context)}
+    >
+      {explainingTicker === context.ticker ? "설명 중…" : "Agent로 위험 설명"}
+    </button>
+  );
+}
+
+function ExplanationSection({ explanation, explanationError }: {
+  readonly explanation: { readonly ticker: string; readonly reply: string } | null;
+  readonly explanationError: string;
+}) {
+  return (
+    <>
       {explanation ? (
         <section className="investment-context-explanation" aria-live="polite">
           <strong>{explanation.ticker} · Agent 설명</strong>
@@ -182,34 +245,68 @@ export function InvestmentContextCardView({
       {explanationError ? (
         <p className="investment-context-error" role="status">{explanationError}</p>
       ) : null}
+    </>
+  );
+}
 
-      {mode === "home" ? (
-        <nav className="investment-context-links" aria-label="연결된 리서치 화면">
-          <a href="#/market-memory">시장 내러티브</a>
-          <a href="#/deep-research">딥 리서치</a>
-        </nav>
-      ) : null}
-      <small className="investment-context-boundary">개인 가설 레이어 · 외부 evidence 및 Canonical 본문과 분리</small>
+type InvestmentContextStripViewProps = {
+  readonly summary: InvestmentContextSummary | null;
+  readonly onExplain?: (context: InvestmentTickerContext) => void;
+  readonly explainingTicker?: string;
+  readonly explanation?: { readonly ticker: string; readonly reply: string } | null;
+  readonly explanationError?: string;
+};
+
+/**
+ * 시장 내러티브 화면의 한 줄 표시. 카드로 올려 두면 개인 참고 정보가 시장 상태를 밀어내고
+ * 화면의 주인공처럼 보였다(2026-09-25 사용자 결정 — "다음 확인" 아래 한 줄).
+ * 색 워시 없이 3px 보라 줄과 보라 라벨로만 개인 층임을 말한다: HDR에서 채도가 눌리면
+ * 옅은 보라 배경은 사라지지만 선과 글자는 남는다.
+ */
+export function InvestmentContextStripView({
+  summary,
+  onExplain,
+  explainingTicker = "",
+  explanation = null,
+  explanationError = "",
+}: InvestmentContextStripViewProps) {
+  const contexts = summary?.watchContexts.slice(0, 3) || [];
+  if (!contexts.length) return null;
+  return (
+    <aside
+      className="surface--group investment-context-strip"
+      data-qa="investment-context-market-memory"
+      data-layer={contextBoundary.layer}
+      data-reuse-as-evidence={String(contextBoundary.reuseAsEvidence)}
+      aria-label="내 종목과 닿은 흐름"
+    >
+      <p className="investment-context-strip__kicker">내 종목과 닿은 흐름 · 가설 (근거 아님)</p>
+      <ul className="investment-context-strip__list">
+        {contexts.map((context) => {
+          const link = investmentContextLink(context);
+          return (
+            <li key={context.ticker}>
+              <strong>{context.ticker}</strong>
+              <span>{driverText(context, 3).join(" · ")}</span>
+              <span className="investment-context-strip__actions">
+                <a className="btn btn--sm btn--text" href={link.href}>{link.label}</a>
+                {onExplain ? (
+                  <ExplainButton context={context} explainingTicker={explainingTicker} onExplain={onExplain} />
+                ) : null}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <ExplanationSection explanation={explanation} explanationError={explanationError} />
+      <small className="investment-context-strip__note">{CONTEXT_FOOTNOTE}</small>
     </aside>
   );
 }
 
-export function InvestmentContextCard(props: InvestmentContextCardProps) {
+/** 개인 맥락 요약을 한 번 읽는다. 보조 정보라 실패하면 null로 남고 화면은 조용하다. */
+export function useInvestmentContextSummary(refreshKey = 0) {
   const [summary, setSummary] = useState<InvestmentContextSummary | null>(null);
-  // 닫기는 브라우저에 기억한다. 컴포넌트 state로만 두면 화면을 옮길 때마다 되살아나서
-  // "닫았는데 또 뜬다"가 된다.
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return window.localStorage.getItem(CONTEXT_DISMISS_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [explainingTicker, setExplainingTicker] = useState("");
-  const [explanation, setExplanation] = useState<{ ticker: string; reply: string } | null>(null);
-  const [explanationError, setExplanationError] = useState("");
-  const explanationController = useRef<AbortController | null>(null);
-
   useEffect(() => {
     const controller = new AbortController();
     getJson<InvestmentContextSummary>("/api/investment-context/summary", { signal: controller.signal })
@@ -218,11 +315,20 @@ export function InvestmentContextCard(props: InvestmentContextCardProps) {
         // 보조 카드라 실패하면 조용히 사라진다. 리서치 화면에 오류 배너를 띄울 만한 정보가 아니다.
       });
     return () => controller.abort();
-  }, []);
+  }, [refreshKey]);
+  return summary;
+}
+
+/** `Agent로 위험 설명`: 사용자가 누를 때만 job을 만든다. */
+function useInvestmentContextExplanation() {
+  const [explainingTicker, setExplainingTicker] = useState("");
+  const [explanation, setExplanation] = useState<{ ticker: string; reply: string } | null>(null);
+  const [explanationError, setExplanationError] = useState("");
+  const explanationController = useRef<AbortController | null>(null);
 
   useEffect(() => () => explanationController.current?.abort(), []);
 
-  async function requestExplanation(context: InvestmentTickerContext) {
+  const requestExplanation = useCallback(async (context: InvestmentTickerContext) => {
     explanationController.current?.abort();
     const controller = new AbortController();
     explanationController.current = controller;
@@ -252,9 +358,39 @@ export function InvestmentContextCard(props: InvestmentContextCardProps) {
         setExplainingTicker("");
       }
     }
-  }
+  }, []);
 
-  if (dismissed) return null;
+  return { explainingTicker, explanation, explanationError, requestExplanation };
+}
+
+export function InvestmentContextStrip({ summary }: { readonly summary: InvestmentContextSummary | null }) {
+  const { explainingTicker, explanation, explanationError, requestExplanation } = useInvestmentContextExplanation();
+  return (
+    <InvestmentContextStripView
+      summary={summary}
+      onExplain={requestExplanation}
+      explainingTicker={explainingTicker}
+      explanation={explanation}
+      explanationError={explanationError}
+    />
+  );
+}
+
+export function InvestmentContextCard(props: InvestmentContextCardProps) {
+  const summary = useInvestmentContextSummary();
+  // 닫기는 브라우저에 기억한다. 컴포넌트 state로만 두면 화면을 옮길 때마다 되살아나서
+  // "닫았는데 또 뜬다"가 된다. 닫기 버튼이 있는 카드(홈)에만 적용한다 — 예전에는 홈에서
+  // 닫은 것이 닫기 버튼도 없는 다른 화면의 카드까지 숨겼다.
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(CONTEXT_DISMISS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const { explainingTicker, explanation, explanationError, requestExplanation } = useInvestmentContextExplanation();
+
+  if (dismissed && props.dismissible) return null;
   return (
     <InvestmentContextCardView
       {...props}

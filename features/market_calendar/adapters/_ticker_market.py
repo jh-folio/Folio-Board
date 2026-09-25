@@ -13,7 +13,7 @@ from __future__ import annotations
 
 KR_SUFFIXES = (".KS", ".KQ")
 JP_SUFFIXES = (".T", ".JP")
-# 유럽은 국가별 거래소가 갈리지만 Folio OS의 시장 단위는 EUROPE 하나다.
+# 유럽은 국가별 거래소가 갈리지만 Folio Board의 시장 단위는 EUROPE 하나다.
 # 타임존은 거래소를 따라간다 — 런던만 GMT/BST로 나머지와 한 시간 어긋난다.
 EUROPE_LONDON_SUFFIXES = (".L",)
 EUROPE_CONTINENT_SUFFIXES = (".PA", ".DE", ".AS", ".MI", ".MC", ".BR", ".LS", ".VI", ".SW", ".F", ".DU")

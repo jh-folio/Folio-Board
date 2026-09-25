@@ -94,6 +94,8 @@ NON_ARTIFACT_CASES = {
             "adapter": "codex",
             "mode": "generate",
             "proposalId": "proposal-safe",
+            "sessionId": None,
+            "assistantMessageId": None,
         },
     ),
 }
@@ -281,8 +283,28 @@ def _canonical_seed(path: Path, scope: str, markdown: str, *, overlay: bool = Fa
 
 
 def _scope_result(scope: str) -> dict:
+    # Exercise canonical persistence with a candidate that satisfies the
+    # shared production structure gate, rather than a now-invalid one-liner.
+    label = "미국장" if scope == "us" else "한국장"
+    title = "US Market Briefing" if scope == "us" else "Korea Market Briefing"
+    companies = ("NVIDIA", "Alphabet") if scope == "us" else ("삼성전자", "SK하이닉스")
+    markdown = "\n\n".join([
+        f"# {title} — 2026.07.21 마감",
+        f"## 0. 오늘의 {label} 성격",
+        f"## 1. {label} 시장 흐름",
+        f"## 2. {label}을 움직인 핵심 변수",
+        f"## 3. {label}을 주도한 기업 ① — {companies[0]}",
+        f"## 4. {label}을 주도한 기업 ② — {companies[1]}",
+        "## 5. 일반 투자자 관점",
+        f"## 6. 다음 {label} 체크포인트",
+        "## 오늘의 결론",
+        "## Source & Data Notes",
+        "**한 줄 결론:** 합성 자료의 검토 결과\n" * 7,
+        "· 합성 확인 항목\n" * 18,
+        f"{scope} changed body\n" + "합성 자료 기반 분석 문장 " * 600,
+    ])
     return {
-        "markdown": f"# {'US' if scope == 'us' else 'Korea'} Market Briefing\n\n{scope} changed body",
+        "markdown": markdown,
         "sessionMode": f"{scope}_close",
         "marketSessionDate": "2026-07-21",
         "sources": [],

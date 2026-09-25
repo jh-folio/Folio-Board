@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from features.llm_settings.task_policy import TaskPolicyError
+
 import secrets
 import os
 from concurrent.futures import Executor
@@ -40,6 +42,7 @@ from features.topic_report.approved_jobs import ApprovedTopicJobs
 from features.topic_report.approved_research import prepare_approved_research, prepare_market_state
 from features.topic_report.approval_submission import SubmissionError
 from features.agent_mode.bridge import ADAPTERS, bridge_status
+from features.llm_settings.task_runtime import generation_mode as task_generation_mode, task_snapshot
 from features.smart_collections.routes import create_smart_collection_service
 from features.smart_collections.service import CollectionServiceError, SmartCollectionService
 
@@ -121,7 +124,7 @@ class ApprovedRequestBoundary:
             return mode
         from features.llm_settings.client import ai_agent_mode
 
-        return "cli" if ai_agent_mode() == "cli" else "direct"
+        return "cli"
 
     @classmethod
     def _adapter(cls, request: GenerateApprovedRequest) -> str:
@@ -138,18 +141,31 @@ class ApprovedRequestBoundary:
         return preferred if preferred in ADAPTERS else "codex"
 
     def plan(self, body: dict[str, JsonValue]) -> JSONResponse:
+        # 입력 검증과 계획 생성을 한 try로 묶지 않는다. 둘 다 ValidationError를 던지지만
+        # 원인이 정반대다 — 앞은 사용자가 고칠 것, 뒤는 플래너 산출물이 계약을 어긴 것이다.
+        # 하나로 묶어 `validation_error`만 돌려주던 시절 화면은 멀쩡한 질문에 대고
+        # "질문을 1~500자로 입력하세요"라고 말했다(실측: 그룹 이름을 티커로 돌려준 계획).
         try:
             request = PlanRequest.model_validate(body)
-            envelope = self._service.plan(request)
-        except (ValidationError, ApprovalStoreError, ApprovedRequestError, CollectionServiceError) as error:
+        except ValidationError as error:
             return _failure_response(error)
-        return _response(200, envelope.model_dump(mode="json"))
+        return self._plan_envelope(lambda: self._service.plan(request))
 
     def replan(self, body: dict[str, JsonValue]) -> JSONResponse:
         try:
             request = ReplanRequest.model_validate(body)
-            envelope = self._service.replan(request)
-        except (ValidationError, ApprovalStoreError, ApprovedRequestError, CollectionServiceError) as error:
+        except ValidationError as error:
+            return _failure_response(error)
+        return self._plan_envelope(lambda: self._service.replan(request))
+
+    def _plan_envelope(self, run) -> JSONResponse:
+        try:
+            envelope = run()
+        except ValidationError:
+            # 60초짜리 계획 호출이 버려진 것이므로 사용자가 할 일은 다시 시도하거나
+            # 빠른 계획을 고르는 것이다. 입력을 고치라고 안내하면 틀린 곳을 가리킨다.
+            return _response(422, {"error": "plan_invalid"})
+        except (ApprovalStoreError, ApprovedRequestError, CollectionServiceError) as error:
             return _failure_response(error)
         return _response(200, envelope.model_dump(mode="json"))
 
@@ -174,6 +190,8 @@ class ApprovedRequestBoundary:
     def preflight(self, body: dict[str, JsonValue]) -> JSONResponse:
         try:
             request = GenerateApprovedRequest.model_validate(body)
+            if request.execution.mode == "direct":
+                return _response(409, {"error": "llm_api_removed"})
             preflight = self._service.preflight(request)
             if preflight.replayJobId is not None:
                 replay = self._jobs.store.get(preflight.replayJobId)
@@ -182,13 +200,31 @@ class ApprovedRequestBoundary:
                 return _response(202, {"job": self._jobs.compatibility(replay)})
             if preflight.preview is None or preflight.preparedResearch is None:
                 raise JobsStoreUnavailableError
-            adapter = self._adapter(request)
+            # Resolve once at approval submission.  The command carries this
+            # immutable snapshot through the worker and any deep-research
+            # resume checkpoints.
+            task_policy = task_snapshot("topic_report")
+            policy_mode = task_generation_mode(task_policy)
+            adapter = str(task_policy.get("provider") or "") if policy_mode == "llm_cli" else "auto"
+            if policy_mode == "llm_cli" and adapter not in ADAPTERS:
+                raise ValueError("topic_cli_provider_unavailable")
             market_state = prepare_market_state(
                 self._jobs.data_dir,
                 request.approvedRequest,
                 self._clock,
             )
-            resolved_mode = self._mode(request)
+            # Confirmed zero-evidence runs are deterministic and must never
+            # launch an adapter just because the task default is CLI.  Keep
+            # the command in the direct/rules branch so the worker produces
+            # the explicit zero-evidence report and records that no engine was
+            # attempted.
+            resolved_mode = (
+                "direct"
+                if preflight.preview.zeroEvidence.required
+                else "cli"
+                if policy_mode == "llm_cli"
+                else "direct"
+            )
             job = self._jobs.queued_job(
                 requested_mode=resolved_mode,
                 adapter=adapter,
@@ -202,6 +238,7 @@ class ApprovedRequestBoundary:
                 preview=preflight.preview,
                 research=preflight.preparedResearch,
                 marketState=market_state,
+                taskPolicy=task_policy,
             )
             submitted = self._jobs.submit(
                 proof=self._service.approval_proof(request),
@@ -210,6 +247,8 @@ class ApprovedRequestBoundary:
             )
         except (ValidationError, ApprovalStoreError, ApprovedRequestError, CollectionServiceError) as error:
             return _failure_response(error)
+        except TaskPolicyError as error:
+            return _response(error.status, {"error": error.code, "message": str(error)})
         except (AttemptStoreUnavailableError, JobsStoreUnavailableError, SubmissionError, OSError, ValueError):
             return _response(503, {"error": "topic_execution_unavailable"})
         return _response(202, {"job": self._jobs.compatibility(submitted.job)})

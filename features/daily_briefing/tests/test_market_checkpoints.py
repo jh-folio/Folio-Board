@@ -25,6 +25,7 @@ from features.common.research_schema.checkpoints import checkpoints_from_markdow
 from features.daily_briefing import builder
 from features.daily_briefing.schema import SINGLE_MARKET_SCOPES
 from features.daily_briefing.service import MARKET_LABELS, briefing_checkpoint_headings
+from features.agent_mode.briefing_contract import briefing_output_contract
 
 
 def _section(scope):
@@ -90,8 +91,34 @@ def test_single_market_briefing_replaces_the_combined_checkpoints():
 
 
 def _scope_result(scope, *, with_section=True):
+    contract = briefing_output_contract(scope, markets=[scope])
+    names = ("NVIDIA", "Alphabet") if scope == "us" else ("Samsung Electronics", "SK hynix")
+    headings = []
+    checkpoint_heading = f"6. 다음 {MARKET_LABELS[scope]} 체크포인트"
+    for section in contract["requiredSections"]:
+        if not with_section and section == checkpoint_heading:
+            continue
+        if section == "US Market Briefing":
+            headings.append("# US Market Briefing — 2026.06.19")
+        elif section == "Korea Market Briefing":
+            headings.append("# Korea Market Briefing — 2026.06.19")
+        elif "주도한 기업 ①" in section:
+            headings.append(f"## {section} — {names[0]}")
+        elif "주도한 기업 ②" in section:
+            headings.append(f"## {section} — {names[1]}")
+        else:
+            headings.append(f"## {section}")
+        if with_section and section == checkpoint_heading:
+            headings.extend((
+                f"- {scope} 확인 조건 하나",
+                f"- {scope} 확인 조건 둘",
+            ))
+    markdown = "\n\n".join(headings)
+    markdown += "\n\n" + "**한 줄 결론:** 확인\n" * 7
+    markdown += "· 확인 항목\n" * 18
+    markdown += "근거 있는 분석 문장 " * 1000
     return {
-        "markdown": _section(scope) if with_section else f"# {scope} briefing body\n\n본문만 있다\n",
+        "markdown": markdown,
         "sessionMode": f"{scope}_close",
         "marketSessionDate": "2026-06-19",
         "sources": [],

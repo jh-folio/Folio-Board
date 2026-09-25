@@ -1,6 +1,6 @@
-# Folio OS Installation and Launch Guide
+# Folio Board Installation and Launch Guide
 
-Folio OS is a local-first investment research workspace. The easiest setup path assumes you already use an AI coding agent such as Codex, Claude Code, or another LLM assistant that can operate on your local machine.
+Folio Board is a local-first investment research workspace. The easiest setup path assumes you already use an AI coding agent such as Codex, Claude Code, or another LLM assistant that can operate on your local machine.
 
 Korean users can also read [README.ko.md](README.ko.md).
 
@@ -9,7 +9,7 @@ There are two supported setup paths:
 1. **AI Agent-assisted setup**: recommended for most users.
 2. **Manual setup**: use when you prefer to run commands yourself or need to troubleshoot.
 
-Already have Folio OS installed? Skip to [Updating To A New Version](#updating-to-a-new-version).
+Already have Folio Board installed? Skip to [Updating To A New Version](#updating-to-a-new-version).
 
 ---
 
@@ -18,10 +18,10 @@ Already have Folio OS installed? Skip to [Updating To A New Version](#updating-t
 Give your AI Agent the repository link and the prompt below.
 
 ```text
-Install and run Folio OS on my local PC.
+Install and run Folio Board on my local PC.
 
 Repository:
-https://github.com/jh-folio/FolioOS
+https://github.com/jh-folio/Folio-Board
 
 Please:
 1. Clone the repository.
@@ -29,7 +29,7 @@ Please:
 3. Copy .env.example to .env if .env does not already exist.
 4. Do not delete or overwrite data/, research-inbox/, config/, or any existing user files.
 5. If an API key or local path is needed, ask me before editing .env.
-6. Start Folio OS using the provided Windows or shell startup script.
+6. Start Folio Board using the provided Windows or shell startup script.
 7. Open the local app URL in my browser.
 8. If startup fails, show me the relevant error and log location.
 ```
@@ -37,7 +37,7 @@ Please:
 Recommended follow-up prompt after the first launch:
 
 ```text
-Check whether Folio OS started correctly.
+Check whether Folio Board started correctly.
 If it did not, diagnose the startup error without deleting any personal data.
 ```
 
@@ -53,7 +53,7 @@ The Agent must not delete, reset, or overwrite:
 
 These locations can contain personal API keys, generated reports, RSS archives, notes, and local research material. A single `data/` folder can reach hundreds of thousands of files and close to a gigabyte, so never assume it is disposable.
 
-`workspace.json` is written only when you move your research data out of the app folder from **Settings > “자료 위치”** (data location). It records where the data went. Deleting it makes Folio OS fall back to the app folder and your existing work appears to be gone, even though the files are still on disk.
+`workspace.json` is written only when you move your research data out of the app folder from **Settings > “자료 위치”** (data location). It records where the data went. Deleting it makes Folio Board fall back to the app folder and your existing work appears to be gone, even though the files are still on disk.
 
 ---
 
@@ -67,14 +67,14 @@ These locations can contain personal API keys, generated reports, RSS archives, 
 
 Optional but recommended:
 
-- OpenAI, Claude, Gemini, or CLI-based LLM access for higher-quality generation
+- An installed and authenticated Codex, Claude Code, or Antigravity CLI for higher-quality generation
 - `yfinance` and `polars` dependencies from `requirements.txt` for market data and dataframe operations
 
 ### Clone The Repository
 
 ```powershell
-git clone https://github.com/jh-folio/FolioOS.git
-cd FolioOS
+git clone https://github.com/jh-folio/Folio-Board.git
+cd Folio-Board
 ```
 
 If you downloaded a ZIP release instead, extract it and open a terminal in the extracted folder.
@@ -109,13 +109,13 @@ macOS / Linux:
 cp .env.example .env
 ```
 
-Then edit `.env` only for the services you actually use. API keys are optional, but LLM features need either configured API keys or a supported local CLI bridge.
+Then edit `.env` only for the services you actually use. Data API keys are optional. AI features use a supported local CLI bridge. Configure the CLI in Settings, or turn AI off to use rule-based features.
 
 Do not commit or share `.env`.
 
 ---
 
-## Launch Folio OS
+## Launch Folio Board
 
 ### Windows
 
@@ -155,11 +155,11 @@ http://127.0.0.1:8787
 
 Use `127.0.0.1` rather than `localhost`. The server listens on IPv4 only, and on some systems `localhost` resolves to IPv6 first and waits on every request before falling back.
 
-The first launch on a large research archive can take a while — the search index is read at startup. Keep the terminal window open while using the app; closing it stops Folio OS.
+The first launch on a large research archive can take a while — the search index is read at startup. Keep the terminal window open while using the app; closing it stops Folio Board.
 
 ### First Run
 
-A short setup guide appears the first time you start Folio OS with an empty workspace. It asks two things — whether to use AI, and which markets to follow — and you can skip any step. **Folio OS works without an AI key**: collection, search, charts, and rule-based reports all run locally.
+A short setup guide appears the first time you start Folio Board with an empty workspace. It asks two things — whether to use AI, and which markets to follow — and you can skip any step. **Folio Board works without an AI key**: collection, search, charts, and rule-based reports all run locally.
 
 The guide does not appear if you already have research data, so updating never shows it again.
 
@@ -167,7 +167,7 @@ The guide does not appear if you already have research data, so updating never s
 
 ## Updating To A New Version
 
-Releases unzip into a **version-named folder** such as `FolioOS-v0.5.4/`. The new folder starts with an empty `data/`, so your reports and collected articles do not follow automatically unless you tell them to.
+Releases unzip into a **version-named folder** such as `FolioBoard-v0.6.0/`. The new folder starts with an empty `data/`, so your reports and collected articles do not follow automatically unless you tell them to.
 
 ### If your data lives in the app folder (the default)
 
@@ -178,14 +178,14 @@ Releases unzip into a **version-named folder** such as `FolioOS-v0.5.4/`. The ne
 
 ### If you moved your data (Settings > “자료 위치”)
 
-Nothing to copy. Start the new folder and Folio OS finds `~/Documents/FolioOS` on its own. Copy `.env` across if you use API keys.
+Nothing to copy. Start the new folder and Folio Board finds `~/Documents/FolioBoard` on its own — or the older `~/Documents/FolioOS`, if that's still where your data is. Copy `.env` across if you use API keys.
 
 Moving is a one-time choice that makes every later update a plain unzip. It **copies** your data and never deletes the original.
 
 ### Agent prompt for updating
 
 ```text
-Update my existing Folio OS installation to the latest release.
+Update my existing Folio Board installation to the latest release.
 
 Current installation folder:
 <path to the folder you run today>
@@ -223,8 +223,8 @@ Development-only folders such as `web/`, `docs/`, and `plan/` are needed for sou
 Maintainers can create a clean user package from reviewed tracked inputs with:
 
 ```powershell
-py -3 scripts\package_release.py --version v0.5.4
-py -3 scripts\verify_release.py --release-dir dist\FolioOS-v0.5.4
+py -3 scripts\package_release.py --version v0.6.0
+py -3 scripts\verify_release.py --release-dir dist\FolioBoard-v0.6.0
 ```
 
 The package includes the built React bundle, so normal users do not need Node.js. Deep Research remains local-first: its reports are stored under `data/topic-reports/`, Smart Collections under `data/smart-collections.json`, and Agent Work Log entries contain metadata only.
@@ -273,8 +273,7 @@ python3 -m pip install -r requirements.txt
 
 Check:
 
-- `.env` has the API keys you intend to use, or
 - the selected LLM CLI is installed and authenticated, and
-- AI Agent settings are enabled inside Folio OS.
+- AI Agent settings are enabled inside Folio Board.
 
-Folio OS should still run with rule-based fallback behavior even when LLM features are unavailable.
+Folio Board should still run with rule-based fallback behavior even when LLM features are unavailable.

@@ -25,6 +25,9 @@
 | `research_quality/` | 저장 산출물의 source grounding, hallucination risk, personal bias risk 평가 |
 | `quality_generation/` | 생성 전 품질 목표, preflight, 약한 섹션 1회 보강, telemetry |
 | `data_reliability/` | 공식자료 우선순위, provider 상태, 한국 수동 데이터 보강 경로 |
+| `diagnostics/` | 실행별 bounded privacy-safe diagnostic record, OS writer lease, SharedJob/direct producer observer와 headless safe projection (0.6 L1a/L1b/L1c; UI 없음) |
+| `execution_result.py` | provider 본문/response ID를 메모리에만 두는 additive structured execution facts; 기존 tuple/string API는 변경하지 않음 |
+| `self_reference.py` | `generated_by` 자기참조 마커(`GENERATED_BY_MARKER`)와 신·구 이름 별칭 집합(`SELF_GENERATED_MARKER_ALIASES`) 단일 출처. Obsidian/Notion export writer가 값을 쓸 때 쓴다 |
 
 ## workspace.py / workspace_service.py
 
@@ -37,7 +40,7 @@
 1. `FOLIO_HOME` 환경변수 — 화면에 노출하지 않는 탈출구. 이 값이 있으면 설정 화면의 옮기기를 막습니다(표지를 써도 다음 시작에서 환경변수가 이기므로, 옮겼다고 말하면 거짓말이 됩니다).
 2. 앱 폴더의 `workspace.json` 표지 — 옮기기가 성공했을 때만 생깁니다. 배포 zip에는 없습니다.
 3. 앱 폴더 `data/`에 **파일이 있으면** 앱 폴더.
-4. `~/Documents/FolioOS`에 자료가 있으면 거기.
+4. `~/Documents/FolioBoard`(새 이름) 또는 `~/Documents/FolioOS`(구 이름, 새 이름에 자료가 없을 때만)에 자료가 있으면 거기. 옮기기의 목적지는 새 이름 하나뿐이지만, 이 탐색만은 구 이름을 계속 본다 — 옮겨 둔 사용자가 새 버전을 풀었을 때 자료를 잃지 않기 위해서다.
 5. 아니면 앱 폴더 — 기본값.
 
 **기본값은 앱 폴더입니다.** 옮기는 것은 선택이며 아무것도 새로 만들지 않습니다.
@@ -82,6 +85,7 @@ py -3 -m features.common.market_data.nikkei225_universe
 - **섹터는 지수별 분류 대신 시세 provider의 분류를 씁니다.** 네 유럽 지수가 ICB·Prime Standard·GICS 하위산업을 제각각 쓰기 때문입니다. 네 어휘로 동시에 묶은 히트맵은 묶음이 아닙니다.
 - **일본 증권코드는 영숫자입니다.** 2024년부터 `285A`(키오시아) 같은 코드가 쓰여 숫자 4자리만 받으면 신규 편입 종목이 조용히 빠집니다.
 - provider 실패는 마지막 정상 스냅샷으로 되돌아가고 `stale`로 표시합니다. 캐시도 없으면 `unavailable`입니다 — 빈 히트맵과 무변동 장세는 화면에서 구분되지 않기 때문입니다.
+- 히트맵 일봉 bulk가 일부 종목만 돌려주면 성공한 종목은 유지하고, 현재 세션 종가·유효한 전일 종가가 없는 종목만 작은 batch와 제한된 순차 모드로 재시도합니다. 끝까지 빠진 종목이 있으면 `coverage.status=partial|unavailable`, `missingCount`, `missingSymbols`, warning을 남기며 전체 히트맵으로 표시하지 않습니다. 완전한 동일 세션·동일 universe 캐시만 재사용하고, partial 결과로 last-good을 덮어쓰지 않습니다.
 - **last-good 캐시 저장 실패는 스냅샷을 죽이지 않습니다.** `save_last_good_snapshot()`은 `atomic_replace`로 쓰고 실패 시 `False`를 돌려줍니다. 여기 오면 시세를 이미 다 받은 뒤라, 캐시 저장 하나 때문에 예외를 올리면 그 시장 히트맵이 통째로 비고 브리핑 사이드카는 immutable이라 영구히 `unavailable`로 남습니다.
 
 ## market_data/providers.py
@@ -89,13 +93,24 @@ py -3 -m features.common.market_data.nikkei225_universe
 브리핑이 기사 표현에만 의존하지 않도록 시장 데이터 provider 경계를 둡니다.
 
 - `MarketDataProvider`: 날짜별 시장 수치를 가져오는 인터페이스입니다.
-- `TossOpenApiKoreaMarketProvider`: 0.2 사용자 표면에서는 숨긴 내부 검증 adapter입니다. `FOLIO_ENABLE_TOSS_OPEN_API=1`이 켜진 경우에만 설정 상태를 확인하고, 공식 OpenAPI에서 KOSPI/KOSDAQ aggregate 지수·투자자 수급 endpoint가 확인되지 않으면 경고를 남기고 다음 provider로 넘깁니다.
+- `TossOpenApiKoreaMarketProvider`: 현재 집계 보고서 경로에서는 준비 상태만 확인하고 yfinance로 넘기는 내부 adapter입니다. Toss 지수 분봉은 별도 native chart 경로에서 사용합니다. 이 공급원 구분은 운영 메타데이터이며 브리핑 작성용 본문에 경고로 전달하지 않습니다.
 - `YFinanceKoreaMarketProvider`: KOSPI/KOSDAQ/KOSPI200 지수 종가·등락률과 원·달러 환율을 조회합니다.
 - `PyKrxKoreaMarketProvider`는 2026-08-12에 제거했습니다. pykrx 1.2.x부터 지수 조회에 KRX 계정(`KRX_ID`/`KRX_PW`)이 필요해 자격증명 없는 설치에서는 항상 실패했고, 거래대금·투자자별 수급·업종 등락률은 그래서 실제로 채워진 적이 없습니다.
 - `fetch_korea_market_data(date)`: provider chain을 실행하고, 별도 FX 보조 경로로 원·달러 환율(`USDKRW=X`)을 붙입니다.
+- `YFinanceKoreaMarketProvider`의 KOSPI·KOSDAQ·KOSPI200 등락률은 요청 세션의 정확한 직전 KRX 세션 봉을 찾을 때만 채웁니다. 직전 봉이 없으면 종가·기준일은 보존하되 `changePct`는 비우고 비교일·사유를 함께 남깁니다.
 - **환율도 지수와 같은 세션일로 부릅니다.** Toss 경로가 켜져 있으면 `fetch_usdkrw_exchange_rate(date_time=<세션일>)`로 요청하고, 응답 `asOfDate`가 세션일보다 미래면 그 세션의 값이 아니므로 버리고 yfinance로 폴백합니다. 예전에는 무인자 호출이라 지난 세션 브리핑에 오늘 환율이 섞였습니다(yfinance 경로는 원래 `as_of <= date`로 잘라 왔습니다).
 
 provider가 실패해도 호출자는 빈 payload와 warning을 받아야 하며, 보고서 생성 경로는 수치를 추정하지 않고 한계를 명시해야 합니다.
+
+### 저장 브리핑의 정규장 가격 계열
+
+`market_data/price_history.py::build_price_history()`는 저장 보고서용 5분봉·1시간봉·일봉을 같은 yfinance 정규장·비수정 가격 기준으로 받습니다(`prepost=False`, `auto_adjust=False`). Toss의 최근 200개 1분봉과 장후까지 포함하는 일봉을 혼합하지 않습니다. 요청한 날짜·봉 간격을 유지하고 없는 구간을 만들지 않습니다. `chart_service.py`의 실시간 Toss bootstrap·분봉 집계·WebSocket 및 공급원 설정은 이 변경과 별개로 유지합니다.
+
+### market_data/snapshot.py 수익률 기준
+
+`fetch_market_snapshot()`은 기존 `last`, `asOfDate`, `oneDayPct`, `fiveDayPct`, `periodPct` 필드를 유지합니다. 주식·지수·ETF의 1일·5일 값은 미국 거래소 캘린더의 정확한 비교 세션을 사용하며, 해당 봉이 없으면 수치를 만들지 않고 `oneDayReason`/`fiveDayReason`과 비교일을 함께 남깁니다. 정렬되지 않은 행·중복일·비유한 값·미래 봉·휴장일 봉은 계산에서 제외합니다. 과거 `as_of_date` 조회는 요청 기간에 비교용 warmup만 더하고 `periodStartDate`/`periodPct`는 원래 `period` 경계에서 계산하므로, 짧은 기간이 조용히 장기 수익률로 늘어나지 않습니다.
+
+FX·선물·금리에는 주식 캘린더가 없으므로 1일·5일 비교율을 만들지 않고 사유만 남깁니다. 24시간 암호화폐는 정확한 달력일이 있는 경우에만 비교합니다. 캘린더 범위를 확인할 수 없는 경우 평일을 거래일로 추측하지 않습니다. yfinance 스냅샷은 `oneDayComparisonValue`/`fiveDayComparisonValue`와 비교일, `comparisonSource`, `priceUnit`, `priceBasis`를 함께 남기며, 선물처럼 단위를 확정할 수 없는 값은 `unknown`으로 표시합니다. Toss/custom 행은 선언하지 않은 조정 기준을 새로 만들지 않습니다. 이 순수 계산 경로는 연결 provider를 호출하지 않으며, provider·Market Tape·차트 전달은 각 기능의 계약을 따릅니다.
 
 ## taxonomy.py
 

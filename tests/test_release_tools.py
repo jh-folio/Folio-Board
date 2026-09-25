@@ -115,7 +115,7 @@ def run_workspace_script(workspace: Path, script: str, *args: str) -> subprocess
 
 def make_minimal_package(tmp_path: Path) -> Path:
     manifest = load_manifest()
-    package = tmp_path / "FolioOS-test"
+    package = tmp_path / "FolioBoard-test"
     package.mkdir()
     shutil.copy2(ROOT / "release-manifest.json", package / "release-manifest.json")
     for rel in manifest["runtimeFiles"]:
@@ -148,7 +148,7 @@ def test_package_defaults_to_version_file() -> None:
     result = run_package("--dry-run")
 
     assert result.returncode == 0, result.stderr
-    assert f"FolioOS-v{VERSION}" in result.stdout
+    assert f"FolioBoard-v{VERSION}" in result.stdout
 
 
 def test_package_dry_run_requires_a_safe_version() -> None:
@@ -206,7 +206,7 @@ def test_gitleaks_scan_redacts_all_secret_values(monkeypatch, tmp_path: Path) ->
 def test_package_build_creates_verified_zip(tmp_path: Path) -> None:
     workspace = make_committed_release_workspace(tmp_path)
     version = "test-release-tools"
-    package_dir = workspace / "dist" / f"FolioOS-{version}"
+    package_dir = workspace / "dist" / f"FolioBoard-{version}"
     package_zip = package_dir.with_suffix(".zip")
 
     result = run_workspace_script(workspace, "scripts/package_release.py", "--version", version, "--skip-gitleaks")
@@ -219,7 +219,15 @@ def test_package_build_creates_verified_zip(tmp_path: Path) -> None:
     # 부트스트랩이 아는 파일과 패키지 내용이 갈라지면 첫 실행이 조용히 깨진다.
     from features.common.config_bootstrap import DEFAULT_CONFIG_NAMES
 
-    assert set(DEFAULT_CONFIG_NAMES) == {path.name for path in (package_dir / "defaults" / "config").iterdir()}
+    # The dated membership changeset is immutable supporting data, not a
+    # mutable bootstrapped user setting; it still must ship byte-for-byte.
+    supplemental = "sp500_constituent_changes_2026.json"
+    assert set(DEFAULT_CONFIG_NAMES) | {supplemental} == {
+        path.name for path in (package_dir / "defaults" / "config").iterdir()
+    }
+    assert (package_dir / "defaults" / "config" / supplemental).read_bytes() == (
+        workspace / "defaults" / "config" / supplemental
+    ).read_bytes()
     # 셸 스크립트가 CRLF면 shebang이 `#!/bin/bash` + CR이 되어 macOS·Linux에서
     # `bad interpreter: /bin/bash^M`으로 실행 자체가 실패한다. 0.5.0 패키지의
     # start.sh가 실제로 CRLF 27줄이었다 — Windows 작업 트리에서 그대로 복사됐다.
@@ -245,7 +253,7 @@ def test_package_build_creates_verified_zip(tmp_path: Path) -> None:
     assert len(build["commit"]) == 40
     assert package_zip.is_file()
     with zipfile.ZipFile(package_zip) as archive:
-        assert "FolioOS-test-release-tools/release-manifest.json" in archive.namelist()
+        assert "FolioBoard-test-release-tools/release-manifest.json" in archive.namelist()
 
 
 def test_verifier_rejects_build_commit_mismatch(tmp_path: Path) -> None:
@@ -268,16 +276,16 @@ def test_verifier_rejects_build_commit_mismatch(tmp_path: Path) -> None:
 def test_package_build_preserves_dotted_version_in_zip_name(tmp_path: Path) -> None:
     workspace = make_committed_release_workspace(tmp_path)
     version = "v0.1.1-smoke"
-    package_dir = workspace / "dist" / f"FolioOS-{version}"
-    package_zip = workspace / "dist" / f"FolioOS-{version}.zip"
-    wrong_zip = workspace / "dist" / "FolioOS-v0.1.zip"
+    package_dir = workspace / "dist" / f"FolioBoard-{version}"
+    package_zip = workspace / "dist" / f"FolioBoard-{version}.zip"
+    wrong_zip = workspace / "dist" / "FolioBoard-v0.1.zip"
 
     result = run_workspace_script(workspace, "scripts/package_release.py", "--version", version, "--skip-gitleaks")
     assert result.returncode == 0, result.stderr
     assert package_zip.is_file()
     assert not wrong_zip.exists()
     with zipfile.ZipFile(package_zip) as archive:
-        assert f"FolioOS-{version}/release-manifest.json" in archive.namelist()
+        assert f"FolioBoard-{version}/release-manifest.json" in archive.namelist()
 
 
 def test_universal_lock_is_packaged_byte_for_byte(tmp_path: Path) -> None:
@@ -298,7 +306,7 @@ def test_universal_lock_is_packaged_byte_for_byte(tmp_path: Path) -> None:
         "--skip-gitleaks",
     )
     assert result.returncode == 0, result.stderr
-    package = workspace / "dist/qa/lock-byte-equality/FolioOS-qa-lock-byte-equality"
+    package = workspace / "dist/qa/lock-byte-equality/FolioBoard-qa-lock-byte-equality"
     assert (package / lock.name).read_bytes() == lock.read_bytes()
     assert (package / bootstrap_lock.name).read_bytes() == bootstrap_lock.read_bytes()
 
@@ -307,7 +315,7 @@ def test_package_accepts_required_qa_build_metadata_suffix() -> None:
     result = run_package("--version", "v0.2.0-qa+8b12ced7", "--dry-run")
 
     assert result.returncode == 0, result.stderr
-    assert "FolioOS-v0.2.0-qa+8b12ced7" in result.stdout
+    assert "FolioBoard-v0.2.0-qa+8b12ced7" in result.stdout
 
 
 def test_real_zip_extracts_verifies_and_boots_on_first_run(tmp_path: Path) -> None:
@@ -322,11 +330,11 @@ def test_real_zip_extracts_verifies_and_boots_on_first_run(tmp_path: Path) -> No
         "--skip-gitleaks",
     )
     assert result.returncode == 0, result.stderr
-    package_zip = workspace / "dist/qa/real-zip-first-run/FolioOS-qa-real-zip-first-run.zip"
+    package_zip = workspace / "dist/qa/real-zip-first-run/FolioBoard-qa-real-zip-first-run.zip"
     extracted_root = tmp_path / "extracted"
     with zipfile.ZipFile(package_zip) as archive:
         archive.extractall(extracted_root)
-    package = extracted_root / "FolioOS-qa-real-zip-first-run"
+    package = extracted_root / "FolioBoard-qa-real-zip-first-run"
     expected_commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=workspace,
@@ -440,7 +448,7 @@ def test_package_rejects_dirty_tracked_runtime_before_writing(tmp_path: Path) ->
 def test_package_rejects_output_exists_even_when_force_is_requested(tmp_path: Path) -> None:
     workspace = make_committed_release_workspace(tmp_path)
     output_root = workspace / "dist/qa/output-exists"
-    package = output_root / "FolioOS-qa-output-exists"
+    package = output_root / "FolioBoard-qa-output-exists"
     package.mkdir(parents=True)
     sentinel = package / "owned-before-package.txt"
     sentinel.write_bytes(b"do-not-replace\n")
@@ -472,7 +480,7 @@ def test_verifier_rejects_wrong_commit_without_optional_hint(tmp_path: Path) -> 
         "--skip-gitleaks",
     )
     assert result.returncode == 0, result.stderr
-    package = workspace / "dist/qa/wrong-commit/FolioOS-qa-wrong-commit"
+    package = workspace / "dist/qa/wrong-commit/FolioBoard-qa-wrong-commit"
     build_path = package / "BUILD.json"
     build = json.loads(build_path.read_text(encoding="utf-8"))
     actual_head = subprocess.run(

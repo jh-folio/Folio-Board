@@ -1,10 +1,13 @@
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from features.agent_mode import service
+from features.market_memory import service as memory_service
 from features.agent_mode import chat
 from features.market_memory.snapshot import save_market_state_snapshot
+from features.investment_review import review_v2
 
 
 def test_topic_pack_dispatch_preserves_custom_tickers_and_deep_research():
@@ -33,11 +36,17 @@ def test_market_memory_agent_writeback_uses_existing_normalizer():
         "internal": {"date": "2099-12-31", "usedDocs": [{"title": "Source"}]},
     }
     normalized = {"title": "Narrative", "summary": "Summary", "sources": [{"title": "Source"}]}
-    with (
-        patch.object(service, "normalize_llm_memory_entry", return_value=(normalized, "")),
-        patch.object(service, "upsert_memory", side_effect=lambda _path, entry: entry),
-    ):
-        result = service.write_market_memory_from_json(pack, {"entries": [{"title": "Narrative"}]})
+    # 저장은 API 키 경로와 공유하는 `market_memory.service.save_memory_entries`가 한다.
+    # 그쪽의 `upsert_memory`를 막아야 이 테스트가 실제 워크스페이스 DB에 쓰지 않는다 —
+    # agent_mode 쪽 이름만 막으면 진짜 저장이 사용자 DB로 나간다(실측). DB 경로도
+    # 임시로 바꾼다 — 스텁이 nextCheckpoints를 실으면 병합 경로가 진짜 DB를 연다.
+    with TemporaryDirectory() as tmp:
+        with (
+            patch.object(service, "normalize_llm_memory_entry", return_value=(normalized, "")),
+            patch.object(memory_service, "upsert_memory", side_effect=lambda _path, entry: entry),
+            patch.object(service, "MARKET_MEMORY_DB_PATH", Path(tmp) / "market-memory.sqlite3"),
+        ):
+            result = service.write_market_memory_from_json(pack, {"entries": [{"title": "Narrative"}]})
     assert result["status"] == "ok_agent_authored"
     assert result["saved"][0]["sourceKind"] == "agent"
     assert result["saved"][0]["generation"]["mode"] == "agent"
@@ -150,11 +159,40 @@ def test_quality_repair_and_investment_review_write_to_temporary_stores():
             assert repaired["qualityGeneration"]["repairType"] == "agent"
             assert (service.BRIEFINGS_DIR / "2099-12-31.json").exists()
 
-            review_pack = {"artifactId": "2099-12-31", "draftArtifact": {"date": "2099-12-31"}}
-            review = service.write_investment_review_from_markdown(review_pack, "## Review")
+            review_inputs = {
+                "portfolio": {
+                    "revision": 7,
+                    "updatedAt": "2099-12-31T00:00:00+00:00",
+                    "positions": [{"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology", "currency": "USD"}],
+                },
+                "positions": [{"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology", "currency": "USD"}],
+                "theses": [{"ticker": "NVDA", "latestDelta": {"verdict": "maintained", "counterEvidence": [{"text": "경쟁 심화"}]}}],
+                "states": [],
+                "checkpoints": [],
+                "analytics": {"baseCurrency": "USD", "positions": [{"ticker": "NVDA", "weight": 1.0}]},
+                "reportRefs": [],
+                "backtest": None,
+                "backtestUncertainties": [],
+                "manualLinks": {},
+                "capturedAt": "2099-12-31T00:00:00+00:00",
+            }
+            service.REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+            with patch.object(review_v2, "gather_inputs", return_value=review_inputs):
+                candidate = review_v2.build_candidate(Path(tmp) / "data", service.REVIEW_DIR, "2099-12-31")
+                review_pack = {"artifactId": "2099-12-31", "draftArtifact": candidate}
+                review = service.write_investment_review_from_markdown(review_pack, "## Review")
+
             assert review["mode"] == "agent"
-            assert review["generation"]["mode"] == "agent"
-            assert (service.REVIEW_DIR / "2099-12-31.json").exists()
+            assert review["markdown"] == "## Review"
+            assert review["reviewRevision"] == 1
+            assert review["sourceSchemaVersion"] == 2
+            assert review["reviewState"] == "draft"
+            assert review["inputBasis"] == candidate["inputBasis"]
+            assert review["positionReviews"] == candidate["positionReviews"]
+            assert review["positionReviews"][0]["ticker"] == "NVDA"
+            assert "generation" not in review
+            saved = json.loads((service.REVIEW_DIR / "2099-12-31.json").read_text(encoding="utf-8"))
+            assert saved == review
         finally:
             service.BRIEFINGS_DIR = original_briefings
             service.REVIEW_DIR = original_reviews

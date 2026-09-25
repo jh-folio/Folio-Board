@@ -22,9 +22,9 @@ $Port = if ($env:PORT) { $env:PORT } else { "8787" }
 $Url = "http://127.0.0.1:$Port"
 
 Write-Host ""
-Write-Host "Folio OS starting..." -ForegroundColor Green
+Write-Host "Folio Board starting..." -ForegroundColor Green
 Write-Host "Address: $Url" -ForegroundColor Cyan
-Write-Host "Closing this window stops Folio OS." -ForegroundColor Yellow
+Write-Host "Closing this window stops Folio Board." -ForegroundColor Yellow
 Write-Host ""
 
 # 서버가 실제로 응답하기 시작하면 브라우저를 연다. 바로 열면 연결 거부 화면이 먼저 뜬다.
@@ -63,7 +63,7 @@ while ($shouldRestart) {
     }
   } catch {
     Write-Host ""
-    Write-Host "Folio OS could not start:" -ForegroundColor Red
+    Write-Host "Folio Board could not start:" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host ""
     # 여기서만 창을 붙잡는다. 오류 메시지가 창과 함께 사라지면 원인을 알 수 없다.

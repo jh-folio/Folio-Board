@@ -17,6 +17,8 @@ URL이 0~1건이었다.
 """
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import datetime as dt
 import json
 import re
@@ -33,7 +35,8 @@ def historical_years(text: str, *, as_of: str = "") -> list[str]:
     """이 축이 가리키는 과거 연도. 올해와 작년은 로컬 색인이 닿을 수 있으므로 뺀다."""
     try:
         current = dt.date.fromisoformat(str(as_of or "")[:10]).year
-    except Exception:
+    except Exception as error:
+        propagate_interruption(error)
         current = dt.date.today().year
     years = []
     for raw in _YEAR.findall(str(text or "")):
@@ -115,7 +118,8 @@ def lookup_axis(axis: dict, questions: list[str], asked: str, scope_text: str, r
     )
     try:
         payload = _extract(run_call(_PROMPT, context))
-    except Exception:
+    except Exception as error:
+        propagate_interruption(error)
         return {"axisKey": str(axis.get("key") or ""), "status": "unavailable", "facts": [], "quotes": []}
     facts = _rows(payload.get("facts"), ("statement",))
     quotes = _rows(payload.get("quotes"), ("who", "when", "what"))
@@ -209,8 +213,6 @@ def lookup_summary(rows) -> dict:
             if item.get("url")
         }),
     }
-
-
 
 
 def web_source_items(rows) -> list[dict]:

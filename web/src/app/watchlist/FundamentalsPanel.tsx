@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getJson } from "../../api";
-import { changeRatio, compactAmount, percentText, toneOf } from "./EarningsPanel";
+import { compactAmount, quarterAxisLabel } from "../charts/chartFormat";
+import { changeRatio, percentText, toneOf } from "./EarningsPanel";
 
 /** 재무·투자 지표 — 예전 TradingView 펀더멘털 위젯의 네이티브 대체.
  *
@@ -78,6 +79,12 @@ export function useFundamentals(ticker: string): { payload: FundamentalsPayload 
 export function ratioText(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return value.toLocaleString("ko-KR", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+}
+
+export function panelProviderCopy(provider?: string): string {
+  if (provider === "toss_open_api") return "Toss Open API";
+  if (provider === "yfinance") return "yfinance";
+  return "시장 데이터 제공자";
 }
 
 /** 소수 비율(0.31)을 %로. provider가 fraction으로 주는 칸(ROE·마진·성장률) 전용. */
@@ -197,13 +204,6 @@ export const CHART_SETS: ChartSet[] = [
     ],
   },
 ];
-
-/** 분기 키(2026-06-30)를 축 라벨로 — 레퍼런스와 같은 "26년 6월" 형태. */
-export function quarterAxisLabel(quarter: string | undefined): string {
-  const text = String(quarter || "");
-  if (!/^\d{4}-\d{2}/.test(text)) return "";
-  return `${text.slice(2, 4)}년 ${Number(text.slice(5, 7))}월`;
-}
 
 /** 세트의 값 스케일.
  *  막대는 0을 반드시 포함한다 — 적자·순유출 분기(음수)는 기준선 아래로 내려가야 하고,
@@ -471,6 +471,7 @@ export function FundamentalsPanel({ ticker, payload, error }: { ticker: string; 
             </div>
           ))}
         </dl>
+        <p className="section-subtitle">출처 {panelProviderCopy(payload.provider)}</p>
       </div>
       <QuarterlyStatementChart quarters={payload.quarters || []} currency={currency} />
     </div>

@@ -26,7 +26,7 @@ CLI context pack에는 8개의 시각자료 추천과 snapshot이 정상 포함�
 - `requiredMarkers`: 각 시장 주요 섹션의 `한 줄 결론`, 가운뎃점 요약과 해설 문단을 요구하는 작성 계약
 - `retryOnViolation`: 1
 
-CLI 전용 요약 프롬프트를 새로 만들지 않는다. API가 사용하는 `features/daily_briefing/prompt.md`와 `build_llm_context()` 결과를 그대로 context pack에 넣고, bridge 프롬프트에는 이를 축약하지 말라는 지시와 출력 계약만 명시한다.
+CLI 전용 요약 프롬프트를 새로 만들지 않는다. 공통 `features/daily_briefing/prompt.md`와 `build_llm_context()` 결과를 그대로 context pack에 넣고, bridge 프롬프트에는 이를 축약하지 말라는 지시와 출력 계약만 명시한다.
 
 ### CLI 응답 검증과 재작성
 

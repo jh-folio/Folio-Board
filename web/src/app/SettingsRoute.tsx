@@ -1,30 +1,57 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { getJson, postJson, putJson } from "../api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiRequestError, getJson, isAbortError, postJson, putJson } from "../api";
 import { AgentCliSetup } from "./AgentCliSetup";
-import { checkedAtLabel } from "./aiConnectionStatus";
 import { setReactAgentContextScope } from "./agentContext";
+import { DiagnosticDetail } from "./DiagnosticDetail";
+import { captureReportError, isResponseLessError, ReportErrorDiagnostic, reportErrorMessage, type CapturedReportError } from "./reportErrorDiagnostic";
 import { useUiPreferences } from "./homePreference";
 import { RouteHero } from "./RouteHero";
 import { useThemePreference, type ThemePreference } from "./themePreference";
 import { WorkLogMigrationControl } from "./WorkLogMigration";
+import { DiagnosticRetention } from "./DiagnosticRetention";
 
-type ProviderId = "openai" | "gemini" | "claude";
-type SettingsTab = "integrations" | "admin";
+type SettingsTab = "ai" | "admin" | "integrations";
 
 const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
+  { id: "ai", label: "AI" },
   { id: "admin", label: "관리" },
   { id: "integrations", label: "연동" },
 ];
 
 type ModelChoice = { value: string; label: string };
+type ReasoningChoice = { value: string; label: string };
 
-type LlmProvider = {
+
+type TaskPolicyMode = "api" | "cli";
+type TaskPolicyConfig = {
+  mode: TaskPolicyMode;
+  provider: string;
+  model: string;
+  reasoningEffort: string;
+};
+type TaskPolicyRow = {
   label?: string;
-  hasApiKey?: boolean;
-  apiKeyMasked?: string;
+  enabled?: boolean;
+  config?: TaskPolicyConfig | null;
+  runtimeTypes?: string[];
+};
+type TaskPoliciesPayload = {
+  schemaVersion?: number;
+  revision?: number;
+  tasks?: Record<string, TaskPolicyRow>;
+  reasoningChoices?: ReasoningChoice[];
+};
+
+type TaskPolicyCheckResult = {
+  mode?: TaskPolicyMode;
+  provider?: string;
   model?: string;
-  modelChoices?: ModelChoice[];
-  setupUrl?: string;
+  status?: string;
+  available?: boolean;
+  modelAccessVerified?: boolean;
+  generationAttempted?: boolean;
+  message?: string;
+  checkedAt?: string;
 };
 
 type SettingsPayload = {
@@ -33,14 +60,26 @@ type SettingsPayload = {
     mode?: "cli" | "api";
   };
   llm?: {
-    provider?: ProviderId;
-    providers?: Record<string, LlmProvider>;
+    reasoningEffort?: string;
   };
+  taskPolicies?: TaskPoliciesPayload;
   dart?: { hasApiKey?: boolean; apiKeyMasked?: string };
   fred?: { hasApiKey?: boolean; apiKeyMasked?: string };
   bok?: { hasApiKey?: boolean; apiKeyMasked?: string };
+  toss?: {
+    enabled?: boolean;
+    hasClientId?: boolean;
+    clientIdMasked?: string;
+    hasClientSecret?: boolean;
+    clientSecretMasked?: string;
+    baseUrl?: string;
+    ready?: boolean;
+    health?: { status?: string; lastErrorCode?: string | null };
+  };
   notion?: { hasToken?: boolean; tokenMasked?: string; hasDb?: boolean; dbIdMasked?: string; dbId?: string };
 };
+
+type TossSettingsDraft = { enabled: boolean; clientId: string; clientSecret: string };
 
 type AgentAdapter = {
   id: string;
@@ -52,6 +91,8 @@ type AgentAdapter = {
   error?: string;
   model?: string;
   modelChoices?: ModelChoice[];
+  reasoningChoices?: ReasoningChoice[];
+  reasoningByModel?: Record<string, ReasoningChoice[]>;
   docsUrl?: string;
   installSupported?: boolean;
   loginSupported?: boolean;
@@ -91,6 +132,10 @@ type AutomationRun = {
   errorType?: string;
   errorReason?: string;
   scheduleId?: string;
+  /** CLI로 제출된 실행만 갖는다(예: 브리핑). 있으면 진단 상세는 이 값으로 조회한다. */
+  jobId?: string;
+  /** job이 없는 규칙 경로도 포함해 대부분의 실행이 갖는다(0.6 L1c). */
+  diagnosticRunId?: string;
 };
 
 type LlmTestResult = {
@@ -100,6 +145,11 @@ type LlmTestResult = {
   message?: string;
   /** `check_provider()`가 함께 준다. 언제 확인한 값인지 모르면 상태를 믿을 수 없다. */
   checkedAt?: string;
+};
+
+type SettingsReadIssue = {
+  readonly message: string;
+  readonly diagnostic: CapturedReportError;
 };
 
 
@@ -115,17 +165,8 @@ type CacheCleanup = {
   details?: Array<{ path?: string; age_days?: number }>;
 };
 
-const API_PROVIDERS: ProviderId[] = ["openai", "gemini", "claude"];
 
-const PROVIDER_LABELS: Record<ProviderId, { name: string; key: string; model: string }> = {
-  openai: { name: "OpenAI", key: "sk-...", model: "gpt-5.5" },
-  gemini: { name: "Gemini", key: "AIza...", model: "gemini-3.5-flash" },
-  claude: { name: "Claude", key: "sk-ant-...", model: "claude-sonnet-5" },
-};
 
-function providerOrDefault(value?: string): ProviderId {
-  return API_PROVIDERS.includes(value as ProviderId) ? (value as ProviderId) : "openai";
-}
 
 /** loadAll이 저장된 모델을 선택지 목록에 맞춰 정규화하는 것과 같은 규칙.
  *  dirty 판정 기준선도 같은 규칙으로 계산해야 "불러오자마자 dirty"가 되지 않는다. */
@@ -136,6 +177,22 @@ function normalizedChoice(model: string | undefined, choices: ModelChoice[] | un
 
 function statusText(hasValue: boolean | undefined, masked: string | undefined, emptyText: string, label: string) {
   return hasValue ? `${label} 저장됨: ${masked || "저장됨"}` : emptyText;
+}
+
+function tossStatusText(toss: SettingsPayload["toss"], draft: TossSettingsDraft): string {
+  const configured = Boolean((toss?.hasClientId || draft.clientId.trim()) && (toss?.hasClientSecret || draft.clientSecret.trim()));
+  if (draft.enabled !== Boolean(toss?.enabled)) {
+    if (!draft.enabled) return "사용 해제는 API 설정을 저장한 뒤 적용됩니다.";
+    return configured
+      ? "사용 설정은 API 설정을 저장한 뒤 적용됩니다."
+      : "사용하려면 Client ID와 Client Secret을 모두 입력한 뒤 API 설정을 저장하세요.";
+  }
+  if (!draft.enabled) {
+    return configured ? "사용 안 함 · 자격 증명은 이 PC에 저장되어 있습니다." : "사용 안 함 · Client ID와 Client Secret을 입력해 켤 수 있습니다.";
+  }
+  if (!configured) return "설정 필요 · Client ID와 Client Secret을 모두 저장하세요.";
+  if (toss?.ready) return `사용 준비됨 · ${toss.clientIdMasked || "Client ID 저장됨"}`;
+  return "사용 상태를 확인할 수 없습니다. 설정을 다시 저장해 보세요.";
 }
 
 // 어댑터 상태 문구·클래스는 `AgentCliSetup`이 소유한다. 여기 사본을 두면 같은 상태를
@@ -180,6 +237,461 @@ function ToggleSwitch({
         <span className="settings-switch-state" aria-hidden="true">{checked ? "ON" : "OFF"}</span>
       )}
     </label>
+  );
+}
+
+const TASK_POLICY_ORDER = [
+  "daily_briefing",
+  "company_analysis",
+  "topic_report",
+  "market_memory",
+  "thesis_review",
+  "investment_review",
+  "personal_overlay",
+] as const;
+
+// Backend keeps the full producer map for compatibility. The Settings UI
+// exposes the four user-facing generation surfaces; review/overlay surfaces
+// always inherit the global Agent configuration here.
+const TASK_POLICY_VISIBLE_ORDER = [
+  "daily_briefing",
+  "company_analysis",
+  "topic_report",
+  "market_memory",
+] as const;
+const TASK_POLICY_VISIBLE_KEYS = new Set<string>(TASK_POLICY_VISIBLE_ORDER);
+const CLI_TASK_PROVIDERS = ["codex", "claude", "antigravity"] as const;
+const PROVIDER_DEFAULT_REASONING: ReasoningChoice = { value: "provider_default", label: "제공자 기본값" };
+
+const TASK_POLICY_LABELS: Record<string, string> = {
+  daily_briefing: "브리핑",
+  company_analysis: "기업분석",
+  topic_report: "딥 리서치",
+  market_memory: "시장 내러티브",
+  thesis_review: "Thesis 검토",
+  investment_review: "투자 리뷰",
+  personal_overlay: "Personal Overlay",
+};
+
+function emptyTaskPolicies(): TaskPoliciesPayload {
+  return {
+    schemaVersion: 1,
+    revision: 0,
+    tasks: Object.fromEntries(TASK_POLICY_ORDER.map((key) => [key, {
+      label: TASK_POLICY_LABELS[key], enabled: false, config: null,
+    }])),
+    reasoningChoices: [PROVIDER_DEFAULT_REASONING],
+  };
+}
+
+function normalizeTaskPoliciesForFrontend(policy: TaskPoliciesPayload): TaskPoliciesPayload {
+  const tasks = Object.fromEntries(TASK_POLICY_ORDER.map((key) => {
+    const row = policy.tasks?.[key] || {};
+    return [key, {
+      ...row,
+      enabled: TASK_POLICY_VISIBLE_KEYS.has(key) && row.enabled === true,
+      config: row.config || null,
+    }];
+  }));
+  return { ...policy, tasks };
+}
+
+function taskPolicyDraftSignature(policy: TaskPoliciesPayload): string {
+  return JSON.stringify({
+    revision: Number(policy.revision || 0),
+    tasks: TASK_POLICY_ORDER.map((key) => {
+      const row = policy.tasks?.[key] || {};
+      return [key, row.enabled === true, row.config || null];
+    }),
+  });
+}
+
+function serializableTaskPolicies(policy: TaskPoliciesPayload): { expectedRevision: number; tasks: Record<string, { enabled: boolean; config: TaskPolicyConfig | null }> } {
+  const tasks = Object.fromEntries(TASK_POLICY_ORDER.map((key) => {
+    const row = policy.tasks?.[key] || {};
+    return [key, { enabled: TASK_POLICY_VISIBLE_KEYS.has(key) && row.enabled === true, config: row.config || null }];
+  }));
+  return { expectedRevision: Number(policy.revision || 0), tasks };
+}
+
+function taskPolicyProviderLabel(config: TaskPolicyConfig, adapters: AgentAdapter[]): string {
+
+  return adapters.find((adapter) => adapter.id === config.provider)?.label || ({ codex: "Codex CLI", claude: "Claude Code CLI", antigravity: "Antigravity CLI" } as Record<string, string>)[config.provider] || config.provider;
+}
+
+function taskPolicyModelLabel(config: TaskPolicyConfig, adapters: AgentAdapter[]): string {
+  const choices = adapters.find((adapter) => adapter.id === config.provider)?.modelChoices || [];
+  return choices.find((choice) => choice.value === config.model)?.label || config.model;
+}
+
+function taskPolicySummary(config: TaskPolicyConfig | null | undefined, adapters: AgentAdapter[]): string {
+  if (!config) return "별도 설정을 선택하세요.";
+  if (config.mode !== "cli") return "이전 API 설정 · CLI 전환 필요";
+
+  const mode = "LLM CLI";
+  return `${mode} · ${taskPolicyProviderLabel(config, adapters)} · ${taskPolicyModelLabel(config, adapters) || "모델 없음"}`;
+}
+
+function taskPolicyChoices(
+  config: TaskPolicyConfig,
+
+  adapters: AgentAdapter[],
+): ModelChoice[] {
+  const choices = adapters.find((adapter) => adapter.id === config.provider)?.modelChoices || [];
+  if (config.model && !choices.some((choice) => choice.value === config.model)) {
+    return [{ value: config.model, label: `${config.model} (저장된 값)` }, ...choices];
+  }
+  return choices;
+}
+
+function reasoningChoicesForSource(
+  source: AgentAdapter | undefined,
+  model: string,
+  selectedEffort = "",
+): ReasoningChoice[] {
+  const modelChoices = source?.reasoningByModel?.[model] || [];
+  const choices = modelChoices.length ? modelChoices : source?.reasoningChoices || [];
+  const deduped = choices.filter((choice, index, all) => Boolean(choice?.value) && all.findIndex((item) => item.value === choice.value) === index);
+  const safeChoices = deduped.length ? deduped : [PROVIDER_DEFAULT_REASONING];
+  if (selectedEffort && !safeChoices.some((choice) => choice.value === selectedEffort)) {
+    return [{ value: selectedEffort, label: `${selectedEffort} (지원 확인 필요)` }, ...safeChoices];
+  }
+  return safeChoices;
+}
+
+function taskPolicyReasoningChoices(
+  config: TaskPolicyConfig,
+
+  adapters: AgentAdapter[],
+): ReasoningChoice[] {
+  const source = adapters.find((adapter) => adapter.id === config.provider);
+  return reasoningChoicesForSource(source, config.model, config.reasoningEffort);
+}
+
+function taskPolicyReasoningHint(
+  config: TaskPolicyConfig,
+
+  adapters: AgentAdapter[],
+): string {
+  const choices = taskPolicyReasoningChoices(config, adapters);
+  return choices.length <= 1 ? "현재 연결된 모델에서는 제공자 기본값만 확인할 수 있습니다." : "";
+}
+
+function taskPolicyValidation(
+  config: TaskPolicyConfig | null | undefined,
+
+  adapters: AgentAdapter[] = [],
+): string {
+  if (!config) return "실행 방식·제공자·모델·추론 강도를 모두 입력하세요.";
+  if (config.mode !== "cli") return "이전 API 설정입니다. CLI로 전환해 저장하세요.";
+
+
+  if (!config.provider || !config.model) return "실행 방식·제공자·모델을 모두 입력하세요.";
+
+  if (!CLI_TASK_PROVIDERS.includes(config.provider as typeof CLI_TASK_PROVIDERS[number])) {
+    return "LLM CLI에서는 설치된 CLI 제공자를 선택하세요.";
+  }
+  const source = adapters.find((adapter) => adapter.id === config.provider);
+  const explicitSupported = reasoningChoicesForSource(source, config.model).some((choice) => choice.value === config.reasoningEffort);
+  if ((config.reasoningEffort || "provider_default") !== "provider_default" && !explicitSupported) {
+    return "선택한 조합은 제공자 기본값만 지원합니다.";
+  }
+  return "";
+}
+
+function taskPolicyConfigForMode(
+  current: TaskPolicyConfig,
+  mode: TaskPolicyMode,
+
+  adapters: AgentAdapter[],
+): TaskPolicyConfig {
+  const providerChoices = (adapters.length ? adapters : CLI_TASK_PROVIDERS.map((value) => ({ id: value, label: value }))).map((adapter) => ({ value: adapter.id, label: adapter.label || adapter.id }));
+  const provider = providerChoices.some((choice) => choice.value === current.provider)
+    ? current.provider
+    : providerChoices[0]?.value || current.provider;
+  const choices = adapters.find((adapter) => adapter.id === provider)?.modelChoices || [];
+  const model = choices.some((choice) => choice.value === current.model) ? current.model : choices[0]?.value || current.model;
+  return { ...current, mode, provider, model };
+}
+
+function taskPolicyConfigForProvider(
+  current: TaskPolicyConfig,
+  provider: string,
+
+  adapters: AgentAdapter[],
+): TaskPolicyConfig {
+  const choices = adapters.find((adapter) => adapter.id === provider)?.modelChoices || [];
+  const model = choices.some((choice) => choice.value === current.model) ? current.model : choices[0]?.value || current.model;
+  return { ...current, provider, model };
+}
+
+function TaskPolicySettings({
+  policy,
+  globalEnabled,
+  globalConfig,
+  adapters,
+  onChange,
+  onSave,
+  onCancel,
+  canCancel,
+  canSave,
+  dirty,
+  busy,
+  note,
+}: {
+  policy: TaskPoliciesPayload;
+  globalEnabled: boolean;
+  globalConfig: TaskPolicyConfig | null;
+  adapters: AgentAdapter[];
+  onChange: (next: TaskPoliciesPayload) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  canCancel: boolean;
+  canSave: boolean;
+  dirty: boolean;
+  busy: boolean;
+  note: { panel: string; text: string; tone: "ok" | "error"; diagnostic?: CapturedReportError | null } | null;
+}) {
+  const tasks = policy.tasks || {};
+  const [checkingTask, setCheckingTask] = useState("");
+  const [checkResults, setCheckResults] = useState<Record<string, TaskPolicyCheckResult>>({});
+  const [adjustments, setAdjustments] = useState<Record<string, string>>({});
+  useEffect(() => {
+    // A successful revision is a new baseline; old adjustment/check copy
+    // must not look like a fresh warning beside the saved values.
+    setAdjustments({});
+    setCheckResults({});
+  }, [policy.revision]);
+  const patchTask = (key: string, patch: Partial<TaskPolicyRow>) => {
+    const current = tasks[key] || {};
+    setCheckResults((previous) => { const next = { ...previous }; delete next[key]; return next; });
+    onChange({ ...policy, tasks: { ...tasks, [key]: { ...current, ...patch } } });
+  };
+  const patchConfig = (key: string, nextConfig: TaskPolicyConfig, adjustment = "") => {
+    if (adjustment) setAdjustments((previous) => ({ ...previous, [key]: adjustment }));
+    patchTask(key, { config: nextConfig });
+  };
+  const toggleTask = (key: string, enabled: boolean) => {
+    const current = tasks[key] || {};
+    const copied = enabled && !current.config && globalConfig ? { ...globalConfig } : current.config;
+    patchTask(key, { enabled, ...(copied ? { config: copied } : {}) });
+  };
+  const checkTask = async (key: string, config: TaskPolicyConfig | null) => {
+    const validation = taskPolicyValidation(config, adapters);
+    if (validation || !config) {
+      setCheckResults((previous) => ({ ...previous, [key]: { status: "invalid", available: false, message: validation || "작업별 설정을 모두 입력하세요." } }));
+      return;
+    }
+    setCheckingTask(key);
+    try {
+      const result = await postJson<TaskPolicyCheckResult>("/api/settings/task-policies/check", { config });
+      setCheckResults((previous) => ({ ...previous, [key]: result }));
+    } catch (error) {
+      setCheckResults((previous) => ({ ...previous, [key]: { status: "error", available: false, message: settingsErrorMessage(error, "연결 확인에 실패했습니다.") } }));
+    } finally {
+      setCheckingTask((current) => current === key ? "" : current);
+    }
+  };
+
+  return (
+    <div className="task-policy-section" data-qa="task-policy-settings">
+      <div className="settings-subsection-heading">
+        <div>
+          <h4>작업별 모델 설정</h4>
+          <p className="settings-hint">브리핑·기업분석·딥 리서치·시장 내러티브만 별도 모델을 사용할 수 있습니다. 나머지 개인 판단 화면은 전역 설정을 따릅니다.</p>
+        </div>
+      </div>
+      {!globalEnabled && <p className="settings-hint" role="status">AI Agent를 켜면 작업별 설정이 적용됩니다. 지금 편집한 내용은 저장할 수 있습니다.</p>}
+      <div className="task-policy-list">
+        {TASK_POLICY_VISIBLE_ORDER.map((key) => {
+          const row = tasks[key] || {};
+          const enabled = row.enabled === true;
+          const config = row.config || (enabled ? globalConfig : null);
+          const label = TASK_POLICY_LABELS[key] || row.label || key;
+          const modelChoices = config ? taskPolicyChoices(config, adapters) : [];
+          const reasoningChoices = config ? taskPolicyReasoningChoices(config, adapters) : [];
+          const validation = enabled ? taskPolicyValidation(config, adapters) : "";
+          const result = checkResults[key];
+          const cliProviderChoices = adapters.length
+            ? adapters.map((adapter) => ({ value: adapter.id, label: adapter.label || adapter.id }))
+            : CLI_TASK_PROVIDERS.map((value) => ({ value, label: value }));
+          const providerChoices = cliProviderChoices;
+          return (
+            <div className="task-policy-row" key={key}>
+              <div className="task-policy-row-head">
+                <div>
+                  <strong>{label}</strong>
+                  <p className="task-policy-summary">
+                    {enabled ? taskPolicySummary(config, adapters) : `전역 공통 설정 · ${taskPolicySummary(globalConfig, adapters)}`}
+                  </p>
+                </div>
+                <ToggleSwitch
+                  ariaLabel={`${label} 별도 설정 사용`}
+                  checked={enabled}
+                  onChange={(checked) => toggleTask(key, checked)}
+                  compact
+                />
+              </div>
+              {enabled && (config ? (
+                <>
+                  {/* 셀렉트만 격자에 둔다. 안내·검증·확인 결과까지 같은 격자에 넣으면 그것들이
+                      전 열을 점유해 `auto-fit`이 빈 열을 접지 못하고, 넓은 화면에서 셀렉트
+                      오른쪽에 빈 열 두 개가 남는다. 행(`.task-policy-row`)이 이미 세로 격자다. */}
+                  <div className="task-policy-fields">
+                    <label className="field">
+                      <span>실행 방식</span>
+                      <select value={config.mode} onChange={(event) => {
+                        const mode = event.currentTarget.value as TaskPolicyMode;
+                        const next = taskPolicyConfigForMode(config, mode, adapters);
+                        const changed = next.provider !== config.provider || next.model !== config.model;
+                        patchConfig(key, next, changed ? "실행 방식에 맞춰 제공자와 모델을 선택지에 맞췄습니다. 추론 강도를 확인하세요." : "");
+                      }}>
+                        <option value="cli">LLM CLI</option>
+                        {config.mode !== "cli" && <option value="api" disabled>CLI 전환 필요</option>}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>제공자</span>
+                      <select value={config.provider} onChange={(event) => {
+                        const provider = event.currentTarget.value;
+                        const next = taskPolicyConfigForProvider(config, provider, adapters);
+                        patchConfig(key, next, next.model !== config.model ? "제공자에 맞춰 모델을 선택지의 첫 값으로 맞췄습니다." : "");
+                      }}>
+                        {providerChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
+                        {!providerChoices.some((choice) => choice.value === config.provider) && <option value={config.provider}>{config.provider} (지원하지 않음)</option>}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>모델</span>
+                      <select value={config.model} onChange={(event) => patchConfig(key, { ...config, model: event.currentTarget.value })}>
+                        {modelChoices.length ? modelChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>) : <option value={config.model}>{config.model || "모델 목록 없음"}</option>}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>추론 강도</span>
+                      <select value={config.reasoningEffort || "provider_default"} onChange={(event) => patchConfig(key, { ...config, reasoningEffort: event.currentTarget.value })}>
+                        {reasoningChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  {taskPolicyReasoningHint(config, adapters) && <p className="settings-hint">{taskPolicyReasoningHint(config, adapters)}</p>}
+                  {/* 버튼 옆 설명이 좁아지면 버튼 아래로 내려가는 배치는 자동화 카드가
+                      이미 갖고 있다. 같은 모양을 다시 만들지 않고 그 클래스에 훅만 얹는다. */}
+                  <div className="automation-card-actions task-policy-check-actions">
+                    <button className="btn" type="button" onClick={() => void checkTask(key, config)} disabled={checkingTask === key}>
+                      {checkingTask === key ? "확인 중" : "연결 확인"}
+                    </button>
+                    <span className="settings-hint">CLI 설치·로그인 상태만 확인합니다.</span>
+                  </div>
+                  {adjustments[key] && <p className="settings-hint task-policy-adjustment" role="status">{adjustments[key]}</p>}
+                  {/* `.settings-hint`를 같이 걸면 파일 뒤쪽에 있는 그 규칙이 색과 굵기를
+                      이겨, 빨간 테두리 안 글자만 회색인 오류 상자가 된다(실측 rgb(68,80,95)). */}
+                  {validation && <p className="react-dashboard-error" role="alert">{validation}</p>}
+                  {result && <p className={`settings-hint task-policy-check-result${result.available ? " is-ready" : " is-warning"}`} data-qa={`task-policy-check-result-${key}`} role="status">{result.message || "연결 확인 결과를 받았습니다."}</p>}
+                </>
+              ) : (
+                <p className="react-dashboard-error" role="alert">전역 설정을 확인하지 못했습니다. 실행 방식·제공자·모델을 선택하세요.</p>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+      <div className="filter-actions settings-actions task-policy-actions">
+        {dirty && !busy && <span className="settings-dirty-hint">저장 안 된 변경</span>}
+        <button className={canSave ? "btn btn--primary" : "btn"} type="button" onClick={onSave} disabled={busy}>작업별 설정 저장</button>
+        <button className="btn" type="button" onClick={onCancel} disabled={!canCancel}>작업별 변경 취소</button>
+      </div>
+      <PanelNote note={note} panel="task-policy" />
+    </div>
+  );
+}
+
+function GlobalModelSettings({
+  agentProvider,
+  agentModel,
+  selectedAgent,
+  globalReasoningEffort,
+  reasoningChoices,
+  onAgentProviderChange,
+  onAgentModelChange,
+  onReasoningChange,
+  onSave,
+  onCancel,
+  canSave,
+  canCancel,
+  busy,
+  note,
+}: {
+  mode: TaskPolicyMode;
+  agentProvider: string;
+  agentModel: string;
+  selectedAgent?: AgentAdapter;
+  globalReasoningEffort: string;
+  reasoningChoices: ReasoningChoice[];
+  onAgentProviderChange: (provider: string) => void;
+  onAgentModelChange: (model: string) => void;
+  onReasoningChange: (effort: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  canSave: boolean;
+  canCancel: boolean;
+  busy: boolean;
+  note: { panel: string; text: string; tone: "ok" | "error"; diagnostic?: CapturedReportError | null } | null;
+}) {
+  const cliProviderChoices = [
+    { value: "codex", label: "Codex CLI" },
+    { value: "claude", label: "Claude Code CLI" },
+    { value: "antigravity", label: "Antigravity CLI" },
+  ];
+  const modelChoices = selectedAgent?.modelChoices || [];
+  const selectedModel = agentModel;
+  const selectedModelChoices = modelChoices.length
+    ? modelChoices
+    : selectedModel
+      ? [{ value: selectedModel, label: `${selectedModel} (저장된 값)` }]
+      : [];
+  return (
+    <div className="global-model-section" data-qa="global-model-settings">
+      <div className="settings-subsection-heading">
+        <div>
+          <h4>전역 모델 설정</h4>
+          <p className="settings-hint">작업별 별도 설정이 꺼진 화면과 Agent 대화가 이 모델을 사용합니다.</p>
+        </div>
+      </div>
+      <div className="settings-grid global-model-fields">
+        <label className="field">
+          <span>{"사용할 CLI"}</span>
+          {(
+            <select value={agentProvider} onChange={(event) => onAgentProviderChange(event.currentTarget.value)}>
+              {cliProviderChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
+            </select>
+          )}
+        </label>
+        <label className="field">
+          <span>모델</span>
+          <select value={selectedModel} onChange={(event) => (onAgentModelChange(event.currentTarget.value))}>
+            {selectedModelChoices.length ? selectedModelChoices.map((choice) => (
+              <option value={choice.value} key={choice.value}>{choice.label}</option>
+            )) : <option value="">모델 목록 없음</option>}
+          </select>
+        </label>
+        <label className="field">
+          <span>추론 강도</span>
+          <select value={globalReasoningEffort || "provider_default"} onChange={(event) => onReasoningChange(event.currentTarget.value)}>
+            {reasoningChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}
+          </select>
+        </label>
+      </div>
+      {reasoningChoices.length <= 1 && <p className="settings-hint">현재 연결된 모델에서는 제공자 기본값만 확인할 수 있습니다.</p>}
+      <div className="filter-actions settings-actions">
+        {canSave && <span className="settings-dirty-hint">저장 안 된 변경</span>}
+        {/* 한 패널 안에 저장이 둘이라 이름이 서로를 가리지 않아야 한다. 이 버튼이 패널
+            전체 이름을 쓰면 아래 "작업별 설정 저장"까지 저장하는 것처럼 읽힌다. */}
+        <button className={canSave ? "btn btn--primary" : "btn"} type="button" onClick={onSave} disabled={busy}>전역 모델 설정 저장</button>
+        <button className="btn" type="button" onClick={onCancel} disabled={!canCancel}>전역 모델 변경 취소</button>
+      </div>
+      <PanelNote note={note} panel="agent-model" />
+    </div>
   );
 }
 
@@ -297,13 +809,35 @@ type RetentionPreview = {
 };
 
 /** 그 패널이 방금 한 일의 결과. 누른 버튼 바로 아래에 뜬다. */
-function PanelNote({ note, panel }: { note: { panel: string; text: string; tone: "ok" | "error" } | null; panel: string }) {
+function PanelNote({ note, panel }: { note: { panel: string; text: string; tone: "ok" | "error"; diagnostic?: CapturedReportError | null } | null; panel: string }) {
   if (!note || note.panel !== panel) return null;
   return (
-    <p className={note.tone === "error" ? "react-dashboard-error" : "react-dashboard-warning"} role="status">
-      {note.text}
-    </p>
+    <>
+      <p className={note.tone === "error" ? "react-dashboard-error" : "react-dashboard-warning"} role="status">
+        {note.text}
+      </p>
+      {note.diagnostic && <ReportErrorDiagnostic diagnostic={note.diagnostic} />}
+    </>
   );
+}
+
+function settingsErrorMessage(error: unknown, fallback: string): string {
+  if (isResponseLessError(error)) return reportErrorMessage(error, fallback);
+  if (error instanceof ApiRequestError) {
+    const code = /^[a-z0-9_]+$/.test(error.code || "") ? error.code : "";
+    return code ? `${fallback} (${code})` : fallback;
+  }
+  return fallback;
+}
+
+type SettledRead<T> = { readonly value: T | null; readonly error: unknown | null };
+
+async function settleRead<T>(request: Promise<T>): Promise<SettledRead<T>> {
+  try {
+    return { value: await request, error: null };
+  } catch (error) {
+    return { value: null, error };
+  }
 }
 
 export function megabytes(bytes: number) {
@@ -329,8 +863,9 @@ export function reclaimHint(reclaimableBytes: number | undefined) {
  *  보관 기간은 되돌릴 수 없는 설정이라, 고른 값이 지금 몇 건을 없애는지 보이지 않으면
  *  고를 수 없다. 서버가 세는 값이고 화면은 그대로 옮긴다.
  */
-function RetentionNote({ preview, days }: { preview: RetentionPreview | null; days: number }) {
+function RetentionNote({ preview, days, unavailable = false }: { preview: RetentionPreview | null; days: number; unavailable?: boolean }) {
   if (days <= 0) return <p className="settings-hint">모든 자료를 계속 보관합니다. 수집이 쌓이는 만큼 검색 색인이 커집니다.</p>;
+  if (unavailable) return <p className="settings-hint">정리 대상을 확인하지 못했습니다. 현재 표시가 비어 있다고 확정할 수 없습니다.</p>;
   if (!preview || preview.days !== days) return <p className="settings-hint">정리 대상을 확인하는 중입니다.</p>;
   if (!preview.files) return <p className="settings-hint">지금은 {preview.cutoff}보다 오래된 자료가 없어 지워지는 것이 없습니다.</p>;
   return (
@@ -366,11 +901,12 @@ function runOutcome(run: AutomationRun | undefined) {
  *  개장 전이다. 목록이되, 비어 있을 때는 마감 시각에서 나온 제안을 눌러 넣게 한다.
  */
 function BriefingSchedules({
-  schedules, watched, runsById, onChange,
+  schedules, watched, runsById, runsAvailable = true, onChange,
 }: {
   schedules: BriefingSchedule[];
   watched: string[];
   runsById: Record<string, AutomationRun>;
+  runsAvailable?: boolean;
   onChange: (next: BriefingSchedule[]) => void;
 }) {
   const patch = (id: string, changes: Partial<BriefingSchedule>) =>
@@ -512,7 +1048,7 @@ function BriefingSchedules({
                 관심 시장에서 꺼둔 {offScope.map((m) => MARKET_CODES.find((c) => c.id === m)?.label || m).join(" · ")}은(는) 빼고 생성합니다.
               </p>
             )}
-            <LastRun run={runsById[row.id]} />
+            <LastRun run={runsById[row.id]} unavailable={!runsAvailable} />
           </div>
         );
       })}
@@ -549,13 +1085,18 @@ function BriefingSchedules({
   );
 }
 
-function LastRun({ run }: { run?: AutomationRun }) {
-  const { tone, text } = runOutcome(run);
+function LastRun({ run, unavailable = false }: { run?: AutomationRun; unavailable?: boolean }) {
+  const { tone, text } = unavailable
+    ? { tone: "", text: "실행 기록을 확인할 수 없습니다" }
+    : runOutcome(run);
   return (
-    <p className={`automation-last-run ${tone}`.trim()}>
-      <span>마지막 실행</span>
-      {text}
-    </p>
+    <div className="automation-last-run-wrap">
+      <p className={`automation-last-run ${tone}`.trim()}>
+        <span>마지막 실행</span>
+        {text}
+      </p>
+      {run && (run.jobId || run.diagnosticRunId) && <DiagnosticDetail jobId={run.jobId} runId={run.diagnosticRunId} revision={`${run.status || ""}:${run.startedAt || ""}:${run.finishedAt || ""}`} />}
+    </div>
   );
 }
 
@@ -580,28 +1121,52 @@ type MarketScopeState = {
  *  피드가 내어주는 최근 항목까지만 받을 수 있어 꺼져 있던 기간의 공백이
  *  남을 수 있다 — 그 한계를 화면이 먼저 말한다.
  */
-function MarketScopePanel() {
+function MarketScopePanel({ readIssue = null }: { readIssue?: SettingsReadIssue | null }) {
   const [scope, setScope] = useState<MarketScopeState | null>(null);
   const [draft, setDraft] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [errorDiagnostic, setErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const loadSequence = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
+  const saveSequence = useRef(0);
+  const saveController = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const sequence = ++loadSequence.current;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
     void (async () => {
       try {
-        const payload = await getJson<MarketScopeState>("/api/market-scope");
-        if (cancelled) return;
+        const payload = await getJson<MarketScopeState>("/api/market-scope", { signal: controller.signal });
+        if (controller.signal.aborted || sequence !== loadSequence.current) return;
         setScope(payload);
         setDraft([...payload.selected]);
-      } catch {
-        if (!cancelled) setNote("관심 시장 설정을 불러오지 못했습니다.");
+        setErrorDiagnostic(null);
+      } catch (error) {
+        if (isAbortError(error, controller.signal) || sequence !== loadSequence.current) return;
+        setNote(settingsErrorMessage(error, "관심 시장 설정을 불러오지 못했습니다."));
+        setErrorDiagnostic(captureReportError(error, sequence));
+      } finally {
+        if (sequence === loadSequence.current) loadController.current = null;
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      loadSequence.current += 1;
+      controller.abort();
+    };
   }, []);
 
-  if (!scope) return null;
+  if (!scope) {
+    return (
+      <section className="settings-panel input-panel" data-qa="market-scope-panel">
+        <div className="input-panel-header"><div><h3>관심 시장</h3><p>{errorDiagnostic || readIssue ? "관심 시장 설정을 확인하지 못했습니다." : "관심 시장 설정을 읽는 중입니다."}</p></div></div>
+        {note && <p className="react-dashboard-error" role="alert">{note}</p>}
+        {errorDiagnostic && <ReportErrorDiagnostic diagnostic={errorDiagnostic} />}
+      </section>
+    );
+  }
 
   const toggle = (id: string) => {
     setDraft((current) => {
@@ -615,16 +1180,24 @@ function MarketScopePanel() {
 
   const save = async () => {
     if (!dirty) {
+      setErrorDiagnostic(null);
       setNote("변경 사항이 없습니다.");
       return;
     }
+    saveController.current?.abort();
+    const sequence = ++saveSequence.current;
+    const controller = new AbortController();
+    saveController.current = controller;
     setBusy(true);
     setNote("");
+    setErrorDiagnostic(null);
     try {
       const payload = await putJson<MarketScopeState & { newlyEnabled?: string[]; collectionJob?: unknown }>(
         "/api/market-scope",
         { selected: draft },
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted || sequence !== saveSequence.current) return;
       setScope(payload);
       setDraft([...payload.selected]);
       const enabled = payload.newlyEnabled || [];
@@ -632,9 +1205,14 @@ function MarketScopePanel() {
         ? "저장했습니다. 방금 켠 시장의 자료 수집을 시작했습니다 — 꺼져 있던 기간의 기사는 피드가 아직 내어주는 범위까지만 들어옵니다."
         : "저장했습니다.");
     } catch (err) {
-      setNote(err instanceof Error ? err.message : "저장하지 못했습니다.");
+      if (isAbortError(err, controller.signal) || sequence !== saveSequence.current) return;
+      setNote(settingsErrorMessage(err, "관심 시장 설정을 저장하지 못했습니다."));
+      setErrorDiagnostic(captureReportError(err, sequence));
     } finally {
-      setBusy(false);
+      if (sequence === saveSequence.current) {
+        saveController.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -672,7 +1250,8 @@ function MarketScopePanel() {
           {busy ? "저장 중" : "저장"}
         </button>
       </div>
-      {note && <p className="react-dashboard-warning" role="status">{note}</p>}
+      {note && <p className={errorDiagnostic ? "react-dashboard-error" : "react-dashboard-warning"} role={errorDiagnostic ? "alert" : "status"}>{note}</p>}
+      {errorDiagnostic && <ReportErrorDiagnostic diagnostic={errorDiagnostic} />}
     </section>
   );
 }
@@ -712,30 +1291,71 @@ function WorkspacePanel() {
   const [state, setState] = useState<WorkspaceState | null>(null);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
+  const [errorDiagnostic, setErrorDiagnostic] = useState<CapturedReportError | null>(null);
   const [confirming, setConfirming] = useState<"documents" | "app" | "">("");
+  const loadSequence = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
+  const actionSequence = useRef(0);
+  const actionController = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
     try {
-      setState(await getJson<WorkspaceState>("/api/workspace"));
-    } catch {
-      setNote("자료 위치를 읽지 못했습니다.");
+      const payload = await getJson<WorkspaceState>("/api/workspace", { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== loadSequence.current) return false;
+      setState(payload);
+      setErrorDiagnostic(null);
+      return true;
+    } catch (error) {
+      if (isAbortError(error, controller.signal) || sequence !== loadSequence.current) return false;
+      setNote(settingsErrorMessage(error, "자료 위치를 읽지 못했습니다."));
+      setErrorDiagnostic(captureReportError(error, sequence));
+      return false;
+    } finally {
+      if (sequence === loadSequence.current) loadController.current = null;
     }
+  }, []);
+
+  useEffect(() => () => {
+    loadSequence.current += 1;
+    loadController.current?.abort();
+    actionSequence.current += 1;
+    actionController.current?.abort();
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  if (!state) return null;
+  if (!state) {
+    return (
+      <section className="settings-panel input-panel" data-qa="workspace-panel">
+        <div className="input-panel-header"><div><h3>자료 위치</h3><p>{errorDiagnostic ? "자료 위치를 확인하지 못했습니다." : "보고서·수집 자료·설정이 저장되는 폴더를 확인하는 중입니다."}</p></div></div>
+        {note && <p className="react-dashboard-error" role="alert">{note}</p>}
+        {errorDiagnostic && <ReportErrorDiagnostic diagnostic={errorDiagnostic} />}
+      </section>
+    );
+  }
 
   const move = async (destination: "documents" | "app", merge: boolean) => {
+    actionController.current?.abort();
+    const sequence = ++actionSequence.current;
+    const controller = new AbortController();
+    actionController.current = controller;
     setBusy(destination);
     setNote("");
+    setErrorDiagnostic(null);
     try {
       const result = await postJson<{ path: string; previousPath: string; fileCount: number }>(
         "/api/workspace/move",
         { destination, merge },
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted || sequence !== actionSequence.current) return;
       setConfirming("");
-      await load();
+      const loaded = await load();
+      if (controller.signal.aborted || sequence !== actionSequence.current || !loaded) return;
       setNote(
         `자료 ${result.fileCount}개를 ${result.path}(으)로 복사했습니다. ` +
         `서버를 재시작해야 새 위치를 사용합니다. 원본은 ${result.previousPath}에 그대로 있으니 ` +
@@ -745,22 +1365,38 @@ function WorkspacePanel() {
         "재시작 전까지는 RSS 수집과 보관 기간 정리가 일시정지됩니다.",
       );
     } catch (err) {
+      if (isAbortError(err, controller.signal) || sequence !== actionSequence.current) return;
       const message = err instanceof Error ? err.message : "옮기지 못했습니다.";
       if (message.includes("이미 자료")) setConfirming(destination);
-      setNote(message);
+      setNote(settingsErrorMessage(err, "자료를 옮기지 못했습니다."));
+      setErrorDiagnostic(captureReportError(err, sequence));
     } finally {
-      setBusy("");
+      if (sequence === actionSequence.current) {
+        actionController.current = null;
+        setBusy("");
+      }
     }
   };
-
   const reveal = async () => {
+    actionController.current?.abort();
+    const sequence = ++actionSequence.current;
+    const controller = new AbortController();
+    actionController.current = controller;
     setBusy("reveal");
+    setNote("");
+    setErrorDiagnostic(null);
     try {
-      await postJson("/api/workspace/reveal", {});
+      await postJson("/api/workspace/reveal", {}, { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== actionSequence.current) return;
     } catch (err) {
-      setNote(err instanceof Error ? err.message : "폴더를 열지 못했습니다.");
+      if (isAbortError(err, controller.signal) || sequence !== actionSequence.current) return;
+      setNote(settingsErrorMessage(err, "폴더를 열지 못했습니다."));
+      setErrorDiagnostic(captureReportError(err, sequence));
     } finally {
-      setBusy("");
+      if (sequence === actionSequence.current) {
+        actionController.current = null;
+        setBusy("");
+      }
     }
   };
 
@@ -842,7 +1478,8 @@ function WorkspacePanel() {
           옮길 위치: {state.documentsPath} · 복사만 하고 원본은 지우지 않습니다.
         </p>
       )}
-      {note && <p className="react-dashboard-warning" role="status">{note}</p>}
+      {note && <p className={errorDiagnostic ? "react-dashboard-error" : "react-dashboard-warning"} role={errorDiagnostic ? "alert" : "status"}>{note}</p>}
+      {errorDiagnostic && <ReportErrorDiagnostic diagnostic={errorDiagnostic} />}
     </section>
   );
 }
@@ -850,47 +1487,118 @@ function WorkspacePanel() {
 export function SettingsRoute() {
   const theme = useThemePreference();
   const uiPreferences = useUiPreferences();
-  // 관리(화면·관심 시장·자동화)가 먼저다. 연동은 한 번 설정하면 다시 열 일이 적다.
-  const [tab, setTab] = useState<SettingsTab>("admin");
+  // AI 설정은 이 화면에서 가장 자주 확인하는 실행 경로이므로 첫 화면으로 연다.
+  const [tab, setTab] = useState<SettingsTab>("ai");
   const [settings, setSettings] = useState<SettingsPayload | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings | null>(null);
+  const [taskPolicies, setTaskPolicies] = useState<TaskPoliciesPayload>(() => emptyTaskPolicies());
+  const [taskPoliciesSaved, setTaskPoliciesSaved] = useState<TaskPoliciesPayload>(() => emptyTaskPolicies());
   const [automation, setAutomation] = useState<AutomationSettings>({});
   // 자동화 폼은 서버 응답을 그대로 편집하므로, dirty 판정용 기준선을 따로 든다.
   const [automationSaved, setAutomationSaved] = useState<AutomationSettings>({});
   const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
   const [retentionPreview, setRetentionPreview] = useState<RetentionPreview | null>(null);
+  const [retentionPreviewDiagnostic, setRetentionPreviewDiagnostic] = useState<CapturedReportError | null>(null);
   // 예약 제안은 관심 시장에서 켠 것만 넣는다. 못 읽으면 네 시장을 다 보여주고,
   // 실행할 때 서버가 어차피 교집합을 낸다.
   const [watchedMarkets, setWatchedMarkets] = useState<string[]>(MARKET_CODES.map((m) => m.id));
   const [obsidian, setObsidian] = useState<ObsidianSettings>({});
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [provider, setProvider] = useState<ProviderId>("openai");
-  const [providerApiKey, setProviderApiKey] = useState("");
-  const [providerModel, setProviderModel] = useState("");
+  const [] = useState("");
+  const [] = useState("");
+  const [globalReasoningEffort, setGlobalReasoningEffort] = useState("provider_default");
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [agentMode, setAgentMode] = useState<"cli" | "api">("cli");
   const [agentProvider, setAgentProvider] = useState("codex");
   const [agentModel, setAgentModel] = useState("");
   const [apiDraft, setApiDraft] = useState({ fred: "", bok: "", dart: "" });
+  const [tossDraft, setTossDraft] = useState({ enabled: false, clientId: "", clientSecret: "" });
   const [notionDraft, setNotionDraft] = useState({ token: "", dbId: "" });
   const [vaultPath, setVaultPath] = useState("");
-  const [llmStatus, setLlmStatus] = useState<Record<string, LlmTestResult & { checking?: boolean }>>({});
+  const [] = useState<Record<string, LlmTestResult & { checking?: boolean; diagnostic?: CapturedReportError | null }>>({});
   const [busy, setBusy] = useState("");
   // 결과는 누른 버튼 옆에 뜬다. 예전에는 한 곳(화면 맨 위)에 모아서, 문서상 1,991px에 있는
   // 자동화 저장을 눌러도 메시지가 54px에 떠 두 화면 반 위에 있었다 — 보이지 않는 확인이다.
-  const [note, setNote] = useState<{ panel: string; text: string; tone: "ok" | "error" } | null>(null);
-  const say = useCallback((panel: string, text: string) => setNote({ panel, text, tone: "ok" }), []);
-  const fail = useCallback((panel: string, text: string) => setNote({ panel, text, tone: "error" }), []);
+  const [note, setNote] = useState<{ panel: string; text: string; tone: "ok" | "error"; operationId: number; diagnostic: CapturedReportError | null } | null>(null);
+  const panelOperationId = useRef(0);
+  const panelController = useRef<AbortController | null>(null);
+  const beginPanelOperation = (panel: string, text: string) => {
+    panelController.current?.abort();
+    const operationId = ++panelOperationId.current;
+    const controller = new AbortController();
+    panelController.current = controller;
+    setBusy(panel);
+    setNote({ panel, text, tone: "ok", operationId, diagnostic: null });
+    return { operationId, controller };
+  };
+  const isCurrentPanelOperation = (operationId: number, controller: AbortController) =>
+    operationId === panelOperationId.current && panelController.current === controller && !controller.signal.aborted;
+  const finishPanelOperation = (operationId: number, controller: AbortController) => {
+    if (!isCurrentPanelOperation(operationId, controller)) return;
+    panelController.current = null;
+    setBusy("");
+  };
+  const completePanelOperation = (panel: string, operationId: number, controller: AbortController, text: string, tone: "ok" | "error", error?: unknown) => {
+    if (!isCurrentPanelOperation(operationId, controller)) return;
+    setNote({ panel, text, tone, operationId, diagnostic: tone === "error" && error ? captureReportError(error, operationId) : null });
+  };
+  const showPanelNote = (panel: string, text: string, tone: "ok" | "error" = "ok") => {
+    panelController.current?.abort();
+    const operationId = ++panelOperationId.current;
+    panelController.current = null;
+    setBusy("");
+    setNote({ panel, text, tone, operationId, diagnostic: null });
+  };
   // 화면 전체를 못 불러온 것은 어느 패널의 일도 아니라 위에 남긴다.
   const [error, setError] = useState("");
+  const [settingsReadDiagnostic, setSettingsReadDiagnostic] = useState<CapturedReportError | null>(null);
+  const [automationRunsReadIssue, setAutomationRunsReadIssue] = useState<SettingsReadIssue | null>(null);
+  const [marketScopeReadIssue, setMarketScopeReadIssue] = useState<SettingsReadIssue | null>(null);
+  const [automationRunsAvailable, setAutomationRunsAvailable] = useState(true);
+  const loadAllSequence = useRef(0);
+  const loadAllController = useRef<AbortController | null>(null);
+  const retentionRequestSequence = useRef(0);
+  const retentionController = useRef<AbortController | null>(null);
+  const refreshDraftRef = useRef<{
+    agentDirty: boolean;
+    agentEnabled: boolean;
+    agentMode: "cli" | "api";
+    globalModelDirty: boolean;
+      agentProvider: string;
+    agentModel: string;
+    globalReasoningEffort: string;
+    taskPolicyDirty: boolean;
+    taskPolicies: TaskPoliciesPayload;
+    apiDirty: boolean;
+    apiDraft: { fred: string; bok: string; dart: string };
+    tossDraft: { enabled: boolean; clientId: string; clientSecret: string };
+    notionDirty: boolean;
+    notionDraft: { token: string; dbId: string };
+    obsidianDirty: boolean;
+    vaultPath: string;
+    automationDirty: boolean;
+    automation: AutomationSettings;
+  } | null>(null);
 
-  const providers = settings?.llm?.providers || {};
-  const selectedProvider = providers[provider] || {};
-  const selectedProviderMeta = PROVIDER_LABELS[provider];
-  const providerChoices = selectedProvider.modelChoices || [];
   const agentAdapters = agentSettings?.adapters || [];
   const selectedAgent = agentAdapters.find((adapter) => adapter.id === agentProvider) || agentAdapters[0];
-  const selectedAgentChoices = selectedAgent?.modelChoices || [];
+  const selectedGlobalModel = agentModel || String(selectedAgent?.model || "");
+  const globalReasoningChoices = reasoningChoicesForSource(
+    selectedAgent,
+    selectedGlobalModel,
+    globalReasoningEffort,
+  );
+  const globalTaskConfig = useMemo<TaskPolicyConfig | null>(() => {
+
+    const model = agentModel || String(selectedAgent?.model || "");
+    return model ? { mode: "cli", provider: agentProvider, model, reasoningEffort: globalReasoningEffort } : null;
+  }, [agentProvider, agentModel, selectedAgent?.model, globalReasoningEffort]);
+  // The visible draft keeps the three legacy rows disabled, while the saved
+  // baseline keeps their stored config so a later save can preserve it.  Use
+  // the raw row shape for dirty detection: otherwise a legacy enabled flag
+  // would disappear silently and the user could never intentionally persist
+  // the frontend's disabled projection.
+  const taskPolicyDirty = taskPolicyDraftSignature(taskPolicies) !== taskPolicyDraftSignature(taskPoliciesSaved);
 
   // dirty→primary (2026-08-08 확정): 변경이 생긴 패널의 저장 버튼만 진해지고,
   // 진한 버튼이 곧 "저장 안 된 변경"의 신호다. disabled로 잠그지 않는다.
@@ -898,20 +1606,48 @@ export function SettingsRoute() {
     ? String(agentSettings?.provider)
     : String(agentSettings?.selectedAdapter || agentAdapters[0]?.id || "codex");
   const baselineAdapter = agentAdapters.find((adapter) => adapter.id === baselineAgentProvider) || agentAdapters[0];
+  const baselineGlobalAgent = agentAdapters.find((adapter) => adapter.id === baselineAgentProvider) || baselineAdapter;
+  const baselineGlobalModel = normalizedChoice(baselineGlobalAgent?.model, baselineGlobalAgent?.modelChoices);
+  const baselineReasoningEffort = String(settings?.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default";
+  const baselineAgentMode = settings?.agent?.mode === "api" ? "api" : "cli";
+  const agentModeDirty = agentMode !== baselineAgentMode;
   const agentDirty =
     agentEnabled !== (settings?.agent?.enabled !== false) ||
-    agentMode !== (settings?.agent?.mode === "api" ? "api" : "cli") ||
-    agentProvider !== baselineAgentProvider ||
-    agentModel !== normalizedChoice(baselineAdapter?.model, baselineAdapter?.modelChoices) ||
-    provider !== providerOrDefault(settings?.llm?.provider) ||
-    providerModel !== normalizedChoice(selectedProvider.model, selectedProvider.modelChoices) ||
-    providerApiKey.trim() !== "";
-  const apiDirty = Boolean(apiDraft.fred.trim() || apiDraft.bok.trim() || apiDraft.dart.trim());
+    agentModeDirty;
+  const globalModelDirty = agentProvider !== baselineAgentProvider || agentModel !== baselineGlobalModel || globalReasoningEffort !== baselineReasoningEffort;
+  const apiDirty = Boolean(
+    apiDraft.fred.trim() ||
+    apiDraft.bok.trim() ||
+    apiDraft.dart.trim() ||
+    tossDraft.clientId.trim() ||
+    tossDraft.clientSecret.trim() ||
+    tossDraft.enabled !== Boolean(settings?.toss?.enabled)
+  );
   const notionDirty =
     Boolean(notionDraft.token.trim()) || notionDraft.dbId.trim() !== String(settings?.notion?.dbId || "").trim();
   const obsidianDirty = vaultPath.trim() !== String(obsidian.vaultPath || "").trim();
   const automationDirty =
     JSON.stringify(buildAutomationPayload(automation)) !== JSON.stringify(buildAutomationPayload(automationSaved));
+  refreshDraftRef.current = {
+    agentDirty,
+    agentEnabled,
+    agentMode,
+    globalModelDirty,
+    agentProvider,
+    agentModel,
+    globalReasoningEffort,
+    taskPolicyDirty,
+    taskPolicies,
+    apiDirty,
+    apiDraft,
+    tossDraft,
+    notionDirty,
+    notionDraft,
+    obsidianDirty,
+    vaultPath,
+    automationDirty,
+    automation,
+  };
   // 기록은 최신순으로 오므로 종류별 첫 행이 마지막 실행이다.
   const lastRunByKind = useMemo(() => {
     const map: Record<string, AutomationRun> = {};
@@ -932,34 +1668,61 @@ export function SettingsRoute() {
     return map;
   }, [automationRuns]);
 
-  const loadAll = useCallback(async (refreshAgent = false) => {
+  const loadAll = useCallback(async (refreshAgent = false, preserveDrafts = false) => {
+    const draft = preserveDrafts ? refreshDraftRef.current : null;
+    const sequence = ++loadAllSequence.current;
+    loadAllController.current?.abort();
+    const controller = new AbortController();
+    loadAllController.current = controller;
     setError("");
+    setSettingsReadDiagnostic(null);
+    setAutomationRunsReadIssue(null);
+    setMarketScopeReadIssue(null);
     setBusy("load");
     try {
-      const [settingsPayload, agentPayload, automationPayload, obsidianPayload, runsPayload, scopePayload] = await Promise.all([
-        getJson<SettingsPayload>(`/api/settings${refreshAgent ? "?refresh=true" : ""}`),
-        getJson<AgentSettings>(`/api/agent-bridge/settings${refreshAgent ? "?refresh=true" : ""}`),
-        getJson<AutomationSettings>("/api/automation/settings"),
-        getJson<ObsidianSettings>("/api/obsidian/settings"),
+      const [settingsPayload, agentPayload, automationPayload, obsidianPayload, runsResult, scopeResult] = await Promise.all([
+        getJson<SettingsPayload>(`/api/settings${refreshAgent ? "?refresh=true" : ""}`, { signal: controller.signal }),
+        getJson<AgentSettings>(`/api/agent-bridge/settings${refreshAgent ? "?refresh=true" : ""}`, { signal: controller.signal }),
+        getJson<AutomationSettings>("/api/automation/settings", { signal: controller.signal }),
+        getJson<ObsidianSettings>("/api/obsidian/settings", { signal: controller.signal }),
         // 실행 기록은 있었는데 부르는 화면이 없었다. 자동화가 돌았는지 실패했는지
         // 볼 방법이 없으면 켜 둔 채로 몇 주가 지나도 모른다.
-        getJson<{ items?: AutomationRun[] }>("/api/automation/runs?limit=50").catch(() => ({ items: [] })),
-        getJson<MarketScopeState>("/api/market-scope").catch(() => null),
+        settleRead(getJson<{ items?: AutomationRun[] }>("/api/automation/runs?limit=50", { signal: controller.signal })),
+        settleRead(getJson<MarketScopeState>("/api/market-scope", { signal: controller.signal })),
       ]);
-      setAutomationRuns(runsPayload.items || []);
-      if (scopePayload?.selected) {
-        setWatchedMarkets(scopePayload.selected.map((code) => String(code).toLowerCase()));
+      if (controller.signal.aborted || sequence !== loadAllSequence.current) return;
+
+      if (runsResult.error) {
+        if (isAbortError(runsResult.error, controller.signal)) return;
+        setAutomationRuns([]);
+        setAutomationRunsAvailable(false);
+        setAutomationRunsReadIssue({
+          message: "자동화 실행 기록을 확인할 수 없습니다. 목록이 비어 있다고 확정할 수 없습니다.",
+          diagnostic: captureReportError(runsResult.error, sequence),
+        });
+      } else {
+        setAutomationRunsAvailable(true);
+        setAutomationRunsReadIssue(null);
+        setAutomationRuns(runsResult.value?.items || []);
+      }
+      if (scopeResult.error) {
+        if (isAbortError(scopeResult.error, controller.signal)) return;
+        setMarketScopeReadIssue({
+          message: "관심 시장 설정을 확인할 수 없습니다. 현재 선택을 바꾸지 않았습니다.",
+          diagnostic: captureReportError(scopeResult.error, sequence),
+        });
+      } else if (scopeResult.value?.selected) {
+        setMarketScopeReadIssue(null);
+        setWatchedMarkets(scopeResult.value.selected.map((code) => String(code).toLowerCase()));
       }
       setSettings(settingsPayload);
+      const rawTaskPolicies = settingsPayload.taskPolicies || emptyTaskPolicies();
+      setTaskPolicies(normalizeTaskPoliciesForFrontend(rawTaskPolicies));
+      setTaskPoliciesSaved(rawTaskPolicies);
       setAgentEnabled(settingsPayload.agent?.enabled !== false);
-      setAgentMode(settingsPayload.agent?.mode === "api" ? "api" : "cli");
-      const nextProvider = providerOrDefault(settingsPayload.llm?.provider);
-      setProvider(nextProvider);
-      const nextProviderData = settingsPayload.llm?.providers?.[nextProvider] || {};
-      const nextProviderChoices = nextProviderData.modelChoices || [];
-      setProviderModel(nextProviderChoices.some((choice) => choice.value === nextProviderData.model)
-        ? String(nextProviderData.model || "")
-        : nextProviderChoices[0]?.value || "");
+      setAgentMode("cli");
+      setGlobalReasoningEffort(String(settingsPayload.llm?.reasoningEffort || "provider_default").trim().toLowerCase().replace("-", "_") || "provider_default");
+      setTossDraft({ enabled: Boolean(settingsPayload.toss?.enabled), clientId: "", clientSecret: "" });
       setNotionDraft({ token: "", dbId: settingsPayload.notion?.dbId || "" });
 
       setAgentSettings(agentPayload);
@@ -978,44 +1741,85 @@ export function SettingsRoute() {
       setAutomationSaved(buildAutomationPayload(automationPayload));
       setObsidian(obsidianPayload);
       setVaultPath(obsidianPayload.vaultPath || "");
+      // A forced model/status refresh is also the single settings refresh
+      // button. Keep any unsaved draft in place while replacing only its
+      // optimistic-lock baseline with the freshly read server snapshot.
+      if (draft?.agentDirty) {
+        setAgentEnabled(draft.agentEnabled);
+        setAgentMode(draft.agentMode);
+      }
+      if (draft?.globalModelDirty) {
+        setAgentProvider(draft.agentProvider);
+        setAgentModel(draft.agentModel);
+        setGlobalReasoningEffort(draft.globalReasoningEffort);
+      }
+      if (draft?.taskPolicyDirty) setTaskPolicies(draft.taskPolicies);
+      if (draft?.apiDirty) {
+        setApiDraft(draft.apiDraft);
+        setTossDraft(draft.tossDraft);
+      }
+      if (draft?.notionDirty) setNotionDraft(draft.notionDraft);
+      if (draft?.obsidianDirty) setVaultPath(draft.vaultPath);
+      if (draft?.automationDirty) setAutomation(draft.automation);
       setReactAgentContextScope("settings", { surface: "settings", viewId: "settings", reportKind: "", reportId: "" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "설정을 불러오지 못했습니다.");
+      if (isAbortError(err, controller.signal) || sequence !== loadAllSequence.current) return;
+      setError(settingsErrorMessage(err, "설정을 불러오지 못했습니다."));
+      setSettingsReadDiagnostic(captureReportError(err, sequence));
+      setAutomationRunsAvailable(false);
     } finally {
-      setBusy("");
+      if (sequence === loadAllSequence.current) {
+        loadAllController.current = null;
+        setBusy("");
+      }
     }
   }, []);
 
   const loadCacheStats = useCallback(async () => {
-    setBusy("cache");
-    setNote(null);
+    const operation = beginPanelOperation("cache", "캐시 상태를 불러오는 중입니다.");
     try {
-      const payload = await getJson<CacheStats>("/api/cache/stats");
+      const payload = await getJson<CacheStats>("/api/cache/stats", { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setCacheStats(payload);
-      say("cache", "캐시 상태를 불러왔습니다.");
+      completePanelOperation("cache", operation.operationId, operation.controller, "캐시 상태를 불러왔습니다.", "ok");
     } catch (err) {
-      fail("cache", err instanceof Error ? err.message : "캐시 상태를 불러오지 못했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("cache", operation.operationId, operation.controller, settingsErrorMessage(err, "캐시 상태를 불러오지 못했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }, []);
 
   async function cleanupCache() {
-    setBusy("cache-cleanup");
-    fail("cache", "");
-    say("cache", "오래된 기업 데이터 캐시를 정리하는 중입니다.");
+    const operation = beginPanelOperation("cache", "오래된 기업 데이터 캐시를 정리하는 중입니다.");
+    let result: CacheCleanup;
     try {
-      const result = await postJson<CacheCleanup>("/api/cache/cleanup", {});
-      const statsPayload = await getJson<CacheStats>("/api/cache/stats");
+      result = await postJson<CacheCleanup>("/api/cache/cleanup", {}, { signal: operation.controller.signal });
+    } catch (err) {
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("cache", operation.operationId, operation.controller, settingsErrorMessage(err, "캐시 정리에 실패했습니다."), "error", err);
+      finishPanelOperation(operation.operationId, operation.controller);
+      return;
+    }
+    if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
+    try {
+      const statsPayload = await getJson<CacheStats>("/api/cache/stats", { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setCacheStats(statsPayload);
       // 0개 삭제만 적으면 고장인지 지울 게 없는 것인지 알 수 없다.
-      say("cache", result.deleted
+      completePanelOperation("cache", operation.operationId, operation.controller, result.deleted
         ? `캐시 정리 완료: ${result.deleted}개 삭제, ${result.freed_mb || 0}MB 확보`
-        : "정리할 오래된 캐시가 없습니다. 보관 기간이 지난 파일만 지웁니다.");
+        : "정리할 오래된 캐시가 없습니다. 보관 기간이 지난 파일만 지웁니다.", "ok");
     } catch (err) {
-      fail("cache", err instanceof Error ? err.message : "캐시 정리에 실패했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      // The cleanup POST already succeeded. A failed refresh must never tell
+      // the user that the destructive operation itself failed.
+      const refreshMessage = isResponseLessError(err)
+        ? "캐시는 정리했습니다. 최신 상태는 확인할 수 없습니다."
+        : settingsErrorMessage(err, "캐시는 정리했지만 최신 상태를 불러오지 못했습니다.");
+      completePanelOperation("cache", operation.operationId, operation.controller, refreshMessage, "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
@@ -1023,43 +1827,64 @@ export function SettingsRoute() {
   // 물어야 한다 — 저장 후에야 알 수 있다면 되돌릴 수 없는 설정을 눈감고 고르는 셈이다.
   const retentionDays = Number(automation.rss?.retentionDays ?? DEFAULT_RETENTION_DAYS);
   useEffect(() => {
-    if (retentionDays <= 0) return undefined;
-    let alive = true;
-    // 실패해도 화면이 뜨는 편이 낫다. 미리보기가 없으면 안내 문장만 빠진다.
-    getJson<RetentionPreview>(`/api/rss/retention?days=${retentionDays}`)
-      .then((payload) => { if (alive) setRetentionPreview(payload); })
-      .catch(() => { if (alive) setRetentionPreview(null); });
-    return () => { alive = false; };
+    const sequence = ++retentionRequestSequence.current;
+    retentionController.current?.abort();
+    if (retentionDays <= 0) {
+      setRetentionPreview(null);
+      setRetentionPreviewDiagnostic(null);
+      retentionController.current = null;
+      return undefined;
+    }
+    const controller = new AbortController();
+    retentionController.current = controller;
+    // 실패해도 화면이 뜨는 편이 낫지만, 미리보기가 비었다고 확정하지 않는다.
+    getJson<RetentionPreview>(`/api/rss/retention?days=${retentionDays}`, { signal: controller.signal })
+      .then((payload) => {
+        if (controller.signal.aborted || sequence !== retentionRequestSequence.current) return;
+        setRetentionPreview(payload);
+        setRetentionPreviewDiagnostic(null);
+      })
+      .catch((error) => {
+        if (isAbortError(error, controller.signal) || sequence !== retentionRequestSequence.current) return;
+        setRetentionPreview(null);
+        setRetentionPreviewDiagnostic(captureReportError(error, sequence));
+      })
+      .finally(() => {
+        if (sequence === retentionRequestSequence.current) retentionController.current = null;
+      });
+    return () => {
+      retentionRequestSequence.current += 1;
+      controller.abort();
+    };
   }, [retentionDays]);
 
   async function runRetentionNow() {
-    setBusy("retention");
-    fail("automation", "");
+    const operation = beginPanelOperation("automation", "정리 작업을 시작하는 중입니다.");
     try {
       // 백그라운드 작업이라 여기서는 접수만 확인한다. 진행률은 상단 작업 표시가 맡는다.
-      await postJson("/api/rss/retention/run", {});
-      say("automation", "정리 작업을 시작했습니다. 진행 상황은 상단 작업 표시에서 확인합니다.");
+      await postJson("/api/rss/retention/run", {}, { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
+      completePanelOperation("automation", operation.operationId, operation.controller, "정리 작업을 시작했습니다. 진행 상황은 상단 작업 표시에서 확인합니다.", "ok");
     } catch (err) {
-      fail("automation", err instanceof Error ? err.message : "정리를 시작하지 못했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("automation", operation.operationId, operation.controller, settingsErrorMessage(err, "정리를 시작하지 못했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
   useEffect(() => {
-    loadAll();
+    void loadAll();
+    return () => {
+      loadAllSequence.current += 1;
+      loadAllController.current?.abort();
+      panelOperationId.current += 1;
+      panelController.current?.abort();
+      retentionRequestSequence.current += 1;
+      retentionController.current?.abort();
+    };
   }, [loadAll]);
 
-  useEffect(() => {
-    const current = providers[provider] || {};
-    const choices = current.modelChoices || [];
-    setProviderModel((previous) => choices.some((choice) => choice.value === previous)
-      ? previous
-      : choices.some((choice) => choice.value === current.model)
-        ? String(current.model || "")
-        : choices[0]?.value || "");
-    setProviderApiKey("");
-  }, [provider, providers]);
 
   useEffect(() => {
     const adapter = agentAdapters.find((item) => item.id === agentProvider) || agentAdapters[0];
@@ -1071,164 +1896,217 @@ export function SettingsRoute() {
         : choices[0]?.value || "");
   }, [agentProvider, agentAdapters]);
 
+  function cancelAiAgentSettings() {
+    const nextEnabled = settings?.agent?.enabled !== false;
+    const nextMode = "cli";
+    setAgentEnabled(nextEnabled);
+    setAgentMode(nextMode);
+    showPanelNote("agent", "AI Agent 변경을 취소했습니다.");
+  }
+
+  function cancelGlobalModelSettings() {
+    const savedAgentProvider = baselineAgentProvider;
+    const savedAgent = agentAdapters.find((adapter) => adapter.id === savedAgentProvider) || agentAdapters[0];
+    setAgentProvider(savedAgentProvider);
+    setAgentModel(normalizedChoice(savedAgent?.model, savedAgent?.modelChoices));
+    setGlobalReasoningEffort(baselineReasoningEffort);
+    showPanelNote("agent-model", "전역 모델 변경을 취소했습니다.");
+  }
+
+  function cancelTaskPolicies() {
+    // Keep the saved projection intact so legacy rows remain available to the
+    // serializer even though they are never rendered as editable rows.
+    setTaskPolicies(taskPoliciesSaved);
+    showPanelNote("task-policy", "작업별 변경을 취소했습니다.");
+  }
+
   async function saveAiAgentSettings() {
     if (!agentDirty) {
-      say("agent", "변경 사항이 없습니다.");
+      showPanelNote("agent", "변경 사항이 없습니다.");
       return;
     }
-    setBusy("agent");
-    say("agent", "AI Agent 설정을 저장하는 중입니다.");
+    const operation = beginPanelOperation("agent", "AI Agent 설정을 저장하는 중입니다.");
     try {
-      const models = Object.fromEntries(agentAdapters.map((adapter) => [adapter.id, adapter.model || ""]));
-      models[agentProvider] = agentModel;
-      const [agentPayload, settingsPayload] = await Promise.all([
-        postJson<AgentSettings>("/api/agent-bridge/settings", { provider: agentProvider, models }),
-        postJson<SettingsPayload>("/api/settings", {
-          agent: { enabled: agentEnabled, mode: agentMode },
-          llm: {
-            provider,
-            providers: {
-              [provider]: { apiKey: providerApiKey.trim(), model: providerModel },
-            },
-          },
-        }),
-      ]);
-      setAgentSettings(agentPayload);
+      const settingsPayload = await postJson<SettingsPayload>("/api/settings", {
+        agent: { enabled: agentEnabled, mode: agentMode },
+      }, { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setSettings(settingsPayload);
-      setProviderApiKey("");
-      setLlmStatus((current) => {
-        const next = { ...current };
-        delete next[provider];
-        return next;
-      });
-      window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: agentPayload }));
-      say("agent", agentEnabled
-        ? `AI Agent를 ${agentMode === "cli" ? "LLM CLI" : "LLM API"} 모드로 저장했습니다.`
-        : "AI Agent 생성을 비활성화했습니다.");
+      completePanelOperation("agent", operation.operationId, operation.controller, agentEnabled
+        ? `AI Agent를 ${"LLM CLI"} 모드로 저장했습니다.`
+        : "AI Agent 생성을 비활성화했습니다.", "ok");
     } catch (err) {
-      fail("agent", err instanceof Error ? err.message : "AI Agent 설정 저장에 실패했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("agent", operation.operationId, operation.controller, settingsErrorMessage(err, "AI Agent 설정 저장에 실패했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
-  async function testProvider(providerId: ProviderId) {
-    // 키 없이 눌러도 버튼은 눌리게 두고, 빠진 것을 그 자리에서 말한다(§4 disabled 금지).
-    if (!providers[providerId]?.hasApiKey) {
-      setLlmStatus((current) => ({
-        ...current,
-        [providerId]: { status: "missing_key", available: false, message: "API 키를 먼저 입력하세요" },
-      }));
+  async function saveGlobalModelSettings() {
+    if (agentModeDirty) {
+      showPanelNote("agent-model", "실행 방식 변경은 먼저 AI Agent 연동에서 저장하세요.");
       return;
     }
-    setLlmStatus((current) => ({ ...current, [providerId]: { checking: true } }));
+    if (!globalModelDirty) {
+      showPanelNote("agent-model", "변경 사항이 없습니다.");
+      return;
+    }
+    const operation = beginPanelOperation("agent-model", "AI Agent 모델 설정을 저장하는 중입니다.");
     try {
-      const result = await postJson<LlmTestResult>(`/api/settings/llm/test/${encodeURIComponent(providerId)}`, {});
-      setLlmStatus((current) => ({ ...current, [providerId]: result }));
+      const body: {
+        agent: { mode: "cli" | "api"; provider?: string; model?: string };
+        llm: { reasoningEffort: string };
+      } = {
+        agent: { mode: agentMode },
+        llm: { reasoningEffort: globalReasoningEffort },
+      };
+      {
+        // Send the draft tuple explicitly. The settings service must validate
+        // the selected model before the concurrent CLI settings write changes
+        // the environment underneath it.
+        body.agent.provider = agentProvider;
+        body.agent.model = agentModel;
+      }
+      const settingsRequest = postJson<SettingsPayload>("/api/settings", body, { signal: operation.controller.signal });
+      const agentRequest = postJson<AgentSettings>("/api/agent-bridge/settings", {
+          provider: agentProvider,
+          models: Object.fromEntries(agentAdapters.map((adapter) => [adapter.id, adapter.id === agentProvider ? agentModel : adapter.model || ""])),
+        }, { signal: operation.controller.signal });
+      const [settingsPayload, agentPayload] = await Promise.all([settingsRequest, agentRequest]);
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
+      setSettings(settingsPayload);
+      setGlobalReasoningEffort(String(settingsPayload.llm?.reasoningEffort || globalReasoningEffort));
+      if (agentPayload) {
+        setAgentSettings(agentPayload);
+        window.dispatchEvent(new CustomEvent("folio:agent-settings-updated", { detail: agentPayload }));
+      }
+
+      completePanelOperation("agent-model", operation.operationId, operation.controller, "AI Agent 모델 설정을 저장했습니다.", "ok");
     } catch (err) {
-      setLlmStatus((current) => ({
-        ...current,
-        [providerId]: { status: "network_error", available: false, message: err instanceof Error ? err.message : "연결 확인 실패" },
-      }));
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("agent-model", operation.operationId, operation.controller, settingsErrorMessage(err, "AI Agent 모델 설정 저장에 실패했습니다."), "error", err);
+    } finally {
+      finishPanelOperation(operation.operationId, operation.controller);
+    }
+  }
+
+  async function saveTaskPolicies() {
+    if (!taskPolicyDirty) {
+      showPanelNote("task-policy", "변경 사항이 없습니다.");
+      return;
+    }
+    const operation = beginPanelOperation("task-policy", "작업별 모델 설정을 저장하는 중입니다.");
+    try {
+      const payload = await postJson<TaskPoliciesPayload>("/api/settings/task-policies", serializableTaskPolicies(taskPolicies), { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
+      setTaskPolicies(normalizeTaskPoliciesForFrontend(payload));
+      setTaskPoliciesSaved(payload);
+      completePanelOperation("task-policy", operation.operationId, operation.controller, "작업별 모델 설정을 저장했습니다.", "ok");
+    } catch (err) {
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("task-policy", operation.operationId, operation.controller, settingsErrorMessage(err, "작업별 모델 설정 저장에 실패했습니다."), "error", err);
+    } finally {
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
   async function saveApiSettings() {
     if (!apiDirty) {
-      say("api", "변경 사항이 없습니다.");
+      showPanelNote("api", "변경 사항이 없습니다.");
       return;
     }
-    setBusy("api");
-    say("api", "외부 데이터 API 설정을 저장하는 중입니다.");
+    const operation = beginPanelOperation("api", "외부 데이터 API 설정을 저장하는 중입니다.");
     try {
       const payload = await postJson<SettingsPayload>("/api/settings", {
         fred: { apiKey: apiDraft.fred.trim() },
         bok: { apiKey: apiDraft.bok.trim() },
         dart: { apiKey: apiDraft.dart.trim() },
-      });
+        toss: {
+          enabled: tossDraft.enabled,
+          clientId: tossDraft.clientId.trim(),
+          clientSecret: tossDraft.clientSecret.trim(),
+        },
+      }, { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setSettings(payload);
       setApiDraft({
         fred: "",
         bok: "",
         dart: "",
       });
-      say("api", "외부 데이터 API 설정을 저장했습니다.");
+      setTossDraft({ enabled: Boolean(payload.toss?.enabled), clientId: "", clientSecret: "" });
+      completePanelOperation("api", operation.operationId, operation.controller, "외부 데이터 API 설정을 저장했습니다.", "ok");
     } catch (err) {
-      fail("api", err instanceof Error ? err.message : "API 설정 저장에 실패했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("api", operation.operationId, operation.controller, settingsErrorMessage(err, "API 설정 저장에 실패했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
   async function saveNotionSettings() {
     if (!notionDirty) {
-      say("notion", "변경 사항이 없습니다.");
+      showPanelNote("notion", "변경 사항이 없습니다.");
       return;
     }
-    setBusy("notion");
-    say("notion", "Notion 설정을 저장하는 중입니다.");
+    const operation = beginPanelOperation("notion", "Notion 설정을 저장하는 중입니다.");
     try {
       const payload = await postJson<SettingsPayload>("/api/settings", {
         notion: { token: notionDraft.token.trim(), dbId: notionDraft.dbId.trim() },
-      });
+      }, { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setSettings(payload);
       setNotionDraft({ token: "", dbId: payload.notion?.dbId || "" });
-      say("notion", "Notion 설정을 저장했습니다.");
+      completePanelOperation("notion", operation.operationId, operation.controller, "Notion 설정을 저장했습니다.", "ok");
     } catch (err) {
-      fail("notion", err instanceof Error ? err.message : "Notion 설정 저장에 실패했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("notion", operation.operationId, operation.controller, settingsErrorMessage(err, "Notion 설정 저장에 실패했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
   async function saveObsidianSettings() {
     if (!obsidianDirty) {
-      say("obsidian", "변경 사항이 없습니다.");
+      showPanelNote("obsidian", "변경 사항이 없습니다.");
       return;
     }
-    setBusy("obsidian");
-    say("obsidian", "Obsidian 경로를 저장하는 중입니다.");
+    const operation = beginPanelOperation("obsidian", "Obsidian 경로를 저장하는 중입니다.");
     try {
-      const payload = await postJson<ObsidianSettings>("/api/obsidian/settings", { vaultPath: vaultPath.trim() });
+      const payload = await postJson<ObsidianSettings>("/api/obsidian/settings", { vaultPath: vaultPath.trim() }, { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setObsidian(payload);
       setVaultPath(payload.vaultPath || vaultPath);
-      say("obsidian", payload.vaultPath ? "Obsidian 경로를 저장했습니다." : "Vault 경로를 입력하세요.");
+      completePanelOperation("obsidian", operation.operationId, operation.controller, payload.vaultPath ? "Obsidian 경로를 저장했습니다." : "Vault 경로를 입력하세요.", "ok");
     } catch (err) {
-      fail("obsidian", err instanceof Error ? err.message : "Obsidian 설정 저장에 실패했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("obsidian", operation.operationId, operation.controller, settingsErrorMessage(err, "Obsidian 설정 저장에 실패했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
   async function saveAutomationSettings() {
     if (!automationDirty) {
-      say("automation", "변경 사항이 없습니다.");
+      showPanelNote("automation", "변경 사항이 없습니다.");
       return;
     }
-    setBusy("automation");
-    say("automation", "자동화 설정을 저장하는 중입니다.");
+    const operation = beginPanelOperation("automation", "자동화 설정을 저장하는 중입니다.");
     try {
-      const payload = await postJson<AutomationSettings>("/api/automation/settings", buildAutomationPayload(automation));
+      const payload = await postJson<AutomationSettings>("/api/automation/settings", buildAutomationPayload(automation), { signal: operation.controller.signal });
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
       setAutomation(buildAutomationPayload(payload));
       setAutomationSaved(buildAutomationPayload(payload));
-      say("automation", "자동화 설정을 저장했습니다.");
+      completePanelOperation("automation", operation.operationId, operation.controller, "자동화 설정을 저장했습니다.", "ok");
     } catch (err) {
-      fail("automation", err instanceof Error ? err.message : "자동화 설정 저장에 실패했습니다.");
+      if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
+      completePanelOperation("automation", operation.operationId, operation.controller, settingsErrorMessage(err, "자동화 설정 저장에 실패했습니다."), "error", err);
     } finally {
-      setBusy("");
+      finishPanelOperation(operation.operationId, operation.controller);
     }
   }
 
-  const providerRows = useMemo(() => API_PROVIDERS.map((providerId) => {
-    const row = providers[providerId] || {};
-    const result = llmStatus[providerId];
-    const checking = result?.checking;
-    const label = checking ? "확인 중" : result?.available ? "사용 가능" : result ? "확인 실패" : row.hasApiKey ? "확인 필요" : "키 없음";
-    const className = result?.available ? "ready" : checking || result ? "warn" : "";
-    const detail = result?.message || `${row.model || "모델 미설정"} · ${row.hasApiKey ? "저장된 키가 있습니다." : "API Key를 저장하세요."}`;
-    const checkedAt = checkedAtLabel(result?.checkedAt);
-    return { providerId, row, label, className, detail, checkedAt };
-  }), [llmStatus, providers]);
 
   return (
     <div className="react-settings-route" data-settings-route>
@@ -1237,7 +2115,7 @@ export function SettingsRoute() {
         title="설정"
         description="화면, 관심 시장, 자동화와 LLM·외부 데이터·내보내기 연동을 관리합니다."
         actions={(
-        <button className="btn" type="button" onClick={() => loadAll(true)} disabled={busy === "load"}>
+        <button className="btn" type="button" onClick={() => loadAll(true, true)} disabled={busy === "load"}>
           {busy === "load" ? "불러오는 중" : "새로고침"}
         </button>
         )}
@@ -1254,14 +2132,17 @@ export function SettingsRoute() {
       </div>
 
       {error && <p className="react-dashboard-error">{error}</p>}
+      {settingsReadDiagnostic && <ReportErrorDiagnostic diagnostic={settingsReadDiagnostic} />}
+      {marketScopeReadIssue && <p className="react-dashboard-error" data-qa="settings-market-scope-read-error" role="alert">{marketScopeReadIssue.message}</p>}
+      {marketScopeReadIssue && <ReportErrorDiagnostic diagnostic={marketScopeReadIssue.diagnostic} />}
 
-      {tab === "integrations" ? (
-        <div id="settings-integrations" className="sub-tab-panel active">
-          <section className="settings-panel input-panel">
+      {tab === "ai" ? (
+        <div id="settings-ai" className="sub-tab-panel active">
+          <section className="settings-panel input-panel" data-qa="agent-integration-settings">
             <div className="input-panel-header settings-agent-header">
               <div>
-                <h3>AI Agent 설정</h3>
-                <p>보고서와 시장 내러티브 생성에 사용할 Agent 경로를 선택합니다. 비활성화하면 규칙 기반으로 생성합니다.</p>
+                <h3>AI Agent 연동</h3>
+                <p>AI Agent 사용 여부와 CLI 연결 상태를 관리합니다.</p>
               </div>
             </div>
             <div className="settings-grid">
@@ -1271,7 +2152,6 @@ export function SettingsRoute() {
                   <ToggleSwitch ariaLabel="AI Agent 사용" checked={agentEnabled} onChange={setAgentEnabled} compact />
                   <div className="segment" role="group" aria-label="AI Agent 실행 방식">
                     <button aria-pressed={agentMode === "cli"} type="button" onClick={() => setAgentMode("cli")}>LLM CLI</button>
-                    <button aria-pressed={agentMode === "api"} type="button" onClick={() => setAgentMode("api")}>LLM API</button>
                   </div>
                 </div>
                 {!agentEnabled && (
@@ -1280,28 +2160,10 @@ export function SettingsRoute() {
               </div>
             </div>
 
+            {settings?.agent?.mode === "api" && <p role="status" className="settings-hint">LLM API 지원이 종료되었습니다. CLI 연결을 확인한 뒤 AI Agent 연동을 저장하거나 AI를 꺼 주세요.</p>}
             <fieldset className="settings-agent-controls" disabled={!agentEnabled}>
-
-            {agentMode === "cli" ? (
+            {(
               <>
-                <div className="settings-grid">
-                  <label className="field">
-                    <span>사용할 CLI</span>
-                    <select value={agentProvider} onChange={(event) => setAgentProvider(event.currentTarget.value)}>
-                      {(agentAdapters.length ? agentAdapters : [{ id: "codex", label: "Codex CLI" }, { id: "claude", label: "Claude Code CLI" }, { id: "antigravity", label: "Antigravity CLI" }]).map((adapter) => (
-                        <option value={adapter.id} key={adapter.id}>{adapter.label || adapter.id}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>모델</span>
-                    <select value={agentModel} onChange={(event) => setAgentModel(event.currentTarget.value)}>
-                      {selectedAgentChoices.length ? selectedAgentChoices.map((choice) => (
-                        <option value={choice.value} key={choice.value}>{choice.label}</option>
-                      )) : <option value="">모델 목록 없음</option>}
-                    </select>
-                  </label>
-                </div>
                 {/* 안내 화면과 같은 컴포넌트다. 안내가 "나중에 설정에서 바꿀 수 있습니다"라고
                     말하므로 설정에서도 설치·로그인이 되어야 그 말이 참이 된다. */}
                 <AgentCliSetup
@@ -1309,65 +2171,63 @@ export function SettingsRoute() {
                   onSettings={(payload) => setAgentSettings((current) => ({ ...(current || {}), ...payload }))}
                 />
               </>
-            ) : (
-              <>
-                <label className="field">
-                  <span>API 제공자</span>
-                  <select value={provider} onChange={(event) => setProvider(providerOrDefault(event.currentTarget.value))}>
-                    <option value="openai">GPT / OpenAI</option>
-                    <option value="gemini">Gemini / Google</option>
-                    <option value="claude">Claude / Anthropic</option>
-                  </select>
-                </label>
-                <div className="settings-grid">
-                  <label className="field">
-                    <span>{selectedProviderMeta.name} API Key</span>
-                    <input value={providerApiKey} onChange={(event) => setProviderApiKey(event.currentTarget.value)} type="password" autoComplete="off" placeholder={selectedProvider.hasApiKey ? `${selectedProvider.apiKeyMasked} 저장됨` : selectedProviderMeta.key} />
-                  </label>
-                  <label className="field">
-                    <span>{selectedProviderMeta.name} Model</span>
-                    <select value={providerModel} onChange={(event) => setProviderModel(event.currentTarget.value)}>
-                      {providerChoices.length ? providerChoices.map((choice) => (
-                        <option value={choice.value} key={choice.value}>{choice.label}</option>
-                      )) : <option value="">모델 목록 없음</option>}
-                    </select>
-                  </label>
-                </div>
-                <div className="cli-provider-list" aria-live="polite">
-                  {providerRows.map(({ providerId, row, label, className, detail, checkedAt }) => (
-                    <div className="cli-provider-row" key={providerId}>
-                      <div className="cli-provider-main">
-                        <div className="cli-provider-head">
-                          <strong>{row.label || PROVIDER_LABELS[providerId].name}</strong>
-                          <span className={`cli-chip status-chip ${className}`}>{label}</span>
-                          {/* 언제 잰 값인지 없으면 "사용 가능"이 지금인지 지난주인지 모른다. */}
-                          {checkedAt && <span className="cli-provider-checked">{checkedAt} 확인</span>}
-                        </div>
-                        <div className="cli-provider-meta">{detail}</div>
-                      </div>
-                      <div className="cli-provider-actions">
-                        <button className="btn" type="button" disabled={Boolean(llmStatus[providerId]?.checking)} onClick={() => testProvider(providerId)}>연결 확인</button>
-                        {row.setupUrl && <a className="btn" href={row.setupUrl} target="_blank" rel="noreferrer">콘솔 열기</a>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {/* 사용량과 잔액은 이 앱이 볼 수 없다. 조회에 관리자 키가 필요해서 일반 API
-                    키로는 불가능하다 — 모르는 것을 아는 척하지 않고 어디서 보는지만 말한다. */}
-                <p className="cli-setup-note">
-                  이 앱은 키가 살아 있는지만 확인합니다. <b>사용량과 잔액은 제공사 콘솔</b>에서 보세요.
-                </p>
-              </>
             )}
 
             </fieldset>
             <div className="filter-actions settings-actions">
               {agentDirty && !busy && <span className="settings-dirty-hint">저장 안 된 변경</span>}
-              <button className={agentDirty && !busy ? "btn btn--primary" : "btn"} type="button" onClick={saveAiAgentSettings} disabled={busy === "agent"}>AI Agent 설정 저장</button>
-              <button className="btn" type="button" onClick={() => loadAll(true)} disabled={busy === "load"}>모델/상태 새로고침</button>
+              <button className={agentDirty && !busy ? "btn btn--primary" : "btn"} type="button" onClick={saveAiAgentSettings} disabled={busy !== ""}>AI Agent 연동 저장</button>
+              <button className="btn" type="button" onClick={cancelAiAgentSettings} disabled={!agentDirty || busy !== ""}>AI Agent 변경 취소</button>
             </div>
             <PanelNote note={note} panel="agent" />
           </section>
+
+          <section className="settings-panel input-panel" data-qa="ai-agent-model-settings">
+            {/* 다른 설정 패널과 같은 헤더다. `.settings-provider-head`는 Toss처럼 패널 안
+                하위 블록의 `strong` 제목을 위한 것이라, 여기에 쓰면 h3가 규칙 없이 브라우저
+                기본값(19.89px/700 + 위아래 여백)으로 떨어져 옆 패널의 24px/800과 어긋났다. */}
+            <div className="input-panel-header">
+              <div>
+                <h3>AI Agent 모델 설정</h3>
+                <p>전역 모델을 먼저 정하고, 아래에서 작업별 모델을 따로 지정할 수 있습니다.</p>
+              </div>
+            </div>
+            <GlobalModelSettings
+              mode={agentMode}
+              agentProvider={agentProvider}
+              agentModel={agentModel}
+              selectedAgent={selectedAgent}
+              globalReasoningEffort={globalReasoningEffort}
+              reasoningChoices={globalReasoningChoices}
+              onAgentProviderChange={(nextProvider) => setAgentProvider(nextProvider)}
+              onAgentModelChange={(nextModel) => setAgentModel(nextModel)}
+              onReasoningChange={setGlobalReasoningEffort}
+              onSave={saveGlobalModelSettings}
+              onCancel={cancelGlobalModelSettings}
+              canSave={globalModelDirty && busy === ""}
+              canCancel={globalModelDirty && busy === ""}
+              busy={busy !== ""}
+              note={note}
+            />
+
+            <TaskPolicySettings
+                policy={taskPolicies}
+                globalEnabled={agentEnabled}
+                globalConfig={globalTaskConfig}
+                                adapters={agentAdapters}
+                onChange={setTaskPolicies}
+                onSave={saveTaskPolicies}
+                onCancel={cancelTaskPolicies}
+                canCancel={taskPolicyDirty && busy === ""}
+                canSave={taskPolicyDirty && busy === ""}
+                dirty={taskPolicyDirty}
+                busy={busy !== ""}
+                note={note}
+              />
+          </section>
+        </div>
+      ) : tab === "integrations" ? (
+        <div id="settings-integrations" className="sub-tab-panel active">
 
           <section className="settings-panel input-panel">
             <div className="input-panel-header"><h3>API 연동</h3><p>외부 데이터 API 키를 설정합니다.</p></div>
@@ -1382,6 +2242,46 @@ export function SettingsRoute() {
             <div className="settings-grid">
               <label className="field"><span>DART API Key</span><input value={apiDraft.dart} onChange={(event) => setApiDraft({ ...apiDraft, dart: event.currentTarget.value })} type="password" autoComplete="off" placeholder={settings?.dart?.hasApiKey ? `${settings.dart.apiKeyMasked} 저장됨` : "OpenDART API 키"} /></label>
               <div className="field"><span>DART 상태</span><p className="section-subtitle">{statusText(settings?.dart?.hasApiKey, settings?.dart?.apiKeyMasked, "국내 기업 분석용 DART API 키가 없습니다.", "DART API 키")}</p></div>
+            </div>
+            <div className="surface surface--inset settings-toss-integration" role="group" aria-labelledby="toss-open-api-title">
+              <div className="settings-provider-head">
+                <div>
+                  <strong id="toss-open-api-title">Toss Open API</strong>
+                  <p className="settings-hint">실시간 시세와 Portfolio 보유 내역 가져오기에 사용합니다. 주문은 보내지 않습니다.</p>
+                </div>
+                <ToggleSwitch
+                  ariaLabel="Toss Open API 사용"
+                  checked={tossDraft.enabled}
+                  onChange={(enabled) => setTossDraft({ ...tossDraft, enabled })}
+                  compact
+                />
+              </div>
+              <div className="settings-grid">
+                <label className="field">
+                  <span>Toss Client ID</span>
+                  <input
+                    value={tossDraft.clientId}
+                    onChange={(event) => setTossDraft({ ...tossDraft, clientId: event.currentTarget.value })}
+                    type="password"
+                    autoComplete="off"
+                    disabled={!tossDraft.enabled}
+                    placeholder={settings?.toss?.hasClientId ? `${settings.toss.clientIdMasked} 저장됨` : "Toss Client ID"}
+                  />
+                </label>
+                <label className="field">
+                  <span>Toss Client Secret</span>
+                  <input
+                    value={tossDraft.clientSecret}
+                    onChange={(event) => setTossDraft({ ...tossDraft, clientSecret: event.currentTarget.value })}
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={!tossDraft.enabled}
+                    placeholder={settings?.toss?.hasClientSecret ? `${settings.toss.clientSecretMasked} 저장됨` : "Toss Client Secret"}
+                  />
+                </label>
+              </div>
+              <p className="settings-hint" role="status" aria-live="polite">{tossStatusText(settings?.toss, tossDraft)}</p>
+              <p className="settings-hint">여기서는 설정만 저장합니다. 계좌 조회와 Portfolio 반영은 Portfolio에서 직접 눌렀을 때만 시작되며, 반영 전 미리보기를 거칩니다.</p>
             </div>
             <div className="filter-actions settings-actions">
               {apiDirty && !busy && <span className="settings-dirty-hint">저장 안 된 변경</span>}
@@ -1465,12 +2365,14 @@ export function SettingsRoute() {
             </div>
           </section>
 
-          <MarketScopePanel />
+          <MarketScopePanel readIssue={marketScopeReadIssue} />
 
           <WorkspacePanel />
 
           <section className="settings-panel input-panel">
             <div className="input-panel-header"><h3>자동화</h3><p>수집, 중기 시장 정리, 브리핑 생성을 각각 독립 루틴으로 관리합니다.</p></div>
+            {automationRunsReadIssue && <p className="react-dashboard-error" data-qa="settings-automation-runs-read-error" role="alert">{automationRunsReadIssue.message}</p>}
+            {automationRunsReadIssue && <ReportErrorDiagnostic diagnostic={automationRunsReadIssue.diagnostic} />}
             <div className="automation-routines">
               <section className="automation-card">
                 <div className="automation-card-head">
@@ -1492,7 +2394,8 @@ export function SettingsRoute() {
                     {RETENTION_CHOICES.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
                   </select>
                 </label>
-                <RetentionNote preview={retentionPreview} days={retentionDays} />
+                <RetentionNote preview={retentionPreview} days={retentionDays} unavailable={Boolean(retentionPreviewDiagnostic)} />
+                {retentionPreviewDiagnostic && <ReportErrorDiagnostic diagnostic={retentionPreviewDiagnostic} />}
                 <div className="automation-card-actions">
                   <button
                     type="button"
@@ -1504,7 +2407,7 @@ export function SettingsRoute() {
                   </button>
                   <span className="settings-hint">{reclaimHint(retentionPreview?.reclaimableBytes)}</span>
                 </div>
-                <LastRun run={lastRunByKind.rss} />
+                <LastRun run={lastRunByKind.rss} unavailable={!automationRunsAvailable} />
               </section>
 
               <section className="automation-card">
@@ -1518,7 +2421,7 @@ export function SettingsRoute() {
                 </div>
                 <label className="field"><span>정리 간격</span><select value={String(automation.marketMemory?.intervalMinutes || 1440)} onChange={(event) => setAutomation({ ...automation, marketMemory: { ...automation.marketMemory, intervalMinutes: event.currentTarget.value } })}><option value="720">12시간마다</option><option value="1440">하루마다</option><option value="2880">이틀마다</option><option value="10080">일주일마다</option></select></label>
                 <div className="automation-inline-switch"><span>RSS 수집 직후에도 정리</span><ToggleSwitch ariaLabel="RSS 수집 직후 Market Memory 정리" checked={Boolean(automation.marketMemory?.runAfterRss)} onChange={(checked) => setAutomation({ ...automation, marketMemory: { ...automation.marketMemory, runAfterRss: checked } })} compact /></div>
-                <LastRun run={lastRunByKind.marketMemory} />
+                <LastRun run={lastRunByKind.marketMemory} unavailable={!automationRunsAvailable} />
               </section>
 
               <section className="automation-card">
@@ -1533,6 +2436,7 @@ export function SettingsRoute() {
                   schedules={automation.briefingSchedules || []}
                   watched={watchedMarkets}
                   runsById={lastBriefingRunById}
+                  runsAvailable={automationRunsAvailable}
                   onChange={(next) => setAutomation({ ...automation, briefingSchedules: next })}
                 />
                 <label className="field">
@@ -1603,6 +2507,7 @@ export function SettingsRoute() {
             </div>
             <WorkLogMigrationControl />
           </section>
+          <DiagnosticRetention />
         </div>
       )}
     </div>

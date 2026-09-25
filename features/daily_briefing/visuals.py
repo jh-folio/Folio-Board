@@ -393,7 +393,7 @@ def _coverage(requested, returned, missing):
 def _latest_series_time(series):
     values = []
     for row in series or []:
-        for bucket in (row.get("intraday") or {}, row.get("daily") or {}):
+        for bucket in (row.get("intraday") or {}, row.get("hourly") or {}, row.get("daily") or {}):
             points = bucket.get("points") or []
             if points:
                 values.append(str(points[-1].get("time") or ""))
@@ -408,7 +408,7 @@ def _series_provider(series):
             source_by_interval = row.get("sourceByInterval") or {}
             provider = "+".join(
                 str(source_by_interval.get(key) or "").strip()
-                for key in ("intraday", "daily")
+                for key in ("intraday", "hourly", "daily")
                 if str(source_by_interval.get(key) or "").strip()
             )
         for part in provider.split("+"):
@@ -463,6 +463,7 @@ def _price_snapshot(snapshot_id, market_key, role, session_date, requested, seri
     point_counts = {
         row.get("ticker", ""): {
             "intraday": len(((row.get("intraday") or {}).get("points") or [])),
+            "hourly": len(((row.get("hourly") or {}).get("points") or [])),
             "daily": len(((row.get("daily") or {}).get("points") or [])),
         }
         for row in series
@@ -492,7 +493,7 @@ def _price_snapshot(snapshot_id, market_key, role, session_date, requested, seri
         # 실제 통화는 `currencies`와 각 시리즈에서 읽는다.
         "currency": currencies[0] if len(currencies) == 1 else "MIXED" if currencies else "",
         "currencies": currencies,
-        "granularities": ["5m", "1d"],
+        "granularities": ["5m", "1h", "1d"],
         "dataSufficiency": {"minimumTrendPoints": 8, "pointCounts": point_counts, "status": "sparse" if sparse else "sufficient" if series else "unavailable"},
         "subject": subject or {},
         "series": series,
@@ -538,6 +539,7 @@ def collect_briefing_visuals(
             ]
             return {
                 "intraday": {"interval": "5m", "points": []},
+                "hourly": {"interval": "1h", "points": []},
                 "daily": {"interval": "1d", "points": rows},
             }
     else:
@@ -579,13 +581,16 @@ def collect_briefing_visuals(
                     "provider": value.get("provider") or "market-data-v2",
                     "sourceByInterval": value.get("sourceByInterval") or {},
                     "intraday": value.get("intraday") or {"interval": "5m", "points": []},
+                    "hourly": value.get("hourly") or {"interval": "1h", "points": []},
                     "daily": value.get("daily") or {"interval": "1d", "points": []},
                 }
+                warnings.extend(f"{symbol}: {warning}" for warning in value.get("warnings") or [] if str(warning))
             except Exception:
                 price_cache[key] = {
                     "provider": "unavailable",
                     "sourceByInterval": {},
                     "intraday": {"interval": "5m", "points": []},
+                    "hourly": {"interval": "1h", "points": []},
                     "daily": {"interval": "1d", "points": []},
                 }
                 warnings.append(f"{symbol}: price_history_unavailable")
@@ -704,6 +709,11 @@ def collect_briefing_visuals(
             }
             warnings.append(f"{market_key} heatmap: unavailable")
         heatmap_id = f"market-heatmap:{market_key}:{date}"
+        heatmap_coverage = heatmap_payload.get("coverage") or {}
+        if heatmap_coverage.get("status") != "complete":
+            warnings.append(
+                f"{market_key} heatmap: {heatmap_coverage.get('status') or 'unavailable'}"
+            )
         sidecar_snapshots[heatmap_id] = {
             "schemaVersion": 2,
             "id": heatmap_id,
@@ -723,6 +733,10 @@ def collect_briefing_visuals(
             "rows": heatmap_payload.get("rows") or [],
             "warnings": heatmap_payload.get("warnings") or [],
         }
+        if isinstance(heatmap_payload.get("universeProvenance"), dict):
+            sidecar_snapshots[heatmap_id]["universeProvenance"] = deepcopy(
+                heatmap_payload["universeProvenance"]
+            )
         heatmap_snapshot = {
             key: value for key, value in sidecar_snapshots[heatmap_id].items()
             if key not in {"rows"}
@@ -1035,7 +1049,9 @@ def _current_price_snapshot(saved, fetch_price, clock, warnings, retrieved_at):
             history = {}
             warnings.append(f"{symbol}: price_history_unavailable")
         intraday = history.get("intraday") or {"interval": "5m", "points": []}
+        hourly = history.get("hourly") or {"interval": "1h", "points": []}
         daily = history.get("daily") or {"interval": "1d", "points": []}
+        warnings.extend(f"{symbol}: {warning}" for warning in history.get("warnings") or [] if str(warning))
         if not (intraday.get("points") or daily.get("points")):
             missing.append(symbol)
             continue
@@ -1043,7 +1059,10 @@ def _current_price_snapshot(saved, fetch_price, clock, warnings, retrieved_at):
             "ticker": ticker,
             "providerSymbol": symbol,
             "label": saved_series.get("label") or ticker,
+            "provider": history.get("provider") or "market-data-v2",
+            "sourceByInterval": history.get("sourceByInterval") or {},
             "intraday": intraday,
+            "hourly": hourly,
             "daily": daily,
         })
     current = _price_snapshot(saved.get("id"), market_key, saved.get("role"), target, requested, series, missing, subject=deepcopy(saved.get("subject") or {}))
@@ -1073,6 +1092,10 @@ def _current_heatmap_snapshot_v2(saved, payload, clock, retrieved_at):
         "marketStatus": deepcopy(clock),
         "warnings": deepcopy(payload.get("warnings") or []),
     })
+    if isinstance(payload.get("universeProvenance"), dict):
+        current["universeProvenance"] = deepcopy(payload["universeProvenance"])
+    else:
+        current.pop("universeProvenance", None)
     current.pop("sidecarRef", None)
     return current
 
@@ -1225,7 +1248,16 @@ def load_current_visuals(
             continue
         snapshots.append(current)
     available = sum(1 for row in snapshots if row.get("freshness") != "unavailable")
-    status = "ok" if snapshots and available == len(snapshots) else "partial" if available else "unavailable"
+    incomplete_heatmap = any(
+        row.get("type") == "market_heatmap"
+        and (row.get("coverage") or {}).get("status") != "complete"
+        for row in snapshots
+    )
+    status = (
+        "unavailable" if not available
+        else "partial" if incomplete_heatmap or available != len(snapshots)
+        else "ok"
+    )
     if status == "unavailable":
         warnings.append("current market snapshot is unavailable; saved briefing snapshot remains unchanged")
     return {

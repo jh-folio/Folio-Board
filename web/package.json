@@ -1,9 +1,9 @@
 {
-  "name": "folio-os-web",
+  "name": "folio-board-web",
   "private": true,
-  "version": "0.5.4",
+  "version": "0.6.0",
   "type": "module",
-  "description": "Folio OS React island shell (gradual adoption). Builds fixed-name bundles into ../public/react for the FastAPI static server to serve.",
+  "description": "Folio Board React island shell (gradual adoption). Builds fixed-name bundles into ../public/react for the FastAPI static server to serve.",
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
@@ -11,7 +11,8 @@
     "test:source": "node --test tests/*.test.mjs",
     "test:unit": "vitest run",
     "test:ui": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:vendor": "node scripts/build-vendor.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.19.0",
@@ -24,6 +25,8 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
+    "echarts": "6.1.0",
+    "lightweight-charts": "5.2.0",
     "react-doctor": "^0.9.3",
     "react-grab": "0.1.50",
     "react-scan": "0.5.7",

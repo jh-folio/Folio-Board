@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pytest
 
+from features.common.tests.company_listing_fixtures import company_listing_cache
+
 from features.common.company_resolution import _fold_latin_accents, _key, resolve_company_query
 
 

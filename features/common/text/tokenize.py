@@ -1,6 +1,6 @@
 """Language-aware tokenization for indexing, clustering, and deduplication.
 
-Folio OS tokenized with ``[A-Za-z0-9가-힣]{2,}`` in four places. That works for
+Folio Board tokenized with ``[A-Za-z0-9가-힣]{2,}`` in four places. That works for
 Korean and English and fails two different ways elsewhere, measured on 20 market
 headlines per language (Task 0.4):
 

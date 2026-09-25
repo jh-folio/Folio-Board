@@ -19,7 +19,7 @@ def test_market_tape_wraps_snapshot_and_korea_data():
             "ok": True,
             "latestUsEquityDate": "2026-06-12",
             "tickers": {
-                "SPY": {"label": "S&P 500 ETF", "last": 6100, "oneDayPct": 0.4, "asOfDate": "2026-06-12"},
+            "SPY": {"label": "S&P 500 ETF", "last": 6100, "oneDayPct": 0.4, "asOfDate": "2026-06-12"},
             },
         },
         korea_market_data={
@@ -66,6 +66,46 @@ def test_market_tape_uses_latest_completed_kr_session_before_open():
     kospi = next(item for item in tape["items"] if item["symbol"] == "KOSPI")
     assert kospi["status"] == "fresh"
     assert tape["session"]["kr"] == "2026-08-03"
+
+
+def test_market_tape_preserves_null_comparison_and_session_metadata():
+    tape = build_market_tape(
+        date="2026-08-31",
+        market_snapshot={"ok": True, "tickers": {
+            "EURUSD=X": {
+                "last": 1.1, "oneDayPct": None,
+                "oneDayComparisonDate": None,
+                "oneDayReason": "unsupported_comparison_calendar",
+                "comparisonSource": "yfinance",
+                "priceUnit": "quote",
+                "priceBasis": "unadjusted_close",
+                "fiveDayPct": None, "fiveDayComparisonDate": None,
+                "fiveDayReason": "unsupported_comparison_calendar",
+                "asOfDate": "2026-08-31",
+            },
+        }},
+        market_windows={"usRegularSessionDate": "2026-08-31"},
+    )
+    item = tape["items"][0]
+    assert item["oneDayPct"] is None
+    assert item["oneDayComparisonDate"] is None
+    assert item["oneDayReason"] == "unsupported_comparison_calendar"
+    assert item["fiveDayReason"] == "unsupported_comparison_calendar"
+    assert item["comparisonSource"] == "yfinance"
+    assert item["priceUnit"] == "quote"
+    assert item["priceBasis"] == "unadjusted_close"
+
+
+def test_market_tape_rejects_nonfinite_values():
+    tape = build_market_tape(
+        date="2026-08-31",
+        market_snapshot={"ok": True, "tickers": {
+            "NVDA": {"last": float("inf"), "oneDayPct": float("-inf"), "asOfDate": "2026-08-31"},
+        }},
+    )
+    item = tape["items"][0]
+    assert item["value"] is None
+    assert item["changePct"] is None
 
 
 def _run_all():

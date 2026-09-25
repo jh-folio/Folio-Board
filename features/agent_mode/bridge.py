@@ -7,35 +7,112 @@ import shutil
 import subprocess
 import threading
 import time
+from concurrent.futures import CancelledError
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Callable
 
 from features.agent_mode import schema
 from features.agent_mode import service as agent_service
 from features.agent_mode import job_runtime
+from features.common.quality_generation.call_budget import SharedRepairBudget, bind_briefing_budget, current_briefing_budget
+from features.common.execution_result import WebSearchFacts
 from features.agent_mode.briefing_contract import briefing_contract_violations
 from features.company_analysis.report_contract import (
     missing_sections as company_missing_sections,
     render_section_retry as company_section_retry,
 )
-from features.common.jobs import cancel_job, get_job, submit_job
+from features.common.jobs import (
+    cancel_job,
+    diagnostic_execution,
+    diagnostic_stage_end,
+    diagnostic_stage_failure,
+    diagnostic_stage_start,
+    get_job,
+    submit_job,
+)
 from features.common.shared_jobs_schema import TaskType
 from features.llm_settings.client import load_dotenv
 from features.common.workspace import data_dir
+from features.llm_settings.model_catalog import is_safe_cli_model_id
+from features.llm_settings.reasoning import is_supported_reasoning_effort
+from features.llm_settings.task_policy import CLI_REASONING_EFFORTS, TaskPolicyError
+from features.llm_settings.task_runtime import (
+    bind_task_policy,
+    current_task_policy,
+    generation_mode as task_generation_mode,
+    task_is_enabled,
+    task_policy_metadata,
+    task_snapshot,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TIMEOUT_SECONDS = 1800
 MAX_OUTPUT_CHARS = 4_000_000
+# A chat answer is not a report body. Letting it grow to the report-generation
+# ceiling meant nothing caught a runaway conversational reply until it neared
+# 4M characters.
+MAX_CHAT_OUTPUT_CHARS = 60_000
+# 어댑터 사용량 한도. 코드 결함과 대처가 완전히 다르므로(기다리면 된다 vs 고쳐야 한다)
+# 일반 실행 실패와 구분해 올린다 — 예전에는 잡에 `adapter_failed`만 남아 CLI 세션
+# 기록을 직접 열어야만 429였다는 사실을 알 수 있었다.
+_RATE_LIMIT_MARKS = (
+    "hit your session limit",
+    "hit your usage limit",
+    "hit your weekly limit",
+    "rate_limit",
+    "rate limit",
+    "429",
+)
+
+
+class AgentRateLimitError(RuntimeError):
+    """어댑터 사용량 한도. `resetHint`는 CLI가 알려 준 리셋 시각 문구."""
+
+    def __init__(self, message: str, reset_hint: str = "") -> None:
+        super().__init__(message)
+        self.reset_hint = reset_hint
+
+
+class AgentProcessError(RuntimeError):
+    """A completed CLI process returned no usable successful result."""
+
+
+class AgentAdapterUnavailableError(RuntimeError):
+    """The selected, already-inspected adapter was not ready to execute."""
+
+
+class AgentOutputValidationError(RuntimeError):
+    """The bridge's own closed output-contract validator rejected a result."""
+
+
+def rate_limit_hint(text: str) -> str | None:
+    """사용량 한도 표지가 있으면 리셋 시각 문구(없으면 빈 문자열)를 돌려준다."""
+    blob = str(text or "")
+    folded = blob.casefold()
+    if not any(mark in folded for mark in _RATE_LIMIT_MARKS):
+        return None
+    lowered = blob.lower()
+    at = lowered.find("resets")
+    if at < 0:
+        return ""
+    # 줄 하나만 본다. CLI가 "resets 9pm (Asia/Seoul)"처럼 알려 준다.
+    tail = blob[at:].splitlines()[0]
+    return " ".join(tail.split())[:80]
+
+
 ADAPTERS = ("codex", "claude", "antigravity")
 STATUS_ADAPTERS = ADAPTERS
 # adapter id → 실제 실행 바이너리 이름.
 BINARY_NAMES = {"codex": "codex", "claude": "claude", "antigravity": "agy"}
 
-# agy headless가 파일 읽기를 거부했다는 표시. Folio OS의 Agent task는 **전부** 컨텍스트
+# agy headless가 파일 읽기를 거부했다는 표시. Folio Board의 Agent task는 **전부** 컨텍스트
 # 팩 파일을 읽는 것으로 시작하므로(팩이 5MB라 프롬프트에 넣을 수 없다), 이 권한이 없으면
 # 브리핑·기업분석 같은 task를 아예 만들 수 없다. 대화처럼 파일을 안 읽는 호출은 된다.
 AGY_PERMISSION_DENIED_MARK = 'the "read_file" permission'
 AGY_PERMISSION_HELP = (
-    "Antigravity(agy)의 headless 모드가 파일 읽기 권한을 자동 거부했습니다. Folio OS의 "
+    "Antigravity(agy)의 headless 모드가 파일 읽기 권한을 자동 거부했습니다. Folio Board의 "
     "브리핑·기업분석은 컨텍스트 팩 파일을 읽어야 하므로 이 상태에서는 만들 수 없습니다. "
     "설정에서 Codex나 Claude CLI로 바꾸거나, "
     "`~/.gemini/antigravity-cli/settings.json`의 permissions.allow에 read_file 규칙을 "
@@ -44,7 +121,7 @@ AGY_PERMISSION_HELP = (
 
 AGY_UNVERIFIED_HELP = (
     "Antigravity(agy)가 컨텍스트 팩 파일을 읽을 수 있는지 아직 확인하지 않았습니다. "
-    "Folio OS의 브리핑·기업분석은 팩 파일을 읽어야 하므로 확인 전에는 열지 않습니다. "
+    "Folio Board의 브리핑·기업분석은 팩 파일을 읽어야 하므로 확인 전에는 열지 않습니다. "
     "설정 > AI Agent에서 `상태 새로고침`을 누르면 실제로 확인합니다(약 20초). "
     "그동안은 Codex나 Claude CLI를 사용하세요."
 )
@@ -57,7 +134,188 @@ _STATUS_CACHE: tuple[float, dict] | None = None
 _STATUS_LOCK = threading.Lock()
 _PROCESS_LOCK = threading.Lock()
 _RUNNING_PROCESSES: dict[str, subprocess.Popen] = {}
-_RUN_SEMAPHORE = threading.Semaphore(1)
+_RUN_SEMAPHORE = threading.RLock()
+_PROMPT_JOB_ID: ContextVar[str] = ContextVar("folio_prompt_job_id", default="")
+
+
+@contextmanager
+def _bind_prompt_job(job_id: str):
+    token = _PROMPT_JOB_ID.set(job_id)
+    try:
+        yield
+    finally:
+        _PROMPT_JOB_ID.reset(token)
+
+
+def _queued_task_snapshot(task_type: str, params: dict) -> dict | None:
+    """Resolve a user-visible task policy once when a bridge job is accepted."""
+    try:
+        existing = params.get("_task_policy_snapshot")
+        return task_snapshot(task_type, existing if isinstance(existing, dict) else None)
+    except TaskPolicyError as error:
+        # Internal bridge jobs (quality repair, planner helpers, and legacy
+        # tasks) are intentionally outside the user-visible task list.
+        if error.code == "task_policy_unknown_task":
+            return None
+        raise
+
+
+def _bridge_task_gate(snapshot: dict | None) -> dict | None:
+    """Return a no-engine result when the global gate was turned off in queue."""
+    if snapshot is None or task_is_enabled(snapshot, recheck_global=True):
+        return None
+    return {
+        "generationMode": "rules",
+        "artifactType": str(snapshot.get("runtimeTaskType") or snapshot.get("taskKey") or "agent_task"),
+        "policy": task_policy_metadata(snapshot),
+        "message": "전역 AI Agent가 꺼져 있어 이 작업은 실행하지 않았습니다.",
+    }
+
+
+def _prepare_bridge_params(task_type: str, params: dict | None, adapter: str) -> tuple[dict, str, dict | None]:
+    payload = dict(params) if isinstance(params, dict) else {}
+    snapshot = _queued_task_snapshot(task_type, payload)
+    if snapshot is None:
+        return payload, str(adapter or ""), None
+    payload["_task_policy_snapshot"] = snapshot
+    selected_adapter = str(snapshot.get("provider") or adapter or "")
+    return payload, selected_adapter, snapshot
+
+# A briefing child should not inherit desktop browser/computer-use channels.  The
+# policy is intentionally task-local: ContextVar keeps a concurrent Agent task
+# (or a later ordinary chat) on its own tool policy.
+_BRIEFING_CODEX_TOOL_POLICY: ContextVar[tuple[str, ...]] = ContextVar(
+    "briefing_codex_tool_policy", default=()
+)
+_BRIEFING_DISABLED_CODEX_FEATURES = (
+    "plugins",
+    "browser_use",
+    "browser_use_external",
+    "computer_use",
+)
+# `node_repl` can be configured as either stdio or URL transport.  Add only its
+# enable override after the CLI itself resolves whether that legacy server exists;
+# replacing its table would corrupt URL transport settings.
+_BRIEFING_DISABLED_NODE_REPL = "mcp_servers.node_repl.enabled=false"
+_BRIEFING_MCP_DISCOVERY_TIMEOUT_SECONDS = 8
+
+
+@contextmanager
+def _diagnostic_boundary(stage_code: str, boundary: str):
+    """Observe a concrete bridge boundary without changing bridge behavior."""
+    recorder, stage_id = diagnostic_stage_start(stage_code)
+    try:
+        yield
+    except Exception as error:
+        diagnostic_stage_failure(
+            recorder,
+            error,
+            stage_id=stage_id,
+            stage_code=stage_code if stage_id is not None else None,
+            boundary=boundary,
+        )
+        raise
+    else:
+        diagnostic_stage_end(recorder, stage_id, stage_code)
+
+
+@contextmanager
+def _observed_tool_policy(task_type: str, selected: dict):
+    """Enter the concrete tool policy under a short preflight observation."""
+    recorder, stage_id = diagnostic_stage_start("preflight")
+    entered = False
+    try:
+        with _briefing_codex_tool_policy(task_type, selected):
+            entered = True
+            diagnostic_stage_end(recorder, stage_id, "preflight")
+            yield
+    except Exception as error:
+        # Only policy entry belongs to preflight.  Failures from the enclosed
+        # task already have their own context/generate/validate/commit stage.
+        if not entered:
+            diagnostic_stage_failure(
+                recorder,
+                error,
+                stage_id=stage_id,
+                stage_code="preflight" if stage_id is not None else None,
+                boundary="adapter",
+            )
+            diagnostic_stage_end(recorder, stage_id, "preflight")
+        raise
+
+
+def _briefing_mcp_server_names(adapter: dict) -> frozenset[str]:
+    """Ask Codex which non-plugin MCP servers this child would inherit.
+
+    This is configuration discovery only: no model, MCP server, browser, or
+    computer-use tool is started.  Keep failures terse because CLI output may
+    contain user configuration details.
+    """
+    command = [
+        adapter["executable"], "mcp", "list", "--json",
+        "-c", "features.plugins=false",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_child_environment(),
+            timeout=_BRIEFING_MCP_DISCOVERY_TIMEOUT_SECONDS,
+            creationflags=_creation_flags(),
+        )
+        if result.returncode != 0:
+            raise RuntimeError("nonzero")
+        payload = json.loads(result.stdout or "")
+        if isinstance(payload, list):
+            servers = payload
+        elif isinstance(payload, dict):
+            servers = payload.get("mcp_servers", payload.get("servers"))
+        else:
+            servers = None
+        if not isinstance(servers, list):
+            raise ValueError("invalid_mcp_list")
+        names: set[str] = set()
+        for server in servers:
+            if not isinstance(server, dict):
+                raise ValueError("invalid_mcp_server")
+            name = server.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("invalid_mcp_server_name")
+            names.add(name.strip())
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, TypeError, ValueError, RuntimeError):
+        raise RuntimeError("브리핑용 Codex MCP 구성을 확인하지 못했습니다. 다시 시도하세요.") from None
+    return frozenset(names)
+
+
+def _briefing_codex_tool_policy_overrides(adapter: dict) -> tuple[str, ...]:
+    args: list[str] = []
+    for feature in _BRIEFING_DISABLED_CODEX_FEATURES:
+        args.extend(["-c", f"features.{feature}=false"])
+    if "node_repl" in _briefing_mcp_server_names(adapter):
+        args.extend(["-c", _BRIEFING_DISABLED_NODE_REPL])
+    return tuple(args)
+
+
+@contextmanager
+def _briefing_codex_tool_policy(task_type: str, adapter: dict):
+    """Limit only Codex invocations belonging to one briefing task."""
+    token = None
+    if task_type == "briefing" and str(adapter.get("id") or "").strip().lower() == "codex":
+        token = _BRIEFING_CODEX_TOOL_POLICY.set(_briefing_codex_tool_policy_overrides(adapter))
+    try:
+        yield
+    finally:
+        if token is not None:
+            _BRIEFING_CODEX_TOOL_POLICY.reset(token)
+
+
+def _briefing_codex_tool_policy_args() -> list[str]:
+    """Return per-invocation overrides for the active briefing context only."""
+    return list(_BRIEFING_CODEX_TOOL_POLICY.get())
 
 
 def _creation_flags() -> int:
@@ -97,6 +355,9 @@ def _probe_adapter(adapter: str) -> dict:
         "version": "",
         "error": "",
         "bridgeSupported": True,
+        # Server-authoritative web-search capability (Agent Dock Stage D) —
+        # the Dock UI reads this later instead of guessing per adapter.
+        "supportsWebSearch": adapter_supports_web_search(adapter),
     }
     if not executable:
         result["error"] = "CLI를 찾을 수 없습니다."
@@ -248,7 +509,7 @@ def agent_preflight(adapter: str = "") -> dict:
         "workspace",
         "Workspace",
         ROOT.exists() and (ROOT / "app.py").exists(),
-        "Folio OS workspace를 확인했습니다." if ROOT.exists() else "Folio OS workspace를 찾을 수 없습니다.",
+        "Folio Board workspace를 확인했습니다." if ROOT.exists() else "Folio Board workspace를 찾을 수 없습니다.",
         detail=str(ROOT),
     )
     add(
@@ -302,7 +563,7 @@ def agent_preflight(adapter: str = "") -> dict:
         "bridge_supported",
         "Bridge Support",
         bool(selected.get("bridgeSupported", True)),
-        "이 CLI는 Folio OS Direct Bridge에서 지원됩니다."
+        "이 CLI는 Folio Board Direct Bridge에서 지원됩니다."
         if selected.get("bridgeSupported", True)
         else selected.get("error") or "이 CLI는 현재 Direct Bridge에서 지원되지 않습니다.",
     )
@@ -326,43 +587,62 @@ def _select_adapter(requested: str = "") -> dict:
         selected = next((item for item in status["adapters"] if item["id"] == requested), None)
         if not selected or not selected["available"]:
             detail = (selected or {}).get("error") or "CLI를 사용할 수 없습니다."
-            raise RuntimeError(f"{requested} adapter unavailable: {detail}")
+            raise AgentAdapterUnavailableError(f"{requested} adapter unavailable: {detail}")
         return selected
     selected_id = status.get("selectedAdapter")
     selected = next((item for item in status["adapters"] if item["id"] == selected_id), None)
     if not selected:
-        raise RuntimeError(status.get("message") or "Agent CLI를 사용할 수 없습니다.")
+        raise AgentAdapterUnavailableError(status.get("message") or "Agent CLI를 사용할 수 없습니다.")
     return selected
 
 
-def _agent_prompt(pack_path: Path, pack: dict) -> str:
+def _agent_prompt(pack_path: Path, pack: dict, *, inline_briefing: bool = False) -> str:
     contract = pack.get("outputContract") or {}
     output_format = contract.get("format", "markdown")
     lines = [
-        "Act as the final Folio OS report author for this single task.",
-        f"Read the UTF-8 Agent Context Pack at: {pack_path}",
-        "Follow agentInstructions, prompt, context, evidence boundaries, outputContract, and writeBackContract in that pack.",
-        "Do not modify files, run the Folio OS writeback command, or expose credentials.",
+        "Act as the final Folio Board report author for this single task.",
+        ("Use the prepared briefing input below; no file or shell lookup is needed."
+         if inline_briefing else f"Read the UTF-8 Agent Context Pack at: {pack_path}"),
+        "Follow agentInstructions, prompt, context, evidence boundaries, outputContract, and writeBackContract in the supplied input.",
+        "Do not modify files, run the Folio Board writeback command, or expose credentials.",
+        "Complete the requested payload now. Do not enter plan mode, write a plan, or ask for approval to start drafting.",
     ]
+    if pack.get("taskType") == "briefing":
+        lines.append(
+            "This briefing must use the local Context Pack and must not open or control a browser, "
+            "external browser, or computer UI."
+        )
     if sum(1 for section in (contract.get("requiredSections") or []) if section == "Source & Data Notes") > 1:
         lines.append(
             "Each market block must end with its own '## Source & Data Notes' covering ONLY that market. "
             "Do not write a combined tail section (notes or references) that spans multiple markets."
         )
     required = contract.get("requiredSections") or []
-    expected_titles = [
-        str(value).strip() for value in (contract.get("expectedTitles") or {}).values()
-        if str(value).strip()
-    ]
-    expected_leaders = contract.get("expectedLeadingCompanies") or {}
-    title_instruction = (
-        "Market title H1 lines must exactly match: " + " / ".join(f"'# {title}'" for title in expected_titles) + "."
-        if expected_titles
-        else "Each market title must be an H1 with a session date and status, like '# US Market Briefing — YYYY.MM.DD 마감' or '# Korea Market Briefing — YYYY.MM.DD 장중'."
-    )
+    # 태스크 공통 — 어떤 taskType이 requiredSections를 채우든 맞는 말이다.
     if required:
         lines.extend([
             "Do not summarize, shorten, merge, or omit required report sections (필수 섹션을 축약하지 마세요).",
+            "Required Markdown heading fragments, in contract order:",
+            *(f"- {section}" for section in required),
+        ])
+    # 브리핑 전용 — 마켓 타이틀·분량 하한·"오늘의 ... 성격"·주도 기업 em dash 서식은
+    # briefing_contract.py만 채우는 필드다(company_analysis 등 다른 outputContract는
+    # 이 키들을 안 쓴다). taskType 조건 없이 requiredSections만 보고 붙였더니 기업분석에
+    # "최소 분량 0자"·브리핑 제목 형식·**"blockquotes 금지"**가 새어 들어갔다 — 마지막
+    # 항목은 §글쓰기 방식의 섹션 요약 blockquote 규칙과 정면으로 충돌한다(실측 P3:
+    # 섹션 요약 blockquote 준수율 13/16).
+    if required and pack.get("taskType") == "briefing":
+        expected_titles = [
+            str(value).strip() for value in (contract.get("expectedTitles") or {}).values()
+            if str(value).strip()
+        ]
+        expected_leaders = contract.get("expectedLeadingCompanies") or {}
+        title_instruction = (
+            "Market title H1 lines must exactly match: " + " / ".join(f"'# {title}'" for title in expected_titles) + "."
+            if expected_titles
+            else "Each market title must be an H1 with a session date and status, like '# US Market Briefing — YYYY.MM.DD 마감' or '# Korea Market Briefing — YYYY.MM.DD 장중'."
+        )
+        lines.extend([
             f"Minimum report length: {int(contract.get('minimumCharacters') or 0)} characters.",
             f"Minimum '**한 줄 결론:**' count: {int(contract.get('minimumOneLineConclusions') or 0)}.",
             f"Minimum middle-dot summary line count: {int(contract.get('minimumMiddleDotBullets') or 0)}.",
@@ -375,9 +655,14 @@ def _agent_prompt(pack_path: Path, pack: dict) -> str:
                 ) + "."]
                 if expected_leaders else []
             ),
-            "Required Markdown heading fragments, in contract order:",
-            *(f"- {section}" for section in required),
         ])
+    if inline_briefing:
+        # The shared context builder already pins the writer evidence, market
+        # facts, manifest IDs and control hints. Do not make a read-only author
+        # parse megabytes of draft charts/internal staging data with a shell.
+        for key in ("agentInstructions", "prompt", "context", "outputContract", "writeBackContract"):
+            value = pack.get(key) or ({} if key.endswith("Contract") else "")
+            lines.extend([f"\n--- {key} ---", value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)])
     lines.append(f"Return only the final {output_format} payload. Do not wrap it in commentary or Markdown fences.")
     return "\n".join(lines)
 
@@ -398,19 +683,81 @@ def adapter_supports_web_search(adapter_id: str) -> bool:
     return str(adapter_id or "").strip().lower() in WEB_SEARCH_ARGS
 
 
+SEARCH_POLICIES = frozenset({"off", "auto", "on"})
+
+
+def resolve_effective_web_search(policy: str, adapter_override: str = "") -> tuple[bool, str, str | None]:
+    """(effective_web_search, resolved_adapter_id, blocked_reason) for Agent Dock Stage D.
+
+    `off` never searches. `auto`/`on` both need `adapter_supports_web_search()`
+    on the adapter that will actually run — `_select_adapter()` resolves that
+    the same way `run_agent_prompt()` itself will, so this reflects the real
+    outcome rather than guessing. Only `on` sets `blocked_reason` when
+    unsupported (Antigravity today): the caller should refuse the turn rather
+    than run the CLI without search and call that "on" (plan §5.3). `auto`
+    degrades silently — trying is not required.
+    """
+    normalized = policy if policy in SEARCH_POLICIES else "off"
+    if normalized == "off":
+        return False, "", None
+    selected = _select_adapter(adapter_override)
+    adapter_id = str(selected.get("id") or "")
+    if not adapter_supports_web_search(adapter_id):
+        return False, adapter_id, "unsupported" if normalized == "on" else None
+    return True, adapter_id, None
+
+
+def _cli_reasoning_effort(adapter_id: str, value: str = "", *, model: str = "") -> str:
+    """Normalize a task effort and fail closed before spawning a CLI.
+
+    The persisted task policy is validated when it is saved, but callers such
+    as a resumed job can carry an older snapshot.  Rechecking here prevents a
+    stale or hand-built snapshot from silently losing its requested effort.
+    ``provider_default`` is represented by an omitted adapter argument.
+    """
+    effort = str(value or "").strip().lower().replace("-", "_")
+    if effort in {"", "default", "providerdefault", "provider_default"}:
+        return ""
+    adapter = str(adapter_id or "").strip().lower()
+    supported = CLI_REASONING_EFFORTS.get(adapter, frozenset())
+    if effort not in supported or not is_supported_reasoning_effort("cli", adapter, model, effort):
+        raise ValueError(f"Unsupported reasoning effort for CLI adapter: {adapter_id}/{effort}")
+    return effort
+
+
+def adapter_supports_reasoning(adapter_id: str, value: str) -> bool:
+    """Return whether a non-default effort has a known adapter transport."""
+    try:
+        _cli_reasoning_effort(adapter_id, value)
+    except ValueError:
+        return False
+    return True
+
+
 def _adapter_command(
-    adapter: dict, prompt: str = "", model_override: str = "", *, web_search: bool = False
+    adapter: dict,
+    prompt: str = "",
+    model_override: str = "",
+    *,
+    web_search: bool = False,
+    reasoning_effort: str = "",
 ) -> list[str]:
     from features.agent_mode.setup import configured_model
 
     executable = adapter["executable"]
     model = str(model_override or "").strip() or configured_model(adapter["id"])
+    if model and not is_safe_cli_model_id(model):
+        # Fail closed before spawning, like an unsupported effort below.
+        raise ValueError(f"Unsupported model ID for CLI adapter: {adapter.get('id', '')}")
+    effort = _cli_reasoning_effort(adapter.get("id", ""), reasoning_effort, model=model)
     if adapter["id"] == "antigravity":
         # agy는 단일 프롬프트를 인자(--print <prompt>)로 받아 비대화형 실행한다. 단, Windows
         # headless는 출력을 stdout으로 내지 못하므로 _invoke_agent_cli에서 Windows를 사전 차단한다.
         command = [executable]
         if model:
             command.extend(["--model", model])
+        if effort:
+            command.extend(["--effort", effort])
         command.extend(["--print", prompt])
         return command
     if adapter["id"] == "codex":
@@ -424,23 +771,54 @@ def _adapter_command(
         ]
         if model:
             command.extend(["--model", model])
+        if effort:
+            # Codex's `-c` override is scoped to this process and therefore
+            # does not mutate the user's global config.toml.
+            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(_briefing_codex_tool_policy_args())
+        if _BRIEFING_CODEX_TOOL_POLICY.get():
+            # Explicitly override inherited cached/live search during writing.
+            # The separate lookup pass alone may enable native web search.
+            command.extend(["-c", 'web_search="live"' if web_search else 'web_search="disabled"'])
         if web_search:
             command.extend(WEB_SEARCH_ARGS["codex"])
+            # A lookup call needs to know whether the model actually searched;
+            # plain stdout never says. codex's own JSONL event log carries a
+            # `type: "web_search"` item exactly when the tool fires (실측
+            # 2026-09-12) — see `_extract_web_search_observation()`.
+            command.append("--json")
         command.append("-")
         return command
     if adapter["id"] == "claude":
+        # Planning is not a filesystem sandbox: it makes the author stop for
+        # approval instead of returning the report. Deny prompts and expose
+        # only the read tools needed by this bridge; never inherit write tools.
+        read_tools = ["Read", "Glob", "Grep"]
+        if web_search:
+            read_tools.append("WebSearch")
         command = [
             executable,
             "--print",
             "--output-format",
-            "text",
+            # A lookup call needs to see whether WebSearch actually fired.
+            # The single-line "text" format never carries that, and even the
+            # final usage summary's own server_tool_use.web_search_requests
+            # stays 0 when the tool ran (실측 2026-09-12: Claude Code executes
+            # WebSearch through an internal helper model, so only the
+            # per-turn tool_use blocks in stream-json are reliable — see
+            # `_extract_web_search_observation()`).
+            "stream-json" if web_search else "text",
+            *(["--verbose"] if web_search else []),
             "--permission-mode",
-            "plan",
+            "dontAsk",
+            "--tools", ",".join(read_tools),
+            "--allowedTools", ",".join(read_tools),
+            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         ]
         if model:
             command.extend(["--model", model])
-        if web_search:
-            command.extend(WEB_SEARCH_ARGS["claude"])
+        if effort:
+            command.extend(["--effort", effort])
         return command
     raise ValueError(f"Unsupported adapter: {adapter['id']}")
 
@@ -548,6 +926,76 @@ def _prompt_needs_file_read(prompt: str) -> bool:
     return "Agent Context Pack" in prompt
 
 
+def _parse_jsonl(raw: str) -> list[dict]:
+    """어댑터의 구조화 이벤트 로그를 줄 단위로 읽는다. 못 읽는 줄은 조용히 건너뛴다 —
+    이 파싱은 관측용 보너스이지, 실패했다고 실행 자체를 죽일 이유가 아니다.
+    """
+    events: list[dict] = []
+    for line in str(raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            events.append(parsed)
+    return events
+
+
+def _claude_used_web_search(events: list[dict]) -> bool:
+    for event in events:
+        if event.get("type") != "assistant":
+            continue
+        content = ((event.get("message") or {}).get("content")) or []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "WebSearch":
+                return True
+    return False
+
+
+def _codex_used_web_search(events: list[dict]) -> bool:
+    for event in events:
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "web_search":
+            return True
+    return False
+
+
+def _extract_web_search_observation(adapter_id: str, raw_stdout: str) -> tuple[str | None, WebSearchFacts]:
+    """찾기 콜에서 실제로 검색이 일어났는지, 어댑터 자신의 구조화 출력에서만 읽는다.
+
+    설정 가능 여부(`adapter_supports_web_search`)는 관측이 아니다 — 이 함수는 **이번
+    실행**에서 어댑터가 남긴 이벤트를 읽는다(실측 2026-09-12: claude
+    `--output-format stream-json`의 `tool_use`/`name=WebSearch` 블록, codex `--json`의
+    `item.type == "web_search"`). 파싱에 실패하거나 지원하지 않는 어댑터면 관측하지
+    않은 것으로 남긴다 — 텍스트를 지어내거나 사용 여부를 추측하지 않는다. 호출자는
+    이때 원래 stdout을 그대로 쓴다.
+    """
+    events = _parse_jsonl(raw_stdout)
+    if not events:
+        return None, WebSearchFacts()
+    if adapter_id == "claude":
+        result_event = next((event for event in reversed(events) if event.get("type") == "result"), None)
+        text = result_event.get("result") if isinstance(result_event, dict) else None
+        if not isinstance(text, str) or not text:
+            return None, WebSearchFacts()
+        used = _claude_used_web_search(events)
+        return text, WebSearchFacts(enabled=True, used="yes" if used else "no", observation="complete")
+    if adapter_id == "codex":
+        text = None
+        for event in events:
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                text = item["text"]
+        if not text:
+            return None, WebSearchFacts()
+        used = _codex_used_web_search(events)
+        return text, WebSearchFacts(enabled=True, used="yes" if used else "no", observation="complete")
+    return None, WebSearchFacts()
+
+
 def _invoke_agent_cli(
     selected: dict,
     prompt: str,
@@ -556,18 +1004,43 @@ def _invoke_agent_cli(
     model_override: str = "",
     *,
     web_search: bool = False,
+    reasoning_effort: str = "",
+    facts_sink: dict | None = None,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
+    observe_result: bool = False,
+    result_sink: dict | None = None,
 ) -> str:
+    """`facts_sink`는 순수 additive 관측 통로다: 값을 넘기지 않는 기존 호출자는
+    이전과 완전히 같게 동작한다. 넘기면, 검색이 실제로 지원되는 요청이었을 때
+    `facts_sink["webSearchFacts"]`에 `WebSearchFacts`를 채운다(관측 실패 시 기본값).
+    호출마다 새로 만든 로컬 dict를 넘기는 것을 전제한다 — 동시 호출 간에 공유되는
+    가변 상태를 두지 않기 위해서다(`serialize=False` 찾기 콜은 동시에 돌 수 있다).
+    `result_sink`는 별도의 메모리 전용 ExecutionResult 통로다. 응답 dict·보고서·
+    로그로 직렬화하지 않는다. 기존 facts_sink에는 허용된 종료/검색 사실만 둔다.
+    """
+    if result_sink is not None:
+        result_sink.pop("result", None)
     is_antigravity = selected.get("id") == "antigravity"
     if is_antigravity and _AGY_FILE_READS_BLOCKED and _prompt_needs_file_read(prompt):
         # 이미 거부당한 것을 알고 있다. 팩을 만들고 수 분을 버린 뒤 같은 곳에서
         # 실패하게 두지 않는다.
         raise RuntimeError(AGY_PERMISSION_HELP)
+    effective_web_search = bool(web_search) and adapter_supports_web_search(selected.get("id", ""))
     command = _adapter_command(
         selected,
         prompt,
         model_override=model_override,
-        web_search=bool(web_search) and adapter_supports_web_search(selected.get("id", "")),
+        web_search=effective_web_search,
+        reasoning_effort=reasoning_effort,
     )
+    structured = (observe_result or result_sink is not None) and selected.get("id") in {"codex", "claude"}
+    if structured:
+        if selected["id"] == "codex" and "--json" not in command:
+            command.insert(-1, "--json")
+        elif selected["id"] == "claude":
+            command[command.index("--output-format") + 1] = "stream-json"
+            if "--verbose" not in command:
+                command.append("--verbose")
     proc = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -591,15 +1064,47 @@ def _invoke_agent_cli(
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
+        if result_sink is not None:
+            from features.common.execution_result import ExecutionResult
+            from features.common.provider_result import ProviderPayload
+            result_sink["result"] = ExecutionResult(
+                transport_status="failed", completion_status="incomplete", stop_reason="other",
+                provider=ProviderPayload(raw_stop_reason="deadline_expired"),
+            )
         raise TimeoutError(f"Agent CLI 실행 시간이 {timeout}초를 초과했습니다.")
     finally:
         if job_id:
             with _PROCESS_LOCK:
                 _RUNNING_PROCESSES.pop(job_id, None)
-    if proc.returncode != 0:
+    observed_body = None
+    execution_result = None
+    if structured:
+        from features.common.cli_provider_result import observe_execution
+        execution_result = observe_execution(selected["id"], stdout, returncode=proc.returncode)
+        observed_body = execution_result.text
+        completion = {"completionStatus": execution_result.completion_status, "stopReason": execution_result.stop_reason}
+        if result_sink is not None:
+            result_sink["result"] = execution_result
+        if facts_sink is not None:
+            facts_sink["executionFacts"] = completion
+    if proc.returncode != 0 and not (structured and observed_body):
         error = (stderr or stdout or f"exit {proc.returncode}").strip()[-2000:]
-        raise RuntimeError(f"Agent CLI 실행 실패 (exit {proc.returncode}): {error}")
-    output = _strip_outer_fence(stdout)
+        hint = rate_limit_hint(error)
+        if hint is not None:
+            raise AgentRateLimitError(f"Agent CLI 사용량 한도에 걸렸습니다. {hint}".strip(), hint)
+        raise AgentProcessError(f"Agent CLI 실행 실패 (exit {proc.returncode}): {error}")
+    if structured and not observed_body:
+        raise AgentProcessError("Agent CLI 완료 응답 본문을 확인하지 못했습니다.")
+    output = _strip_outer_fence(observed_body if structured else stdout)
+    facts = WebSearchFacts()
+    if effective_web_search:
+        # 구조화 출력에서 최종 텍스트를 다시 뽑는다 — stream-json/--json으로 바꾼
+        # stdout은 이제 순수 응답 텍스트가 아니라 이벤트 로그이기 때문이다. 못 뽑으면
+        # (스키마가 바뀌었거나 파싱이 실패하면) 원래 stdout을 그대로 쓴다: 그 값이
+        # JSON으로 안 읽히는 것은 호출자가 이미 다루는 "조회 실패" 경로일 뿐이다.
+        observed_text, facts = _extract_web_search_observation(selected.get("id", ""), stdout)
+        if observed_text:
+            output = _strip_outer_fence(observed_text)
     if not output:
         detail = (stderr or "").strip()[-500:]
         if is_antigravity and AGY_PERMISSION_DENIED_MARK in (stderr or ""):
@@ -608,11 +1113,29 @@ def _invoke_agent_cli(
             # `internal_error`로만 남았다.
             _mark_agy_file_reads_blocked(selected.get("version", ""), detail)
             raise RuntimeError(AGY_PERMISSION_HELP)
-        raise RuntimeError(
+        hint = rate_limit_hint(detail)
+        if hint is not None:
+            # 한도는 exit 0 + 빈 stdout으로도 온다. 일반 "빈 결과"로 보고하면 사용자는
+            # 무엇을 기다려야 하는지 알 수 없다.
+            raise AgentRateLimitError(f"Agent CLI 사용량 한도에 걸렸습니다. {hint}".strip(), hint)
+        raise AgentProcessError(
             "Agent CLI가 최종 결과를 반환하지 않았습니다." + (f" (stderr: {detail})" if detail else "")
         )
-    if len(output) > MAX_OUTPUT_CHARS:
+    if len(output) > max_output_chars:
         raise RuntimeError("Agent CLI 결과가 허용 크기를 초과했습니다.")
+    if facts_sink is not None:
+        facts_sink["webSearchFacts"] = facts
+    if result_sink is not None:
+        from dataclasses import replace
+        from features.common.execution_result import ExecutionResult
+        from features.common.provider_result import ProviderPayload
+        result_sink["result"] = replace(
+            (execution_result or ExecutionResult(
+                transport_status="succeeded", provider=ProviderPayload(
+                    adapter=selected.get("id") if selected.get("id") in {"codex", "claude", "antigravity"} else "unknown",
+                ),
+            )).with_text(output), web_search=facts,
+        )
     return output
 
 
@@ -631,7 +1154,7 @@ def _briefing_correction_prompt(base_prompt: str, violations: list[str], contrac
     return "\n".join([
         base_prompt,
         "",
-        "The previous briefing output violated the Folio OS API-parity contract.",
+        "The previous briefing output violated the Folio Board API-parity contract.",
         "Regenerate the complete report from the same context pack. Do not patch or 축약하지 마세요.",
         "Contract violations:",
         problems,
@@ -650,59 +1173,229 @@ def _used_web_search(selected: dict, requested: bool) -> bool:
     return bool(requested) and adapter_supports_web_search(selected.get("id", ""))
 
 
+def _task_cli_kwargs(task_policy: dict | None) -> dict[str, str]:
+    """Turn a frozen task policy into bridge-only CLI kwargs.
+
+    Empty/default fields are omitted so the existing global CLI behavior and
+    lightweight test seams remain unchanged.  Explicit values are carried to
+    the adapter process; they are never written to the user's CLI config.
+    """
+    if not isinstance(task_policy, dict):
+        return {}
+    kwargs: dict[str, str] = {}
+    model = str(task_policy.get("model") or "").strip()
+    if model:
+        kwargs["model_override"] = model
+    effort = _cli_reasoning_effort(
+        str(task_policy.get("provider") or ""),
+        str(task_policy.get("reasoningEffort") or ""),
+        model=model,
+    )
+    if effort:
+        kwargs["reasoning_effort"] = effort
+    return kwargs
+
+
+def _invoke_task_cli(
+    selected: dict,
+    prompt: str,
+    timeout: int,
+    job_id: str = "",
+    *,
+    task_policy: dict | None = None,
+    web_search: bool = False,
+    facts_sink: dict | None = None,
+    result_sink: dict | None = None,
+) -> str:
+    """Invoke a task's selected adapter with its immutable model/effort."""
+    kwargs = _task_cli_kwargs(task_policy)
+    if facts_sink is not None:
+        kwargs.update(facts_sink=facts_sink, observe_result=True)
+    if result_sink is not None:
+        kwargs["result_sink"] = result_sink
+    if web_search:
+        kwargs["web_search"] = True
+    return _invoke_agent_cli(selected, prompt, timeout, job_id, **kwargs)
+
+
 def run_agent_prompt(
     prompt: str, *, adapter: str = "", model: str = "", timeout: int = 0, job_id: str = "",
-    serialize: bool = True, web_search: bool = False,
+    serialize: bool = True, web_search: bool = False, reasoning_effort: str = "",
+    diagnostic_primary: bool = True, on_phase: Callable[[str], None] | None = None,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
+    observe_result: bool = False,
+    result_sink: dict | None = None,
 ) -> dict:
     """단일 프롬프트를 Agent CLI로 실행하고 텍스트 결과만 돌려준다(파일 쓰기 없음).
 
     Agent 채팅처럼 context pack/writeback이 필요 없는 read-only 호출용이다.
 
-    `serialize=False`는 **이미 `_RUN_SEMAPHORE`를 쥔 호출자 전용**이다. 그 세마포어는
-    `threading.Semaphore(1)`이라 재진입이 안 되고 acquire에 타임아웃도 없다 — 잡 스레드
-    안에서 다시 부르면 그 잡이 영원히 멈춘다. 브리핑 생성 잡의 커밋 단계에서 도는
-    의미 비교가 정확히 그 자리다(`run_agent_task`가 커밋까지 통째로 감싼다).
+    `_RUN_SEMAPHORE`는 같은 작업 스레드의 보조 CLI 호출을 허용하는 RLock이다.
+    다른 작업은 계속 직렬화한다. `serialize=False`는 이미 잠금을 소유한 호출자용이다.
     """
     effective_timeout = timeout or max(30, int(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", 300)))
+    job_id = job_id or _PROMPT_JOB_ID.get()
+    def check_cancelled():
+        if job_id and (get_job(job_id) or {}).get("status") in {"cancelled", "cancel_requested"}:
+            if result_sink is not None:
+                from features.common.execution_result import ExecutionResult
+                result_sink["result"] = ExecutionResult(
+                    transport_status="cancelled", completion_status="incomplete", stop_reason="cancelled",
+                )
+            raise RuntimeError("cancelled")
+
+    check_cancelled()
+    bound_policy = current_task_policy()
+    if isinstance(bound_policy, dict):
+        if task_generation_mode(bound_policy) != "llm_cli":
+            raise RuntimeError("ai_disabled")
+        # Nested calls made while a producer is running inherit its frozen
+        # model/effort.  Explicit arguments remain available for Agent Dock
+        # conversations and other read-only callers.
+        if not str(adapter or "").strip():
+            adapter = str(bound_policy.get("provider") or "")
+        if not str(model or "").strip():
+            model = str(bound_policy.get("model") or "")
+        if not str(reasoning_effort or "").strip():
+            reasoning_effort = str(bound_policy.get("reasoningEffort") or "")
+    budget = current_briefing_budget()
+    if budget:
+        effective_timeout = min(effective_timeout, budget.remaining_seconds() or effective_timeout)
     if not serialize:
         selected = _select_adapter(adapter)
-        output = _invoke_agent_cli(
-            selected, prompt, effective_timeout, job_id, model_override=model, web_search=web_search
-        )
-        return {"output": output, "adapter": selected["id"], "webSearch": _used_web_search(selected, web_search)}
-    with _RUN_SEMAPHORE:
+        diagnostic_execution(attempted_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
+        with _diagnostic_boundary("generate", "adapter"):
+            kwargs = {"model_override": model, "web_search": web_search}
+            if _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model):
+                kwargs["reasoning_effort"] = _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model)
+            facts_sink: dict = {}
+            output = _invoke_agent_cli(
+                selected, prompt, effective_timeout, job_id, facts_sink=facts_sink,
+                max_output_chars=max_output_chars, **({"observe_result": True} if observe_result else {}), **kwargs,
+                **({"result_sink": result_sink} if result_sink is not None else {}),
+            )
+        diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
+        if budget:
+            budget.check_active()
+        check_cancelled()
+        web_search_facts = facts_sink.get("webSearchFacts") or WebSearchFacts()
+        return {
+            "output": output,
+            "adapter": selected["id"],
+            "webSearch": _used_web_search(selected, web_search),
+            "webSearchFacts": web_search_facts.safe_projection(),
+            **({"executionFacts": facts_sink.get("executionFacts", {})} if observe_result else {}),
+        }
+    recorder, stage_id = diagnostic_stage_start("wait_engine")
+    if on_phase is not None:
+        on_phase("wait_engine")
+    wait_deadline = time.monotonic() + ((budget.remaining_seconds() or effective_timeout) if budget else effective_timeout)
+    acquired = False
+    while not acquired and time.monotonic() < wait_deadline:
+        check_cancelled()
+        if budget:
+            budget.check_active()
+        acquired = _RUN_SEMAPHORE.acquire(timeout=min(0.25, max(0, wait_deadline - time.monotonic())))
+    if not acquired:
+        error = TimeoutError("deadline_expired")
+        diagnostic_stage_failure(recorder, error, stage_id=stage_id, stage_code="wait_engine", boundary="adapter")
+        diagnostic_stage_end(recorder, stage_id, "wait_engine")
+        raise error
+    try:
+        check_cancelled()
+        diagnostic_stage_end(recorder, stage_id, "wait_engine")
+        if on_phase is not None:
+            on_phase("generate")
         selected = _select_adapter(adapter)
-        output = _invoke_agent_cli(
-            selected, prompt, effective_timeout, job_id, model_override=model, web_search=web_search
-        )
-    return {"output": output, "adapter": selected["id"], "webSearch": _used_web_search(selected, web_search)}
+        diagnostic_execution(attempted_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
+        with _diagnostic_boundary("generate", "adapter"):
+            kwargs = {"model_override": model, "web_search": web_search}
+            if _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model):
+                kwargs["reasoning_effort"] = _cli_reasoning_effort(selected.get("id", ""), reasoning_effort, model=model)
+            facts_sink: dict = {}
+            output = _invoke_agent_cli(
+                selected, prompt, effective_timeout, job_id, facts_sink=facts_sink,
+                max_output_chars=max_output_chars, **({"observe_result": True} if observe_result else {}), **kwargs,
+                **({"result_sink": result_sink} if result_sink is not None else {}),
+            )
+        diagnostic_execution(final_engine="cli", adapter=str(selected["id"]), primary=diagnostic_primary)
+    except Exception as error:
+        # Acquisition is the only wait-engine boundary.  Once acquired, the
+        # exact selector/process boundary records the failure instead.
+        if stage_id is not None and not any(
+            event.stage_id == stage_id and event.event_code == "end"
+            for event in (recorder.record.events if recorder is not None else ())
+        ):
+            diagnostic_stage_failure(recorder, error, stage_id=stage_id, stage_code="wait_engine", boundary="adapter")
+            diagnostic_stage_end(recorder, stage_id, "wait_engine")
+        raise
+    finally:
+        _RUN_SEMAPHORE.release()
+    if budget:
+        budget.check_active()
+    check_cancelled()
+    web_search_facts = facts_sink.get("webSearchFacts") or WebSearchFacts()
+    return {
+        "output": output,
+        "adapter": selected["id"],
+        "webSearch": _used_web_search(selected, web_search),
+        "webSearchFacts": web_search_facts.safe_projection(),
+            **({"executionFacts": facts_sink.get("executionFacts", {})} if observe_result else {}),
+    }
 
 
-def run_agent_task(
+def _run_agent_task_locked(
     task_type: str,
-    params: dict | None = None,
+    params: dict,
     *,
-    adapter: str = "",
-    progress=None,
-    job_id: str = "",
+    selected: dict,
+    durable: bool,
+    progress,
+    job_id: str,
+    task_policy: dict | None = None,
 ) -> dict:
-    params = params if isinstance(params, dict) else {}
-    progress = progress or (lambda *args, **kwargs: None)
-    with _RUN_SEMAPHORE:
-        durable = job_runtime.is_durable_job(job_id)
-        if job_id and (get_job(job_id) or {}).get("status") == "cancelled":
-            return {"cancelled": True, "artifactType": task_type}
-        selected = _select_adapter(adapter)
+    """Run one task while the caller owns `_RUN_SEMAPHORE`."""
+    # Start before pack preparation and keep it through writeback: pack
+    # enrichment and commit-time semantic/concentration repairs may make nested
+    # `run_agent_prompt(..., serialize=False)` calls.
+    budget = SharedRepairBudget(
+        deadline=time.monotonic() + max(30, int(os.environ.get("AGENT_CLI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))),
+        cancelled=lambda: bool(job_id) and (get_job(job_id) or {}).get("status") in {"cancelled", "cancel_requested"},
+    ) if task_type == "briefing" else None
+    policy_context = bind_task_policy(task_policy) if isinstance(task_policy, dict) else nullcontext()
+    with _bind_prompt_job(job_id), policy_context, _observed_tool_policy(task_type, selected), (bind_briefing_budget(budget) if budget else nullcontext()):
         progress("Agent context pack을 구성하고 있습니다.", 10, adapter=selected["id"])
-        prepare_params = {**params, "owner_job_id": job_id} if durable else params
-        pack, pack_path = agent_service.prepare_pack(task_type, **prepare_params)
+        # The immutable policy travels with the job parameters but is a
+        # bridge concern; feature pack builders should receive only their
+        # declared task arguments.
+        prepare_params = {
+            key: value for key, value in params.items() if key != "_task_policy_snapshot"
+        }
+        if durable:
+            prepare_params["owner_job_id"] = job_id
+        if task_type == "briefing":
+            from features.agent_mode.setup import configured_model
+            semantic_model = (
+                str(task_policy.get("model") or "")
+                if isinstance(task_policy, dict) and task_policy.get("model")
+                else configured_model(selected["id"])
+            )
+            prepare_params = {**prepare_params, "semantic_adapter": selected["id"], "semantic_model": semantic_model}
+        with _diagnostic_boundary("context", "generic"):
+            pack, pack_path = agent_service.prepare_pack(task_type, **prepare_params)
         progress("Agent CLI를 실행하고 있습니다.", 25, contextPackPath=str(pack_path), adapter=selected["id"])
-        agent_prompt = _agent_prompt(pack_path, pack)
+        agent_prompt = _agent_prompt(
+            pack_path, pack,
+            inline_briefing=task_type == "briefing" and selected["id"] == "claude",
+        )
         # 실제로 실행한 어댑터를 pack에 남긴다. 저장물의 generation.model이 자리표
         # (`current-agent-session`)뿐이면 나중에 품질 편차를 어느 엔진 탓인지 귀속할
         # 수 없다(브리핑 유보 밀도 이분포에서 실측).
         pack["executedAdapter"] = selected["id"]
+        diagnostic_execution(attempted_engine="cli", adapter=str(selected["id"]))
         timeout = max(30, int(os.environ.get("AGENT_CLI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
+        if budget:
+            timeout = budget.remaining_seconds()
         try:
             # **본문 생성에는 어댑터 웹 도구를 켜지 않는다(`web_search=` 없음).** 누락이
             # 아니라 실측으로 도달한 설계다 — 쓰기 과제에 "필요하면 검색도 하라"를 얹는
@@ -710,48 +1403,141 @@ def run_agent_task(
             # 있으면 충분하다고 판단한다. 웹은 별도 **찾기 과제**로 분리해야 작동하며,
             # 그 자리에서 `run_agent_prompt(..., web_search=True)`로 켠다
             # (`company_analysis/engine_calls.py`, `topic_report/web_lookup.py`).
-            output = _invoke_agent_cli(selected, agent_prompt, timeout, job_id)
+            company_facts = {} if (task_type == "company_analysis" or (task_type == "quality_repair" and (pack.get("internal") or {}).get("targetArtifactType") == "company_analysis")) else None
+            company_result = {}
+            with _diagnostic_boundary("generate", "adapter"):
+                output = _invoke_task_cli(
+                    selected,
+                    agent_prompt,
+                    timeout,
+                    job_id,
+                    task_policy=task_policy,
+                    **({"facts_sink": company_facts, "result_sink": company_result} if company_facts is not None else {}),
+                )
+            if company_facts is not None:
+                pack["executionFacts"] = company_facts.get("executionFacts", {})
+                # Persist the returned body before optional repair/finalization.
+                # A later exception or process exit must not erase paid work.
+                from features.company_analysis.recovery import preserve_candidate
+                from features.company_analysis.service import ANALYSIS_REPORTS_DIR
+                raw_company = {**(pack.get("draftArtifact") or {}),
+                               "markdown": output, "executionFacts": pack["executionFacts"]}
+                preserve_candidate(ANALYSIS_REPORTS_DIR, raw_company)
+            diagnostic_execution(final_engine="cli", adapter=str(selected["id"]))
             output_format = (pack.get("outputContract") or {}).get("format", "markdown")
+            briefing_contract_failed = False
             if task_type == "briefing" and output_format == "markdown":
                 contract = pack.get("outputContract") or {}
-                violations = briefing_contract_violations(output, contract)
+                with _diagnostic_boundary("validate", "validation"):
+                    violations = briefing_contract_violations(output, contract)
                 retries = max(0, int(contract.get("retryOnViolation") or 0))
                 if violations and retries:
+                    budget.claim("structure")
+                    previous_output = output
                     progress("CLI 브리핑 구조를 보완해 다시 작성하고 있습니다.", 60, adapter=selected["id"])
                     correction_prompt = _briefing_correction_prompt(agent_prompt, violations, contract)
-                    output = _invoke_agent_cli(selected, correction_prompt, timeout, job_id)
-                    violations = briefing_contract_violations(output, contract)
+                    with _diagnostic_boundary("generate", "adapter"):
+                        output = _invoke_task_cli(
+                            selected,
+                            correction_prompt,
+                            budget.remaining_seconds(),
+                            job_id,
+                            task_policy=task_policy,
+                        )
+                    from features.common.quality_generation.repair_grounding import preserves_briefing_input
+                    if not preserves_briefing_input(previous_output, output, pack.get("sources") or []):
+                        raise AgentOutputValidationError("briefing_repair_outside_input")
+                    with _diagnostic_boundary("validate", "validation"):
+                        violations = briefing_contract_violations(output, contract)
                 if violations:
-                    raise RuntimeError(
-                        "Agent CLI 브리핑이 출력 계약을 충족하지 못했습니다: "
-                        + "; ".join(violations)
-                    )
+                    _dump_contract_violation(job_id, output, violations)
+                    if not durable:
+                        # 비-durable 경로는 규칙 대체를 태울 커밋 경로가 없다.
+                        # 잘못된 브리핑을 writeback 하느니 여기서 끝낸다.
+                        with _diagnostic_boundary("validate", "validation"):
+                            raise AgentOutputValidationError(
+                                "Agent CLI 브리핑이 출력 계약을 충족하지 못했습니다: "
+                                + "; ".join(violations)
+                            )
+                    # durable 잡은 여기서 죽지 않는다.  토큰을 쓴 실행을 통째로
+                    # 버리는 대신, 같은 팩의 고정 자료로 규칙 기반 보고서를 만들어
+                    # 동일한 최종 검증·원자적 커밋 경로에 한 번만 태운다
+                    # (§daily_briefing README "계약 또는 최종 사실 검증").
+                    with _diagnostic_boundary("validate", "validation"):
+                        diagnostic_execution(final_engine="rules", fallback_reason="engine_failed")
+                    briefing_contract_failed = True
             elif task_type == "company_analysis" and output_format == "markdown":
                 # 초안이 고정 9섹션을 어기면 **쓰기만** 한 번 더 시킨다. 브리핑이 이미
                 # 같은 자리에서 같은 일을 한다 — 앞의 자료 수집·웹 조회는 재사용된다.
                 # 브리핑과 달리 **실패로 끝내지 않는다.** 기업분석은 섹션 하나가 빠져도
                 # 나머지가 쓸모 있고, 계약 결함으로 남으면 점수 상한이 그것을 말한다.
-                missing = company_missing_sections(output)
+                try:
+                    with _diagnostic_boundary("validate", "validation"):
+                        missing = company_missing_sections(output)
+                except (KeyboardInterrupt, SystemExit, CancelledError):
+                    raise
+                except Exception:
+                    # Keep the exact output when optional structural
+                    # observation itself fails. The shared finalizer receives
+                    # this marker through the draft artifact and reports an
+                    # unassessed warning without blocking writeback.
+                    pack.setdefault("draftArtifact", {})["validationStatus"] = "unassessed"
+                    missing = []
                 if missing:
+                    retry_facts = {}
+                    retry_result = {}
                     progress("CLI 기업분석 구조를 보완해 다시 작성하고 있습니다.", 60, adapter=selected["id"])
-                    retry = _invoke_agent_cli(
-                        selected,
-                        agent_prompt + "\n\n" + company_section_retry(missing),
-                        timeout,
-                        job_id,
-                    )
-                    # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
-                    if len(company_missing_sections(retry)) < len(missing):
-                        output = retry
+                    try:
+                        with _diagnostic_boundary("generate", "adapter"):
+                            retry = _invoke_task_cli(
+                                selected,
+                                agent_prompt + "\n\n" + company_section_retry(missing),
+                                timeout,
+                                job_id,
+                                task_policy=task_policy,
+                                facts_sink=retry_facts,
+                                result_sink=retry_result,
+                            )
+                        # 재시도가 더 낫지 않으면 처음 것을 쓴다. 나쁜 초안이라도 없는 것보다 낫다.
+                        if len(company_missing_sections(retry)) < len(missing):
+                            output = retry
+                            company_result = retry_result
+                            pack["executionFacts"] = retry_facts.get("executionFacts", {})
+                    except (KeyboardInterrupt, SystemExit, CancelledError):
+                        # Explicit cancellation/interruption is never a usable
+                        # report and must not fall through to writeback.
+                        raise
+                    except Exception:
+                        # Structural repair is optional. Preserve the exact
+                        # first draft when the retry times out or fails.
+                        pass
+            if task_type == "company_analysis" and job_id and (get_job(job_id) or {}).get("status") in {"cancel_requested", "cancelled"}:
+                schema.update_pack_status(
+                    pack_path,
+                    status="cancelled",
+                    result={"cancelled": True},
+                )
+                return {"cancelled": True, "artifactType": task_type}
         except Exception:
             schema.update_pack_status(pack_path, status="failed", result={"error": "agent_task_failed"})
             raise
         progress("Agent 결과를 기존 저장소에 반영하고 있습니다.", 85, adapter=selected["id"])
         output_format = (pack.get("outputContract") or {}).get("format", "markdown")
-        payload = _json_payload(output) if output_format == "json" else None
+        if output_format == "json":
+            with _diagnostic_boundary("validate", "validation"):
+                payload = _json_payload(output)
+        else:
+            payload = None
+            if company_facts is not None:
+                from features.common.report_citations import render_citation_links
+                output = render_citation_links(output, (pack.get("draftArtifact") or {}).get("sourceLedger"), execution=company_result.get("result"))
         if durable:
             schema.update_pack_status(pack_path, status="committing")
             parsed_task = TaskType(task_type)
+            # Shared JSON/SQL lifecycles own the commit stage because they can
+            # close it at the proof boundary immediately before terminal
+            # authority persistence.  An outer stage here would otherwise end
+            # after the terminal observer and leave a false open stage.
             if parsed_task == TaskType.THESIS_DELTA:
                 summary = job_runtime.commit_thesis_output(job_id, pack, payload or {})
             elif parsed_task == TaskType.MARKET_MEMORY_LLM:
@@ -765,23 +1551,124 @@ def run_agent_task(
                     pack,
                     markdown=output if output_format != "json" else None,
                     payload=payload,
+                    contract_failed=briefing_contract_failed,
                 )
             summary = {
                 "generationMode": "llm_cli",
                 "adapter": selected["id"],
                 "artifactType": task_type,
+                **({"policy": task_policy_metadata(task_policy)} if isinstance(task_policy, dict) else {}),
                 **summary,
             }
+            if company_facts is not None:
+                from features.company_analysis.recovery import discard_promoted
+                discard_promoted(ANALYSIS_REPORTS_DIR, raw_company)
             progress("Agent 결과 저장을 완료했습니다.", 100, **summary)
             return summary
-        if output_format == "json":
-            result = agent_service.writeback_pack(pack, payload=payload)
-        else:
-            result = agent_service.writeback_pack(pack, markdown=output)
+        with _diagnostic_boundary("commit", "save"):
+            if output_format == "json":
+                result = agent_service.writeback_pack(pack, payload=payload)
+            else:
+                result = agent_service.writeback_pack(pack, markdown=output)
+        if company_facts is not None and result.get("saved") is True:
+            from features.company_analysis.recovery import discard_promoted
+            discard_promoted(ANALYSIS_REPORTS_DIR, raw_company)
+        if company_facts is not None and result.get("saved") is False:
+            raise AgentOutputValidationError("기업분석을 정상본으로 저장하지 못했습니다. 보고서 목록의 복구 후보를 확인하세요.")
         summary = _result_summary(task_type, pack, result, selected["id"])
         schema.update_pack_status(pack_path, status="done", result=summary)
         progress("Agent 결과 저장을 완료했습니다.", 100, **summary)
         return summary
+
+
+def _dump_contract_violation(job_id: str, output: str, violations: list[str]) -> None:
+    """Write one contract-violating CLI output to a local file when asked.
+
+    계약 위반은 위반 목록만 남기고 산출물을 버린다.  CLI가 왜 그런 것을 냈는지
+    (짧은 거절문인지, 잘린 응답인지) 알 방법이 없어 원인을 좁힐 수 없었다.
+    `BRIEFING_REJECTION_DUMP_DIR`을 설정한 실행에서만 쓴다.
+    """
+    import os
+
+    target = str(os.environ.get("BRIEFING_REJECTION_DUMP_DIR") or "").strip()
+    if not target:
+        return
+    try:
+        import json
+        from datetime import datetime
+        from pathlib import Path
+
+        directory = Path(target)
+        directory.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        payload = {"jobId": job_id, "violations": list(violations), "output": output}
+        (directory / f"contract-{stamp}.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        return
+
+
+def run_agent_task(
+    task_type: str,
+    params: dict | None = None,
+    *,
+    adapter: str = "",
+    progress=None,
+    job_id: str = "",
+) -> dict:
+    params = params if isinstance(params, dict) else {}
+    progress = progress or (lambda *args, **kwargs: None)
+    task_policy = params.get("_task_policy_snapshot")
+    if isinstance(task_policy, dict):
+        task_policy = task_snapshot(task_type, task_policy)
+        blocked = _bridge_task_gate(task_policy)
+        if blocked is not None:
+            progress(blocked["message"], 100, **blocked)
+            return blocked
+        if task_generation_mode(task_policy) != "llm_cli":
+            result = {
+                "generationMode": task_generation_mode(task_policy),
+                "artifactType": task_type,
+                "policy": task_policy_metadata(task_policy),
+                "message": "이 작업의 CLI 설정을 확인해 주세요.",
+            }
+            progress(result["message"], 100, **result)
+            return result
+        # A queued task's provider is part of the immutable snapshot.  The
+        # caller's legacy one-off adapter is ignored once the snapshot exists.
+        adapter = str(task_policy.get("provider") or adapter)
+    recorder, stage_id = diagnostic_stage_start("wait_engine")
+    try:
+        _RUN_SEMAPHORE.acquire()
+    except Exception as error:
+        diagnostic_stage_failure(
+            recorder,
+            error,
+            stage_id=stage_id,
+            stage_code="wait_engine" if stage_id is not None else None,
+            boundary="adapter",
+        )
+        diagnostic_stage_end(recorder, stage_id, "wait_engine")
+        raise
+    diagnostic_stage_end(recorder, stage_id, "wait_engine")
+    try:
+        durable = job_runtime.is_durable_job(job_id)
+        if job_id and (get_job(job_id) or {}).get("status") == "cancelled":
+            return {"cancelled": True, "artifactType": task_type}
+        with _diagnostic_boundary("preflight", "adapter"):
+            selected = _select_adapter(adapter)
+        return _run_agent_task_locked(
+            task_type,
+            params,
+            selected=selected,
+            durable=durable,
+            progress=progress,
+            job_id=job_id,
+            task_policy=task_policy,
+        )
+    finally:
+        _RUN_SEMAPHORE.release()
 
 
 def _phase_progress(progress, label: str, start: int, end: int):
@@ -809,65 +1696,126 @@ def run_market_memory_update_task(
     params = params if isinstance(params, dict) else {}
     date = str(params.get("date") or "").strip()
     task_params = {"date": date} if date else {}
+    task_policy = params.get("_task_policy_snapshot")
+    if isinstance(task_policy, dict):
+        task_policy = task_snapshot("market_memory_update", task_policy)
+        blocked = _bridge_task_gate(task_policy)
+        if blocked is not None:
+            progress(blocked["message"], 100, **blocked)
+            return blocked
+        if task_generation_mode(task_policy) != "llm_cli":
+            result = {
+                "generationMode": task_generation_mode(task_policy),
+                "artifactType": "market_memory_update",
+                "policy": task_policy_metadata(task_policy),
+                "message": "이 작업의 CLI 설정을 확인해 주세요.",
+            }
+            progress(result["message"], 100, **result)
+            return result
+        task_params["_task_policy_snapshot"] = task_policy
+        adapter = str(task_policy.get("provider") or adapter)
     progress = progress or (lambda *args, **kwargs: None)
     if job_runtime.is_durable_job(job_id):
-        with _RUN_SEMAPHORE:
-            selected = _select_adapter(adapter)
-            timeout = max(30, int(os.environ.get("AGENT_CLI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
-            memory_pack, memory_path = agent_service.prepare_pack(
-                "market_memory_llm",
-                **task_params,
-                owner_job_id=job_id,
+        wait_recorder, wait_stage = diagnostic_stage_start("wait_engine")
+        try:
+            _RUN_SEMAPHORE.acquire()
+        except Exception as error:
+            diagnostic_stage_failure(
+                wait_recorder, error, stage_id=wait_stage,
+                stage_code="wait_engine" if wait_stage is not None else None,
+                boundary="adapter",
             )
+            diagnostic_stage_end(wait_recorder, wait_stage, "wait_engine")
+            raise
+        diagnostic_stage_end(wait_recorder, wait_stage, "wait_engine")
+        try:
+            with _diagnostic_boundary("preflight", "adapter"):
+                selected = _select_adapter(adapter)
+            diagnostic_execution(attempted_engine="cli", adapter=str(selected["id"]))
+            timeout = max(30, int(os.environ.get("AGENT_CLI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
+            pack_params = {
+                key: value for key, value in task_params.items() if key != "_task_policy_snapshot"
+            }
+            with _diagnostic_boundary("context", "generic"):
+                memory_pack, memory_path = agent_service.prepare_pack(
+                    "market_memory_llm",
+                    **pack_params,
+                    owner_job_id=job_id,
+                )
             progress("1/2 중기 메모리: Agent CLI를 실행하고 있습니다.", 20, adapter=selected["id"])
             try:
-                memory_output = _invoke_agent_cli(
-                    selected,
-                    _agent_prompt(memory_path, memory_pack),
-                    timeout,
-                    job_id,
-                )
-                memory_payload = _json_payload(memory_output)
-                memory_prepared = agent_service.prepare_market_memory_writeback(memory_pack, memory_payload)
+                with _diagnostic_boundary("generate", "adapter"):
+                    memory_output = _invoke_task_cli(
+                        selected,
+                        _agent_prompt(memory_path, memory_pack),
+                        timeout,
+                        job_id,
+                        task_policy=task_policy,
+                    )
+                with _diagnostic_boundary("validate", "validation"):
+                    memory_payload = _json_payload(memory_output)
+                    memory_prepared = agent_service.prepare_market_memory_writeback(memory_pack, memory_payload)
                 schema.update_pack_status(memory_path, status="prepared")
                 if (get_job(job_id) or {}).get("status") == "cancel_requested":
                     return {"cancelled": True, "artifactType": "market_memory_update"}
-                snapshot_pack, snapshot_path = agent_service.prepare_pack(
-                    "market_state_snapshot",
-                    **task_params,
-                    owner_job_id=job_id,
-                )
+                with _diagnostic_boundary("context", "generic"):
+                    snapshot_pack, snapshot_path = agent_service.prepare_pack(
+                        "market_state_snapshot",
+                        **pack_params,
+                        owner_job_id=job_id,
+                    )
                 progress("2/2 시장 상태: Agent CLI를 실행하고 있습니다.", 65, adapter=selected["id"])
-                snapshot_output = _invoke_agent_cli(
-                    selected,
-                    _agent_prompt(snapshot_path, snapshot_pack),
-                    timeout,
-                    job_id,
-                )
-                snapshot_payload = agent_service.prepare_market_state_snapshot_writeback(
-                    snapshot_pack,
-                    _json_payload(snapshot_output),
-                )
+                with _diagnostic_boundary("generate", "adapter"):
+                    snapshot_output = _invoke_task_cli(
+                        selected,
+                        _agent_prompt(snapshot_path, snapshot_pack),
+                        timeout,
+                        job_id,
+                        task_policy=task_policy,
+                    )
+                with _diagnostic_boundary("validate", "validation"):
+                    snapshot_payload = agent_service.prepare_market_state_snapshot_writeback(
+                        snapshot_pack,
+                        _json_payload(snapshot_output),
+                    )
                 schema.update_pack_status(memory_path, status="committing")
                 schema.update_pack_status(snapshot_path, status="committing")
+                from features.market_memory.service import finalize_role_classification
+
+                # This fact belongs to the CLI work already completed above.
+                # It must be recorded before the combined authority proof
+                # terminalizes diagnostics, but it must not reorder role SQL.
+                diagnostic_execution(final_engine="cli", adapter=str(selected["id"]))
                 committed = job_runtime.commit_combined_market_output(
                     job_id,
                     tuple(memory_prepared["entries"]),
                     lambda _projected: snapshot_payload,
+                )
+                # Keep the established post-commit order and exception
+                # semantics: a failed combined transaction must not create
+                # independent role writes.
+                role_classification = finalize_role_classification(
+                    memory_prepared.get("roleSelection") or {},
+                    memory_payload,
+                    db_path=agent_service.MARKET_MEMORY_DB_PATH,
                 )
             except Exception:
                 for path in (locals().get("memory_path"), locals().get("snapshot_path")):
                     if isinstance(path, Path) and path.exists():
                         schema.update_pack_status(path, status="failed", result={"error": "agent_task_failed"})
                 raise
+        finally:
+            _RUN_SEMAPHORE.release()
         result = {
             "generationMode": "llm_cli",
             "adapter": selected["id"],
             "artifactType": "market_memory_update",
+            **({"policy": task_policy_metadata(task_policy)} if isinstance(task_policy, dict) else {}),
             "artifactId": date or str(snapshot_pack.get("artifactId") or ""),
             "title": str(snapshot_payload.get("headline") or "Market Memory Update"),
             "date": date or str(snapshot_pack.get("artifactId") or ""),
             **committed,
+            "roleClassification": role_classification,
             "message": "시장 메모리와 화면용 시장 상태 스냅샷을 모두 업데이트했습니다.",
         }
         progress("시장 메모리 업데이트를 완료했습니다.", 100, **result)
@@ -889,6 +1837,7 @@ def run_market_memory_update_task(
     return {
         "generationMode": "llm_cli",
         "adapter": snapshot.get("adapter") or memory.get("adapter") or adapter or "auto",
+        **({"policy": task_policy_metadata(task_policy)} if isinstance(task_policy, dict) else {}),
         "artifactType": "market_memory_update",
         "artifactId": date or snapshot.get("date") or memory.get("date") or "",
         "title": snapshot.get("title") or "Market Memory Update",
@@ -902,6 +1851,7 @@ def run_market_memory_update_task(
 
 
 def submit_agent_task(task_type: str, params: dict | None = None, *, adapter: str = "") -> dict:
+    params, effective_adapter, task_policy = _prepare_bridge_params(task_type, params, adapter)
     label = {
         "briefing": "LLM CLI 브리핑 생성",
         "company_analysis": "LLM CLI 기업 분석",
@@ -918,28 +1868,33 @@ def submit_agent_task(task_type: str, params: dict | None = None, *, adapter: st
         label,
         run_agent_task,
         task_type,
-        params or {},
-        adapter=adapter,
+        params,
+        adapter=effective_adapter,
         pass_job_id=True,
         dedicated_thread=True,
     )
-    job["generationMode"] = "llm_cli"
-    job["adapter"] = adapter or "auto"
+    job["generationMode"] = task_generation_mode(task_policy) if task_policy else "llm_cli"
+    job["adapter"] = effective_adapter or "auto"
+    if task_policy:
+        job["taskPolicy"] = task_policy_metadata(task_policy)
     return job
 
 
 def submit_market_memory_update(params: dict | None = None, *, adapter: str = "") -> dict:
+    params, effective_adapter, task_policy = _prepare_bridge_params("market_memory_update", params, adapter)
     job = submit_job(
         "agent_bridge",
         "LLM CLI 시장 메모리 업데이트",
         run_market_memory_update_task,
-        params or {},
-        adapter=adapter,
+        params,
+        adapter=effective_adapter,
         pass_job_id=True,
         dedicated_thread=True,
     )
-    job["generationMode"] = "llm_cli"
-    job["adapter"] = adapter or "auto"
+    job["generationMode"] = task_generation_mode(task_policy) if task_policy else "llm_cli"
+    job["adapter"] = effective_adapter or "auto"
+    if task_policy:
+        job["taskPolicy"] = task_policy_metadata(task_policy)
     return job
 
 

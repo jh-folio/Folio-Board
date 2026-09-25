@@ -4,11 +4,56 @@
 
 ## 현재 프론트엔드 구조
 
+기업 분석은 생성 응답의 본문을 목록 갱신보다 먼저 표시한다. 목록 조회 실패가 이미 받은
+본문을 숨기거나 생성 실패로 바꾸지 않으며, `saved: true`인 경우에만 자동 저장 성공을
+안내하고 저장본 URL로 이동한다. 미저장 결과도 기존 리더에서 읽고 닫을 수 있지만
+영구 보관으로 표시하지 않는다. 검수 미완료 안내는 기존 보고서 상태 줄에 표시한다.
+
 **React SPA가 기본 프론트엔드다.** 기본 URL(`/`)에서 `web/`(Vite+React+TS, 빌드 산출물 `public/react/folio-react.js`)의 React shell이 렌더되고, route(home/dashboard/watchlist/briefing/rss/market-memory/analysis/deep-research/settings)는 React 네이티브다. 0.2 기본 nav에는 home/briefing/rss/market-memory/analysis/deep-research/settings를 노출하고 dashboard/watchlist는 딥링크 호환 route로 유지한다. `public/index.html`은 `#folioReactRoot`와 script/style 로딩만 갖는 최소 entrypoint이며, `public/app.js`는 React가 재사용하는 bridge-only 파일이다(`FolioBridge`: `renderMarkdown`, `splitReportTitle`, `briefingSourcePanelHtml`, `renderBriefingVisuals`, `updateAgentContext`, `openAgentDock` 등).
 
 우측 전역 Action Panel은 제거되었다. 보고서 조작은 리더 내부 조작 레일과 노트 패널에서 처리한다.
 
+## Portfolio 현황과 편집 흐름
+
+Portfolio는 `보유·평가 | 투자 리뷰 | 프리셋 | 백테스트`를 유지한다. 기본 화면은 저장된
+평가/집중도와 읽기 전용 보유 행이며 `보유 편집`에서 초안을 연다. 투자 리뷰는 요약·변화·
+중요 반증/위험 뒤에 행동을 배치하고 자료·이력은 펼침으로 제공한다. 빈 화면의 바로가기는
+기존 하위 탭만 이동하며 자동 생성/저장을 하지 않는다. 기존 프리미티브와 토큰을 사용하고
+모바일 보유 표는 좁은 화면에 맞춰 재배치한다. API/권위와 계산 계약은 변경하지 않는다.
+
+투자 리뷰는 투자 논리 미작성·최신 검토 미작성·검토 후 자료 부족을 구분한다. 반복되는
+자료 부족 문구는 묶되 중요한 반증과 기한 경과는 작업 버튼 앞에 남긴다. 연결 자료는
+기존 보고서 reader로, 날짜 이력은 해당 날짜의 저장본으로 이동한다. 이전 형식 revision 0은
+읽을 수 있지만 검토 완료/Agent 반박은 비활성화하며 새 생성은 명시적 갱신에서만 실행한다.
+
 ## 설정 화면의 결과 알림
+
+설정의 `AI` 탭에서 `AI Agent 연동`과 `AI Agent 모델 설정`을 편집한다.
+AI Agent 모델 설정에는 `전역 모델 설정`과 `작업별 모델 설정`이 있으며, 작업별 화면에는 브리핑·기업분석·딥 리서치·시장 내러티브 네 행만 보인다.
+`별도 설정 사용`을 켠 작업은 실행 방식·제공자·모델·추론 강도를 별도로 저장하고,
+끄면 전역 설정을 따른다. 끄더라도 이전 별도 설정은 남으며,
+`작업별 변경 취소`는 저장 전 변경을 되돌린다. 전역 패널과 작업별 패널은 저장·취소가
+서로 독립적이다. 각 작업의 `연결 확인`은 선택한 CLI의
+설치·로그인 상태만 확인한다. 전역 AI Agent가 꺼져 있어도 작업 설정은 편집할 수 있지만
+AI 실행은 허용하지 않는다.
+저장 오류는 해당 패널 알림으로 표시하며 Agent 대화 설정은 별도로 유지한다.
+
+`AI Agent 모델 설정`의 모양 계약(2026-09-07 정리):
+
+- 패널 머리는 다른 설정 패널과 같은 `.input-panel-header`다. `.settings-provider-head`는 Toss처럼
+  패널 **안** 하위 블록의 `strong` 제목용이라, 거기에 `h3`를 넣으면 규칙이 없어 브라우저 기본값
+  (19.89px/700 + 위아래 여백)으로 떨어진다 — 옆 패널의 24px/800과 어긋났다.
+- 위계는 패널 제목 24px → 하위 단 제목(`.settings-subsection-heading h4`) `--fs-title` 20px →
+  행 제목 17px → 요약 15px이다. 하위 단을 16.5px으로 두면 자기가 묶는 행보다 작아진다.
+- 작업 목록은 같은 탭 위쪽 CLI 제공자 목록(`.cli-provider-list`)과 같은 리듬을 쓴다 —
+  목록이 윗선, 행이 아랫선, 행 패딩 `--sp-4`.
+- 필드 열 수는 뷰포트가 아니라 **남은 폭**이 정한다(`repeat(auto-fit, minmax(150px, 1fr))`).
+  창이 1100px이어도 도크가 열리면 패널이 372px까지 좁아지는데, 뷰포트 미디어 쿼리는 그때
+  발동하지 않아 셀렉트가 42px로 줄어 값이 아예 보이지 않았다. 안내·검증·확인 결과는 이 격자
+  **밖**, 행의 직접 자식으로 둔다 — 전 열을 점유하는 자식이 있으면 `auto-fit`이 빈 열을 접지
+  못해 넓은 화면에서 오른쪽에 빈 열이 남는다.
+- 패널의 면·자식 간격·패널 사이 간격은 `.settings-panel`과 `.sub-tab-panel`이 이미 갖는다.
+  다시 선언하면 이 패널만 위 패널과의 거리가 18px에서 34px로 벌어진다.
 
 각 패널의 저장·정리 결과는 **그 패널 안, 누른 버튼 바로 아래**에 뜹니다(`PanelNote`). 예전에는 화면 맨 위 한 곳에 모았는데, 문서상 1,991px에 있는 `자동화 저장`을 눌러도 메시지가 54px에 떠 뷰포트 720px 기준 두 화면 반 위에 있었습니다 — 보이지 않는 확인입니다.
 
@@ -22,7 +67,7 @@
 
 `#/office`는 0.3.0의 기본 Home인 Pixel Office다. read-only `/api/pixel-office` 요약을 7개 의미 있는 오브젝트로 표시하고, 기존 `/api/jobs`의 redacted 프론트 모델을 이용해 Agent 활동·완료·실패 상태를 갱신한다. 데스크톱에서는 lazy-loaded PixiJS 게임 장면+React semantic hotspot+overlay 상세 패널을 사용하고, 980px 이하에서는 Agent 미니 장면+상태 카드+하단 시트를 사용한다. Agent는 authored waypoint 경로로 대응 가구까지 실제 이동하며 발 위치로 Y-depth를 정렬한다. 상세 dialog는 Escape, focus trap, 원래 오브젝트 focus 복귀를 지원한다. 캐릭터 preset은 프로젝트 원본 `Classic Analyst`와 `Economics Student` 두 개만 노출하며, 사용자 이름과 움직임 줄이기 설정을 함께 저장한다.
 
-`#/home`은 React가 직접 렌더하는 기존 Agent Home이다. Home은 큰 `Folio OS` hero, 빠른 실행, 최근 보고서 칩 디자인을 유지하면서 hero와 빠른 실행 사이에 Codex/검색 메인 화면형 프롬프트 박스를 둔다. 프롬프트 전송은 `/api/agent/chat`으로 job을 만들고 `/api/jobs/{id}`를 polling하며, 수정 proposal은 `/api/agent/proposals/{id}` 승인/거절 API를 사용한다. 모델 선택은 `/api/agent-bridge/settings`의 현재 provider/adapter `modelChoices`를 따른다. 대화 로그는 보고서 evidence와 분리해 브라우저 localStorage에 저장하고, 사용자가 `새 대화`로 즉시 비울 수 있다. Home 하단에는 `/api/jobs` 기반 최근 Agent/빠른 실행 작업 목록을 표시한다.
+`#/home`은 React가 직접 렌더하는 기존 Agent Home이다. Home은 큰 `Folio Board` hero, 빠른 실행, 최근 보고서 칩 디자인을 유지하면서 hero와 빠른 실행 사이에 Codex/검색 메인 화면형 프롬프트 박스를 둔다. 프롬프트 전송은 `/api/agent/chat`으로 job을 만들고 `/api/jobs/{id}`를 polling하며, 수정 proposal은 `/api/agent/proposals/{id}` 승인/거절 API를 사용한다. 모델 선택은 `/api/agent-bridge/settings`의 현재 provider/adapter `modelChoices`를 따른다. 대화 로그는 보고서 evidence와 분리해 브라우저 localStorage에 저장하고, 사용자가 `새 대화`로 즉시 비울 수 있다. Home 하단에는 `/api/jobs` 기반 최근 Agent/빠른 실행 작업 목록을 표시한다.
 
 Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우저 대화·모델·proposal·최근 작업 상태를 사용한다. 첫 실행 chooser, 각 Home의 전환 버튼, Settings > 화면에서 기본 Home을 선택한다. 명시한 보고서 딥링크는 이 선택으로 바뀌지 않는다. 두 Home에서는 전역 Agent Dock을 표시하지 않는다.
 
@@ -30,7 +75,11 @@ Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우�
 
 `#/briefing`은 React 저장 브리핑 route다. 목록 화면은 공통 `RouteHero`와 브리핑 생성 설정 패널, 저장 브리핑 검색 패널을 사용한다. 검색 패널은 `/api/briefings/index`의 `q`, `marketScope`, `briefingType`, `dateFrom`, `dateTo` 파라미터를 직접 사용한다. `#/briefing/{date}/{us|kr|both}` detail hash에서는 `/api/briefings/{date}?includePersonal=true&marketScope=...`를 호출해 `ReportReaderShell` 안에서 Canonical markdown을 표시한다. 브리핑 detail action rail은 AI/노트/내보내기 그룹으로 분류하고, Personal Overlay 생성, Agent 문의, Notion/Obsidian export를 직접 처리한다. note slot은 Native Notes API(`/api/investment-notes`)에 `market_memo`를 저장하고 linked notes를 조회한다. 리더 본문(`ReportBody`)은 별도 파서를 두지 않고 `FolioBridge`의 `renderMarkdown()`·`splitReportTitle()`·`briefingSourcePanelHtml()`·`renderBriefingVisuals()`를 재사용해 표·링크·리스트·가격 차트·히트맵·소스패널 parity를 확보한다.
 
-브리핑 리더와 아카이브 카드의 시장별 제목은 `시장 세션일 + 마감/장중`을 표시하고, 리더 hero에는 `YYYY.MM.DD KST 발행`을 별도 보조 정보로 표시한다. URL·삭제 대상·기본 정렬은 발행일(`reportDate`) 기준을 유지한다.
+브리핑 리더와 아카이브 카드의 시장별 제목은 `시장 세션일 + 마감/장중`을 표시한다. 리더 hero는 보고서 날짜와 실제 생성 시각(KST)을 구분하고, 구 저장본에 생성 시각이 없으면 미상으로 표시한다. URL·삭제 대상·기본 정렬은 발행일(`reportDate`) 기준을 유지한다.
+
+브리핑 본문의 HTML 객체는 내용이 같으면 유지해 외부 차트 DOM이 관련 없는 재렌더에 지워지지 않게 한다. 주간 이야기 비중은 기존 저장 비중을 재계산하지 않는 주제별 선그래프(0–100%)이며, 결측은 선을 끊고 0과 구별한다. 날짜 선택·기사 수·전체 값 표로 터치/키보드에서도 읽고, PNG 내보내기는 선과 범례·날짜별 분모를 포함한다. 첫 문장을 차트 앞에서 읽고, 지수와 히트맵 사이에는 본문 설명을 둔다. 주간 지수의 주초 종가 기준 흐름과 전주 종가 기준 전체 성과는 범례에서 구별한다.
+
+참고자료는 작성 입력·연결 기사·본문 참고자료의 합집합을 접어서 제공하고, 추적 query만 다른 링크는 중복 제거한다. 목록 자체를 검증된 주장 근거로 표시하지 않는다. 모바일 일정표는 내부 가로 스크롤을 사용하고 날짜·상태를 글자 단위로 접지 않는다. 인라인 본문은 페이지 세로 스크롤을 공유한다. 데스크톱 `읽기에 집중`은 조작·노트를 접고 다시 펼치며 작성 중 노트를 유지한다. 노트 닫기는 모바일 노트에만 표시한다.
 
 `#/rss`는 React RSS route다. `/api/rss/items`로 20개 단위 feed를 읽고, 시작/종료/소스 필터와 페이지네이션을 관리한다. `POST /api/rssarchive/import` job polling으로 RSS 수집을 실행하고, `/api/rss/merge`를 통해 현재 필터 범위의 Markdown 병합 파일을 다운로드한다.
 
@@ -40,7 +89,7 @@ Pixel Office와 Agent Home은 `web/src/app/agentWorkspace/`의 같은 브라우�
 
 React Shell은 레거시 shell과 같은 큰 구조를 직접 렌더한다: dark topbar, 접을 수 있는 floating 좌측 navigation rail, 가운데 scrollable route host, 우측 Agent Dock. 0.2 노출 화면인 브리핑·RSS 피드·시장 내러티브·기업분석·딥리서치·설정 목록 화면은 공통 `RouteHero`를 사용한다. 대시보드·워치리스트 route 구현은 유지하지만 기본 nav에는 노출하지 않는다. 레거시 기업분석 탭과 같은 흰색 hero 카드(골드 eyebrow, 제목, 설명, 우측 액션 슬롯)를 기준으로 맞추며, 브리핑 목록은 hero 아래에 레거시 브리핑 탭의 생성/검색 패널을 유지하고, 보고서 reader 내부의 dark report hero와 본문 레이아웃은 별도로 유지한다.
 
-React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토큰을 따른다. 좌측 navigation title/item은 `--fs-base`, 그룹 라벨은 `--fs-xs`, route hero 제목은 `--fs-xl`, 설명은 `--fs-base`를 사용한다. 홈 화면의 큰 `Folio OS` title은 레거시 `.home-hero` display scale을 유지하되, React Home에서는 prompt 위치를 고정하고 hero만 위로 당겨 title과 prompt 사이 여백을 확보한다.
+React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토큰을 따른다. 좌측 navigation title/item은 `--fs-base`, 그룹 라벨은 `--fs-xs`, route hero 제목은 `--fs-xl`, 설명은 `--fs-base`를 사용한다. 홈 화면의 큰 `Folio Board` title은 레거시 `.home-hero` display scale을 유지하되, React Home에서는 prompt 위치를 고정하고 hero만 위로 당겨 title과 prompt 사이 여백을 확보한다.
 
 좌측 navigation 아이콘은 알파벳 배지가 아니라 탭 의미에 맞춘 outline SVG를 사용한다. 개별 아이콘 선택은 실제 UI 디자인에서 지정한 매핑을 따른다.
 
@@ -48,7 +97,7 @@ React Shell의 타이포그래피는 새 값을 만들지 않고 레거시 토�
 
 `#/watchlist`는 React Watchlist route지만 0.2 기본 사용자 nav에서는 숨긴다. `/api/watchlist`로 저장 목록을 읽고 저장하며, `/api/watchlist/resolve`로 티커/회사명을 정규화하고, `/api/watchlist/overview`로 카드용 태그·뉴스 카운트를 읽는다. 카드 클릭은 `#/watchlist/{item}` detail hash로 상세 화면을 열고, `/api/watchlist/detail`로 회사 정보·뉴스를, `MarketChartFigure`로 시세 차트를, `EarningsPanel`(`/api/market/earnings`)로 실적을 함께 보여준다. 카드와 상세 화면은 `watchlist-*`, `compact-item`, `input-panel`, `filter-btn` 클래스를 재사용한다.
 
-`#/settings`는 React Settings route다. `/api/settings`, `/api/agent-bridge/settings`, `/api/obsidian/settings`, `/api/automation/settings`를 직접 소비하며, AI Agent/API/Notion/Obsidian/자동화 설정을 `settings-panel`, `input-panel`, `settings-grid`, `filter-btn` 클래스 위에 렌더한다. `화면` 패널은 기본 Home, Classic/Student 캐릭터, 선택 이름, 시스템 모션/움직임 줄이기만 제공한다. AI Agent 설정은 ON/OFF와 LLM CLI/API 모드 토글을 한 패널에서 관리한다. 모델 필드는 마지막으로 불러온 `modelChoices`를 select로 표시하며, 새로고침은 `/api/settings?refresh=true`와 `/api/agent-bridge/settings?refresh=true`로 model catalog를 강제 갱신한다.
+`#/settings`는 React Settings route다. `/api/settings`, `/api/agent-bridge/settings`, `/api/obsidian/settings`, `/api/automation/settings`를 직접 소비하며, AI Agent/외부 데이터/Notion/Obsidian/자동화 설정을 `settings-panel`, `input-panel`, `settings-grid`, `filter-btn` 클래스 위에 렌더한다. `화면` 패널은 기본 Home, Classic/Student 캐릭터, 선택 이름, 시스템 모션/움직임 줄이기만 제공한다. AI Agent 설정은 ON/OFF와 CLI 연결을 한 패널에서 관리한다. 모델 필드는 마지막으로 불러온 `modelChoices`를 select로 표시하며, 새로고침은 `/api/settings?refresh=true`와 `/api/agent-bridge/settings?refresh=true`로 CLI model catalog를 갱신한다. 과거 API 설정에는 명시 전환 안내를 표시하며 데이터 API 설정은 유지한다.
 
 포트폴리오와 standalone 투자 노트 탭은 프론트엔드에서 숨김/비활성화한다. 기존 `data/portfolio*.json`, portfolio API, native notes API/storage는 유지하며, 보고서 옆 투자 노트 패널도 계속 유지한다.
 
@@ -110,7 +159,7 @@ public/react/folio-react.js
 
 - `renderMarkdown()`: 제목, 문단, 링크, 리스트, 표 렌더링. React report reader가 `FolioBridge`를 통해 호출한다.
 - `splitReportTitle()`: 보고서 본문의 선행 H1을 dark report hero(골드 kicker + 제목)로 올리고 본문에서 제거한다. 저장된 markdown은 바꾸지 않으며 표시 시점에만 전처리한다.
-- `MarketChartFigure`(`web/src/app/dashboard/MarketChartFigure.tsx`): 네이티브 시장 차트 **그림 한 장**. 종목 선택·설정 저장·패널 제목은 이 안에 없다 — 대시보드는 그것들을 자기가 갖고, 워치리스트 상세는 종목이 이미 정해져 있어 필요가 없다. Lightweight Charts의 `attributionLogo`는 그대로 둔다(§6 절대 규칙).
+- `MarketChartFigure`(`web/src/app/dashboard/MarketChartFigure.tsx`): 네이티브 시장 차트 **그림 한 장**. 종목 선택·설정 저장·패널 제목은 이 안에 없다 — 대시보드는 그것들을 자기가 갖고, 워치리스트 상세는 종목이 이미 정해져 있어 필요가 없다. Lightweight Charts의 `attributionLogo`는 그대로 둔다(§6 절대 규칙). 그림은 canvas라 화면 읽기 프로그램이 볼 것이 없으므로 **이름(범위·처음/마지막 종가·최고/최저 요약)·방향키 판독(`aria-live`)·데이터 표**를 그림 밖에 둔다 — 좌우 방향키 한 봉, PageUp/PageDown 열 봉, Home/End 처음·끝, Escape 해제이고, 고른 봉에 십자선과 툴팁이 함께 뜬다. 무대가 `role="img"`가 아니라 `role="group"`인 이유는 안에 TradingView 출처 링크가 있고 img는 자손을 숨기기 때문이다(axe `nested-interactive`).
 
 ## 보고서 hero / 색상
 
@@ -126,7 +175,7 @@ public/react/folio-react.js
 
 ```text
 .hero
- ├─ .hero-brand          좌: 브랜드(Folio OS)
+ ├─ .hero-brand          좌: 브랜드(Folio Board)
  ├─ .hero-status-group   중앙: 상태 텍스트(#status) + 진행바(#jobProgress) + 작업 취소(#cancelAgentJobBtn)
  └─ .hero-meta-group     우: 마지막 인덱싱 시각 + 서버 재시작(#restartServerBtn)
 ```
@@ -166,7 +215,18 @@ public/react/folio-react.js
 
 - `renderMarkdown()` 변경은 브리핑과 기업분석 모두에 영향을 줍니다.
 - 표 렌더링은 `<div class="table-wrap"><table>...</table></div>` 구조입니다.
-- Plotly 차트는 layout마다 글꼴을 지정하지 않아도 되도록, `Plotly.react`/`newPlot`를 한 번 감싸 `layout.font.family`(`PLOTLY_FONT_FAMILY`, UI 본문 글꼴)를 일괄 주입합니다. 새 차트도 자동 적용되며, 차트 글꼴이 본문과 달라지면 이 래퍼를 먼저 확인합니다.
+- **차트 층은 셋이다.** 기능이 멀쩡한 차트를 기술 통일만을 이유로 옮기지 않는다.
+  1. **ECharts** — 새 차트와 브리핑 히트맵(`public/briefing-visuals.js`, React 밖이라 `window.echarts`를 직접 부른다). `public/vendor/echarts.js`가 `window.echarts`(SVG 렌더러)로 노출되고, 화면은 `web/src/app/charts/FolioChart`에 `option`을 넘긴다. `FolioChart`가 수명(마운트·해제·폭 변화, 숨은 곳에서 시작해도 보이면 바로잡기)·테마 전환(`chart.setTheme`, 확대 범위·범례 선택은 되돌려 놓는다)·loading/empty/error/stale 네 상태·텍스트 대체(`role="img"` + 필수 `label`, 방향키 판독, 데이터 표)를 맡는다.
+  2. **Lightweight Charts** — 금융 시계열(`MarketChartFigure`, 브리핑 가격 계열). `public/vendor/lightweight-charts.js`(npm 배포본과 바이트 동일)로 서빙한다.
+  3. **손 SVG** — 기업분석 `AnalysisCharts`, 워치리스트 분기 지표 `FundamentalsPanel`, Portfolio `BacktestChart`. `BacktestChart`는 단일/비교 결과가 공유하며 실제 컨테이너 폭, 날짜/값 축, 범례, 날짜 hover·터치·키보드 선택과 데이터 표를 제공한다. 이들은 CSS 토큰을 직접 따른다.
+
+  **새 차트를 추가하는 절차**
+  - 필요한 차트 종류·컴포넌트가 `web/src/vendor/echarts.ts` 등록 목록에 없으면 한 줄 더하고 `web/`에서 `npm run build:vendor`로 다시 만든 뒤 `public/vendor/echarts.js`를 함께 커밋한다(사용자 설치본은 Node 없이 이 파일을 서빙한다).
+  - option은 차트 종류별 컴포넌트가 만든다 — 화면이 직접 쓰지 않는다. 색은 디자인 토큰, 금액·분기 표기는 `web/src/app/charts/chartFormat.ts`(KRW·JPY는 조·억, 그 외 T·B·M)를 쓴다. `option`은 메모이즈해서 넘긴다(참조가 바뀌면 다시 그리며 확대 범위가 초기화된다). 색을 토큰에서 만드는 차트(캐스케이드 등)는 `(tokens) => option` 함수로 넘겨 테마 전환 때 새 토큰으로 다시 만들게 한다.
+  - `FolioChart`의 `label`(필수)·`table`·`keyboard`를 채운다. 그림 안에 링크·버튼이 있으면 img가 그것을 숨기므로 `role="group"`을 쓴다.
+  - 앱 소스는 ECharts를 **`import type`으로만** 가져오고 실행 코드는 `window.echarts`로만 받는다(같은 라이브러리가 React 번들에 두 벌 실리지 않게. `web/tests/vendorScriptsSource.test.mjs`가 지킨다).
+  - ECharts 버전은 정확 고정이다. 올릴 때는 `public/briefing-visuals.test.js`의 canary(`heatmapTileSizes`)가 먼저 걸린다 — 히트맵 라벨 계획이 ECharts의 비공개 배치 경로를 읽기 때문이다.
+  - 캔버스 글꼴·색은 컴포넌트가 CSS 변수를 `getComputedStyle`로 읽는다(ECharts는 `var()`·`color-mix()`를 풀지 못하므로 해석된 값을 쓴다).
 - 기업분석 본문 폭은 기본적으로 `markdown-brief`의 제한 폭을 따릅니다.
 
 ## 보고서 가설 검토 표면 (0.2.1)
@@ -198,11 +258,24 @@ public/react/folio-react.js
 
 - `InvestmentContextCard.tsx`는 `GET /api/investment-context/summary`의 동일한
   metadata-only projection을 Home, Market Memory, Smart Collection, Deep Research에 표시한다.
+- **Market Memory는 카드가 아니다(0.6.0).** 카드로 올리면 개인 참고 정보가 시장 상태를 밀어내고
+  화면의 주인공처럼 보였다. `InvestmentContextStrip`이 Market State의 "다음 확인" 바로 아래에
+  한 줄로 놓이고(`MarketStateDashboard`의 `personalContext` 자리), 그 흐름의 검증 알림에는
+  `내 종목 NVDA · GOOGL` 보라 칩이 붙는다. 칩은 내러티브 **상태 ID**(`ownedTickersByState`)로만
+  잇고 이름으로 잇지 않는다. 연결 링크는 포트폴리오 종목이면 `#/portfolio`, 워치리스트에 있으면
+  `#/watchlist`로 간다.
+- **개인 층은 3px 보라 줄과 보라 라벨이 말한다.** 옅은 보라 워시는 쓰지 않는다 — 0.5 무테 규칙이
+  카드의 보라 줄을 지워 워시만 남았고, HDR에서 채도가 눌리면 개인 층인 줄 알 수 없었다.
+  카드는 말미 무테 규칙 뒤에서 줄을 다시 선언한다. 실측 대비(라벨 글자/보라 줄 vs 면): 다크 8.61,
+  라이트 5.94. 버튼은 `.btn` 프리미티브(`btn--sm`, 링크는 `btn--text`)다.
+- 확인 예정은 0이면 숨긴다. 맨 아래 경계 문구는 "내 포트폴리오·워치리스트 기준 참고 정보예요.
+  보고서 근거로는 쓰지 않아요."로 화면 말을 쓴다.
 - 네 표면의 ticker, stance, 예정 checkpoint, 연결 route는 같은 컴포넌트 계약을 사용한다.
   Portfolio와 Watchlist의 독립 route는 계속 기본 navigation에서 숨긴다.
 - 연결된 맥락이 없으면 어떤 화면에서도 렌더링하지 않는다(로딩·실패도 마찬가지). 홈에서
   빈 카드가 상시 떠 있으면 아직 쓰지 않은 기능을 계속 광고하게 된다. 닫기는
-  `folio.investmentContext.dismissed.v1`에 저장해 화면을 옮겨도 유지한다.
+  `folio.investmentContext.dismissed.v1`에 저장해 화면을 옮겨도 유지한다. 닫기 버튼이 있는
+  카드(홈)에만 적용한다 — 예전에는 홈에서 닫은 것이 닫기 버튼도 없는 화면의 카드까지 숨겼다.
 - 카드는 `data-layer="hypothesis"`를 유지하고 포트폴리오 수량·비중·가격이나 note body를
   렌더링하지 않는다. 외부 evidence와 Canonical 보고서 본문도 이 카드와 구분한다.
 - context 자동 조회는 read-only다. Agent는 사용자가 `Agent로 위험 설명`을 눌렀을 때만
@@ -230,6 +303,17 @@ public/react/folio-react.js
 - 근거 부족 확인(zero-evidence confirm)과 수정 제안 승인 절차는 단순화 후에도 숨기지 않는다.
 
 ## Agent 작업 기록 표시 규칙 (0.3.x)
+
+D4 로컬 수용 완료(2026-09-08): 기존 실행 상세 안에 진단 정보 미리보기·로컬 다운로드,
+설정에 진단 보존 관리 패널을 연결했다. 삭제와 설정 저장은 각각 미리보기·확인을 거치며
+실제 자동 삭제는 기본 off다. 중첩 펼침과 모바일 체크박스 배치를 보완하고
+desktop/mobile × Light/Dark 및 접근성을 검증했다. 운영 서버/실제 자료 변경은 하지 않았다.
+
+- `DiagnosticDetail`은 기존 작업 기록과 설정의 마지막 자동화 실행에서 실행 상세를 조회한다. 작업 기록의 전체 새로고침은 항목의 수정 시각이 같아도 열린 상세를 함께 갱신한다. 로그마다 새로고침 버튼을 두지 않으며, 조회 실패의 `다시 시도`는 유지한다. 실행 ID 변경·펼침 재개에서도 현재 기록을 다시 읽고 이전 요청의 늦은 응답은 버린다.
+- 실행 성공/실패/취소와 진단 범위 제한/실제 기록 손실은 구분한다. 현재 작업 상태를 확인하지 못하면 완료를 단정하지 않는다. 규칙 대체 뒤 저장에 실패한 실행을 완료로 표시하지 않으며, 실패한 단계의 종료 이벤트를 성공 완료 단계로 세지 않는다.
+- 브리핑·기업분석·딥 리서치의 생성 오류는 서버가 제공한 유효한 실행 ID가 있을 때 같은 `실행 상세`를 연다. 요청 ID만 있으면 접힌 개발자 정보에 표시하고 실행 ID로 추측하지 않는다. 네트워크/응답 읽기 문제는 서버 처리 결과를 확인할 수 없는 상태로 안내하며 자동 재전송하지 않는다. 오류가 바뀌거나 새 작업으로 넘어가면 이전 진단 연결을 지운다. 일반 목록·삭제·내보내기 오류와 전역 팝업으로 범위를 넓히지 않는다.
+- 진단의 다음 행동은 기존 화면으로만 연결한다. 설정 확인은 `설정에서 확인`, 결과 확인은 해당 기능의 목록(`자동화`는 설정 화면)으로 표시하며, 대기·재시도·알 수 없는 행동에는 링크를 만들지 않는다.
+- 공통 실행 목록은 기존 Work Log 안의 `실패·대체 실행 찾기`를 펼쳐서 연다. `실패만`·`대체 실행만`·기간·`모든 실행 보기`로 목록을 전환하며, 현재 스냅샷·부분 검사·조회 실패·cursor 재조회 상태를 구분한다. 기존 Work Log 26필드와 숨기기 범위, 직접 실행·재생성 경계는 바꾸지 않는다.
 
 - Work Log API는 계속 안전한 코드 값만 준다. 화면 문구는 `web/src/app/workLogCopy.ts`의
   `workLogItemCopy()`가 그 코드를 사람이 읽는 문장으로 바꿔서 만든다. 컴포넌트는 코드 값을

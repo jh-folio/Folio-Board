@@ -13,8 +13,25 @@ from features.daily_briefing import builder
 
 def _scope_result(scope):
     market = scope.upper()
+    label = "미국장" if scope == "us" else "한국장" if scope == "kr" else "유럽장" if scope == "europe" else "일본장"
+    title = "US" if scope == "us" else "Korea" if scope == "kr" else "Europe" if scope == "europe" else "Japan"
+    markdown = "\n\n".join([
+        f"# {title} Market Briefing — 2026.06.19 마감",
+        f"## 0. 오늘의 {label} 성격",
+        f"## 1. {label} 시장 흐름",
+        f"## 2. {label}을 움직인 핵심 변수",
+        f"## 3. {label}을 주도한 기업 ① — 첫기업",
+        f"## 4. {label}을 주도한 기업 ② — 둘째기업",
+        "## 5. 일반 투자자 관점",
+        f"## 6. 다음 {label} 체크포인트",
+        "## 오늘의 결론",
+        "## Source & Data Notes",
+        "**한 줄 결론:** 확인\n" * 7,
+        "· 확인 항목\n" * 18,
+        f"{scope} body " + "근거 있는 분석 문장 " * 1000,
+    ])
     return {
-        "markdown": f"# {'US' if scope == 'us' else 'Korea'} Market Briefing\n\n{scope} body",
+        "markdown": markdown,
         "sessionMode": f"{scope}_close",
         "marketSessionDate": "2026-06-19",
         "sources": [],
@@ -117,6 +134,49 @@ def test_build_briefing_persists_per_market_reports_and_sidecars():
 
         # 연결 분석은 제거됐다. 통합 생성이 더 이상 사이드카를 만들지 않는다.
         assert not (root / "2026-06-20.link.json").exists()
+
+
+def test_rules_api_briefing_save_strips_legacy_change_metadata_without_change_calls():
+    """The direct API/rules writer neither compares nor projects briefing changes."""
+    from features.common.change_intelligence import comparator, semantic
+    from features.common.change_intelligence import service as change_service
+
+    visuals = {"visualRecommendations": [], "visualSnapshots": [], "sidecar": {}, "warnings": []}
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        patches = [patch.object(builder, "BRIEFINGS_DIR", root), *_build_patches(visuals)]
+        for item in patches:
+            item.start()
+        original_single_market_briefing = builder._single_market_briefing
+
+        def with_legacy_change_metadata(briefing, scope, checkpoints=None):
+            candidate = original_single_market_briefing(briefing, scope, checkpoints)
+            candidate.update({
+                "changeBasis": {"artifactId": "legacy"},
+                "changeSummary": {"status": "major_change"},
+                "changeIntelligence": {"status": "major_change", "projectionStatus": "pending"},
+            })
+            return candidate
+
+        try:
+            with (
+                patch.object(builder, "_single_market_briefing", side_effect=with_legacy_change_metadata),
+                patch.object(change_service, "decorate_candidate", side_effect=AssertionError("briefing decorated")),
+                patch.object(change_service, "compare_basis", side_effect=AssertionError("briefing compared")),
+                patch.object(comparator, "compare_basis", side_effect=AssertionError("briefing compared")),
+                patch.object(semantic, "evaluate_semantic_changes", side_effect=AssertionError("briefing evaluated")),
+                patch.object(change_service, "project_committed_report", side_effect=AssertionError("briefing projected")),
+            ):
+                builder.build_briefing("2026-06-20", persist=True, market_scope="us", llm_override=False)
+        finally:
+            for item in reversed(patches):
+                item.stop()
+
+        saved_paths = list(root.glob("*.us.json"))
+        assert len(saved_paths) == 1
+        saved = json.loads(saved_paths[0].read_text(encoding="utf-8"))
+        assert all(key not in saved for key in ("changeBasis", "changeSummary", "changeIntelligence"))
+        assert not (root / "market-memory.sqlite3").exists()
 
 
 def test_single_market_regeneration_preserves_sibling_and_marks_overlay_stale():

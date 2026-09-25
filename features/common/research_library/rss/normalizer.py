@@ -1,4 +1,4 @@
-"""Normalize collector-specific rows into Folio OS intake evidence items."""
+"""Normalize collector-specific rows into Folio Board intake evidence items."""
 from __future__ import annotations
 
 import datetime as dt

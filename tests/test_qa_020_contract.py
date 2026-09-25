@@ -146,7 +146,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
         "runRoot": str(run_root.resolve()),
         "ownershipMarker": str(marker.resolve()),
         "artifact": {
-            "path": str((tmp_path / "FolioOS-v0.2.0.zip").resolve()),
+            "path": str((tmp_path / "FolioBoard-v0.2.0.zip").resolve()),
             "sha256": "a" * 64,
         },
         "build": {"version": "0.2.0", "commit": "b" * 40},
@@ -349,11 +349,11 @@ def test_prepare_help_exposes_manifest_only_contract() -> None:
 
 
 def test_prepare_seeds_runtime_visible_strict_topic_report_and_wired_fixtures(tmp_path: Path) -> None:
-    artifact = tmp_path / "FolioOS-v0.2.0.zip"
+    artifact = tmp_path / "FolioBoard-v0.2.0.zip"
     with zipfile.ZipFile(artifact, "w") as archive:
-        archive.writestr("FolioOS/VERSION", "0.2.0\n")
+        archive.writestr("FolioBoard/VERSION", "0.2.0\n")
         archive.writestr(
-            "FolioOS/BUILD.json",
+            "FolioBoard/BUILD.json",
             json.dumps(
                 {
                     "version": "0.2.0",
@@ -362,7 +362,7 @@ def test_prepare_seeds_runtime_visible_strict_topic_report_and_wired_fixtures(tm
                 }
             ),
         )
-        archive.writestr("FolioOS/app.py", "# fixture app\n")
+        archive.writestr("FolioBoard/app.py", "# fixture app\n")
     attempt = tmp_path / "attempt"
     result = _run(
         QA_020,
@@ -572,8 +572,8 @@ def test_full_generation_probe_receipt_requires_two_exact_independent_modes() ->
     module = _load_qa_020()
     receipt = {
         "direct": {"saved": False, "provenance": {
-            "requestedMode": "direct", "attemptedEngine": "api", "finalEngine": "rules",
-            "fallbackReason": "engine_failed",
+            "requestedMode": "direct", "attemptedEngine": "none", "finalEngine": "rules",
+            "fallbackReason": None,
         }},
         "cli": {"saved": False, "provenance": {
             "requestedMode": "cli", "attemptedEngine": "cli", "finalEngine": "rules",
@@ -589,7 +589,7 @@ def test_full_generation_probe_receipt_requires_two_exact_independent_modes() ->
 
 def test_workspace_identity_golden_vector_uses_normative_nul_formula(tmp_path: Path) -> None:
     module = _load_qa_020()
-    extract_root = (tmp_path / "packages" / "preExposure" / "FolioOS").resolve()
+    extract_root = (tmp_path / "packages" / "preExposure" / "FolioBoard").resolve()
     expected = hashlib.sha256(
         f"attempt-golden\0{'a' * 64}\0{extract_root}".encode("utf-8")
     ).hexdigest()

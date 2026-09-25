@@ -2,11 +2,84 @@
 from __future__ import annotations
 
 import pytest
+from copy import deepcopy
+import datetime as dt
 
 from features.daily_briefing import weekly_visuals as wv
 from features.daily_briefing.weekly import weekly_window
 
 WEEK_SESSIONS = ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21"]
+
+
+def _full_daily_history():
+    end = dt.date(2026, 8, 21)
+    days = [end - dt.timedelta(days=n) for n in range(400)]
+    days = sorted(day for day in days if day.weekday() < 5)[-255:]
+    return {"provider": "test", "sourceByInterval": {"hourly": "test-hourly", "daily": "test-daily"},
+            "intraday": {"interval": "5m", "points": [{"time": "unused", "close": 999}]},
+            "hourly": {"interval": "1h", "points": [
+                {"time": f"2026-08-{17 + (n // 7):02d}T{9 + (n % 7):02d}:00:00-04:00", "close": 100 + n}
+                for n in range(35)]},
+            "daily": {"interval": "1d", "points": [
+                {"time": day.isoformat(), "open": 100 + n, "high": 102 + n,
+                 "low": 99 + n, "close": 101 + n, "volume": 100000 + n}
+                for n, day in enumerate(days)]}}
+
+
+@pytest.mark.parametrize("market", ["us", "kr", "europe", "jp"])
+def test_weekly_flow_adds_full_daily_history_without_changing_week_fields(market):
+    window = weekly_window("2026-08-23")
+    history = _full_daily_history()
+    original = deepcopy(history)
+    calls = []
+
+    def fetch(ticker, date):
+        calls.append((ticker, date))
+        return history
+
+    result = wv.collect_weekly_visuals(window, "us", markets=[market], documents=[],
+        price_history_fetcher=fetch, heatmap_fetchers={market: lambda date: {}})
+    flow = result["visualSnapshots"][0]
+    assert calls == [(item["ticker"], window.week_end) for item in wv.INDEX_UNIVERSE[market]]
+    shorter = deepcopy(history)
+    shorter["daily"]["points"] = history["daily"]["points"][-6:]
+    legacy = wv._collect_weekly_flow(market, window, lambda *args: shorter, [])
+    fields = ("points", "baselineClose", "changePct", "weeklyReturn", "weeklyBaselineClose",
+              "weeklyBaselineDate", "weeklyEndDate", "weeklyReturnReason", "expectedSessions", "missingSessions")
+    for row, previous in zip(flow["series"], legacy["series"]):
+        assert row["daily"] == history["daily"]
+        assert row["hourly"] == history["hourly"]
+        assert len(row["daily"]["points"]) == 255
+        assert all("close" in point for point in row["daily"]["points"])
+        assert "intraday" not in row
+        assert row["sourceByInterval"] == history["sourceByInterval"]
+        assert {key: row[key] for key in fields} == {key: previous[key] for key in fields}
+        assert len(row["points"]) == 5
+    for key in ("role", "range", "window", "weekLabel", "sessionDates", "coverage", "currencies"):
+        assert flow[key] == legacy[key]
+    assert flow["granularities"] == ["1h", "1d"]
+    assert flow["subject"] == {}
+    assert flow["dataSufficiency"]["status"] == "sufficient"
+    assert all(counts == {"intraday": 0, "hourly": 35, "daily": 255} for counts in flow["dataSufficiency"]["pointCounts"].values())
+    recommendation = result["visualRecommendations"][0]
+    assert recommendation["variant"] == "weekly_flow_chart"
+    assert recommendation["defaultPeriod"] == "1W"
+    assert recommendation["placement"]["sectionRole"] == "weekly_flow"
+    flow["series"][0]["daily"]["points"][0]["close"] = -1
+    assert history == original  # Saved assembly does not mutate the fetcher's cache.
+
+
+@pytest.mark.parametrize("market", ["us", "kr", "europe", "jp"])
+@pytest.mark.parametrize("points", [None, [], [{"time": "2026-08-21", "close": 100}],
+    [{"time": "2026-08-20", "close": None}, {"time": "2026-08-21", "close": 100}]])
+def test_weekly_flow_missing_or_insufficient_history_warns(market, points):
+    warnings = []
+    history = {} if points is None else {"daily": {"interval": "1d", "points": points}}
+    flow = wv._collect_weekly_flow(market, weekly_window("2026-08-23"), lambda *args: history, warnings)
+    assert flow["series"] == []
+    assert flow["coverage"]["missingSymbols"] == [item["ticker"] for item in wv.INDEX_UNIVERSE[market]]
+    assert flow["dataSufficiency"]["status"] == "unavailable"
+    assert flow["warnings"] and warnings
 
 
 def _price_fetcher(closes_by_symbol=None, dates=None):
@@ -92,6 +165,111 @@ def test_flow_baseline_is_the_first_session_inside_the_window():
     assert flow["sessionDates"] == WEEK_SESSIONS
     assert flow["unit"] == "percent_change_from_week_start"
     assert flow["range"] == "week"
+
+
+def test_flow_exposes_prior_week_close_return_separately_from_normalized_curve():
+    window = weekly_window("2026-08-23")
+    result = wv.collect_weekly_visuals(
+        window, "us", documents=[],
+        price_history_fetcher=_price_fetcher({"^GSPC": [100.0, 101.0, 102.0, 103.0, 104.0]}),
+        heatmap_fetchers={"us": _heatmap_fetcher({})},
+    )
+    series = next(row for row in result["visualSnapshots"][0]["series"] if row["ticker"] == "^GSPC")
+    # The curve remains first-in-window (100 -> 104), while the headline
+    # weekly return uses the preceding close (50 -> 104).
+    assert series["baselineClose"] == 100.0
+    assert series["points"][0]["changePct"] == 0.0
+    assert series["weeklyBaselineDate"] == "2026-08-14"
+    assert series["weeklyBaselineClose"] == 50.0
+    assert series["weeklyReturn"] == pytest.approx(108.0)
+    assert series["weeklyEndDate"] == "2026-08-21"
+
+
+def test_flow_marks_missing_middle_session_as_partial_temporal_coverage():
+    window = weekly_window("2026-08-23")
+
+    def sparse(symbol, session_date):
+        points = [
+            {"time": "2026-08-17", "close": 100.0},
+            # 08-18 is intentionally absent for every symbol.
+            {"time": "2026-08-19", "close": 101.0},
+            {"time": "2026-08-20", "close": 102.0},
+            {"time": "2026-08-21", "close": 103.0},
+        ]
+        return {"provider": "test", "daily": {"interval": "1d", "points": points}}
+
+    result = wv.collect_weekly_visuals(
+        window, "us", documents=[], price_history_fetcher=sparse,
+        heatmap_fetchers={"us": _heatmap_fetcher({})},
+    )
+    flow = next(row for row in result["visualSnapshots"] if row["role"] == "weekly_flow")
+    series = next(row for row in flow["series"] if row["ticker"] == "^GSPC")
+    assert flow["coverage"]["status"] == "partial"
+    assert "2026-08-18" in series["missingSessions"]
+    assert "2026-08-18" in flow["coverage"]["missingSessionsBySymbol"]["^GSPC"]
+
+
+def test_weekly_return_keeps_missing_prior_baseline_null():
+    window = weekly_window("2026-08-23")
+
+    def no_prior(symbol, session_date):
+        return {"provider": "test", "daily": {"interval": "1d", "points": [
+            {"time": "2026-08-17", "close": 100.0},
+            {"time": "2026-08-18", "close": 101.0},
+            {"time": "2026-08-19", "close": 102.0},
+            {"time": "2026-08-20", "close": 103.0},
+            {"time": "2026-08-21", "close": 104.0},
+        ]}}
+
+    result = wv.collect_weekly_visuals(
+        window, "us", documents=[], price_history_fetcher=no_prior,
+        heatmap_fetchers={"us": _heatmap_fetcher({})},
+    )
+    series = next(row for row in result["visualSnapshots"][0]["series"] if row["ticker"] == "^GSPC")
+    assert series["weeklyReturn"] is None
+    assert series["weeklyBaselineDate"] is None
+    assert series["weeklyReturnReason"] == "prior_week_close_missing"
+
+
+def test_weekly_return_requires_exact_prior_and_final_calendar_sessions():
+    window = weekly_window("2026-08-23")
+
+    def stale_or_missing_end(symbol, session_date):
+        return {"provider": "test", "daily": {"interval": "1d", "points": [
+            # 08-13 is not the exact prior session to this window; 08-14 is missing.
+            {"time": "2026-08-13", "close": 50.0},
+            {"time": "2026-08-17", "close": 100.0},
+            {"time": "2026-08-18", "close": 101.0},
+            {"time": "2026-08-19", "close": 102.0},
+            {"time": "2026-08-20", "close": 103.0},
+        ]}}
+
+    result = wv.collect_weekly_visuals(
+        window, "us", documents=[], price_history_fetcher=stale_or_missing_end,
+        heatmap_fetchers={"us": _heatmap_fetcher({})},
+    )
+    series = next(row for row in result["visualSnapshots"][0]["series"] if row["ticker"] == "^GSPC")
+    assert series["weeklyReturn"] is None
+    assert series["weeklyBaselineDate"] is None
+    assert series["weeklyReturnReason"] == "prior_week_close_missing"
+
+    def missing_friday(symbol, session_date):
+        return {"provider": "test", "daily": {"interval": "1d", "points": [
+            {"time": "2026-08-14", "close": 50.0},
+            {"time": "2026-08-17", "close": 100.0},
+            {"time": "2026-08-18", "close": 101.0},
+            {"time": "2026-08-19", "close": 102.0},
+            {"time": "2026-08-20", "close": 103.0},
+        ]}}
+
+    result = wv.collect_weekly_visuals(
+        window, "us", documents=[], price_history_fetcher=missing_friday,
+        heatmap_fetchers={"us": _heatmap_fetcher({})},
+    )
+    series = next(row for row in result["visualSnapshots"][0]["series"] if row["ticker"] == "^GSPC")
+    assert series["weeklyReturn"] is None
+    assert series["weeklyBaselineDate"] == "2026-08-14"
+    assert series["weeklyReturnReason"] == "week_end_session_missing"
 
 
 def test_heatmap_recomputes_week_over_week_and_drops_constituents_without_a_week_start():

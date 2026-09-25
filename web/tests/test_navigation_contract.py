@@ -187,7 +187,7 @@ def test_topic_report_endpoint_inventory_has_no_public_save_route() -> None:
 
 
 def test_detects_version_drift() -> None:
-    files = {"README.md": "Folio OS 0.1", "README.ko.md": "Folio OS 0.3", "installation.md": "Folio OS 0.3"}
+    files = {"README.md": "Folio Board 0.1", "README.ko.md": "Folio Board 0.3", "installation.md": "Folio Board 0.3"}
     assert _current_claim_issues(files) == ["README.md:version"]
 
 

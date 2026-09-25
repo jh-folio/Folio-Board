@@ -135,6 +135,14 @@ class JsonArtifactSpec:
     artifact_id: str
     exact_path: Path
     payload: dict[str, JsonValue]
+    # Runs while the exact artifact lock is held, before the stager captures
+    # its base hash.  Feature contracts can validate a candidate without
+    # writing around the job lifecycle.
+    payload_validator: Callable[[dict[str, JsonValue], dict[str, JsonValue] | None], dict[str, JsonValue]] | None = None
+    # Staging can be long-lived.  A feature with external authoritative inputs
+    # may reject promotion if those inputs moved after staging; this must run
+    # before the job claims COMMITTING or creates a recovery journal.
+    pre_promotion_validator: Callable[[], None] | None = None
 
 
 type ArtifactSpec = CanonicalArtifactSpec | JsonArtifactSpec
@@ -146,6 +154,7 @@ class StagedArtifact:
     exact_path: Path
     staged_path: Path
     canonical: PreparedCanonicalWrite | None
+    pre_promotion_validator: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)

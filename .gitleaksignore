@@ -25,3 +25,11 @@ eb78b998e80eca896725262410357c4f022da5db:features/daily_briefing/tests/test_four
 # 그리고 이 파일 자신의 옛 판본 한 건. 인용을 지운 지금 판본은 걸리지 않지만,
 # 인용이 들어 있던 커밋(aec5b55)은 히스토리에 남아 계속 잡힌다.
 aec5b5576e643915c7cc371d920f2642a645cc33:.gitleaksignore:generic-api-key:6
+
+# 아래 3건은 테스트 전용 고정값이다. JS 두 건은 인증에 쓰이지 않는
+# `*_fixture` preview 토큰이고, Python 건은 인증 키가 아닌 ResumeStore의
+# 임시 체크포인트 파일명용 고정 키다. 값의 용도와 위치를 확인했으며,
+# 지문 단위로만 무시한다.
+f54034337339eadaf822dd34bd4ab33f822186c6:web/src/app/diagnosticD4Api.test.ts:generic-api-key:19
+f54034337339eadaf822dd34bd4ab33f822186c6:web/tests/e2e/diagnostic-retention-d4.spec.ts:generic-api-key:11
+c6486b88266cf2f789e7632d382488d9634ec129:features/topic_report/tests/test_resume_store.py:generic-api-key:20

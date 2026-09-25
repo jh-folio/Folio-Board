@@ -85,7 +85,7 @@ def install_verified_executable(source: Path, destination: Path) -> None:
 
 def install_gitleaks(version: str, install_dir: Path) -> Path:
     asset = load_asset(version)
-    request = urllib.request.Request(asset["url"], headers={"User-Agent": "FolioOS-release-bootstrap/0.2"})
+    request = urllib.request.Request(asset["url"], headers={"User-Agent": "FolioBoard-release-bootstrap/0.2"})
     with tempfile.TemporaryDirectory(prefix="folio-gitleaks-") as temporary_name:
         temporary = Path(temporary_name)
         archive = temporary / asset["filename"]

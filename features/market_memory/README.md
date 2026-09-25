@@ -27,6 +27,7 @@
   - `confidence`, `evidence_count_7d/30d/90d`, `last_confirmed_at`, `last_challenged_at`
   - `falsification_triggers_json`, `next_checkpoints_json`
 - `market_regime_evidence`, `market_regime_changes`, `market_regime_thesis_links` 테이블에 상태별 근거, 변화 로그, thesis 연결을 저장합니다.
+- `market_evidence_roles`에는 `(state_key, memory_id)`별 근거 역할을 별도로 저장합니다. 이 행은 상태가 회전해도 계보를 따르며, 분류 당시의 의미 해시와 classifier version이 현재 상태/근거와 같을 때만 다시 사용합니다.
 - `market_memory_taxonomy` 테이블에 story, story_family, tag, industry, ticker, subject, event_kind, state_key의 사용량을 누적합니다.
 - `market_story_links` 테이블에 branch와 family의 관계를 저장합니다.
   - `branches_from`, `same_family`, `confirms`, `conflicts_with`, `replaces`, `evolves_from`
@@ -57,6 +58,10 @@
 - `features/market_memory/memory.py`: 감사 리포트, 스토리 맵, 패밀리 제안, 상태 수동 업데이트 로직
 - `features/market_memory/service.py`: LLM 기반 내러티브 정리와 서버 시작 시 Regime 추세 자동 갱신 스케줄링
 - `features/market_memory/regime_v2.py`: Regime 근거 분류, momentum/confidence 계산, 변화 로그, thesis 연결
+- `features/market_memory/checkpoint_verdicts.py`: 구조화 체크포인트 판정 pass(규칙 기반)와 생성·교체 쓰기 경로
+- `features/thesis_tracking/checkpoint_verdicts.py`: thesis 체크포인트 판정(근거 풀은 연구 인덱스 문서, 0건이면 인덱스를 열지 않음)
+- `features/market_memory/verification_view.py`: 내러티브 검증 상태 읽기 projection(체크포인트 판정·무소식 배지·판정 이력)
+- `features/common/research_schema/tracked_checkpoints.py`: 구조화 체크포인트 스키마·검증·병합 (market_memory와 thesis_tracking 공용)
 - `features/market_memory/prompt.md`: LLM 기반 시장 내러티브 정리 프롬프트
 - `app.py`: `/api/memory`, `/api/memory/states`, `/api/memory/regime/refresh`, `/api/memory/states/{state_id}/evidence|changes|thesis-links` API와 브리핑 생성 후 자동 저장
 - `public/index.html`, `public/app.js`, `public/styles.css`: 시장 내러티브 탭 UI
@@ -70,14 +75,120 @@
 - 상태는 모든 엔트리에서 자동 생성하지 않습니다. 최소 반복 근거가 있거나, 중요도가 높고 복수 출처가 있을 때 active/watch로 올립니다.
 - 기존 분류값을 우선 재사용하고, 새 키는 최소 단위로 추가합니다.
 - `brief` 메모는 기본적으로 상태를 만들지 않고, `issue` 메모만 상태 후보가 됩니다.
-- LLM은 버튼을 눌렀을 때만 실행합니다. 컨텍스트는 후보 이슈 4개, 각 이슈당 상위 자료 2개, 최근 메모리/상태/패밀리의 압축본으로 제한합니다.
+- LLM 기반 시장 메모리 업데이트는 후보 이슈 4개, 각 이슈당 상위 자료 2개, 최근 메모리/상태/패밀리의 압축본으로 제한합니다. 브리핑 사전작업은 메모리가 오래됐을 때만 같은 중기 메모리 갱신 뒤 화면 스냅샷을 시도하며, 어느 단계의 실패도 브리핑을 막지 않습니다.
 - LLM 출력은 JSON으로 파싱하고 허용된 enum과 필드 길이를 코드에서 다시 정규화한 뒤 저장합니다.
 - Regime v2의 최종 `momentum`과 evidence `role`은 코드 enum으로 검증합니다. LLM 자유 텍스트로 결론을 확정하지 않습니다.
 - Thesis/Obsidian 노트는 hypothesis입니다. Regime v2는 `linked_regimes`, ticker overlap 등을 연결 정보로만 쓰며 외부 evidence처럼 취급하지 않습니다.
 - `method='manual'`로 저장된 Regime↔thesis 링크의 `relationship`은 자동 추론 갱신(`refresh_thesis_links`)이 덮어쓰지 않습니다. 이 갱신은 서버 시작과 자동화마다 돌기 때문에, 보호하지 않으면 사용자가 지정한 값이 예고 없이 사라집니다.
 - 메모리 재저장은 Regime 갱신이 계산한 `confidence`를 되돌리지 않습니다. 같은 날 같은 `state_key`는 같은 행이라 재저장이 흔한 경로이고, `momentum`·근거 카운트는 남는데 `confidence`만 기본값으로 돌아가면 행이 서로 모순됩니다.
+- 규칙 추세 갱신은 `next_checkpoints_json`을 덮어쓰지 않고 병합합니다. 구조화 체크포인트의 판정 상태는 판정 pass만 바꾸며, 갱신은 템플릿 문장만 다시 씁니다.
+- 체크포인트 판정은 `confirmed | challenged | no_signal` enum이며 규칙으로만 계산합니다. 판정이 내러티브 status/momentum이나 Thesis verdict를 자동으로 바꾸지 않습니다.
 - 기본 브리핑 markdown은 추세 갱신으로 변경하지 않습니다.
 - 기업 분석의 공식자료 우선순위와 섞지 않습니다.
+
+## 내러티브 근거 역할 (0.6 후속 R)
+
+기사의 일반적인 호재·악재가 아니라, **해당 내러티브가 유지되는지**를 기준으로 근거 역할을 분류합니다. `supporting | challenging | neutral`만 허용하며 checkpoint verdict(`confirmed | challenged | no_signal`)는 계속 규칙 pass가 결정합니다.
+
+- `bias=bullish|bearish` 상태만 규칙 polarity로 즉시 역할을 계산합니다. `neutral`/`mixed`/빈 bias는 부정적인 기사라도 `neutral`입니다. `net_effect` slug는 매칭·분류·hash에 사용하지 않습니다.
+- API와 Agent CLI는 같은 `roleCandidates`(최대 50 pair)를 모델 출력에 함께 싣고, 같은 validator와 SQLite write를 사용합니다. candidate의 `state`/`memory`는 hash의 canonical input과 같은 값이며 hash/version은 모델에 주거나 받지 않습니다. 모르는 pair, 중복, enum 오류는 그 원소만 버리며, 유효한 나머지는 저장합니다.
+- LLM 구성이면 현재 hash/version의 durable role이 없는 pair는 pending입니다. pending은 momentum/confidence와 `market_regime_evidence` projection에 들어가지 않습니다. 단, checkpoint keyword와 맞는 pending pair가 있으면 `dueBy`/90일 무신호 만료를 보류합니다.
+- 같은 market-memory 호출에서 내러티브가 바뀌면 현재 basis를 다시 고릅니다. 시작 batch에 있던 pair는 응답 전후 hash가 같을 때만 LLM 결과를 쓰고, basis가 달라진 기존 pair만 현재 basis의 rules row로 닫아 다음 due upgrade가 가능하게 합니다. 응답 뒤 새로 생긴 pair는 모델에 제공하지 않았으므로 손대지 않고 다음 primary backlog에서 처리합니다.
+- 모델 호출·출력 일부가 실패하면 해당 회차 pair는 보수 규칙 role로 저장하고 24시간, 72시간, 이후 7일 간격으로 재시도합니다. role 전용 budget slot은 없으며, 기존 market-memory 호출이 provider quota/budget 소진 신호를 낸 경우에만 `role_budget_exhausted`로 연결하고 failure count를 올리지 않습니다. role batch는 `BEGIN IMMEDIATE`로만 저장되며 역할 저장 실패가 내러티브·스냅샷·브리핑을 되돌리지 않습니다.
+- RSS digest, 서버 시작 추세 갱신, checkpoint verdict pass는 role LLM을 호출하지 않습니다. RSS는 기존 durable role을 보존하고, rules 모드에서는 즉시 규칙 projection을 사용합니다.
+
+## 구조화 체크포인트와 판정 pass (0.6 Stage A)
+
+"다음에 이것을 확인하자"를 저장만 하고 그 '다음'이 와도 되짚지 않던 것을, 매일 돌아오는 루프로 바꿉니다.
+
+### 저장 형태 — 한 리스트에 두 종류가 산다
+
+저장 위치는 기존 컬럼 그대로입니다(`market_narrative_states.next_checkpoints_json`, thesis는 `thesis.next_checkpoints_json`). **새 테이블을 만들지 않습니다.** 리스트의 원소는 둘 중 하나이며 읽는 쪽은 둘 다 받습니다.
+
+- `str`: 규칙 엔진이 갱신마다 다시 만드는 템플릿 문장. 기존 저장본은 전부 이것입니다.
+- `dict`: 구조화 체크포인트. `features/common/research_schema/tracked_checkpoints.py`가 스키마와 검증을 소유합니다.
+
+```text
+{ "id": "cp_<정규화(item+matchers) 해시 8자>",   // 재생성·중복 판별 키
+  "item": "전력 설비 기업 실적 가이던스 상향",     // <=120자
+  "direction": "supporting" | "challenging",       // 이 신호가 잡히면 무슨 의미인가
+  "matchers": { "tickers": [...], "keywords": [...] },
+  "dueBy": "2026-09-15" | null,
+  "status": "open" | "confirmed" | "challenged" | "expired",
+  "createdAt": "...",
+  "lastVerdict": { "verdict": "confirmed|challenged|no_signal", "at": "...",
+                   "evidence": [{"memoryId","date","title","role"}] },   // <=3건 사본
+  "history": [ {"at","from","to","verdict"} ] }                          // 상한 20
+```
+
+- **enum과 길이는 코드가 집행합니다.** `direction`은 뜻이 뒤집히는 값이라 기본값을 주지 않습니다 — enum을 벗어나면 그 원소를 버립니다. `status`·`lastVerdict.verdict`는 모르는 값이면 기본값(`open`)으로 내려가고, 모르는 키는 제거합니다.
+- **상태 라벨 전문을 keyword로 쓸 수 없습니다.** 라벨을 keyword로 쓰면 그 상태의 모든 근거가 매칭돼 과잉 확인이 됩니다 — 실측으로 근거의 `matched_terms`에 `state_key` 자체가 들어 있습니다. 비교는 공백을 지우고 합니다.
+- **내러티브는 keyword >=1, thesis는 ticker >=1 그리고 keyword >=1을 요구합니다.** 티커만으로는 "그 회사 뉴스가 있다"이지 가설 신호가 아닙니다.
+- 상태당 구조화 체크포인트는 8개까지, `dueBy`는 생성 시점 이후의 ISO 날짜만 받습니다.
+- **검증 실패의 처분은 경로에 따라 다릅니다.** 생성 경로(LLM 출력·수동 입력)에서 실패한 원소는 버리고 규칙 템플릿 문장이 그 자리를 대신합니다(화면이 비지 않습니다). **저장된 원소의 재검증 실패는 버리지 않고 그대로 보존하며 판정에서만 뺍니다** — 그 실패는 원소가 아니라 규칙 쪽 변화(라벨 개명 등)이고, 매일 도는 갱신·판정이 그것을 지우면 체크포인트와 이력이 소리 없이 사라집니다. 화면은 이 원소에 `검증 불가`를 표시합니다. 생성 경로의 원소는 `status`/`lastVerdict`/`history`/`createdAt`을 낼 수 없습니다 — 서버가 찍습니다(받으면 '이미 확인됨'으로 태어나는 체크포인트가 생깁니다). `id`에는 스코프 정체성(state_key/ticker)이 들어가 서로 다른 상태의 같은 문구가 다른 id를 받습니다.
+
+### 갱신 생존 — 규칙 갱신은 덮어쓰지 않고 병합합니다
+
+`refresh_regime_state`는 예전에 `next_checkpoints_json`을 통째로 새 템플릿으로 덮어썼습니다. 이 갱신은 서버 시작마다·RSS 수집마다 돌기 때문에, 그대로 두면 구조화 체크포인트를 만들어도 다음 갱신에 status가 초기화됩니다. 지금은 `merge_with_templates()`로 **구조화 원소는 보존하고 템플릿 문장만 오늘 것으로 갈아끼웁니다.**
+
+구조화 체크포인트의 생성·교체는 규칙 갱신이 아니라 명시적 쓰기 경로에서만 일어납니다(`checkpoint_verdicts.merge_state_checkpoints`). 같은 `id`는 `status`·`history`·`lastVerdict`·`createdAt`을 승계하고, 새 것은 추가하며, 사라진 것 중 `open`은 유지하고 해소된 것은 상한 안에서 오래된 것부터 정리합니다.
+
+### 판정 pass
+
+`features/market_memory/checkpoint_verdicts.py`가 소유하며 `run_rss_market_memory_update()`의 `refresh_all_regimes` **뒤**에 돕니다(근거 행이 방금 갱신된 뒤라야 대조할 것이 있습니다). **LLM을 부르지 않습니다.**
+
+- 대조 기준일: 판정 이력이 있으면 마지막 verdict **날짜이고 그 날짜는 다시 봅니다**(오전 판정 뒤 같은 날짜로 들어온 반증이 영구 스킵되면 confirmed가 하루 종일 눌러앉습니다 — 같은 행을 다시 봐도 판정은 결정적이고 이력은 바뀔 때만 남아 멱등합니다). 첫 판정은 `createdAt` **날짜를 제외합니다** — 체크포인트는 대개 그날의 근거에서 태어나므로 낳아 준 근거로 즉시 확인되는 것은 자기확인입니다.
+- 매칭: keyword가 근거의 제목+요약+`matchedTerms`에 **공백 제거 부분일치**, 또는 ticker가 `matchedTerms`에 있으면 hit입니다. 티커를 본문에서 찾지 않는 것은 의도입니다 — 짧은 티커가 한국어 본문에 우연히 걸리면 그 회사와 무관한 기사가 확인 신호가 됩니다.
+- **과잉 판정 방지와 판정 규칙**: (1) `neutral` role은 절대 세지 않습니다(실측 898행 중 364행이 neutral — 이걸 세면 매일 confirmed가 됩니다). (2) **role이 판정을 정합니다** — 매칭된 supporting행은 확인 신호, challenging행은 반증 신호이며 체크포인트 direction과 무관합니다(direction으로 거르면 반증 단독이 무시됩니다). direction은 체크포인트가 무엇을 기다리는지의 메타데이터이고, role이 없는 풀(thesis)에서만 판정 방향을 정합니다. (3) `score >= 0.5`만 셉니다(실측 실사용 근거는 0.71~1.0). (4) 반증이 하나라도 있으면 **challenged**입니다 — 확증편향 방지는 반증에 우선권을 줍니다. 근거 사본도 반증을 먼저 싣습니다(잘리면 challenged 배지 아래 확인 기사만 보입니다).
+- verdict 의미: 반증 신호가 있으면 `challenged`, 확인 신호만 있으면 `confirmed`, 아무것도 없으면 `no_signal`(아무것도 바꾸지 않습니다). `dueBy` 경과 + 판정 없음이면 `status=expired`이며, 이것은 판정이 아니라 상태 전환이라 이력에만 남습니다.
+- **같은 날 두 번 돌아도 안전합니다.** 판정은 같은 입력에 결정적이고, 이력과 저장은 verdict가 **바뀔 때만** 씁니다. 판정 pass는 **읽기 우선**입니다 — 바뀐 원소만 제자리 교체하고 검증 실패 dict·템플릿·순서는 건드리지 않으며, 변화가 없으면 쓰지 않습니다. `market_regime_changes`에 남기는 근거 참조는 `memory:` 접두의 memory_id 사본입니다(이 컬럼의 다른 생산자는 진짜 evidence_id를 쓰므로 이름공간을 가릅니다).
+- **판정은 기록이지 상태 전환이 아닙니다.** 내러티브의 `status`/`momentum`은 기존 규칙이 계속 소유하고, 이 pass는 체크포인트 자신의 `status`만 바꿉니다.
+
+### 판정 이력
+
+내러티브는 기존 `market_regime_changes` 테이블에 `field="checkpoint:<id>"` 행으로 남깁니다. **근거 참조는 `evidence_id`가 아니라 `memory_id` 사본입니다** — 근거 행은 갱신마다 `DELETE` 후 재삽입이라 `evidence_id`가 다음 갱신에 사라집니다(`regime_v2.py` 실측). 같은 이유로 체크포인트의 `lastVerdict.evidence`도 `memoryId` + 날짜·제목 사본을 들고 있습니다. thesis는 체크포인트 dict 안의 `history` 배열(상한 20)과 기존 `thesis_delta`를 쓰며 새 테이블을 만들지 않습니다.
+
+### 생성 경로 — LLM 시장 메모리 업데이트
+
+구조화 체크포인트는 **시장 메모리 업데이트**에서 태어납니다. LLM 엔트리의 `nextCheckpoints` 필드이며 모양은 `[{item, direction, matchers:{tickers,keywords}, dueBy?}]`, 엔트리당 최대 3개입니다.
+
+- **LLM은 `id`·`status`·`createdAt`·`lastVerdict`·`history`를 내지 않습니다.** 서버가 찍습니다 — 맡기면 "이미 확인됨"으로 태어나는 체크포인트가 생깁니다. 입력 모양에서 그 키들을 들이지 않고(`service.llm_checkpoint_inputs`), validator가 `trusted=False`로 한 번 더 벗깁니다.
+- **프롬프트는 부탁이고 집행은 validator입니다.** `prompt.md`가 모양·direction enum·keyword 규칙(각 2~40자, 상태 라벨 전문 금지, 방향을 담은 구체어)·엔트리당 3개 상한을 지시하지만, 검증은 `tracked_checkpoints`가 병합 시점에 합니다.
+- **귀속은 엔트리의 `stateKey`를 따릅니다.** 엔트리가 active/watch 상태를 만들거나 갱신할 때 그 상태에 `merge_state_checkpoints`로 병합하고, **새 상태를 파생하지 않아도**(중요도 미달 등) `stateKey`의 살아 있는 상태가 있으면 거기에 붙습니다(`current_state_id_for_key`). 상태로 승격되지 않은 issue 메모의 체크포인트만 버리고 **버린 개수를 결과 요약에 남깁니다**(`checkpointsMerged`/`checkpointsDropped`). 병합 **실패**는 dropped에 섞지 않고 `checkpointErrors`+`checkpointErrorCode`(예외 클래스)로 따로 셉니다 — 섞으면 기능 전체가 죽어도 "LLM이 나쁜 체크포인트를 냈다"와 구분되지 않습니다.
+- **체크포인트는 계보(state_key)의 소유물입니다.** 상태 행은 날짜별로 회전하고(state_id = sha(state_key:date)) 이전 행은 overridden으로 밀리는데, `upsert_state_from_memory`가 회전 시 밀려나는 행의 목록을 새 행에 **승계**합니다 — 없으면 같은 체크포인트가 매일 open으로 다시 태어나고 어제의 판정·이력은 판정 pass가 다시는 방문하지 않는 행에 고립됩니다. `dueBy` 없는 open도 구조 판정 창(90일)을 신호 없이 넘기면 `expired`가 됩니다(병합은 open을 자르지 않으므로 만료가 무한 누적의 유일한 출구).
+- **메모리 저장은 `service.save_memory_entries`로 통일합니다.** 수동·예약 CLI 생성과 writeback에 동일한 병합·권위 저장 계약을 적용합니다.
+- **`storyCheckpoint`(자유 문장)는 그대로 병존합니다.** 사람이 읽는 한 줄 요약이고, 구조화 체크포인트는 기계가 대조하는 층입니다. 대체하면 LLM 구조화 실패가 곧 표시 실패가 됩니다.
+- 상태 스냅샷 경로는 체크포인트를 내지 않습니다 — 생성 경로가 늘수록 병합 규칙이 갈라집니다.
+
+### thesis 판정 — 근거 풀은 연구 인덱스 문서
+
+`features/thesis_tracking/checkpoint_verdicts.py`가 소유하며 내러티브 판정과 같은 자리에서 돕니다. 판정 코어는 같고 근거 풀만 다릅니다.
+
+- 풀은 **연구 인덱스 문서를 직접 훑어** 그 회사 태그가 붙은 뉴스만 **날짜순**으로 모읍니다(컷오프 이후만, 안전판 상한 500은 가장 오래된 쪽을 자름). `search_documents` 브라우즈의 관련도순 상한 200을 쓰지 않습니다 — 보도가 많은 종목(실측 GOOGL 9,387건 태그)에서 이번 주 기사가 상한 밖으로 잘려 판정이 영영 `no_signal`이 됩니다. `market_memory` 행을 보조로 섞지 않습니다: 두 풀을 합치면 어느 풀이 판정했는지 설명할 수 없습니다.
+- **구조화 체크포인트를 가진 thesis가 하나도 없으면 인덱스를 열지 않습니다.** `load_index()`는 실측 4.7초라 수집 자동화 경로에서 공짜가 아닙니다.
+- 문서가 그 회사 **태그를 실제로 갖고 있어야** 근거입니다. 제목 부분일치로 딸려 온 남의 기사는 걸러냅니다(워치리스트가 배운 것과 같은 규칙 — 연결 열쇠는 종목 코드).
+- **문서 풀에는 role 분류가 없습니다.** 그래서 체크포인트의 `direction`이 판정 방향을 정하고(supporting → `confirmed`, challenging → `challenged`, enum 밖은 판정하지 않음), 근거 사본 키는 `memoryId`가 아니라 `docId`(**URL 우선** — 파일 경로는 보관 기간 정리가 지웁니다)이며 `role`을 싣지 않습니다.
+- **회사명·티커는 매칭 재료가 아닙니다.** 풀이 이미 그 종목으로 걸러져 있어 회사 태그가 haystack에 들어가면 회사명 keyword가 모든 기사에 걸립니다 — 행에 matchedTerms를 싣지 않고(haystack = 제목+요약) validator 금지어에 티커·회사명을 넘깁니다. **keyword가 방향을 담아야 합니다**("가이던스 상향").
+- 판정 이력은 체크포인트 dict 안의 `history` 배열입니다(상한 20). thesis 하나가 실패해도 나머지 판정은 계속됩니다(결과 행에 오류 코드).
+- 쓰기는 `store.save_thesis_checkpoints`로 `next_checkpoints_json`만 제자리 교체합니다. **`last_reviewed_at`도 `updated_at`도 바꾸지 않습니다** — Delta의 `since_last_review`가 `updated_at`으로 물러나는 폴백이 있어, 올리면 기계 판정이 사용자 검토로 읽힙니다. 노트 재동기화(`upsert_thesis`)는 문자열 목록만 갈아끼우므로 판정 status와 이력이 살아남습니다.
+
+### 화면 — 확인이 필요한 내러티브 (0.6 Stage C.1·C.3)
+
+시장 내러티브 탭의 드라이버 카드 **아래**에 알림 줄이 있습니다(`web/src/app/marketMemory/NarrativeVerificationPanel.tsx`, payload는 `GET /api/memory/verification`).
+
+- **주의가 필요한 내러티브만 나옵니다**(2026-09-01 사용자 결정). 반증 신호·정리 후보·식어가는 중·기한 경과 중 하나에 해당하는 상태만 한 줄씩 서고, **해당이 없으면 이 섹션은 렌더되지 않습니다.** 예전에는 활성 상태 전부를 카드로 펼쳐서, 판정이 하나도 없는 날에도 `확인 항목이 아직 없습니다`를 상태 수만큼 반복하는 화면이 한 페이지를 차지했습니다 — 알림은 조용할 때 안 보여야 시끄러울 때 눈에 띕니다. 로딩 중에도 자리를 잡지 않습니다(대개 사라질 자리라 스켈레톤을 그리면 화면이 떴다 꺼지는 것으로 보입니다).
+- **화면에서 뺀 것**: 확인 항목 전체 목록, 규칙이 만든 템플릿 문장, 검증 불가 건수, 상태별 근거 수 요약. 모두 `GET /api/memory/verification`에는 그대로 있습니다. 저장 형식이 규칙과 맞지 않는다는 사실은 엔지니어링 신호이지 사용자를 부를 이유가 아닙니다. 사용자가 직접 쓴 항목인 종목 Thesis 쪽은 계속 `검증 불가`를 화면이 말합니다.
+- **위 카드와 같은 층이 아닙니다.** 드라이버 카드는 스냅샷이 쓴 해석이고 이 줄은 저장된 `market_narrative_states`의 규칙 판정입니다. 스냅샷 드라이버에는 상태 정체성이 없어(`snapshot-driver:N`) 체크포인트를 붙일 수 없고, 제목으로 이어 붙이는 매칭은 이 저장소가 여러 번 데인 방식입니다 — 그래서 섞지 않고 자기 자리에서 보여줍니다.
+- **무소식 배지**가 죽어가는 이야기와 살아있는 이야기를 갈라 보여줍니다. 계획 §4의 고정 사다리를 그대로 씁니다 — 14일이면 `식어가는 중`, 30일이면 `정리 후보`입니다. **30일은 제안일 뿐 상태를 자동으로 바꾸지 않으며**, 그 줄이 `자동으로 바뀌지 않습니다` 문장을 함께 적습니다.
+- `근거 보기` 접기 안에 **반증된 체크포인트**(항목·방향 설명·마지막 판정 시각)와 그 판정이 쓴 **근거 제목 사본**(최대 3건), 그리고 **판정 이력**(C.3, 최근 4건)이 들어갑니다. 확인된 항목까지 담으면 반증이 그 안에 묻힙니다.
+- **판정 이력**(C.3)은 기존 `market_regime_changes`를 읽습니다. `evidence_ids_json`의 `memory:` 접두 항목은 memory_id 사본이라 join하지 않고 **건수만** 보여주며, 화면에 내부 id를 흘리지 않습니다. 전환 값(`open`→`confirmed`)은 사람 말로 옮겨 보여줍니다.
+- 상태는 **색만으로 전달하지 않습니다** — 기호와 라벨이 함께 가고 색은 보조입니다(WCAG 1.4.1). 표시 언어는 Watchlist Thesis workspace와 `web/src/app/verification.ts` 하나를 공유합니다.
+- 이 패널은 **읽기 전용**입니다. 판정은 자료 수집 뒤 규칙 pass가 이미 끝냈고 화면은 그 결과를 읽을 뿐입니다.
+- 각 줄의 `반박해줘`(접근성 이름은 `{내러티브}의 전제를 반박해줘`)는 0.6 Stage D의 명시적 Agent action입니다. bounded `stateId`만 넘기고 서버가 해당 상태와 최근 90일 근거를 다시 읽어 새 대화를 시작합니다. ID가 stale이면 넓은 시장 맥락으로 대체하지 않으며, 내부 ID는 scope 칩에 표시하지 않습니다. 답변은 상태·checkpoint를 자동 변경하지 않습니다.
+
+### 완료 상태
+
+Stage B가 Thesis 생성·수정과 keyword 검증을, Stage C가 `검증 불가`·무소식 배지·판정 타임라인 화면을 완료했다. 이 README의 구조화 checkpoint, 판정 pass, 화면 절이 현재 계약이다.
 
 ## RSS Short-Term Memory Intake
 
@@ -85,7 +196,7 @@ Market Memory can be updated from RSS/evidence before a briefing is generated. R
 
 This keeps the hierarchy explicit: RSS/evidence is short-term memory, Market Memory is medium-term memory, and reports consume both.
 
-`run_rss_market_memory_update()`는 digest 반영 후 active/watch 상태의 규칙 기반 추세 갱신(`refresh_all_regimes`)까지 함께 실행한다. RSS 수집·Market Memory 자동화가 돌 때마다 momentum/confidence/근거 카운트가 자동으로 갱신되며, 화면에서 상태별 수동 갱신 버튼은 제공하지 않는다.
+`run_rss_market_memory_update()`는 digest 반영 후 active/watch 상태의 규칙 기반 추세 갱신(`refresh_all_regimes`)과 체크포인트 판정 pass(내러티브 `run_checkpoint_verdicts`, thesis `run_thesis_checkpoint_verdicts`)까지 함께 실행한다. 판정 실패는 수집 잡을 죽이지 않는다. RSS 수집·Market Memory 자동화가 돌 때마다 momentum/confidence/근거 카운트가 자동으로 갱신되며, 화면에서 상태별 수동 갱신 버튼은 제공하지 않는다.
 
 Market State Snapshot 생성 시에는 코드가 축별 점수로 강하게 선별하지 않는다. `build_market_state_context()`는 최신 RSS 후보를 넓게 압축한 `rssCandidates`(기본 최대 120개)를 LLM에 넘기고, 기존 축별 `shortTermDigest`는 탐색 보조 인덱스로만 제공한다. 중요한 드라이버 선택, 방향성 판단, 행동 가이드 작성은 LLM이 수행한다.
 
@@ -147,6 +258,7 @@ GET /api/memory/audit?days=30
 GET /api/memory/report?limit=8
 GET /api/memory/state-dashboard?limit=5
 GET /api/memory/state-snapshot
+GET /api/memory/verification
 POST /api/memory
 POST /api/memory/llm
 POST /api/memory/state-snapshot

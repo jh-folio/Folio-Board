@@ -10,11 +10,10 @@ from features.common.engine_lookup import LookupCall, configured_lookup_call as 
 
 
 def configured_lookup_call(*, adapter: str = "", job_id: str = "") -> LookupCall:
-    """웹 조회 한 번. API 키가 있으면 그것을, 없으면 Agent CLI를 쓴다."""
+    """설정한 Agent CLI로 웹 조회를 한 번 수행한다."""
     return _common_lookup(
         adapter=adapter,
         job_id=job_id,
-        api_timeout_env="COMPANY_LOOKUP_API_TIMEOUT_SECONDS",
         cli_timeout_env="COMPANY_LOOKUP_CLI_TIMEOUT_SECONDS",
     )
 

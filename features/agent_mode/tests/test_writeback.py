@@ -12,33 +12,37 @@ from features.agent_mode.briefing_contract import briefing_output_contract
 
 
 def _valid_briefing_markdown(scope="both", us_companies=("NVIDIA", "Alphabet"), kr_companies=("Samsung Electronics", "SK hynix")):
-    contract = briefing_output_contract(scope)
-    headings = []
-    for section in contract["requiredSections"]:
-        if section == "US Market Briefing":
-            headings.append("# US Market Briefing — 2099.12.31")
-        elif section == "Korea Market Briefing":
-            headings.append("# Korea Market Briefing — 2099.12.31")
-        elif section == "3. 미국장을 주도한 기업 ①":
-            headings.append(f"## {section} — {us_companies[0]}")
-        elif section == "4. 미국장을 주도한 기업 ②":
-            headings.append(f"## {section} — {us_companies[1]}")
-        elif section == "3. 한국장을 주도한 기업 ①":
-            headings.append(f"## {section} — {kr_companies[0]}")
-        elif section == "4. 한국장을 주도한 기업 ②":
-            headings.append(f"## {section} — {kr_companies[1]}")
-        else:
-            headings.append(f"## {section}")
-    conclusions = "\n".join(
-        "**한 줄 결론:** 시장의 가격 반응과 내부 구조를 함께 해석합니다."
-        for _ in range(contract["minimumOneLineConclusions"])
-    )
-    bullets = "\n".join(
-        "· 핵심 수치와 원인, 다음 확인점을 점검합니다."
-        for _ in range(contract["minimumMiddleDotBullets"])
-    )
-    prose = "시장 흐름과 근거, 반대 신호, 체크포인트를 자연스러운 줄글로 설명합니다. " * 300
-    return "\n\n".join(headings + [conclusions, bullets, prose])
+    def block(market, companies):
+        contract = briefing_output_contract(market, markets=[market])
+        headings = []
+        for section in contract["requiredSections"]:
+            if section == "US Market Briefing":
+                headings.append("# US Market Briefing — 2099.12.31")
+            elif section == "Korea Market Briefing":
+                headings.append("# Korea Market Briefing — 2099.12.31")
+            elif "주도한 기업 ①" in section:
+                headings.append(f"## {section} — {companies[0]}")
+            elif "주도한 기업 ②" in section:
+                headings.append(f"## {section} — {companies[1]}")
+            else:
+                headings.append(f"## {section}")
+        conclusions = "\n".join(
+            "**한 줄 결론:** 시장의 가격 반응과 내부 구조를 함께 해석합니다."
+            for _ in range(contract["minimumOneLineConclusions"])
+        )
+        bullets = "\n".join(
+            "· 핵심 수치와 원인, 다음 확인점을 점검합니다."
+            for _ in range(contract["minimumMiddleDotBullets"])
+        )
+        prose = "시장 흐름과 근거, 반대 신호, 체크포인트를 자연스러운 줄글로 설명합니다. " * 300
+        return "\n\n".join(headings + [conclusions, bullets, prose])
+
+    if scope == "both":
+        return "\n\n---\n\n".join((
+            block("us", us_companies), block("kr", kr_companies),
+        ))
+    companies = us_companies if scope == "us" else kr_companies
+    return block(scope, companies)
 
 
 def test_briefing_writeback_uses_agent_generation_without_touching_real_store():

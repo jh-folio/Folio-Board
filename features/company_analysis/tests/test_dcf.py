@@ -54,6 +54,43 @@ class TestNormalizedBase:
         assert D.normalized_base_fcf(no_revenue)["method"] == "median_fcf"
         assert D.normalized_base_fcf(_summary({"Revenue": [1]})) == {}
 
+    def test_a_genuine_multiyear_trend_weights_toward_the_recent_margin(self):
+        """중앙값은 상승 추세에서 항상 한두 해 뒤처진다 — 최근 연도 가중으로 따라잡는다."""
+        trending = _summary({
+            "Revenue": [10_000, 9_000, 8_000],
+            "Operating Cash Flow": [2_300, 1_760, 1_300],
+            "Capital Expenditure": [500, 500, 500],
+        })
+        base = D.normalized_base_fcf(trending)
+        assert base["method"] == "trend_weighted_margin"
+        assert base["marginTrend"] == "increasing"
+        # 마진 중앙값(0.14)보다 최근 마진(0.18)에 더 가깝게 나와야 한다.
+        assert base["usedMargin"] > 0.14
+        # median_margin이면 -22.2%가 났을 자리다 — 실제에 더 가까워야 한다.
+        assert base["deviationFromRecent"] > -0.20
+
+    def test_a_declining_trend_also_gets_weighted_not_just_growth(self):
+        """추세는 방향과 무관하다 — 악화 추세도 중앙값 대신 최근 연도로 당긴다."""
+        declining = _summary({
+            "Revenue": [10_000, 9_000, 8_000],
+            "Operating Cash Flow": [1_300, 1_760, 2_300],  # 위 증가 케이스의 시간 역순
+            "Capital Expenditure": [500, 500, 500],
+        })
+        base = D.normalized_base_fcf(declining)
+        assert base["method"] == "trend_weighted_margin"
+        assert base["marginTrend"] == "decreasing"
+
+    def test_the_spike_case_still_falls_back_to_median(self):
+        """한 구간이 마진 폭을 지배하는 스파이크는 추세로 보지 않는다(회귀 방지)."""
+        spike = _summary({
+            "Revenue": [10_000, 9_800, 9_600],
+            "Operating Cash Flow": [2_400, 2_350, 2_300],
+            "Capital Expenditure": [2_000, 400, 380],
+        })
+        base = D.normalized_base_fcf(spike)
+        assert base["method"] == "median_margin"
+        assert base["marginTrend"] == "flat"
+
 
 class TestGrowthDriver:
     def test_revenue_leads_because_fcf_growth_contradicts_it(self):
@@ -188,3 +225,89 @@ class TestBuildDcf:
         assert "역산 성장률" in block
         assert "고평가·저평가라고 단정하지 마세요" in block
         assert "다시 계산하지 마세요" in block
+
+    def test_the_terminal_and_implied_wording_tracks_the_real_horizon(self):
+        """`fadePath`는 10년인데 문구가 "6년차 이후"라고 박혀 있었다 — 10년 명시
+        예측 모델에서 터미널은 11년차부터다. 역산 성장률도 1년차 값일 뿐 여러 해
+        유지되는 요구 성장률이 아니다."""
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000)
+        years = len(model["fadePath"])
+        block = D.render_dcf_context(model)
+        assert "6년차" not in block
+        assert f"명시 예측 기간({years}년) 이후" in block
+        # 역산 성장률은 1년차 값이고 이후 감쇠한다고 밝힌다.
+        assert "1년차 FCF 성장률 한 값만" in block
+        assert "여러 해 유지되는" in block
+
+    def test_a_shorter_horizon_moves_the_wording_with_it(self):
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000)
+        model["fadePath"] = model["fadePath"][:5]
+        block = D.render_dcf_context(model)
+        assert "명시 예측 기간(5년) 이후" in block
+
+
+class TestAssumptionSensitivity:
+    """§9.4 — 두 입력을 더 정확하게 만드는 것보다 그 입력이 답을 얼마나 지배하는지
+    보이는 쪽이 먼저다. 실측 ERP 4~6%가 MSFT 내재가치를 37% 흔들었다."""
+
+    def test_wacc_path_exposes_the_erp_and_risk_free_band(self):
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000, currency="USD")
+        rows = model["assumptionSensitivity"]
+        assert rows, "WACC 경로에서 감도표가 비면 §9.4가 무효다"
+        axes = {row["axis"] for row in rows}
+        assert axes == {"base", "riskFree", "erp"}
+        # ERP가 크면 할인율이 오르고 내재가치가 내린다 — 방향이 틀리면 표가 독자를 속인다.
+        by_erp = {row["equityRiskPremium"]: row for row in rows if row["axis"] in {"base", "erp"}}
+        erps = sorted(by_erp)
+        assert by_erp[erps[0]]["perShare"] > by_erp[erps[-1]]["perShare"]
+        assert by_erp[erps[0]]["discountRate"] < by_erp[erps[-1]]["discountRate"]
+
+    def test_implied_growth_comes_as_a_band_when_price_is_known(self):
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000, currency="USD")
+        implied = [row.get("impliedGrowth") for row in model["assumptionSensitivity"]]
+        solved = [value for value in implied if value is not None]
+        assert len(solved) >= 2
+        assert max(solved) > min(solved)  # 가정에 따라 "시장이 넣은 성장률"이 달라진다
+
+    def test_fixed_rate_fallback_has_no_sensitivity_table(self):
+        """고정 할인율은 무위험·ERP를 읽지 않으므로 감도표가 거짓 정밀이 된다."""
+        model = D.build_dcf(STEADY, price=20.0, beta=None, market_cap=None, currency="USD")
+        assert model["assumptionSensitivity"] == []
+
+    def test_context_and_rows_share_the_base_assumptions(self):
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000, currency="USD")
+        base_rows = [row for row in model["assumptionSensitivity"] if row["axis"] == "base"]
+        assert len(base_rows) == 1
+        assert base_rows[0]["discountRate"] == model["discountRate"]["rate"]
+        block = D.render_dcf_context(model)
+        assert "가정 감도" in block
+
+    def test_injected_erp_is_recorded_not_the_constant(self):
+        row = D.estimate_discount_rate(
+            beta=1.0, tax_rate=None, debt_cost=None, market_cap=1e6, debt=0,
+            equity_risk_premium=0.06,
+        )
+        assert row["equityRiskPremium"] == 0.06
+
+    def test_risk_free_meta_dict_injects_the_rate_and_lands_in_the_result(self):
+        """호출부 두 곳이 각자 사후 주입하던 시절, 한쪽은 markdown만 반환하는 함수라
+        기록이 어디에도 남지 않았다. build_dcf가 meta를 직접 받아 싣는다."""
+        meta = {"rate": 0.055, "source": "fred_DGS10", "asOf": "2026-08-29T00:00:00+00:00"}
+        model = D.build_dcf(STEADY, price=20.0, beta=1.2, market_cap=20_000, risk_free=meta)
+        assert model["riskFreeMeta"] == meta
+        assert model["discountRate"]["riskFree"] == 0.055
+        assert model["discountRate"]["riskFreeSource"] == "injected"
+
+    def test_collapsed_band_is_named_not_presented_as_a_range(self):
+        """모든 행이 상·하한에 물리면 "범위로 읽으세요"가 거짓말이 된다."""
+        rows = [
+            {"axis": "base", "discountRate": 0.16, "clamped": True},
+            {"axis": "erp", "discountRate": 0.16, "clamped": True},
+        ]
+        assert D.sensitivity_band_collapsed(rows) is True
+        assert D.sensitivity_band_collapsed([{**rows[0], "clamped": False}]) is False
+
+    def test_row_labels_come_from_one_owner(self):
+        assert D.assumption_row_label({"axis": "base"}) == "기준"
+        assert D.assumption_row_label({"axis": "riskFree", "riskFree": 0.042}) == "무위험 4.2%"
+        assert D.assumption_row_label({"axis": "erp", "equityRiskPremium": 0.045}) == "ERP 4.5%"

@@ -62,6 +62,28 @@ def test_momentum_rules():
     assert R.determine_momentum(challenge, as_of="2026-06-11T00:00:00+00:00") == "fading"
 
 
+def test_regime_checkpoint_templates_use_human_momentum_wording_without_enum_tokens():
+    state = {"state_label": "AI 데이터센터 전력 병목"}
+    raw_tokens = ("momentum=", "conflicted", "turning", "fading")
+    expected = {
+        "conflicted": "상반된 근거가 함께 이어지면",
+        "turning": "추세 전환 신호가 이어지면",
+        "fading": "추세 약화가 이어지면",
+    }
+
+    for momentum, wording in expected.items():
+        first = R.regime_checkpoints(state, [], momentum)
+        second = R.regime_checkpoints(state, [], momentum)
+        assert first == second
+        rendered = "\n".join(first)
+        assert wording in rendered
+        assert not any(token in rendered for token in raw_tokens)
+
+    empty = R.regime_checkpoints({}, [], "")
+    assert empty == R.regime_checkpoints({}, [], "")
+    assert not any(token in "\n".join(empty) for token in raw_tokens)
+
+
 def _seed_db(db_path):
     conn = M.connect(db_path)
     M.init_db(conn)
@@ -104,7 +126,7 @@ def test_refresh_regime_state_keeps_existing_status_compatibility(monkeypatch):
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         _seed_db(db_path)
         monkeypatch.setattr(R, "_now", lambda: "2026-06-11T00:00:00+00:00")
-        result = R.refresh_regime_state(db_path, "state-ai", days=7)
+        result = R.refresh_regime_state(db_path, "state-ai", days=7, role_mode="rules")
         assert result["ok"] is True
         assert result["evidenceCount7d"] == 2
         assert result["evidenceCount30d"] == 2
@@ -113,6 +135,41 @@ def test_refresh_regime_state_keeps_existing_status_compatibility(monkeypatch):
         assert states[0]["status"] == "active"  # 기존 active/watch 조회 호환
         assert "momentum" in states[0]
         assert states[0]["evidenceCount90d"] == 2
+
+
+def test_refresh_records_evidence_count_change_once_and_skips_unchanged_refresh(monkeypatch):
+    """C.3: 근거 수 변화는 이력에 남되 동일 refresh는 중복 행을 만들지 않는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed_db(db_path)
+        monkeypatch.setattr(R, "_now", lambda: "2026-06-11T00:00:00+00:00")
+        R.refresh_regime_state(db_path, "state-ai", days=7, role_mode="rules")
+        conn = M.connect(db_path)
+        first = conn.execute("SELECT old_value, new_value FROM market_regime_changes WHERE field='evidence_count'").fetchall()
+        conn.close()
+        assert len(first) == 1 and '"d7": 0' in first[0]["old_value"] and '"d7": 2' in first[0]["new_value"]
+        R.refresh_regime_state(db_path, "state-ai", days=7, role_mode="rules")
+        conn = M.connect(db_path)
+        assert conn.execute("SELECT COUNT(*) AS n FROM market_regime_changes WHERE field='evidence_count'").fetchone()["n"] == 1
+        conn.close()
+
+
+def test_state_status_transition_is_recorded_on_existing_change():
+    """C.3: 실제 상태 전환도 기존 market_regime_changes 시간축으로 남는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        conn = M.connect(db_path)
+        M.init_db(conn)
+        base = {
+            "id": "mem-status", "date": "2026-06-10", "asOf": "2026-06-10T00:00:00+00:00",
+            "title": "AI 공급망", "summary": "수요 변화", "story": "ai_supply", "storyFamily": "AI 공급망",
+            "stateKey": "ai_supply", "stateLabel": "AI 공급망", "importance": "high", "stateStatus": "active",
+        }
+        M.upsert_state_from_memory(conn, base, observed_at="2026-06-10T00:00:00+00:00")
+        M.upsert_state_from_memory(conn, {**base, "stateStatus": "watch"}, observed_at="2026-06-11T00:00:00+00:00")
+        row = conn.execute("SELECT field, old_value, new_value FROM market_regime_changes WHERE field='status'").fetchone()
+        conn.close()
+        assert row and (row["field"], row["old_value"], row["new_value"]) == ("status", "active", "watch")
 
 
 def test_upsert_memory_keeps_regime_calculated_confidence():

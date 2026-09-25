@@ -60,6 +60,19 @@ reuse_as_evidence: false
 자동 생성 자료 본문.
 """
 
+# 2026-09 리네이밍 이후 새로 내보내는 노트는 신규 표시명을 쓴다. 신·구 값 모두
+# self_generated로 인식돼야 한다(dual-read, plan §4.3) — classify()는 값을
+# 비교하지 않고 bool(generated_by)로만 판정하므로 이름이 바뀌어도 안전하다.
+SOURCE_NOTE_NEW_MARKER = """---
+type: source_note
+generated_by: Folio Board
+source_layer: primary_processed
+reuse_as_evidence: false
+---
+
+자동 생성 자료 본문.
+"""
+
 # 현재 Obsidian export가 만드는 브리핑 노트(명시 마커 없음, type만 briefing)
 EXPORTED_BRIEFING = """---
 date: 2026-06-09
@@ -160,6 +173,14 @@ def test_source_note_is_self_generated():
     assert note.importable is False
 
 
+def test_source_note_with_new_display_name_is_also_self_generated():
+    """`generated_by: Folio Board`(신규 export)도 `Folio OS`(과거 export)와 동일하게
+    걸러진다 — 이름이 바뀌었다고 자기참조 방지가 뚫리면 안 된다(plan §4.3)."""
+    note = P.parse_note(SOURCE_NOTE_NEW_MARKER)
+    assert note.layer == P.LAYER_SELF_GENERATED
+    assert note.importable is False
+
+
 def test_generated_by_excluded_from_evidence():
     note = P.parse_note(SOURCE_NOTE)
     # generated_by 노트는 evidence로도, hypothesis로도 재사용되지 않는다
@@ -192,7 +213,7 @@ def test_reuse_as_hypothesis_false_not_importable():
 
 
 def test_obsidian_note_is_never_evidence():
-    for sample in (COMPANY_THESIS, MARKET_MEMO, SOURCE_NOTE, EXPORTED_BRIEFING, PLAIN_NOTE):
+    for sample in (COMPANY_THESIS, MARKET_MEMO, SOURCE_NOTE, SOURCE_NOTE_NEW_MARKER, EXPORTED_BRIEFING, PLAIN_NOTE):
         assert P.parse_note(sample).is_evidence is False
 
 

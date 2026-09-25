@@ -90,6 +90,13 @@ def prepare(
             validate_report_identity(report_kind, path, current)
         match write_kind:
             case WriteKind.CANONICAL:
+                if report_kind is ReportKind.COMPANY_ANALYSIS:
+                    from features.company_analysis.recovery import guard_canonical
+                    guard_canonical(path.parent, dict(candidate))
+                if report_kind is ReportKind.TOPIC_REPORT:
+                    from features.topic_report.execution import report_incomplete
+                    if report_incomplete(dict(candidate)):
+                        raise CanonicalValidationError("topic_report_incomplete", "딥 리서치 실행이 완료되지 않았습니다.")
                 target, target_revision, content_hash, changed = canonical_candidate(
                     current,
                     candidate,
@@ -132,14 +139,35 @@ def prepare(
 
 
 def commit_sync(prepared: PreparedCanonicalWrite) -> PreparedCanonicalWrite:
-    with artifact_lock(prepared.exact_path):
-        current = load_report(prepared.exact_path)
-        if matches_target(current, prepared):
-            return prepared
-        verify_base(current, prepared)
-        atomic_write(prepared.exact_path, prepared.serialized_bytes)
-        verify_committed(prepared)
-        return prepared
+    # Direct report paths use this common canonical promotion.  The optional
+    # recorder is already bound by their API/worker owner; standalone callers
+    # remain inert and never acquire a diagnostics writer.
+    from features.common.jobs import diagnostic_stage_end, diagnostic_stage_failure, diagnostic_stage_start
+
+    recorder, stage_id = diagnostic_stage_start("commit")
+    try:
+        with artifact_lock(prepared.exact_path):
+            current = load_report(prepared.exact_path)
+            if matches_target(current, prepared):
+                result = prepared
+            else:
+                verify_base(current, prepared)
+                atomic_write(prepared.exact_path, prepared.serialized_bytes)
+                verify_committed(prepared)
+                result = prepared
+    except Exception as error:
+        diagnostic_stage_failure(
+            recorder,
+            error,
+            stage_id=stage_id,
+            stage_code="commit" if stage_id is not None else None,
+            boundary="save",
+        )
+        # The caller decides whether a caught direct save failure reaches a
+        # terminal observation; preserve the actual open commit gap here.
+        raise
+    diagnostic_stage_end(recorder, stage_id, "commit")
+    return result
 
 
 def _intent_contains_target(

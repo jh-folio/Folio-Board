@@ -6,7 +6,7 @@ import { useThemePreference, type ThemePreference } from "./themePreference";
 
 /** 첫 실행 안내.
  *
- *  Folio OS는 자료를 모으고 읽는 도구라 첫 화면이 비어 있다. 무엇을 먼저 해야 하는지
+ *  Folio Board는 자료를 모으고 읽는 도구라 첫 화면이 비어 있다. 무엇을 먼저 해야 하는지
  *  모르면 빈 화면만 보고 닫는다. 그래서 **켠 뒤 바로 쓸 수 있게 되는 것 두 가지**만
  *  묻는다 — 어느 시장을 볼지, AI를 쓸지. 둘 다 나중에 설정에서 바꿀 수 있고, 전부
  *  건너뛰어도 앱은 규칙 기반으로 동작한다.
@@ -37,13 +37,7 @@ const THEME_CHOICES: ReadonlyArray<{ id: ThemePreference; label: string }> = [
   { id: "system", label: "시스템" },
 ];
 
-const PROVIDERS = [
-  { id: "openai", label: "OpenAI", url: "https://platform.openai.com/api-keys" },
-  { id: "gemini", label: "Gemini", url: "https://aistudio.google.com/apikey" },
-  { id: "claude", label: "Claude", url: "https://console.anthropic.com/settings/keys" },
-] as const;
 
-type ProviderId = (typeof PROVIDERS)[number]["id"];
 
 /** 서버는 한국어 이름을 주지만 화면은 다른 곳과 같은 코드를 쓴다(`EUROPE` → `EU`). */
 const MARKET_CODES: Record<string, string> = { US: "US", KR: "KR", EUROPE: "EU", JP: "JP" };
@@ -98,10 +92,8 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
   // **지금 설정에서 시작한다.** 늘 `none`으로 두면, 안내를 다시 열어 아무것도 고르지
   // 않고 다음만 눌러도 쓰던 사람의 AI가 꺼진다 — 저장이 `enabled: false`를 쓴다.
   // 실제로 그렇게 꺼진 뒤 다음 날 예약 브리핑이 규칙 기반으로 떨어진 적이 있다.
-  const [engine, setEngine] = useState<"none" | "api" | "cli">("none");
+  const [engine, setEngine] = useState<"none" | "cli">("none");
   const [engineTouched, setEngineTouched] = useState(false);
-  const [provider, setProvider] = useState<ProviderId>("openai");
-  const [apiKey, setApiKey] = useState("");
   const [cli, setCli] = useState<AgentCliSettings | null>(null);
 
   // 완료 화면에서 둘러보기를 하겠다고 답했는가. 둘러보기 자체는 앱 전체를 돌아야 하므로
@@ -136,7 +128,7 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
         // 쓰던 사람이 안내를 다시 열었을 때 자기 설정이 이미 선택돼 있어야 한다.
         const current = await getJson<{ agent?: { enabled?: boolean; mode?: string } }>("/api/settings");
         if (!cancelled && current.agent?.enabled) {
-          setEngine(current.agent.mode === "cli" ? "cli" : "api");
+          setEngine(current.agent.mode === "cli" ? "cli" : "none");
         }
       } catch {
         /* 못 읽으면 기본값에서 시작한다. 저장은 고른 적이 있을 때만 한다. */
@@ -153,7 +145,7 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
     return () => { cancelled = true; };
   }, []);
 
-  const pickEngine = useCallback((next: "none" | "api" | "cli") => {
+  const pickEngine = useCallback((next: "none" | "cli") => {
     setEngineTouched(true);
     setEngine(next);
   }, []);
@@ -178,12 +170,9 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
     setNote("");
     try {
       await postJson("/api/settings", {
-        agent: { enabled: engine !== "none", mode: engine === "cli" ? "cli" : "api" },
-        ...(engine === "api" && apiKey.trim()
-          ? { llm: { provider, providers: { [provider]: { apiKey: apiKey.trim() } } } }
-          : {}),
+        agent: { enabled: engine !== "none", mode: "cli" },
+
       });
-      setApiKey("");
       // 성공 문구는 두지 않는다. 다음 단계로 넘어가는 것이 이미 확인이고, 문구를
       // 남기면 다음 단계 아래에 붙어 그 단계를 저장했다고 읽힌다.
       goto("markets");
@@ -259,7 +248,6 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
   };
 
   const index = STEPS.indexOf(step);
-  const providerMeta = PROVIDERS.find((item) => item.id === provider);
 
   return (
     <div
@@ -341,11 +329,10 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
                 규칙으로 만들고, 보고서도 규칙 기반으로 나옵니다.
               </p>
               {/* 순서는 부담이 적은 것부터다. 라벨은 짧게 두고 설명이 무게를 진다 —
-                  처음 쓰는 사람에게 `CLI`와 `API`는 그 자체로 아무 뜻이 없다. */}
+                  CLI의 설치·인증 의미를 설명한다. */}
               <div className="welcome-choices" role="group" aria-label="생성 방식">
                 <button type="button" aria-pressed={engine === "none"} onClick={() => pickEngine("none")}>AI 없이</button>
                 <button type="button" aria-pressed={engine === "cli"} onClick={() => pickEngine("cli")}>CLI</button>
-                <button type="button" aria-pressed={engine === "api"} onClick={() => pickEngine("api")}>API</button>
               </div>
 
               {engine === "none" && (
@@ -355,46 +342,11 @@ export function WelcomeWizard({ onFinish }: { onFinish: (startTour: boolean) => 
                 </p>
               )}
 
-              {engine === "api" && (
-                <>
-                  <p className="welcome-muted">
-                    <b>제공사 서버를 부르는 열쇠</b>입니다. 설치할 것이 없는 대신 쓴 만큼 요금이 붙습니다.
-                    지금 넣지 않아도 되고, 설정에서 나중에 넣어도 됩니다.
-                  </p>
-                  <div className="welcome-choices" role="group" aria-label="제공사">
-                    {PROVIDERS.map((item) => (
-                      <button
-                        type="button"
-                        key={item.id}
-                        aria-pressed={provider === item.id}
-                        onClick={() => setProvider(item.id)}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="welcome-field">
-                    <span>API 키</span>
-                    <input
-                      type="password"
-                      value={apiKey}
-                      autoComplete="off"
-                      placeholder="나중에 설정에서 넣어도 됩니다"
-                      onChange={(event) => setApiKey(event.target.value)}
-                    />
-                  </label>
-                  <p className="welcome-muted">
-                    키는 이 PC의 <code>.env</code> 파일에만 저장됩니다. 발급:{" "}
-                    <a href={providerMeta?.url} target="_blank" rel="noreferrer">{providerMeta?.label} 키 페이지</a>
-                  </p>
-                </>
-              )}
-
               {engine === "cli" && (
                 <>
                   <p className="welcome-muted">
                     <b>내 컴퓨터에 설치해서 쓰는 AI 프로그램</b>입니다(Codex·Claude Code·Antigravity).
-                    이미 구독 중이라면 추가 요금이 없고, 한 번 실행에 수십 초가 걸립니다. 아래에서 바로
+                    이용 조건과 사용 한도는 연결한 CLI 계정을 따릅니다. 아래에서 바로
                     설치하고 로그인할 수 있습니다.
                   </p>
                   <AgentCliSetup

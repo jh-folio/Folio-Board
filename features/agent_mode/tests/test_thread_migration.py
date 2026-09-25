@@ -31,6 +31,10 @@ class TestScopeFallback:
     def test_unscoped_kind_is_a_known_scope(self):
         assert UNSCOPED_KIND in SCOPE_KINDS
 
+    def test_challenge_intent_is_bounded_and_unknown_intent_is_dropped(self):
+        assert normalize_scope({"kind": "watchlist", "intent": "challenge"})["intent"] == "challenge"
+        assert normalize_scope({"kind": "watchlist", "intent": "anything_else"})["intent"] == ""
+
 
 class TestMigration:
     def _legacy(self, root, name, payload):

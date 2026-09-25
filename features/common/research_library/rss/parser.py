@@ -1,4 +1,4 @@
-"""Feed parsing for Folio OS Evidence Intake.
+"""Feed parsing for Folio Board Evidence Intake.
 
 Turns raw RSS/Atom XML into a uniform ``raw item`` dict
 (``title``/``description``/``link``/``published_at_utc``) that the

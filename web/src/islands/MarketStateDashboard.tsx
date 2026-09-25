@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { getJson } from "../api";
 import { openReactAgentDock } from "../app/agentContext";
 import { legacyBridge as bridge } from "../app/legacyBridge";
@@ -251,6 +251,8 @@ interface MarketStateDashboardProps {
   updating?: boolean;
   updateDisabled?: boolean;
   onContext?: (context: ReturnType<typeof marketStateContextProjection>) => void;
+  /** "다음 확인" 아래에 놓는 개인 맥락 한 줄. 이 패널은 내용을 모르고 자리만 준다. */
+  personalContext?: ReactNode;
 }
 
 const STATE_LABELS: Record<MarketStateStatus, string> = {
@@ -347,9 +349,10 @@ type MarketStateDashboardViewProps = {
   onSelectMarket?: (scope: MarketScope) => void;
   onUpdate?: () => void;
   onReload?: () => void;
+  personalContext?: ReactNode;
 };
 
-export function MarketStateDashboardView({ payload, selectedMarket = "overall", loading = false, updating = false, updateDisabled = false, error = "", onSelectMarket, onUpdate, onReload }: MarketStateDashboardViewProps) {
+export function MarketStateDashboardView({ payload, selectedMarket = "overall", loading = false, updating = false, updateDisabled = false, error = "", onSelectMarket, onUpdate, onReload, personalContext = null }: MarketStateDashboardViewProps) {
   const ref = readMarketStateRef(payload);
   const state: MarketStateStatus = ref?.status || "empty";
   const marketViews = payload?.marketViews || {};
@@ -475,6 +478,7 @@ export function MarketStateDashboardView({ payload, selectedMarket = "overall", 
       {(activePayload?.watchItems?.length || briefs[3]?.value) ? <section className="market-state-next-checks" data-qa="market-state-next-checks"><h3>다음 확인</h3><ul>{(activePayload?.watchItems || [briefs[3]?.value]).filter(Boolean).slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
       </>
       ) : <StateGap state={state} stateRef={ref} error={error} drivers={drivers} />}
+      {personalContext}
       {showsSnapshot && payload?.sourceRefs?.length ? (
         <details className="market-state-sources">
           <summary>사용한 출처 {payload.sourceRefs.length}개</summary>
@@ -496,7 +500,7 @@ export function MarketStateDashboardView({ payload, selectedMarket = "overall", 
   );
 }
 
-export function MarketStateDashboard({ onUpdate, updating = false, updateDisabled = false, onContext }: MarketStateDashboardProps = {}) {
+export function MarketStateDashboard({ onUpdate, updating = false, updateDisabled = false, onContext, personalContext = null }: MarketStateDashboardProps = {}) {
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
   const [selectedMarket, setSelectedMarket] = useState<MarketScope>("overall");
   const [error, setError] = useState("");
@@ -523,5 +527,5 @@ export function MarketStateDashboard({ onUpdate, updating = false, updateDisable
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { bridge().applyAgentBranding?.(); }, [payload]);
 
-  return <MarketStateDashboardView payload={payload} selectedMarket={selectedMarket} loading={loading} updating={updating} updateDisabled={updateDisabled} error={error} onSelectMarket={setSelectedMarket} onUpdate={onUpdate} onReload={load} />;
+  return <MarketStateDashboardView payload={payload} selectedMarket={selectedMarket} loading={loading} updating={updating} updateDisabled={updateDisabled} error={error} onSelectMarket={setSelectedMarket} onUpdate={onUpdate} onReload={load} personalContext={personalContext} />;
 }

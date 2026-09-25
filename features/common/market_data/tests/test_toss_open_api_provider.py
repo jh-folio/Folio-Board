@@ -8,6 +8,7 @@ if str(ROOT) not in sys.path:
 
 from features.common.market_data import toss_open_api
 from features.common.market_data.providers import TossOpenApiKoreaMarketProvider, _fetch_usdkrw
+from features.llm_settings.client import TOSS_OPEN_API_DEFAULT_BASE_URL, toss_open_api_base_url, toss_open_api_enabled
 from features.llm_settings.settings_service import public_settings
 
 
@@ -33,7 +34,8 @@ def test_toss_open_api_provider_is_safe_stub_until_endpoint_is_enabled(monkeypat
 
     assert payload["ok"] is False
     assert payload["provider"] == "toss_open_api"
-    assert "aggregate index endpoint is not documented" in payload["warnings"][0]
+    assert "aggregate market payload remains on yfinance" in payload["warnings"][0]
+    assert "native chart uses Toss market-indicator candles" in payload["warnings"][0]
     assert "client-secret" not in repr(payload)
 
 
@@ -84,15 +86,21 @@ def test_toss_usdkrw_newer_than_the_session_date_falls_back(monkeypatch):
     assert fx["error"] == "market_data_unavailable"
 
 
-def test_public_settings_hides_toss_settings_without_release_flag(monkeypatch):
-    monkeypatch.setenv("FOLIO_ENABLE_TOSS_OPEN_API", "0")
+def test_example_shaped_toss_credentials_stay_disabled_without_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv("FOLIO_ENABLE_TOSS_OPEN_API", "false")
     monkeypatch.setenv("TOSS_OPEN_API_CLIENT_ID", "demo-client-value")
     monkeypatch.setenv("TOSS_OPEN_API_CLIENT_SECRET", "safe-holder-value")
-    monkeypatch.setenv("TOSS_OPEN_API_BASE_URL", "https://example.invalid")
+    monkeypatch.setenv("TOSS_OPEN_API_BASE_URL", TOSS_OPEN_API_DEFAULT_BASE_URL)
 
     settings = public_settings()
 
-    assert "toss" not in settings
+    assert toss_open_api_enabled() is False
+    assert toss_open_api.toss_credentials_available() is False
+    assert settings["toss"]["enabled"] is False
+    assert settings["toss"]["ready"] is False
+    assert settings["toss"]["hasClientId"] is True
+    assert settings["toss"]["hasClientSecret"] is True
+    assert settings["toss"]["health"]["status"] == "disabled"
     assert "safe-holder-value" not in repr(settings)
 
 
@@ -104,9 +112,27 @@ def test_public_settings_reports_toss_key_without_exposing_secret_when_enabled(m
 
     settings = public_settings()
 
+    assert settings["toss"]["enabled"] is True
     assert settings["toss"]["hasApiKey"] is True
     assert settings["toss"]["ready"] is True
     assert settings["toss"]["baseUrl"] == "https://example.invalid"
     assert settings["toss"]["clientIdMasked"] == "dem...alue"
     assert settings["toss"]["clientSecretMasked"] == "saf...alue"
+    assert settings["toss"]["health"]["configured"] is True
+    assert "safe-holder-value" not in repr(settings["toss"]["health"])
     assert "safe-holder-value" not in repr(settings)
+
+
+def test_opted_in_blank_toss_base_url_uses_pinned_default_in_public_health(monkeypatch):
+    monkeypatch.setenv("FOLIO_ENABLE_TOSS_OPEN_API", "true")
+    monkeypatch.setenv("TOSS_OPEN_API_CLIENT_ID", "demo-client-value")
+    monkeypatch.setenv("TOSS_OPEN_API_CLIENT_SECRET", "safe-holder-value")
+    monkeypatch.setenv("TOSS_OPEN_API_BASE_URL", "  \t ")
+
+    settings = public_settings()
+
+    assert toss_open_api_base_url() == TOSS_OPEN_API_DEFAULT_BASE_URL
+    assert toss_open_api._base_url() == TOSS_OPEN_API_DEFAULT_BASE_URL
+    assert settings["toss"]["baseUrl"] == TOSS_OPEN_API_DEFAULT_BASE_URL
+    assert set(settings["toss"]["health"]) <= {"configured", "enabled", "status", "lastErrorCode", "rateLimit", "authFailures", "authFailureCount"}
+    assert "safe-holder-value" not in repr(settings["toss"])

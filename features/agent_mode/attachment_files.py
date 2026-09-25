@@ -1,6 +1,6 @@
 """Hand an attached image to the Agent CLI as a file path, never as prompt bytes.
 
-Folio OS has two screenshot paths and both ask the user to install or configure
+Folio Board has two screenshot paths and both ask the user to install or configure
 something first: local OCR needs Tesseract, external Vision needs an OpenAI key.
 The Agent CLI already reads image files with neither, but the dock dropped image
 bytes on the way in (`readAttachment` returned an empty string), so the prompt

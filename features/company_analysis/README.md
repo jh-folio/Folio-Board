@@ -12,7 +12,7 @@
 - DART Open API 기반 국내 기업 재무 숫자 수집
 - 로컬 공식자료 발췌 fallback(10-K/10-Q/S-1/20-F/8-K/prospectus/proxy 등)
 - 공식자료 우선 컨텍스트 구성
-- Financial Summary 하위의 재무 품질 분석
+- 실적과 재무 품질 하위의 재무 품질 분석
 - LLM 기업분석 리포트 생성
 - `analysisStyle=beginner|advanced` 기반 초심자/숙련자 보고서 모드
 - data-gap resolver 기반 자료 한계·확인 시도 기록
@@ -24,22 +24,38 @@
 
 ## 생성 경로 — 0.5.6
 
+### 생성 결과 보존
+
+품질 결함은 보고서를 버리는 조건이 아닙니다. CLI 생성에서 선택적인 구조 보완 재시도가
+실패하거나 더 나아지지 않으면 먼저 받은 본문을 유지합니다. 구조 검사·계약 검증을 완료하지
+못하면 `validationStatus: unassessed`와 고정 안내를 남기고 저장 경로로 전달합니다.
+이는 검증 통과가 아니며 후속 품질 평가에서도 경고를 유지합니다. 원문 예외나 비밀값은
+이 안내에 복사하지 않습니다. 명시적 취소와 저장 경로·원자적 커밋 검사는 완화하지 않습니다.
+
+기업분석은 CLI가 반환한 종료 정보를 `executionFacts`로 받아, 필수 섹션 검사와 구분한
+`completion` 상태를 남깁니다. 관측되지 않은 종료 정보는 `unknown`이며 정상 완료를 추측하지
+않습니다. 출력 한도·실패·중단 또는 필수 섹션 누락이 확인된 후보는 정상 보고서로 승격하지
+않습니다. 품질 점수가 낮다는 이유만으로 저장을 막지는 않습니다.
+
+받은 본문은 선택적인 구조 보완 전에 복구용으로 보관합니다. 최종 후보도 정상 저장 전에
+`data/company-analysis/recovery/`에 원자적으로 보관합니다. 저장 실패·경합·부분 완료 시 기존
+정상 보고서와 Personal Overlay는 유지되며, 기업분석 목록의 **[복구 후보]**에서 다시 열 수
+있습니다. 후보는 `saved: false`, `recoveryStored: true`이며 일반 보고서와 별도로 보관됩니다.
+정상본으로 자동 승격하거나 Change Intelligence에 투영하지 않습니다. 필요 없는 후보는
+목록의 기존 삭제 기능으로 삭제할 수 있습니다. 정상 커밋을 확인한 뒤 해당 복구 사본만 정리합니다.
+
+후보 보관 자체도 실패하면 복구를 보장하지 않습니다. CLI가 아직 반환하지 않은 출력이나
+프로세스 강제 종료 전 메모리에만 있던 내용은 이 보관 범위 밖입니다. 취소·기한 초과를
+정상 생성으로 바꾸지 않습니다. 화면 반환 본문과 정본 저장 성공은 구분합니다.
+
 기업분석에는 생성 경로가 둘이다.
 
 ```text
-API   app.py → analyze_company()
+규칙  app.py → analyze_company()
 CLI   app.py → submit_agent_task() → agent_mode/service.py::prepare_company_analysis_pack()
 ```
 
-**조립기와 후처리기는 하나씩이다.** 두 경로가 각자 조립하던 시절 실제로 갈렸다:
-
-- 산출물 계약(분량·근거 인용·서술 요구·웹 조회·검증)이 API 경로에만 붙어, CLI로 만든
-  보고서에는 `contractValidation`이 아예 없었다. 사용자는 CLI를 쓰고 있었다.
-- 자료 검색도 갈렸다. API는 회사를 해석하고 그 표기들로 검색해 합치는데
-  (`search_company_documents`) CLI는 사용자가 친 문자열 하나로 찾았다 — 실측 **NVDA 문서
-  겹침 8/30**, CLI 상위 3건에 엔비디아 기사가 하나도 없었다(세레브라스·SanDisk·CoreWeave).
-- 팩의 `requiredSections`가 손으로 적은 6개라 경쟁우위·성장 전망·어떻게 접근할까가
-  빠져도 아무도 몰랐다.
+**조립기와 후처리기는 하나씩이다.** CLI와 규칙 생성은 같은 기업 식별·자료 검색·산출물 계약을 사용한다. `requiredSections`와 출처·검증 계약을 각 호출부에 복제하지 않는다.
 
 | 무엇 | 어디 |
 |---|---|
@@ -105,6 +121,28 @@ CLI   app.py → submit_agent_task() → agent_mode/service.py::prepare_company_
   보고서 JSON의 `sourceLedger`에 저장된다.
 - `어떻게 접근할까`와 `자료 한계와 참고자료`는 면제다 — 판단을 적는 자리와 데이터 메모는
   근거를 인용하는 자리가 아니다.
+
+### 출처 목록 (`company_analysis_sources`)
+
+리더가 표시하는 `sources`다. **컨텍스트가 근거로 읽는 것은 전부 여기 있어야 한다.**
+
+- 연차보고서(`rankedFiling`, 10-K/20-F)와 **최근 10-Q(`rankedQuarterlyFiling`)를 각자 form
+  라벨과 함께** 싣는다. 10-Q MD&A 발췌는 컨텍스트의 `## 최근 분기 공시 서술`이 쓰는데
+  출처 목록에서 빠져 있었다.
+- `secFacts`의 companyfacts 링크는 `SEC_FACTS_URL`(`api/xbrl/companyfacts/CIK…`)을 가리킨다
+  — submissions URL을 "SEC companyfacts"로 적으면 독자가 연 자료가 재무 숫자의 출처가 아니다.
+- 웹 조회로 인용한 자료(`GenerationInputs.webSourceItems`)는 `sourceLedger`뿐 아니라
+  `sources`에도 들어간다. `draft_artifact`가 규칙/CLI 경로 공통으로 전달한다.
+
+### 리더 렌더링 (`web/src/app/reportReader/CompanyAnalysisBody.tsx`)
+
+- **차트는 섹션에 2-pass로 배정한다.** 전체 섹션의 의미 매칭(제목 키워드)을 먼저 끝내고,
+  남은 차트만 고정 위치(`fallbackIndex`)로 떨어뜨린다(`assignSectionCharts`). 인덱스
+  fallback을 먼저 소비하면 "기업 개요"가 뒤 "실적과 재무 품질"의 실적·마진 차트를 가져간다.
+  서론 문단이 붙어도 `fallbackIndex`는 헤딩 순번(`headingOrdinals`) 기준이라 밀리지 않는다.
+- 공통 `ReportBody::stripInlineReferenceSections`는 참고자료 헤딩부터 **다음 동급·상위
+  헤딩까지만** 걷어낸다. 문서 끝까지 자르면 그 아래에 온 정상 섹션("밸류에이션과 DCF
+  관련 주의")이 사라진다. 참고자료가 문서 맨 끝이면(브리핑) 기존처럼 끝까지 제거된다.
 
 ### 점수 상한
 
@@ -199,13 +237,17 @@ LLM에는 전체 10-K나 전체 PDF를 넣지 않습니다. 입력은 `공식 �
 - `beginner`: 큰 틀은 기존 기업분석 구조를 유지하되, 어려운 용어를 풀어 쓰고 숫자의 의미를 줄글로 설명하는 초심자 친화 보고서입니다.
 - `advanced`: 같은 9개 섹션 골격을 유지하되, 경쟁우위·재무품질·밸류에이션·반증조건을 더 압축적이고 깊게 다루는 숙련자용 보고서입니다.
 
-두 모드는 공통 base prompt를 조합하지 않고 완전히 분리된 prompt 파일을 사용합니다. 다만 두 prompt는 같은 9개 섹션 순서, 자료 우선순위, 조작 금지, data gap 처리 규칙을 반드시 공유해야 합니다.
+두 모드는 각각의 스타일 prompt에 공통 재무 품질 지침과 `prompts/analysis_focus.md`를 결합합니다. 같은 9개 섹션 순서, 자료 우선순위, 조작 금지, data gap 처리 규칙을 공유합니다.
+
+분석에서는 기업의 수익구조·성장 단계·최근 변화에 맞는 핵심 질문을 내부적으로 선택합니다. 질문 목록이나 문답을 출력하지 않고, 여러 섹션에서 서로 다른 근거와 의미를 연결하며 반대 설명과 미확인을 함께 다룹니다. 체크포인트는 근거 있는 수치 또는 확인 가능한 사건으로 설명합니다. 이 지침은 기존 CLI 작성 호출에서 적용되며 추가 호출·수집·점수·저장 필드를 만들지 않습니다. 규칙 기반 보고서의 동작은 유지합니다.
+
+`beginner.md`는 문단 첫 문장에 관찰 사실을 담은 강한 문장을 쓰되, 마크다운 볼드는 섹션당 판단을 좌우하는 1~2곳에만 남깁니다(문단마다 볼드하면 강조가 사라진다는 실측 지적으로 0.6 P3에서 조정). 0번을 제외한 각 섹션 제목 바로 다음 줄에는 blockquote(`> `)로 2~3줄 섹션 요약을 둡니다. 리더 렌더러가 "헤딩 바로 다음 blockquote"만 `.section-summary` 카드로 스타일하므로 제목 → 요약 → 본문 순서를 지켜야 합니다(자세한 렌더링 규칙은 `features/frontend_ui/DESIGN_SYSTEM.md` §5 "리포트 표"). §3 밸류에이션 표는 PER·PSR·EV/EBITDA·FCF Yield 뜻을 표 안이나 표 아래에 밝히도록 명시합니다.
 
 자료가 부족할 때는 곧바로 "확인 불가"로 끝내지 않고 `features/company_analysis/data_gap_resolver.py`의 data-gap resolver가 먼저 SEC companyfacts/DART, SEC 10-K HTML, 로컬 공식자료, 시장 데이터, 로컬 IR·기사·RSS, 웹 검색 허용 여부를 기준으로 어떤 확인 경로를 시도했는지 구조화합니다. 보고서 JSON에는 `dataGaps`와 `resolutionAttempts`가 저장되고, Reader는 해결되지 않은 항목을 "자료 한계"로 보여줍니다.
 
 ## 규칙 기반 버전
 
-LLM이 꺼져 있거나 API Key가 없거나 호출에 실패하면 `features/company_analysis/report_rules.py`가 섹션별 규칙 엔진으로 보고서를 만듭니다.
+LLM이 꺼져 있거나 CLI 보조 작성 호출에 실패하면 `features/company_analysis/report_rules.py`가 섹션별 규칙 엔진으로 보고서를 만듭니다.
 
 - 재무 섹션: SEC companyfacts 또는 DART 재무제표의 핵심 항목을 표로 구성
 - 사업/경쟁우위: SEC 10-K 상위 문단 또는 로컬 공식자료 발췌 중 product, platform, customer, segment, network 등 키워드가 강한 문단 사용
@@ -375,6 +417,28 @@ DCF 차트는 통화가 `USD`로 하드코딩돼 있었습니다.
 
 ## 밸류에이션 (valuation.py)
 
+### 통화·주식 단위 확인
+
+`valuation_basis.py`가 공식 재무의 신고 통화, 주가 단위, 시장가치 통화와 공급자 재무 통화를
+구분합니다. 규칙 보고서·차트·CLI/규칙 공통 생성 입력이 이 판정을 사용합니다.
+통화가 다르거나 확인되지 않은 입력을 섞는 계산, 명시된 ADR 비율·주식종류 불일치에
+영향받는 주당 계산은 제외하고 `analysisCharts.valuationBasis`와 계산 객체에 사유를 남깁니다.
+펜스와 파운드는 같은 값으로 취급하지 않으며, 환율·ADR 환산을 새로 수행하지 않습니다.
+시가총액이 없을 때도 주가×주식수 유도에 같은 안전조건을 적용합니다. 다른 통화의 주가로
+시가총액을 채우지 않으며, 별도로 통화가 확인된 기업가치와 EBITDA의 계산은 유지합니다.
+
+공식 재무와 주가 통화가 일치하는 계산은 유지합니다. 공급자 재무·현금흐름은 별도로
+신고 통화와 일치함을 확인한 경우에만 합칩니다. 주식수 값이 있다는 사실만으로
+ADR 비율이나 주식종류를 검증했다고 주장하지 않으며, 공급자가 제공하지 않은 단위
+메타데이터까지 확인하는 것은 이 최소 정책의 범위 밖입니다.
+
+계산 제외는 보고서 생성·저장을 막는 조건이 아닙니다. 사업 설명·공식 재무와 유효한
+독립 수치는 유지하고, 모델 입력에는 제외 사유와 숫자를 추정하지 말라는 지침을 전달합니다.
+임의의 LLM 산문을 사후 환산·재작성하거나 전부 정확하다고 보증하는 검증은 아닙니다.
+기존 저장 보고서는 다시 쓰지 않습니다.
+
+### 공통 시나리오
+
 시나리오의 **단일 출처**다. 본문과 차트가 각자 계산하던 시절 한 보고서에 밸류에이션이
 두 벌 있었다(실측 HWM 2026-08-27: 본문 EPS 5.54×30/45/60 vs 차트 EPS 4.081×54/73/94).
 
@@ -409,13 +473,45 @@ DCF 차트는 통화가 `USD`로 하드코딩돼 있었습니다.
 
 - `build_dcf()` — 정상화 → 할인율 → 감쇠 → 시나리오 → 역산. `analysisCharts.dcf`에
   저장되고 차트·본문 컨텍스트·규칙 보고서가 **같은 객체**를 읽는다.
-- `normalized_base_fcf()` — 중앙값 FCF 마진 × 최근 매출. 최근 1년이 회사 가치를 정하지
-  않게 한다. 어느 방법으로 내려갔는지 `method`가 말한다.
+- `normalized_base_fcf()` — FCF 마진 × 최근 매출. 최근 1년이 회사 가치를 정하지 않게
+  한다. 마진이 완만한 다년 추세면(`_margin_trend()`, 한 구간이 마진 폭의 70% 넘지 않음)
+  최근 연도 가중 평균(`trend_weighted_margin`)을 쓰고 — 우량성장주처럼 개선세가 이어지는
+  회사에서 중앙값이 추세에 뒤처지는 것을 줄인다 — 스파이크나 횡보면 기존 중앙값
+  (`median_margin`)을 쓴다. 어느 방법으로 내려갔는지 `method`가, 추세 방향은 `marginTrend`가
+  말한다.
 - `growth_driver()` — 매출 CAGR 우선. FCF 성장률은 매출과 부호까지 어긋난다.
 - `estimate_discount_rate()` — 회사별 WACC, 블룸 조정 베타. 입력이 없으면 고정값으로
   내려가되 `method: fallback_fixed`와 `missing`을 남긴다.
 - `implied_growth()` — 현재가를 정당화하는 초기 성장률. **이 층의 핵심 숫자다.**
 - 예측 기간 10년, 선형 감쇠, 터미널 비중 공시(`TERMINAL_SHARE_WARN` 70%).
+- **문구의 연차 숫자는 `fadePath` 길이를 따라간다.** "6년차 이후"로 박아 두면 10년 모델에서 터미널이 11년차부터라는 사실과 어긋나고 본문이 그대로 옮긴다 — `render_dcf_context`(LLM 컨텍스트)와 `report_rules` 셀이 같은 "명시 예측 기간 N년 이후" 표현을 쓴다.
+- **역산 성장률은 1년차 값이고 이후 N년에 걸쳐 감쇠한다.** 정상화 FCF·할인율·영구성장률·감쇠 경로를 고정하고 초기 성장률 한 변수만 역산한 결과다. 컨텍스트가 이 조건을 함께 실어, 매출·EBITDA 성장률 한 숫자와 그대로 비교하거나 "시장의 요구 성장률"처럼 읽지 않게 한다.
 - 시나리오는 성장률만, 민감도 표가 할인율·영구성장. 둘은 같은 모델을 쓴다.
+- `assumption_sensitivity()` — 무위험수익률(±0.5%p)·ERP(4/5/6%)가 내재가치와 역산
+  성장률을 얼마나 움직이는지의 감도표(`assumptionSensitivity`). **값을 맞히는 것보다
+  그 값이 답을 얼마나 지배하는지 보이는 쪽이 먼저다** — 실측 ERP 4~6%가 MSFT 내재가치를
+  37% 흔든다. WACC 경로에서만 낸다(고정 할인율은 두 입력을 읽지 않는다). 본문 컨텍스트와
+  규칙 보고서 둘 다 이 표를 싣고, 내재가치를 하나의 값이 아니라 범위로 읽으라고 적는다.
 - 무위험수익률·위험프리미엄은 **가정**이다. `risk_free` 인자로 살아 있는 값을 주입할
   수 있지만 이 모듈은 스스로 조회하지 않는다.
+- 조회는 `risk_free.py::current_risk_free()`가 한다 — USD만, 키는
+  `llm_settings.client.fred_api_key()`로 읽어(설정 화면이 `.env`에 쓴 키가 보인다)
+  FRED `DGS10`, 없으면 yfinance `^TNX`. 캐시는 1일 TTL + shape 버전
+  (`data/company-analysis/market-cache/risk-free.json` — **상위 폴더에 두면 보고서
+  목록 glob이 캐시를 보고서 카드로 올린다**), 조회 실패 시 stale 캐시(상한 7일 —
+  무제한이면 낡은 금리가 살아 있는 값처럼 주입된다) → 통화 상수 순 폴백이고, 실패도
+  기록해 1시간 쿨다운을 둔다(오프라인에서 보고서마다 timeout을 되풀이하지 않게).
+  `build_dcf`는 meta dict를 통째로 받아 `riskFreeMeta`(source·asOf·관측일)를 스스로
+  싣는다 — 호출부가 사후 주입하지 않는다. 테스트 가드는 함수 맨 위라 pytest에서는
+  실워크스페이스 캐시조차 읽지 않는다. 비USD는 OECD 월간 계열이 9개월 뒤처져 있어
+  (실측 2025-11) 상수 유지 — 쓰기로 결정하면 관측일을 함께 실어야 한다. 두 생성
+  경로(CLI)가 같은 조회를 거친다(`report_rules`·`service`의 `build_dcf` 호출부).
+
+## 본문 인용 링크
+
+새로 생성하는 보고서는 `features/common/report_citations.py`에서 출처 원장의 명시 source ID 태그와 E0 native citation을 일반 Markdown 링크로 연결한다. 문단/블록 뒤 `인용 출처: [자료 제목](URL)`로 보여 기존 리더·복사·Obsidian·Notion 내보내기에서 같은 링크를 사용한다. 과거 저장본은 자동 재작성하지 않는다.
+
+- 원장에 유일하게 연결되고 안전한 HTTP(S) URL이 있는 출처만 표시한다. 없는 URL을 추정하거나 `document:N`을 원장 순번으로 바꾸지 않는다. 출처 연결은 내용의 사실 검증 판정이 아니다.
+- Native citation은 실제 응답에 관측되고 편집 후에도 본문 위치가 유지될 때만 연결한다. provider가 native citation을 제공하지 않으면 명시 source ID 태그를 이용하며 native 지원을 임의로 주장하지 않는다.
+- 원문 source ID 태그는 근거 검증을 위해 유지한다. 내부 `folio-citation-links` 주석은 생성한 링크 문단의 재투영 경계이며 리더에서는 보이지 않고 Notion 변환에서는 제거한다. 코드 예제의 태그·기존 링크는 인용으로 재해석하지 않는다.
+- 저장되는 것은 원장의 제목·공개 URL을 이용한 링크뿐이다. raw provider payload, session/encrypted ID, source quote와 document offset은 보고서·로그·내보내기에 새로 저장하지 않는다.

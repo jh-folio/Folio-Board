@@ -23,6 +23,7 @@ from features.daily_briefing.schema import (
     market_keys_for_briefing_scope,
     normalize_market_scope,
     split_market_markdown,
+    visual_sidecar_file_name,
     visual_sidecar_gzip_file_name,
 )
 
@@ -222,6 +223,33 @@ def test_deleting_one_market_leaves_the_others(scope):
         for other in SINGLE_MARKET_SCOPES:
             if other != scope:
                 assert briefing_file_name(DATE, other) in survivors
+
+
+def test_deleting_weekly_market_removes_weekly_report_and_sidecars():
+    from features.daily_briefing import service
+
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        kr_files = (
+            briefing_file_name(DATE, "kr", "weekly"),
+            visual_sidecar_file_name(DATE, "kr", "weekly"),
+            visual_sidecar_gzip_file_name(DATE, "kr", "weekly"),
+        )
+        us_file = briefing_file_name(DATE, "us", "weekly")
+        for name in (*kr_files, us_file):
+            (root / name).write_bytes(b"test")
+
+        with (
+            patch.object(service, "BRIEFINGS_DIR", root),
+            patch("features.daily_briefing.archive.refresh_briefing_archive"),
+        ):
+            result = service.delete_briefing(DATE, market="kr", kind="weekly")
+
+        assert result["deleted"] is True
+        assert result["market"] == "kr"
+        assert set(result["removedFiles"]) == set(kr_files)
+        assert all(not (root / name).exists() for name in kr_files)
+        assert (root / us_file).exists()
 
 
 def test_a_date_wide_delete_removes_every_market():

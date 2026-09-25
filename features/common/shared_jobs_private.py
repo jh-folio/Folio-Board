@@ -98,7 +98,16 @@ class LiveRecord:
 
 
 class JobPrivateLifecycle:
-    def __init__(self, context_root: Path, *, clock: Callable[[], datetime]) -> None:
+    def __init__(
+        self,
+        context_root: Path,
+        *,
+        clock: Callable[[], datetime],
+        terminal_observer: Callable[[str, JobStatus], None] | None = None,
+        cleanup_started: Callable[[str], None] | None = None,
+        cleanup_finished: Callable[[str], None] | None = None,
+        cleanup_failed: Callable[[str, PrivateCleanupError], None] | None = None,
+    ) -> None:
         self.context_root = context_root
         self.clock = clock
         self.worker_private: dict[str, dict[str, JsonValue]] = {}
@@ -106,6 +115,10 @@ class JobPrivateLifecycle:
         self.live_terminal: dict[str, LiveRecord] = {}
         self.cleanup_blocked: set[str] = set()
         self.repair_required = False
+        self._terminal_observer = terminal_observer
+        self._cleanup_started = cleanup_started
+        self._cleanup_finished = cleanup_finished
+        self._cleanup_failed = cleanup_failed
 
     def set_repair_required(self, required: bool) -> None:
         self.repair_required = required
@@ -161,10 +174,26 @@ class JobPrivateLifecycle:
         live_detail: Mapping[str, str | list[str] | None] | None = None,
         persist: Callable[[], object],
     ) -> None:
+        if self._cleanup_started is not None:
+            try:
+                self._cleanup_started(job_id)
+            except Exception:
+                pass
         if not self.cleanup_owner(job_id):
             self.cleanup_blocked.add(job_id)
             store.mark_private_cleanup_failed(job_id)
-            raise PrivateCleanupError(job_id)
+            error = PrivateCleanupError(job_id)
+            if self._cleanup_failed is not None:
+                try:
+                    self._cleanup_failed(job_id, error)
+                except Exception:
+                    pass
+            raise error
+        if self._cleanup_finished is not None:
+            try:
+                self._cleanup_finished(job_id)
+            except Exception:
+                pass
         self.worker_private.pop(job_id, None)
         self.live_running.pop(job_id, None)
         detail = TerminalLiveDetail.model_validate(
@@ -179,6 +208,15 @@ class JobPrivateLifecycle:
             raise
         self.cleanup_blocked.discard(job_id)
         self._prune_live()
+        # Authority cleanup + persistence has completed.  An observer cannot
+        # become proof or disturb the existing fail-closed lifecycle.
+        if self._terminal_observer is not None:
+            try:
+                current = store.get(job_id)
+                if current is not None and current.status in TERMINAL_STATUSES:
+                    self._terminal_observer(job_id, current.status)
+            except Exception:
+                pass
 
     def terminalize(
         self,

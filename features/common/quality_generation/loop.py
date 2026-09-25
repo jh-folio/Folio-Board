@@ -60,7 +60,44 @@ def apply_quality_loop(
     mode: str = "diagnose_only",
     preflight: dict | None = None,
     context: dict | None = None,
+    repair_budget=None,
+    allow_briefing_repair: bool = False,
 ) -> dict:
+    # Briefing prose is authored output, not a quality-loop input.  Keep the
+    # explicit offline evaluator and the user-triggered quality-repair task,
+    # but never assess, rewrite, or reject a briefing while ordinary
+    # generation/writeback is running.  In particular, qualityMode values
+    # such as ``strict`` and ``quality_repair`` must not become a hidden prose
+    # mutation path.
+    if artifact_type == "briefing" and not allow_briefing_repair:
+        artifact = dict(artifact or {})
+        loop = loop_shell(mode, preflight or {
+            "artifactType": "briefing",
+            "status": "not_assessed",
+            "assessmentStatus": "not_assessed",
+        })
+        loop.update({
+            "assessmentStatus": "not_assessed",
+            "contentAssessment": "not_assessed",
+            "qualityBefore": None,
+            "qualityAfter": None,
+            "weakSectionsBefore": [],
+            "weakSectionsAfter": [],
+            "warnings": ["briefing_content_not_assessed"],
+        })
+        # Do not carry a prior semantic quality result into a new production
+        # candidate.  The body and structural/source fields remain untouched;
+        # only stale content-assessment metadata is replaced.
+        artifact["quality"] = {
+            "status": "not_assessed",
+            "assessmentStatus": "not_assessed",
+            "contentAssessment": "not_assessed",
+            "verifiedClaims": [],
+            "verifiedClaimCount": None,
+            "contradictionCount": None,
+        }
+        artifact["qualityGeneration"] = loop
+        return artifact
     mode = normalize_quality_mode(mode)
     artifact = dict(artifact or {})
     preflight = preflight or preflight_from_context(artifact_type, artifact, context)
@@ -82,6 +119,7 @@ def apply_quality_loop(
             preflight,
             weak_before,
             mode=mode,
+            **({"repair_budget": repair_budget} if artifact_type == "briefing" and repair_budget is not None else {}),
         )
         loop["warnings"].extend(repaired.get("warnings") or [])
         loop["repairReason"] = repaired.get("repairReason", "")

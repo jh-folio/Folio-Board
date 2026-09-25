@@ -233,7 +233,7 @@ def test_a_report_without_a_scope_statement_is_flagged():
     assert "scope_undefined" not in _codes(validate_company_report(scoped))
 
 
-def test_scenarios_without_numeric_conditions_are_flagged():
+def test_scenarios_without_condition_markers_are_flagged():
     vague = _report().replace(
         "## 성장 전망과 체크포인트\n\n" + _FILLER,
         "## 성장 전망과 체크포인트\n\n업황이 좋아지면 실적이 개선됩니다.",
@@ -248,6 +248,14 @@ def test_scenarios_without_numeric_conditions_are_flagged():
     )
     assert "scenario_not_conditional" not in _codes(validate_company_report(concrete))
 
+    event = _report().replace(
+        "## 성장 전망과 체크포인트\n\n" + _FILLER,
+        "## 성장 전망과 체크포인트\n\n다음 실적 공시에서 신규 공장 가동이 연기된 것으로 확인되면 매출 확대 시점의 가정을 재검토합니다.",
+        1,
+    )
+    # 조건어 탐지의 회귀 검사이며 사건의 진실성·출처를 의미적으로 검증하지 않는다.
+    assert "scenario_not_conditional" not in _codes(validate_company_report(event))
+
 
 def test_the_requirements_block_says_where_to_write_each_thing():
     # 원칙이 아니라 어디에 무엇을 쓸지 지시한다.
@@ -255,7 +263,8 @@ def test_the_requirements_block_says_where_to_write_each_thing():
 
     text = render_quality_requirements()
     assert "핵심 판단" in text and "다루지 않는 것" in text
-    assert "45%를 하회하면" in text  # 조건을 예시로 보여준다
+    assert "확인 가능한 사건 조건" in text
+    assert "수치 기준은 출처를 밝히고 임의로 만들지 않습니다" in text
     assert "자기 몫만" in text  # 섹션 간 중복 방지
 
 

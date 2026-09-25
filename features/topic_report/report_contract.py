@@ -19,6 +19,7 @@ from features.common.report_prose import (
     visible_markdown,
 )
 from features.common import report_prose as _prose
+from features.common.research_schema.tracked_checkpoints import squash
 from features.topic_report.section_sources import (
     SOURCE_TAG_NAMES,
     _INLINE_CITATION,
@@ -42,7 +43,7 @@ _STEP_HEADING = re.compile(
 
 _COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
 
-_SOURCE_EXEMPT = frozenset({"질문 정의와 분석 범위", "Source & Data Notes"})
+_SOURCE_EXEMPT = frozenset({"Source & Data Notes"})
 
 
 def _source_required(sections: list[str]) -> list[str]:
@@ -99,14 +100,16 @@ def question_keywords(question: str, limit: int = 8) -> list[str]:
 def unanswered_questions(text: str, research_questions) -> list[str]:
     """본문에 흔적이 하나도 없는 질문.
 
-    비교는 **공백을 지우고** 한다. 한국어 복합어의 띄어쓰기는 글쓴이마다 다르고,
-    실측으로 질문의 "기간프리미엄"이 본문의 "기간 프리미엄"과 맞지 않아 8번이나
-    다룬 주제를 다루지 않았다고 잡았다.
+    비교는 **공백을 지우고 소문자로** 한다(`tracked_checkpoints.squash` 공유 — 같은
+    처방을 두 곳이 각자 들고 있으면 갈라진다). 한국어 복합어의 띄어쓰기는 글쓴이마다
+    다르고, 실측으로 질문의 "기간프리미엄"이 본문의 "기간 프리미엄"과 맞지 않아
+    8번이나 다룬 주제를 다루지 않았다고 잡았다. 영문은 대소문자 표기 편차
+    ("Term Premium" vs "term premium")가 같은 병이라 소문자 접기가 함께 간다.
     """
-    body = re.sub(r"\s+", "", str(text or ""))
+    body = squash(text)
     missing: list[str] = []
     for question in research_questions or []:
-        keywords = [re.sub(r"\s+", "", keyword) for keyword in question_keywords(question)]
+        keywords = [squash(keyword) for keyword in question_keywords(question)]
         keywords = [keyword for keyword in keywords if keyword]
         if not keywords:
             continue
@@ -175,7 +178,7 @@ def validate_deep_report(
     if missing_questions:
         body_target = next(
             (heading for heading in headings if heading not in REPORT_HEAD_SECTIONS and heading not in REPORT_TAIL_SECTIONS),
-            "결론",
+            tail[-1] if tail else "",
         )
         for question in missing_questions[:3]:
             defects.append(_defect("coverage", "question_unanswered", 70, section=body_target))

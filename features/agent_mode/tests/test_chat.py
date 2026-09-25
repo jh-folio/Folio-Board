@@ -34,6 +34,28 @@ def test_build_chat_prompt_includes_effort_report_and_hypothesis_rule():
     assert "hypothesis" in prompt
 
 
+def test_build_chat_prompt_carries_the_full_provider_reasoning_range():
+    """Codex CLI는 xhigh/ultra까지 노력 단계를 낸다(features/llm_settings/reasoning.py) —
+    EFFORT_HINTS에 없으면 이 함수의 `.get(..., EFFORT_HINTS["medium"])` 폴백이 조용히
+    medium 문구로 떨어져, CLI에는 ultra가 가는데 프롬프트 지침은 medium을 말하게 된다.
+    """
+    for level in ("xhigh", "ultra"):
+        prompt = chat.build_chat_prompt("질문", {}, {"effort": level, "model": ""})
+        assert chat.EFFORT_HINTS[level] in prompt
+        assert chat.EFFORT_HINTS[level] != chat.EFFORT_HINTS["medium"]
+
+
+def test_build_chat_prompt_does_not_force_a_fixed_answer_structure():
+    """일반 답변은 자유 Markdown이다 — 정해진 섹션 순서나 JSON 출력을 강제하지 않는다.
+    (market state 참고 블록 자체의 "## Market State Reference" 같은 입력 자료 포맷은
+    모델에게 준 데이터 표기일 뿐 답변 형식 강제가 아니라 이 검사 대상이 아니다.)
+    강제 JSON 출력 계약은 보고서 수정 경로(`build_revision_prompt`)에만 있다."""
+    prompt = chat.build_chat_prompt("질문", {}, {})
+    assert "Return ONLY a JSON object" not in prompt
+    assert '"revisedMarkdown"' not in prompt
+    assert "반드시 다음 섹션" not in prompt and "고정된 순서로" not in prompt
+
+
 def test_build_revision_prompt_requires_full_json_document():
     prompt = chat.build_revision_prompt("bear case 추가", {}, {"effort": "medium", "attachments": [], "model": ""}, "# 기존 본문")
     assert '"revisedMarkdown"' in prompt
@@ -148,6 +170,116 @@ def test_run_agent_chat_companion_uses_cli_reply(monkeypatch):
     assert result["engine"] == "cli"
     assert result["adapter"] == "claude"
     assert result["reply"] == "핵심은 금리입니다."
+
+
+def test_run_agent_chat_blocks_before_the_cli_when_search_is_on_and_unsupported(monkeypatch):
+    """Agent Dock Stage D: `on`인데 이 CLI가 웹 검색을 지원하지 않으면 검색 없이
+    조용히 실행하지 않는다 — CLI를 아예 부르지 않고 이유를 알린다."""
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    monkeypatch.setattr(chat.bridge, "resolve_effective_web_search", lambda policy, adapter: (False, "antigravity", "unsupported"))
+    invoked = []
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", lambda *a, **k: invoked.append(1))
+    result = chat.run_agent_chat("질문", {"surface": "briefing_reader"}, {"searchPolicy": "on", "adapter": "antigravity"})
+    assert not invoked
+    assert result["engine"] == "rules"
+    assert "웹 검색을 지원하지 않아" in result["notice"]
+    assert result["search"] == {"requestedPolicy": "on", "toolEnabled": False, "toolUsed": "no", "sourceRefs": []}
+
+
+def test_run_agent_chat_passes_the_resolved_search_flag_to_the_bridge(monkeypatch):
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    monkeypatch.setattr(chat.bridge, "resolve_effective_web_search", lambda policy, adapter: (True, "codex", None))
+    captured = {}
+
+    def invoke(prompt, **kwargs):
+        captured.update(kwargs)
+        return {"output": "답변", "adapter": "codex", "webSearchFacts": {"enabled": True, "used": "unknown", "observation": "unavailable"}}
+
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", invoke)
+    result = chat.run_agent_chat("질문", {"surface": "briefing_reader"}, {"searchPolicy": "auto"})
+    assert captured["web_search"] is True
+    assert result["search"]["requestedPolicy"] == "auto"
+    assert result["search"]["toolEnabled"] is True
+
+
+def test_run_agent_chat_only_keeps_allow_listed_urls_in_source_refs(monkeypatch):
+    """`features/common/web_search_scope.py`를 그대로 재사용한다 — 목록 밖 URL은
+    evidence처럼 보이지 않게 뺀다."""
+    from features.common.web_search_scope import SourceScope
+
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    monkeypatch.setattr(chat.bridge, "resolve_effective_web_search", lambda policy, adapter: (True, "codex", None))
+    monkeypatch.setattr(chat, "load_source_scope", lambda company: SourceScope(
+        official={"reuters.com": "Reuters"}, media={}, paywalled=frozenset(), company_domains=frozenset(),
+    ))
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", lambda *a, **k: {
+        "output": "금리는 동결됐습니다. 출처: https://www.reuters.com/markets 그리고 https://not-allowed.example/page",
+        "adapter": "codex",
+        "webSearchFacts": {"enabled": True, "used": "yes", "observation": "complete"},
+    })
+    result = chat.run_agent_chat("최근 금리 발표 알려줘", {"surface": "briefing_reader"}, {"searchPolicy": "auto"})
+    urls = {row["url"] for row in result["search"]["sourceRefs"]}
+    assert "https://www.reuters.com/markets" in urls
+    assert not any("not-allowed.example" in url for url in urls)
+    assert result["search"]["toolUsed"] == "yes"
+
+
+def test_run_agent_chat_notes_when_search_was_requested_but_not_actually_used(monkeypatch):
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    monkeypatch.setattr(chat.bridge, "resolve_effective_web_search", lambda policy, adapter: (True, "codex", None))
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", lambda *a, **k: {
+        "output": "답변입니다.", "adapter": "codex",
+        "webSearchFacts": {"enabled": True, "used": "no", "observation": "complete"},
+    })
+    result = chat.run_agent_chat("질문", {"surface": "briefing_reader"}, {"searchPolicy": "on"})
+    assert "실제로 검색을 사용하지 않았습니다" in result["notice"]
+    assert result["search"]["toolUsed"] == "no"
+
+
+def test_run_agent_chat_default_search_policy_is_off_and_unchanged(monkeypatch):
+    """searchPolicy를 안 보내면(대부분의 기존 대화) 검색을 요청하지 않는다."""
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    captured = {}
+
+    def invoke(prompt, **kwargs):
+        captured.update(kwargs)
+        return {"output": "답변", "adapter": "codex"}
+
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", invoke)
+    result = chat.run_agent_chat("질문", {"surface": "briefing_reader"}, {})
+    assert captured["web_search"] is False
+    assert result["search"] == {"requestedPolicy": "off", "toolEnabled": False, "toolUsed": "unknown", "sourceRefs": []}
+
+
+def test_companion_call_uses_the_chat_specific_output_cap_not_the_report_ceiling(monkeypatch):
+    """Agent Dock Stage B: 대화 답변에 보고서 생성용 4M자 상한을 그대로 쓰지 않는다."""
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    captured = {}
+
+    def invoke(prompt, **kwargs):
+        captured.update(kwargs)
+        return {"output": "답변", "adapter": "codex"}
+
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", invoke)
+    chat.run_agent_chat("질문", {"surface": "briefing_reader"}, {})
+    assert captured["max_output_chars"] == chat.bridge.MAX_CHAT_OUTPUT_CHARS
+    assert captured["max_output_chars"] < chat.bridge.MAX_OUTPUT_CHARS
+
+
+def test_dock_chat_forwards_the_chosen_effort_to_the_cli_reasoning_flag(monkeypatch):
+    """실사용으로 발견한 결함: `_run_with_images()`가 `reasoning_effort`를 안 넘겨서
+    Dock의 "노력 단계" 선택이 프롬프트 문구(EFFORT_HINTS)에만 영향을 주고 CLI 자신의
+    실제 추론 강도는 항상 그 CLI의 기본값으로 돌고 있었다(master에도 있던 결함)."""
+    monkeypatch.setattr(chat.bridge, "bridge_status", lambda **kwargs: {"available": True})
+    captured = {}
+
+    def invoke(prompt, **kwargs):
+        captured.update(kwargs)
+        return {"output": "답변", "adapter": "codex"}
+
+    monkeypatch.setattr(chat.bridge, "run_agent_prompt", invoke)
+    chat.run_agent_chat("질문", {"surface": "briefing_reader"}, {"effort": "ultra"})
+    assert captured["reasoning_effort"] == "ultra"
 
 
 def test_collection_projection_prompt_is_server_resolved_metadata_only(monkeypatch, tmp_path):

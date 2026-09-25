@@ -255,7 +255,7 @@ def briefing_doc_score(doc, market_windows):
 
     # 1-b. Evidence Intake 신뢰도 계층(reliability_tier) 보너스. Tier 1(공식자료)·
     #      Tier 2(주요 매체)는 소폭 우대한다. 단, 공식자료(source_type=official_*/
-    #      macro_data)는 브리핑의 "직접 근거"로 쓰지 않는다는 Folio OS 원칙에 따라
+    #      macro_data)는 브리핑의 "직접 근거"로 쓰지 않는다는 Folio Board 원칙에 따라
     #      여기서 가산하지 않고, 브리핑 본문 근거 후보에서 강하게 내린다.
     source_type = str(doc.get("sourceType", "") or "")
     is_official = source_type.startswith("official_") or source_type == "macro_data"
@@ -514,6 +514,117 @@ def prioritize_briefing_groups(groups, market_windows, limit=None, market_scope=
 # ---------------------------------------------------------------------------
 _TIER_LIMIT = {"driver": 1200, "group": 850, "support": 450}
 
+# 기사 페이지에 함께 저장되는 네비게이션/추천/자동요약 문구는 evidence가 아니다.
+# 너무 넓은 금칙어 목록은 정상적인 기사 내용을 잃게 하므로, 페이지 chrome을
+# 가리키는 표현만 제한적으로 제거한다.
+_EXCERPT_NOISE_RE = re.compile(
+    r"(?:공유하기|카카오톡에 공유|페이스북에 공유|트위터에 공유|링크 복사|글자 크기|"
+    r"관련기사|추천기사|많이 본 기사|다른 기사|인기 검색어|로그인|댓글 쓰기|"
+    r"AI\s*(?:요약|자동 요약)|인공지능\s*요약|자동 생성 요약|본문과 관련 없는)",
+    re.I,
+)
+# Keep decimal points inside numbers (``5.62%``) intact while still splitting
+# ordinary prose sentences. Newline-separated snippets remain boundaries.
+_EXCERPT_SENTENCE_SPLIT_RE = re.compile(
+    r"(?<=[!?。！？])\s+|(?<!\d)\.(?=\s+|$)|\n+"
+)
+_EXCERPT_SIGNAL_RE = re.compile(
+    r"(?:\d+(?:\.\d+)?\s*%?|\d[\d,]*(?:\.\d+)?\s*(?:조|억|만|원|달러|%|bp|명|건)|"
+    r"(?:상승|하락|급등|급락|반등|마감|순매수|순매도|전환|발표|공시|실적|가이던스|"
+    r"전망|인수|계약|수주|가격|주가|지수|금리|환율|외국인|기관|투자자|대표|CEO|"
+    r"according|reported|said|announced|earnings|guidance|price|shares))",
+    re.I,
+)
+
+
+def _excerpt_parts(value):
+    """Return embedded Summary/Full Text sections without collapsing them.
+
+    Older index rows occasionally put the complete ``# Summary``/``# Full Text``
+    document in one field.  ``clean_embedded_sections`` intentionally returns one
+    section for legacy callers, but the briefing writer needs both so a number or
+    event mentioned only later in Full Text is not silently lost.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return {"summary": "", "full_text": ""}
+    marker = re.compile(r"#{1,6}\s*(Summary|Full Text|Collection Notes)\b[:\s]*", re.I)
+    matches = list(marker.finditer(text))
+    if not matches:
+        return {"summary": "", "full_text": text}
+    sections = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        label = match.group(1).lower().replace(" ", "_")
+        sections.setdefault(label, text[match.end():end].strip())
+    full_text = sections.get("full_text", "")
+    if "full text is not saved by default" in full_text.lower():
+        full_text = ""
+    return {
+        "summary": sections.get("summary", ""),
+        "full_text": full_text,
+    }
+
+
+def _clean_excerpt_sentences(text):
+    sentences = []
+    # Split the raw blocks first. ``normalize`` collapses newlines, which used
+    # to join a valid fact to a neighbouring menu block before the noise filter
+    # could remove the latter.
+    for part in _EXCERPT_SENTENCE_SPLIT_RE.split(str(text or "")):
+        sentence = normalize(part).strip(" -")
+        if not sentence or _EXCERPT_NOISE_RE.search(sentence):
+            continue
+        # Drop isolated menu labels and tiny UI fragments while retaining short
+        # numeric facts that may be useful to the market-flow section.
+        if len(sentence) < 18 and not _EXCERPT_SIGNAL_RE.search(sentence):
+            continue
+        sentences.append(sentence)
+    return sentences
+
+
+def _bounded_summary_text(text, limit):
+    """Clean summary blocks while retaining their original order."""
+    # Summary prose can be a short but meaningful sentence without a numeric
+    # signal. Keep it; only the explicit page-noise filter is authoritative in
+    # this lane. Tiny standalone labels are still rejected.
+    sentences = []
+    for part in _EXCERPT_SENTENCE_SPLIT_RE.split(str(text or "")):
+        sentence = normalize(part).strip(" -")
+        if sentence and len(sentence) >= 8 and not _EXCERPT_NOISE_RE.search(sentence):
+            sentences.append(sentence)
+    chosen = []
+    for sentence in sentences:
+        candidate = " ".join([*chosen, sentence]).strip()
+        if len(candidate) > limit:
+            break
+        chosen.append(sentence)
+    return " ".join(chosen)
+
+
+def _bounded_relevant_full_text(text, limit):
+    sentences = _clean_excerpt_sentences(text)
+    if not sentences:
+        return ""
+    # Prefer event/number/speaker/reaction sentences, then keep chronological
+    # context. This is deliberately bounded and never inserts the whole article.
+    ranked = sorted(
+        enumerate(sentences),
+        key=lambda item: (bool(_EXCERPT_SIGNAL_RE.search(item[1])), item[0]),
+        reverse=True,
+    )
+    chosen_indices = []
+    chosen = []
+    for index, sentence in ranked:
+        candidate = " ".join([*chosen, sentence]).strip()
+        if len(candidate) > limit:
+            continue
+        chosen.append(sentence)
+        chosen_indices.append(index)
+    # Ranking decides which sentences fit the budget; source order keeps event
+    # progression (for example a six-day flow reversal) readable.
+    return " ".join(sentences[index] for index in sorted(chosen_indices))
+
 
 def briefing_doc_excerpt(doc, clean_fn, tier="support"):
     """tier에 따라 발췌 길이를 차등한다.
@@ -521,6 +632,31 @@ def briefing_doc_excerpt(doc, clean_fn, tier="support"):
     clean_fn 은 service.clean_brief_text 처럼 (text, limit) -> str 인 정리 함수.
     """
     limit = _TIER_LIMIT.get(tier, _TIER_LIMIT["support"])
-    # body 섹션 마커를 먼저 걷어낸다. `clean_fn`은 URL·공백만 정리해서, 마커가 남으면
-    # 기사 본문 대신 매체 페이지의 공유 버튼·글자 크기 위젯이 발췌로 실린다.
-    return clean_fn(clean_embedded_sections(doc.get("summary") or doc.get("content") or ""), limit)
+    # Summary와 Full Text를 합치면 Full Text의 뒤쪽 사건/수치가 요약에 가려진다.
+    # 두 필드를 분리한 뒤 Full Text는 관련 문장만 bounded하게 추가한다.
+    raw_summary = str(doc.get("summary", "") or "")
+    summary_parts = _excerpt_parts(raw_summary)
+    content_parts = _excerpt_parts(doc.get("content", ""))
+    structured_summary = bool(re.search(r"#{1,6}\s*(Summary|Full Text|Collection Notes)\b", raw_summary, re.I))
+    summary = summary_parts["summary"] or ("" if structured_summary else summary_parts["full_text"])
+    # A legacy Summary field can contain both sections while content is empty;
+    # preserve its Full Text as the bounded full-text lane instead of dropping it.
+    full_text = content_parts["full_text"] or (summary_parts["full_text"] if structured_summary else "")
+    if not summary and content_parts["summary"]:
+        summary = content_parts["summary"]
+    summary = clean_fn(
+        _bounded_summary_text(clean_embedded_sections(summary), min(limit, max(180, limit // 2))),
+        min(limit, max(180, limit // 2)),
+    )
+    remaining = max(0, limit - len(summary) - 22)
+    full_excerpt = clean_fn(_bounded_relevant_full_text(full_text, remaining), remaining)
+    if summary and full_excerpt and full_excerpt.lower() != summary.lower():
+        return f"Summary: {summary}\nFull Text excerpts: {full_excerpt}"
+    evidence = summary or full_excerpt
+    if evidence:
+        return evidence
+    # Some legacy headline/RSS rows store a useful title with only a terse
+    # placeholder summary (for example ``요약``). Keep that headline as the
+    # bounded writer evidence, while the same noise filter still rejects
+    # recommendation/menu titles.
+    return _bounded_summary_text(doc.get("title", ""), limit)

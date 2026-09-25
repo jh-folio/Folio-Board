@@ -15,6 +15,7 @@ from features.common.quality_generation.candidate_store import CandidateStore
 from features.common.shared_jobs_private import JobPrivateLifecycle
 from features.common.shared_jobs_schema import JobStatus, TaskType
 from features.common.shared_jobs_store import SharedJobStore
+from features.topic_report.execution import report_incomplete
 
 
 def recover_deep_candidates_startup(
@@ -45,6 +46,8 @@ def _recover_one(job, store, lifecycle, candidates, producer, recovered) -> None
     if current is None or current.status is not JobStatus.RUNNING:
         return
     report = dict(checkpoint.report)
+    if report_incomplete(report):
+        return
     if report.get("deepResearch") is not True and not bool(
         ((report.get("evidencePackSummary") or {}).get("deepResearch") or {}).get("enabled")
     ):

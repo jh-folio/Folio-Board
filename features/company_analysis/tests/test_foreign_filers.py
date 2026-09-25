@@ -332,10 +332,10 @@ def test_financial_charts_are_labelled_in_the_reporting_currency():
     assert charts["performance"]["currency"] == "EUR"
 
 
-def test_price_charts_are_labelled_in_the_listing_currency():
-    """Intrinsic value per share sits beside the current price, so it follows it."""
+def test_price_charts_are_suppressed_when_listing_and_reporting_currency_differ():
+    """No FX conversion means a mixed-currency per-share chart is unavailable."""
     charts = _charts("EUR", "USD")
-    assert charts["scenario_price"]["currency"] == "USD"
+    assert "scenario_price" not in charts
 
 
 def test_a_single_currency_company_labels_everything_the_same():

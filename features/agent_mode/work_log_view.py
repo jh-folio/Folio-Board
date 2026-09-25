@@ -90,6 +90,11 @@ class WorkLogView:
             proposalId=job.proposalId,
             proposalStatus=self._proposal_status(job.proposalId),
             resultStatus=result_status,
+            queueWaitMs=job.queueWaitMs,
+            contextMs=job.contextMs,
+            cliMs=job.cliMs,
+            postprocessMs=job.postprocessMs,
+            totalMs=job.totalMs,
         )
 
     def visible(self, kind: WorkLogFilter) -> tuple[WorkLogEntry, ...]:

@@ -10,6 +10,7 @@
   const renderGate = createRequestGate();
 
   function finite(value) {
+    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
   }
@@ -35,10 +36,24 @@
       intraday: row.intraday && Array.isArray(row.intraday.points)
         ? row.intraday
         : { interval: "5m", points: [] },
+      // 주 단위 1시간봉. 없는 저장본은 `1W`도 일봉으로 그린다.
+      hourly: row.hourly && Array.isArray(row.hourly.points)
+        ? row.hourly
+        : { interval: "1h", points: [] },
       daily: row.daily && Array.isArray(row.daily.points)
         ? row.daily
         : { interval: "1d", points: legacyPoints },
     };
+  }
+
+  /** 분·시간 단위면 참이다. `1d`는 거짓. 그리는 방식(시각 축·wall-clock 변환)과
+   *  값 요약 방식(종가 기준)이 이 하나로 갈린다. */
+  function isIntradayInterval(interval) {
+    return /^\d+\s*[mh]$/i.test(String(interval || ""));
+  }
+
+  function pointsAreIntraday(points) {
+    return (points || []).some((row) => /\d{2}:\d{2}/.test(String(row.time || "")));
   }
 
   function periodPoints(subject, period, asOf) {
@@ -47,19 +62,25 @@
     const end = new Date(`${String(asOf || "").slice(0, 10)}T00:00:00Z`);
     if (Number.isNaN(end.getTime())) return { interval: "1d", points: [] };
     const starts = {
+      // 주간 보고서의 기본 구간. asOf가 그 주 마지막 세션이라 달력 7일이면 월~금(주말
+      // 포함)이 정확히 들어오고 직전 주 세션은 들어오지 않는다.
+      "1W": new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - 6)),
       "1M": new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1, end.getUTCDate())),
       "3M": new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 3, end.getUTCDate())),
       YTD: new Date(Date.UTC(end.getUTCFullYear(), 0, 1)),
       "1Y": new Date(Date.UTC(end.getUTCFullYear() - 1, end.getUTCMonth(), end.getUTCDate())),
     };
     const start = starts[period] || starts["1Y"];
-    return {
-      interval: "1d",
-      points: normalized.daily.points.filter((row) => {
-        const value = new Date(`${String(row.time || "").slice(0, 10)}T00:00:00Z`);
-        return !Number.isNaN(value.getTime()) && value >= start && value <= end;
-      }),
+    const inWindow = (row) => {
+      const value = new Date(`${String(row.time || "").slice(0, 10)}T00:00:00Z`);
+      return !Number.isNaN(value.getTime()) && value >= start && value <= end;
     };
+    // `1W`만 시간봉으로 그린다. 한 주는 일봉으로는 5점이라 선이 아니라 꺾인 선분 넷이고,
+    // 그 주 안에서 언제 움직였는지를 말하지 못한다. 더 긴 구간은 시간봉이 없거나(저장 창이
+    // 한 주다) 너무 촘촘해 일봉 그대로다.
+    const hourly = period === "1W" ? normalized.hourly.points.filter(inWindow) : [];
+    if (hourly.length >= 2) return { interval: normalized.hourly.interval || "1h", points: hourly };
+    return { interval: "1d", points: normalized.daily.points.filter(inWindow) };
   }
 
   function priceSummary(points) {
@@ -88,14 +109,33 @@
     return daily.length >= 2 ? daily.slice(-2) : [];
   }
 
+  /** 그린 날들의 **일봉 종가**만 남긴다.
+   *
+   *  값 요약은 봉을 잘게 쪼개도 종가 기준이어야 한다. 1W를 시간봉으로 그리면 첫 점이
+   *  월요일 09시 봉의 종가라 월요일 **종가**와 다르고(실측 KOSPI 6631.82 vs 6820.02,
+   *  2.8%p), 그대로 두면 머리 숫자가 −1.95%에서 +0.8%로 뛰어 같은 카드의 캡션·본문이
+   *  말하는 주간 등락과 어긋난다. 1D가 세션 5분봉을 그리면서 값은 전일 종가 대비로
+   *  말하는 것과 같은 규칙이다. */
+  function closeWindowForDrawn(subject, points) {
+    const days = new Set((points || []).map((row) => String(row.time || "").slice(0, 10)).filter(Boolean));
+    if (!days.size) return [];
+    return normalizePriceSubject(subject).daily.points
+      .filter((row) => days.has(String(row.time || "").slice(0, 10)) && finite(row.close) !== null);
+  }
+
+  function closeWindow(subject, period, points) {
+    if (period === "1D") return dailyCloseWindow(subject);
+    return pointsAreIntraday(points) ? closeWindowForDrawn(subject, points) : [];
+  }
+
   function priceSummaryForPeriod(subject, period, points) {
-    const dailyWindow = period === "1D" ? dailyCloseWindow(subject) : [];
-    return priceSummary(dailyWindow.length ? dailyWindow : points);
+    const dailyWindow = closeWindow(subject, period, points);
+    return priceSummary(dailyWindow.length >= 2 ? dailyWindow : points);
   }
 
   function hoverBaseline(subject, period, points) {
-    const dailyWindow = period === "1D" ? dailyCloseWindow(subject) : [];
-    if (dailyWindow.length) return finite(dailyWindow[0].close);
+    const dailyWindow = closeWindow(subject, period, points);
+    if (dailyWindow.length >= 2) return finite(dailyWindow[0].close);
     const first = (points || []).find((row) => finite(row.close) !== null || finite(row.value) !== null);
     return finite(first?.close ?? first?.value);
   }
@@ -148,6 +188,12 @@
     return formatHoverTime(value);
   }
 
+  /** 봉 라벨을 **봉 끝**으로 옮길 때 쓰는 분 수.
+   *
+   *  분봉만 옮긴다. 5분봉은 봉 길이가 정확히 5분이라 마지막 봉 `15:55`가 장 마감 `16:00`으로
+   *  읽혀 맞지만, 시간봉의 마지막 봉은 한 시간이 아니다 — 미국장 `15:30` 봉은 30분(마감 16:00),
+   *  한국장 `14:00` 봉은 90분(마감 15:30)이라 한 시간을 더하면 장이 끝난 뒤 시각이 된다.
+   *  그래서 시간봉은 **봉 시작** 시각 그대로 쓴다(`1h`는 여기서 0이다). */
   function intervalMinutes(interval) {
     const match = String(interval || "").match(/^(\d+)m$/i);
     return match ? Number(match[1]) : 0;
@@ -196,16 +242,32 @@
     return Math.floor((wallClock + intervalMinutes(interval) * 60 * 1000) / 1000);
   }
 
-  function initialPriceState(snapshot) {
+  /** 저장본이 실제로 답할 수 있는 기간만 남긴다.
+   *
+   *  주간 스냅샷에는 분봉이 없다(`granularities: ["1d"]`). 1D 버튼을 그대로 두면
+   *  누르는 순간 빈 차트가 되므로, 있는 자료로만 버튼을 만든다. */
+  function availablePeriods(snapshot) {
+    const series = snapshot?.series || [];
+    const has = (kind) => series.some((row) => (normalizePriceSubject(row)[kind].points || []).length > 0);
+    const periods = [];
+    if (has("intraday")) periods.push("1D");
+    if (has("daily")) periods.push("1W", "1M", "3M", "YTD", "1Y");
+    return periods.length ? periods : ["1D"];
+  }
+
+  function initialPriceState(snapshot, defaultPeriod) {
+    const periods = availablePeriods(snapshot);
+    const requested = String(defaultPeriod || "");
     return {
       selectedTicker: snapshot?.series?.[0]?.ticker || "",
-      period: "1D",
+      // 저장본이 권하는 기간(주간은 `1W`)을 쓰되, 그 저장본이 답할 수 있을 때만 쓴다.
+      period: periods.includes(requested) ? requested : periods[0],
       chartType: "line",
     };
   }
 
   function lightweightRows(points, chartType, interval) {
-    const intraday = interval === "5m";
+    const intraday = isIntradayInterval(interval);
     return (points || []).map((point) => {
       const rawTime = String(point.time || "");
       const time = intraday ? intradayChartTime(rawTime, interval) : rawTime.slice(0, 10);
@@ -284,7 +346,8 @@
   }
 
   function insertSectionSlot(heading, slot) {
-    heading.insertAdjacentElement("afterend", slot);
+    const lead = heading.nextElementSibling;
+    (lead?.tagName === "P" ? lead : heading).insertAdjacentElement("afterend", slot);
   }
 
   function buildSectionSlots(article) {
@@ -449,12 +512,6 @@
       .concat("…");
   }
 
-  function heatmapLayoutHeight(stage) {
-    const measured = finite(stage?.clientHeight);
-    if (!measured) return 620;
-    return Math.max(520, Math.round(measured));
-  }
-
   /** 히트맵 계층을 만든다.
    *
    *  `options.flat`이면 산업 층을 접고 섹터 바로 아래에 종목을 붙인다. 뿌리
@@ -473,7 +530,7 @@
     const weightedChange = (items) => {
       const usable = items.filter((row) => finite(row.changePct) !== null);
       const total = usable.reduce((sum, row) => sum + capOf(row), 0);
-      return total ? usable.reduce((sum, row) => sum + finite(row.changePct) * capOf(row), 0) / total : 0;
+      return total ? usable.reduce((sum, row) => sum + finite(row.changePct) * capOf(row), 0) / total : null;
     };
     const normalizedGroupName = (value) => String(value || "Other").trim() || "Other";
     const shouldSkipIndustryLayer = (sector, industry) => {
@@ -536,21 +593,53 @@
   }
 
   const HEATMAP_FONT_FAMILY = 'Inter, "IBM Plex Sans", SUIT, sans-serif';
-  // 트레이스 기본 글꼴. Plotly는 줄 간격(dy)을 span 크기가 아니라 **이 값**의 약
-  // 1.3배로 잡는다. 줄바꿈이 들어가는지 계산할 때 그 사실을 반영해야 하고,
-  // 겹침 없이 쓸 수 있는 최대 크기도 여기서 나온다 — 이름+등락률 두 줄의 상한은
-  // 11px에서 16px, 12px에서 18px, **13px에서 20px**이다. 상한을 올리려면 이 값을
-  // 올려야 하지만 두 줄 라벨의 세로 비용도 같이 오른다(14.3px → 16.9px).
-  const HEATMAP_BASE_FONT_PX = 13;
-  const HEATMAP_LINE_STEP_PX = HEATMAP_BASE_FONT_PX * 1.3;
+  // 라벨 글자는 6px에서 20px 사이다. 정한 크기가 곧 그려지는 크기라(ECharts는 라벨을 줄이지
+  // 않는다) 하한이 곧 화면에 나오는 가장 작은 글자다.
   const HEATMAP_MAX_LABEL_PX = 20;
-  // 하한 아래는 비운다. 지금 방식에서는 정해진 크기가 곧 그려지는 크기라
-  // (Plotly가 줄이지 않는다) 이 값이 곧 화면에 나오는 가장 작은 글자다.
   const HEATMAP_MIN_LABEL_PX = 6;
-  const HEATMAP_LABEL_PAD_PX = 3;
+  // **좌우 여백은 칸 폭의 8%(최소 3px)씩이다.** 처음엔 3px 고정이었는데, 폭에 꼭 맞게 들어가는 라벨이 칸 가장자리에
+  // 붙어 보였다 — 실측에서 라벨 폭이 칸 폭의 85%를 넘는 타일이 KR 8개·JP 14개였다. 비율로 두면 그 타일이 0개가 되고
+  // 라벨은 KR 2개·JP 2개·US 3개만 줄어든다(KR 69→67, JP 137→135, US 268→265).
+  // 안전 측면: ECharts는 트리맵 라벨의 기본 padding 5 때문에 글자 폭을 칸 폭보다 10px 줄여 자른다. heatmapSeriesBase가
+  // padding을 0으로 두면 여백 1px부터 잘림 0이었으므로(KR·JP·US 실측), 최소 3px는 글꼴이 늦게 내려와 폭이 조금
+  // 달라져도 받아낼 여유(2px)다. 글꼴을 바꾸면 다시 잰다.
+  const HEATMAP_LABEL_MIN_SIDE_PAD_PX = 3;
+  const HEATMAP_LABEL_SIDE_PAD_RATIO = 0.08;
+  // 위아래는 잘리지 않고 넘칠 뿐이고 라벨이 세로 가운데라 양쪽이 같다. 실측에서 세로로 칸의 85%를 넘는 라벨은 없었다.
+  const HEATMAP_LABEL_VERTICAL_PAD_PX = 3;
   // 칸 크기에 글자 크기가 따라붙는 정도. 완전 비례가 아니라 면적의 제곱근에
   // 완만하게 따라간다(면적을 그대로 쓰면 큰 칸만 남고 작은 칸은 전부 하한이 된다).
   const HEATMAP_SIZE_PER_ROOT_AREA = 0.105;
+  // 섹터·산업 머리띠. 이름은 한 줄이고 이 띠 안에 들어가야 한다.
+  const HEATMAP_HEADER_PX = 28;
+  // 섹터 이름은 지도에서 가장 먼저 읽혀야 하는 글자다. 머리띠는 **섹터 평균 등락 색**이고(시가총액 가중), 그 색은 색 그대로
+  // 남긴다 — 색이 바로 "이 섹터가 오늘 어땠는가"의 답이다. 예전에는 13px 흰 글자였고 섹터 경계가 종목 경계와 같은 얇은 선이라
+  // 띠가 옆 종목 칸에 섞였다. 그래서 **색은 그대로 두고 경계를 색과 따로** 준다: 섹터 바깥선(아래 heatmapSectorOutlines)이
+  // 등락 색과 무관한 무채색으로 섹터를 감싼다. 흰 글자는 등락 색 9단 모두에서 5.26:1 이상이다(heatmapColor).
+  // 섹터 바깥선. 섹터끼리 떨어져 보이려고 굵고 진한 선을 두르면 지도가 한 장으로 안 읽히고 카드 여러 개로 갈라졌다
+  // (사용자 피드백). 경계는 **간격의 위계**가 말한다 — 종목 사이 1px, 섹터 사이 그보다 넓게 — 바깥선은 기본으로 끈다.
+  // 0보다 크면 그 투명도의 잉크색 선을 섹터마다 얹는다(heatmapSectorOutlines).
+  const HEATMAP_SECTOR_OUTLINE_PX = 1;
+  const HEATMAP_SECTOR_OUTLINE_ALPHA = 0;
+  const HEATMAP_HEADER_MAX_LABEL_PX = 14;
+  const HEATMAP_HEADER_MIN_LABEL_PX = 11;
+  // 두 줄로 나눈 머리띠 이름의 하한. 한 줄보다 1px 작게 시작해 이 값까지만 내려간다.
+  const HEATMAP_HEADER_TWO_LINE_MIN_LABEL_PX = 9;
+  // 머리띠 글자의 왼쪽·오른쪽 여백. ECharts가 글자 폭을 이만큼 줄여 재므로 계획도 같은 값을 뺀다.
+  const HEATMAP_HEADER_SIDE_PAD_PX = 6;
+  // 섹터 사이의 틈. 종목 사이 틈(1px)보다 뚜렷하게 굵어야 "묶음"이 보인다. 틈에는 카드 배경이 비쳐 나온다.
+  const HEATMAP_SECTOR_GAP_PX = 3;
+  // 섹터를 감싸는 틀. 종목 칸을 한 묶음으로 두르는 띠와 같은 색이다.
+  const HEATMAP_SECTOR_FRAME_PX = 1;
+  // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
+  const HEATMAP_MAX_LABEL_LINES = 2;
+  // 글자가 baseline 위아래로 차지하는 몫. 렌더된 줄 상자가 글꼴 크기의 약 1.2배다.
+  const HEATMAP_ASCENT_RATIO = 0.95;
+  const HEATMAP_DESCENT_RATIO = 0.25;
+  const HEATMAP_LINE_HEIGHT = 1.3;
+  // 정확한 타일 크기를 못 읽을 때의 추정. 실측 타일 폭 / √면적의 **최소**가 0.58이었다.
+  // 라벨은 줄지만 잘리지는 않는다 — 틀린 숫자를 그리는 쪽으로는 실패하지 않는다.
+  const HEATMAP_FALLBACK_WIDTH_RATIO = 0.58;
 
   /** 이 칸이 쓸 수 있는 최대 글자 크기.
    *
@@ -565,26 +654,9 @@
     const scaled = HEATMAP_MIN_LABEL_PX + HEATMAP_SIZE_PER_ROOT_AREA * Math.sqrt(area);
     return Math.max(HEATMAP_MIN_LABEL_PX, Math.min(HEATMAP_MAX_LABEL_PX, Math.round(scaled)));
   }
-  // 세 줄까지 늘려도 실측에서 라벨이 하나도 늘지 않았다(JP 77 → 77).
-  const HEATMAP_MAX_LABEL_LINES = 2;
-  // 글자가 baseline 위아래로 차지하는 몫. 실측으로 렌더된 줄 상자가 글꼴 크기의
-  // 약 1.2배였다(30px → 36px, 19px → 23px).
-  const HEATMAP_ASCENT_RATIO = 0.95;
-  const HEATMAP_DESCENT_RATIO = 0.25;
-
-  /** 위아래 두 줄이 겹치지 않는가.
-   *
-   *  Plotly는 줄 간격을 `dy="1.3em"`로 주는데 그 `em`은 span 크기가 아니라
-   *  **`<text>`의 기본 글꼴**(HEATMAP_BASE_FONT_PX) 기준이다. 간격이 14.3px로
-   *  고정이라 첫 줄을 30px로 키우면 아랫줄이 그 위로 올라온다 — 실측에서 큰 타일의
-   *  종목명과 등락률이 36px 높이만큼 통째로 겹쳤다. 그래서 줄이 둘 이상이면
-   *  **간격이 허락하는 크기까지만** 키운다.
-   */
-  const linesClear = (upper, lower) =>
-    upper * HEATMAP_DESCENT_RATIO + lower * HEATMAP_ASCENT_RATIO <= HEATMAP_LINE_STEP_PX;
 
   /** 어절 경계로만 줄을 나눈다. 한 줄도 폭을 넘으면 실패로 돌려준다. */
-  function wrapLabelLines(text, size, width, measure) {
+  function wrapLabelLines(text, size, width, measure, maxLines) {
     const words = String(text).split(/\s+/).filter(Boolean);
     const lines = [];
     let current = "";
@@ -597,31 +669,34 @@
       }
     }
     if (current) lines.push(current);
-    if (!lines.length || lines.length > HEATMAP_MAX_LABEL_LINES) return null;
+    if (!lines.length || lines.length > (maxLines || HEATMAP_MAX_LABEL_LINES)) return null;
     return lines.every((line) => measure(line, size, true) <= width) ? lines : null;
   }
 
-  /** 이 타일에 실제로 들어가는 라벨을 만든다. 안 들어가면 빈 문자열이다.
+  /** 이 타일에 실제로 들어가는 라벨을 **그리기 전에** 정한다. 안 들어가면 null이다.
    *
-   *  예전에는 시가총액 비율만 보고 크기를 정했다(7 + 21·√(cap/max)). 타일 픽셀을
-   *  모르니 넘치는 라벨이 생기고, 그러면 Plotly가 통째로 축소해 1~5px 얼룩으로
-   *  남았다 — 실측 US 데스크톱에서 그려진 라벨 424개 중 276개가 6px 미만이었다.
-   *  "너무 작으면 비운다"는 규칙이 있었지만 명목 크기로만 걸러 소용이 없었다.
+   *  `box`는 타일의 정확한 폭·높이다(heatmapTileSizes). 예전에는 그린 뒤 타일을 재서 라벨을
+   *  얹고, Plotly가 넘치는 라벨을 통째로 축소하면 폭 예산을 깎아 다시 그렸다(4패스 + 비동기 대기).
+   *  ECharts는 축소하지 않고 잘라 버리므로 처음부터 **들어가는 것만** 고르면 되고, 고른 값이 곧
+   *  그려지는 값이라 수렴할 대상이 없다.
    *
-   *  이름+등락 → 어절 줄바꿈+등락 → 이름만 순으로 물러난다. 어절 단위로 **잘라
-   *  내지는** 않는다: 한 어절로 줄이면 KR에서 `Samsung…`이 12개사를, JP에서
-   *  `Mitsubishi…`가 7개사를 가리켜 다른 회사 이름을 말하게 된다.
+   *  이름+등락 → 어절 줄바꿈+등락 → 이름만 순으로 물러난다. 어절 단위로 **잘라 내지는** 않는다:
+   *  한 어절로 줄이면 KR에서 `Samsung…`이 12개사를, JP에서 `Mitsubishi…`가 7개사를 가리켜 다른
+   *  회사 이름을 말하게 된다.
    */
-  function heatmapLabelMarkup(label, change, box, measure) {
+  function heatmapLabelPlan(label, change, box, measure) {
     const text = String(label || "").trim();
-    if (!text) return "";
-    const width = (finite(box && box.width) || 0) - HEATMAP_LABEL_PAD_PX * 2;
-    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_PAD_PX;
-    if (width <= 0 || height <= 0) return "";
+    if (!text) return null;
+    const boxWidth = finite(box && box.width) || 0;
+    const sidePad = Math.max(HEATMAP_LABEL_MIN_SIDE_PAD_PX, boxWidth * HEATMAP_LABEL_SIDE_PAD_RATIO);
+    const width = boxWidth - sidePad * 2;
+    const height = (finite(box && box.height) || 0) - HEATMAP_LABEL_VERTICAL_PAD_PX * 2;
+    if (width <= 0 || height <= 0) return null;
     const ceiling = Math.min(
       finite(box && box.maxSize) ?? HEATMAP_MAX_LABEL_PX,
       heatmapSizeCeiling(width, height),
     );
+    const maxLines = finite(box && box.maxLines) ?? HEATMAP_MAX_LABEL_LINES;
     const tail = String(change || "");
     for (const withTail of [true, false]) {
       if (withTail && !tail) continue;
@@ -629,20 +704,32 @@
       for (let size = ceiling; size >= HEATMAP_MIN_LABEL_PX; size -= 1) {
         const tailSize = Math.max(8, Math.round(size * 0.62));
         if (suffix && measure(suffix, tailSize, false) > width) continue;
-        const lines = wrapLabelLines(text, size, width, measure);
+        const lines = wrapLabelLines(text, size, width, measure, maxLines);
         if (!lines) continue;
-        // 줄이 둘 이상이면 고정 간격 안에 들어와야 한다. 안 그러면 겹친다.
-        if (lines.length > 1 && !linesClear(size, size)) continue;
-        if (suffix && !linesClear(size, tailSize)) continue;
+        const nameStep = Math.round(size * HEATMAP_LINE_HEIGHT);
+        const tailStep = Math.round(tailSize * HEATMAP_LINE_HEIGHT);
         const needed = size * (HEATMAP_ASCENT_RATIO + HEATMAP_DESCENT_RATIO)
-          + (lines.length - 1 + (suffix ? 1 : 0)) * HEATMAP_LINE_STEP_PX;
+          + (lines.length - 1) * nameStep + (suffix ? tailStep : 0);
         if (needed > height) continue;
-        const body = lines.map(escapeHtml).join("<br>");
-        const tailLine = suffix ? `<br><span style="font-size:${tailSize}px">${escapeHtml(suffix)}</span>` : "";
-        return `<span style="font-size:${size}px"><b>${body}</b></span>${tailLine}`;
+        return { lines, size, suffix, tailSize, nameStep, tailStep };
       }
     }
-    return "";
+    return null;
+  }
+
+  /** 계획을 ECharts 라벨 설정으로. 줄 간격도 우리가 정한다(글꼴 기본 간격에 맡기지 않는다). */
+  function heatmapRichLabel(plan) {
+    // `{스타일|글자}` 문법의 예약 문자는 지운다. 이름에 들어 있으면 라벨이 통째로 깨진다.
+    const safe = (value) => String(value).replace(/[{}|]/g, "");
+    const body = plan.lines.map((line) => `{n|${safe(line)}}`).join("\n");
+    const tail = plan.suffix ? `\n{c|${safe(plan.suffix)}}` : "";
+    return {
+      formatter: body + tail,
+      rich: {
+        n: { fontSize: plan.size, lineHeight: plan.nameStep, fontWeight: 700, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+        c: { fontSize: plan.tailSize, lineHeight: plan.tailStep, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+      },
+    };
   }
 
   let labelMeasureContext = null;
@@ -661,109 +748,276 @@
     return change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`;
   };
 
-  /** 지금 그려진 타일의 픽셀 상자. 이 층에서 그려지지 않은 타일은 빠진다. */
-  function heatmapTileBoxes(stage) {
-    const boxes = new Map();
-    stage.querySelectorAll?.("g.slice").forEach((slice) => {
-      const path = slice.querySelector("path.surface");
-      if (!path) return;
-      const box = path.getBBox();
-      if (box.width * box.height <= 0.5) return;
-      const bound = slice.__data__;
-      const nodeId = bound && bound.data ? bound.data.id : null;
-      if (nodeId) boxes.set(nodeId, box);
-    });
-    return boxes;
-  }
-
-  /** Plotly가 칸에 맞추려고 줄여 버린 라벨과 그 배율. */
-  function heatmapShrunkLabels(stage) {
-    const shrunk = new Map();
-    stage.querySelectorAll?.("g.slice").forEach((slice) => {
-      const node = slice.querySelector("text.slicetext");
-      if (!node || !(node.textContent || "").trim()) return;
-      const match = /scale\(([-\d.]+)/.exec(node.getAttribute("transform") || "");
-      const scale = match ? parseFloat(match[1]) : 1;
-      if (!(scale < 0.985)) return;
-      const bound = slice.__data__;
-      if (bound && bound.data) shrunk.set(bound.data.id, scale);
-    });
-    return shrunk;
-  }
-
-  function heatmapTextForBoxes(stage, nodes, budget) {
-    // 자식이 함께 그려지는 부모는 사각형 전체가 아니라 위쪽 머리띠(marker.pad.t)에만
-    // 이름이 들어간다. 전체 사각형으로 재면 606x427에 맞춰 놓고 실제로는 606x28에
-    // 그려져 다시 축소된다.
-    const pad = stage._fullData?.[0]?.marker?.pad || { t: 28, l: 7, r: 7, b: 7 };
-    const boxes = heatmapTileBoxes(stage);
-    const parentsWithChildren = new Set();
-    nodes.parents.forEach((parent, index) => {
-      if (parent && boxes.has(nodes.ids[index])) parentsWithChildren.add(parent);
-    });
-    return nodes.ids.map((nodeId, index) => {
-      const box = boxes.get(nodeId);
-      if (!box) return "";
-      const room = budget.get(nodeId) || 1;
-      const label = nodes.labels[index];
-      if (parentsWithChildren.has(nodeId)) {
-        return heatmapLabelMarkup(label, "", {
-          width: (box.width - pad.l - pad.r) * room,
-          height: Math.min(pad.t, box.height),
-          maxSize: pad.t - 10,
-        }, measureLabelWidth);
-      }
-      return heatmapLabelMarkup(label, heatmapChangeText(nodes.changes[index]), {
-        width: box.width * room,
-        height: box.height,
-      }, measureLabelWidth);
-    });
-  }
-
-  /** 라벨을 실측해 얹고, 그래도 Plotly가 줄인 만큼 폭 예산을 깎아 다시 맞춘다.
+  /** 섹터 머리띠의 라벨 — **이름 + 섹터 평균 등락**. 안 들어가면 이름만, 그래도 안 들어가면 두 줄로, 그래도 안 되면 비운다.
    *
-   *  캔버스 글자폭 추정은 SVG 실제 렌더와 조금 어긋난다. 축소 배율이 곧 얼마나
-   *  넘쳤는지이므로 그만큼 예산을 줄여 다시 고르면 몇 번 만에 수렴한다. 끝내
-   *  안 맞는 타일은 라벨을 포기한다 — 줄여서 얹지 않는다.
+   *  섹터 이름은 한 줄일 때 11px, 두 줄일 때 10px 밑으로 내리지 않는다(읽혀야 한다). 두 줄은 머리띠 높이(28px)에 들어가는
+   *  `Energy &` / `Chemicals` 같은 어절 줄바꿈이다. 이름이 좁은 섹터에서 통째로 비면 그 칸은 어느 섹터인지 알 수 없다.
+   *  `width`는 머리띠 폭이다. ECharts는 글자 폭을 **좌우 padding과 틀 두께(양쪽)만큼** 줄여 재므로 그만큼과 잘림 여유 2px을 뺀다.
    */
-  /** Plotly 내부 레이아웃이 지금 컨테이너 폭을 따라잡을 때까지 기다린다.
+  function heatmapHeaderPlan(name, change, width, measure) {
+    const text = String(name || "").trim();
+    if (!text) return null;
+    const available = (finite(width) || 0) - HEATMAP_HEADER_SIDE_PAD_PX * 2 - HEATMAP_SECTOR_FRAME_PX * 2 - 2;
+    if (available <= 0) return null;
+    const tail = String(change || "");
+    const tailGap = 8;
+    for (let size = HEATMAP_HEADER_MAX_LABEL_PX; size >= HEATMAP_HEADER_MIN_LABEL_PX; size -= 1) {
+      const nameWidth = measure(text, size, true);
+      if (nameWidth > available) continue;
+      const tailSize = Math.max(10, size - 2);
+      const withTail = tail && nameWidth + tailGap + measure(tail, tailSize, false) <= available;
+      // **줄 높이를 띠 높이와 같게** 둔다. 줄 높이가 글자 크기와 같으면 ECharts가 글자를 띠 맨 위에 붙여 그린다 —
+      // `verticalAlign: "middle"`은 효과가 없었고(브라우저 실측: 글자 중심이 띠 중심보다 7px 위), 줄 상자가 띠만큼 높으면
+      // 글자가 그 안의 세로 가운데에 앉는다.
+      return { lines: [text], size, lineHeight: HEATMAP_HEADER_PX, tail: withTail ? tail : "", tailSize, tailGap };
+    }
+    // 한 줄에 안 들어가는 좁은 섹터: 두 줄로. 어절 경계로만 나누고 자르지 않는다.
+    for (let size = HEATMAP_HEADER_MIN_LABEL_PX - 1; size >= HEATMAP_HEADER_TWO_LINE_MIN_LABEL_PX; size -= 1) {
+      const lines = wrapLabelLines(text, size, available, measure, 2);
+      // 두 줄은 줄 높이를 띠 높이의 절반으로 — 두 줄이 정확히 띠를 채워 위아래 여백이 같다.
+      if (lines && lines.length === 2) return { lines, size, lineHeight: HEATMAP_HEADER_PX / 2, tail: "", tailSize: size, tailGap };
+    }
+    return null;
+  }
+
+  function heatmapHeaderLabel(plan) {
+    const safe = (value) => String(value).replace(/[{}|]/g, "");
+    const body = plan.lines.map((line) => `{n|${safe(line)}}`).join("\n");
+    return {
+      formatter: body + (plan.tail ? `{c|${safe(plan.tail)}}` : ""),
+      rich: {
+        n: { fontSize: plan.size, lineHeight: plan.lineHeight, fontWeight: 700, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+        // 평균 등락은 이름보다 한 걸음 물러난 톤이다.
+        // 등락도 같은 줄 높이여야 이름과 같은 세로 위치에 앉는다.
+        c: { fontSize: plan.tailSize, lineHeight: plan.lineHeight, fontWeight: 500, color: "rgba(255, 255, 255, 0.78)", fontFamily: HEATMAP_FONT_FAMILY, padding: [0, 0, 0, plan.tailGap] },
+      },
+    };
+  }
+
+  /** heatmapNodes의 평면 배열을 ECharts가 받는 중첩 트리로. 자료 모양 변환일 뿐이다. */
+  function heatmapTree(nodes) {
+    const byId = new Map();
+    nodes.ids.forEach((id, index) => {
+      byId.set(id, {
+        id,
+        name: nodes.labels[index],
+        value: nodes.values[index],
+        children: [],
+        itemStyle: { color: nodes.colors[index] },
+        _row: nodes.customdata[index],
+        _change: nodes.changes[index],
+      });
+    });
+    const roots = [];
+    nodes.ids.forEach((id, index) => {
+      const parent = nodes.parents[index];
+      const node = byId.get(id);
+      if (parent && byId.has(parent)) byId.get(parent).children.push(node);
+      else roots.push(node);
+    });
+    const prune = (node) => {
+      if (!node.children.length) delete node.children;
+      else node.children.forEach(prune);
+    };
+    roots.forEach(prune);
+    return roots;
+  }
+
+  /** 시리즈 설정 — **진짜 차트와 배치 선계산이 같은 것을 쓴다.** 머리띠 높이·테두리·간격이 다르면
+   *  배치가 달라져 계획한 라벨 폭이 어긋난다. `depth`는 뿌리에서 몇 겹까지 그리는지(잎 포함). */
+  function heatmapSeriesBase(depth) {
+    return {
+      type: "treemap",
+      roam: false,
+      nodeClick: false,
+      // 깊이 상한에서 잎이 된 그룹 앞에 ECharts가 `▶ `를 붙인다(기본값). 그 자리만큼 라벨 폭이 줄어 계획한 폭과 어긋나고
+      // 이름이 잘린다. 들어갈 수 있다는 안내는 위 경로 버튼의 힌트가 이미 한다.
+      drillDownIcon: "",
+      breadcrumb: { show: false },
+      leafDepth: depth,
+      width: "100%",
+      height: "100%",
+      top: 0, left: 0, right: 0, bottom: 0,
+      squareRatio: 1,
+      // 종목 칸: 테두리 없이 1px 틈만 둔다. 틈은 부모(섹터)의 borderColor — 섹터 색 — 로 비쳐 가는 선이 된다.
+      itemStyle: { borderColor: "transparent", borderWidth: 0, gapWidth: 1 },
+      // 라벨은 노드마다 heatmapPlanLabels가 정한다. 여기서 자르거나 줄바꿈하지 않는다.
+      // **padding 0.** 트리맵 라벨의 기본 padding은 5라서 ECharts가 글자에 쓸 수 있는 폭을 칸 폭보다 양쪽 5px씩
+      // 줄인다 — 계획한 폭이 넉넉히 들어가는데도 `...`로 잘렸다(브라우저 실측: 여백 5px 이하에서 잘림 다수).
+      label: { show: false, position: "inside", padding: 0, color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY },
+      upperLabel: { show: true, height: HEATMAP_HEADER_PX, padding: [0, HEATMAP_HEADER_SIDE_PAD_PX, 0, HEATMAP_HEADER_SIDE_PAD_PX], color: "#ffffff", fontFamily: HEATMAP_FONT_FAMILY, overflow: "truncate" },
+      levels: [
+        // 보이지 않는 뿌리는 머리띠를 갖지 않는다 — 안 그러면 맨 위 26px이 빈 띠로 남는다.
+        // 섹터 사이 틈. 카드 배경이 비쳐 나와 라이트·다크 어느 쪽에서도 섹터가 갈라져 보인다.
+        { itemStyle: { borderWidth: 0, gapWidth: HEATMAP_SECTOR_GAP_PX }, upperLabel: { show: false } },
+        // 섹터 틀. 종목 칸을 한 묶음으로 두르고 위에 머리띠가 얹힌다. 색은 노드마다 자기 섹터 색을 준다.
+        { itemStyle: { borderWidth: HEATMAP_SECTOR_FRAME_PX, gapWidth: 1 } },
+      ],
+    };
+  }
+
+  /** 타일의 정확한 크기를 그리기 **전에** 얻는다.
    *
-   *  responsive 리사이즈는 비동기다. 폭이 막 바뀐 직후에는 clientWidth가 820인데
-   *  `_fullLayout.width`는 아직 380이고, 실측으로 약 60ms 뒤에 맞춰진다. 그 사이에
-   *  타일을 재면 옛 크기 기준으로 라벨이 정해진다. 그렇게 작아진 라벨은 축소가
-   *  걸리지 않아 아래 수렴 루프도 눈치채지 못한다 — 창을 넓혔는데 지도가 오히려
-   *  비어 보였다(실측 820px에서 라벨 167개가 78개로).
+   *  squarify는 자료와 크기의 순수 함수라, DOM 없는 ssr 인스턴스에 같은 시리즈 설정으로 배치만
+   *  시키면 진짜 차트와 같은 좌표가 나온다. 예전에는 Plotly가 그린 SVG를 읽었다
+   *  (`__data__`·`_fullLayout`) — Plotly가 무엇을 했는지 알아내려는 역공학이었다. 이건 **우리가 그릴
+   *  것의 크기를 미리 묻는** 것이다.
+   *
+   *  **배치를 읽는 경로(`getModel().getSeriesByIndex(0).getData().tree`의 `getLayout()`)는 ECharts의
+   *  공개 API가 아니다.** 그래서 (1) 벤더 파일이 정확 고정 버전이고, (2) briefing-visuals.test.js가
+   *  실제 벤더 번들로 이 함수를 매번 확인하며(ECharts를 올리면 여기서 먼저 걸린다), (3) 읽지 못하면
+   *  null을 돌려주고 호출자가 추정으로 물러난다 — 틀린 크기를 조용히 내주지 않는다.
+   *  ssr 인스턴스는 dispose하지 않으면 Node 프로세스가 끝나지 않는다(6.1.0). 반드시 finally에서 푼다.
    */
-  async function heatmapAwaitSize(stage) {
+  function heatmapTileSizes(echarts, series, width, height) {
+    if (!echarts || typeof echarts.init !== "function" || !(width > 0) || !(height > 0)) return null;
+    let chart = null;
     try {
-      root.Plotly.Plots?.resize?.(stage);
-    } catch (_) {}
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const width = finite(stage.clientWidth) || 0;
-      const drawn = finite(stage._fullLayout?.width) || 0;
-      if (width && Math.abs(drawn - width) <= 1) return;
-      await new Promise((resolve) => setTimeout(resolve, 32));
+      chart = echarts.init(null, null, { renderer: "svg", ssr: true, width, height });
+      chart.setOption({ animation: false, series: [series] });
+      const data = chart.getModel().getSeriesByIndex(0).getData();
+      const rects = new Map();
+      for (let index = 0; index < data.count(); index += 1) {
+        const node = data.tree.getNodeByDataIndex(index);
+        const id = node.getModel().get("id");
+        const layout = node.getLayout();
+        // 깊이 상한 아래의 노드는 그려지지 않는다. 배치가 아예 없거나 면적(area)만 남아 있어
+        // 폭이 없다 — 건너뛴다. **그려진 노드**의 값이 하나라도 깨졌으면 전부 못 믿는다.
+        if (id == null || !layout || layout.width === undefined) continue;
+        if (![layout.x, layout.y, layout.width, layout.height].every(Number.isFinite)) return null;
+        rects.set(String(id), { x: layout.x, y: layout.y, width: layout.width, height: layout.height });
+      }
+      return rects.size ? rects : null;
+    } catch (_) {
+      return null;
+    } finally {
+      if (chart) chart.dispose();
     }
   }
 
-  async function heatmapApplyLabels(stage, nodes) {
-    const budget = new Map();
-    let text = [];
-    for (let pass = 0; pass < 4; pass += 1) {
-      await heatmapAwaitSize(stage);
-      text = heatmapTextForBoxes(stage, nodes, budget);
-      await root.Plotly.restyle(stage, { text: [text] });
-      // 탭이 뒤에 있으면 requestAnimationFrame이 오지 않는다. 타이머로 기다린다.
-      await new Promise((resolve) => setTimeout(resolve, 16));
-      const shrunk = heatmapShrunkLabels(stage);
-      if (!shrunk.size) return;
-      shrunk.forEach((scale, nodeId) => budget.set(nodeId, (budget.get(nodeId) || 1) * Math.max(0.2, scale)));
-    }
-    const leftover = heatmapShrunkLabels(stage);
-    if (!leftover.size) return;
-    await root.Plotly.restyle(stage, {
-      text: [nodes.ids.map((nodeId, index) => (leftover.has(nodeId) ? "" : text[index]))],
-    });
+  /** 정확한 크기를 못 읽을 때의 추정 타일. 좌표는 모르므로 머리띠 클릭 판정은 꺼진다. */
+  function heatmapFallbackSize(value, total, width, height) {
+    const area = total > 0 ? (Math.max(0, value) / total) * width * height : 0;
+    const side = Math.sqrt(area);
+    return { x: null, y: null, width: side * HEATMAP_FALLBACK_WIDTH_RATIO, height: side };
+  }
+
+  /** 트리의 모든 노드에 라벨을 계획해 붙이고, 머리띠 클릭 판정에 쓸 좌표를 돌려준다.
+   *
+   *  섹터·산업 **머리띠**(자식을 함께 그리는 부모)와 **깊이 상한에서 잎이 된 그룹**(좁은 화면의
+   *  `Materials`)도 같은 계획기를 쓴다. 안 그러면 ECharts 기본 처리가 `▶ M...`처럼 자른다.
+   *  안 들어가는 이름은 비운다 — 자르지 않는다.
+   */
+  function heatmapPlanLabels(roots, context) {
+    const { rects, total, width, height, depth, measure } = context;
+    const headers = [];
+    const rectOf = (node) => (rects && rects.get(node.id)) || heatmapFallbackSize(node.value, total, width, height);
+    const walk = (node, level) => {
+      const rect = rectOf(node);
+      const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+      if (hasChildren && level < depth) {
+        // 틀·틈은 투명이다 — 카드 배경이 비쳐 지도 전체가 같은 색 선으로 나뉜 한 장으로 읽힌다. 머리띠는 borderColor가 아니라
+        // 라벨 배경으로 칠한다(트리맵은 띠·틀·틈을 borderColor 한 색으로 칠해서, 그러면 띠 색과 틈 색을 따로 못 준다).
+        node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: "transparent" });
+        const plan = heatmapHeaderPlan(node.name, heatmapChangeText(node._change), rect.width, measure);
+        // 띠 색은 섹터 평균 등락 색 그대로다(시가총액 가중). 라벨 상자가 띠 전체를 덮는다(폭·높이를 트리맵이 채운다).
+        const band = node.itemStyle.color;
+        node.upperLabel = plan
+          ? Object.assign({ show: true, height: HEATMAP_HEADER_PX, backgroundColor: band }, heatmapHeaderLabel(plan))
+          // 머리띠는 남기고 글자만 비운다. `show: false`면 띠 자체가 사라져 자식이 그 자리를 먹는다.
+          // 빈 문자열("")은 서식이 없는 것으로 읽혀 기본 이름이 `Steels ...`처럼 잘려 그려진다(브라우저 실측) —
+          // 공백 한 글자로 "글자 없음"을 명시한다.
+          : { show: true, height: HEATMAP_HEADER_PX, formatter: " ", backgroundColor: band };
+        if (finite(rect.x) !== null && finite(rect.y) !== null) {
+          headers.push({ id: node.id, x: rect.x, y: rect.y, width: rect.width, height: HEATMAP_HEADER_PX });
+        }
+        node.children.forEach((child) => walk(child, level + 1));
+        return;
+      }
+      const plan = heatmapLabelPlan(node.name, heatmapChangeText(node._change), { width: rect.width, height: rect.height }, measure);
+      node.label = plan ? Object.assign({ show: true }, heatmapRichLabel(plan)) : { show: false };
+      // **마우스를 올려도 라벨이 그대로여야 한다.** 올린 칸은 별도의 강조 상태(emphasis)로 그려지는데 그 상태의
+      // 라벨은 시리즈 기본(show: false)을 따라 통째로 꺼진다 — 기업명이 사라지는 것으로 보였다(브라우저 실측).
+      // 강조 상태의 표시 여부를 평상시와 같게 못 박고, 서식(formatter·rich)은 평상시 것을 그대로 물려받는다.
+      node.emphasis = { label: { show: Boolean(plan) } };
+      // 깊이 상한에서 잎이 된 섹터(좁은 화면)는 틀이 있는 레벨이라 자기 색 틀을 준다 — 안 주면 시리즈 기본(투명)이 아니라 어두운 링이 생긴다.
+      if (hasChildren) node.itemStyle = Object.assign({}, node.itemStyle, { borderColor: "transparent" });
+    };
+    roots.forEach((node) => walk(node, 1));
+    return headers;
+  }
+
+  /** 클릭 좌표가 어느 머리띠 위인가. ECharts는 머리띠를 눌러도 부모가 아니라 보이지 않는 뿌리를 알려 준다. */
+  function heatmapHeaderAt(headers, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+    const hit = (headers || []).find((header) =>
+      x >= header.x && x <= header.x + header.width && y >= header.y && y <= header.y + header.height);
+    return hit ? hit.id : "";
+  }
+
+  /** 섹터 바깥선 — 등락 색과 **따로** 그리는 무채색 테두리.
+   *
+   *  트리맵은 머리띠·틀·틈을 모두 한 색(borderColor)으로 칠해서, 띠를 섹터 색으로 두면 테두리를 따로 줄 수 없다. 그래서
+   *  배치 선계산이 준 섹터 사각형 위에 `graphic` 사각형(채움 없음, 선만)을 얹는다. 클릭·hover는 통과한다(`silent`).
+   *  선은 사각형 안쪽으로 그려 이웃 섹터 쪽 틈(4px)을 침범하지 않는다. 좌표를 못 읽은 경우(추정으로 물러남)엔 없다.
+   *  색은 잉크 토큰이라 라이트에선 어둡고 다크에선 밝다 — 어느 쪽이든 섹터 색과도 카드 배경과도 갈린다.
+   */
+  function heatmapSectorOutlines(roots, rects, color) {
+    if (!rects || !color) return [];
+    const half = HEATMAP_SECTOR_OUTLINE_PX / 2;
+    return (roots || []).map((node) => rects.get(node.id)).filter(Boolean).map((rect) => ({
+      type: "rect",
+      silent: true,
+      z: 20,
+      shape: { x: rect.x + half, y: rect.y + half, width: Math.max(0, rect.width - HEATMAP_SECTOR_OUTLINE_PX), height: Math.max(0, rect.height - HEATMAP_SECTOR_OUTLINE_PX) },
+      style: { fill: "none", stroke: color, lineWidth: HEATMAP_SECTOR_OUTLINE_PX },
+    }));
+  }
+
+  /** 머리띠와 종목 칸 사이의 가는 구분선 — 카드 배경색 1px.
+   *
+   *  띠가 섹터 색 그대로라 그 아래 종목 칸과 맞붙으면 한 덩어리로 보인다. 종목 사이 틈(1px)과 **같은 색 같은 굵기**의 선을 띠 아래에
+   *  두면 지도 전체가 한 가지 선으로 나뉜 한 장으로 읽히면서도 띠가 칸과 갈린다. 좌표는 머리띠 클릭 판정에 쓰는 것과 같다.
+   */
+  function heatmapHeaderRules(headers, color) {
+    if (!color) return [];
+    return (headers || []).map((header) => ({
+      type: "rect",
+      silent: true,
+      z: 21,
+      shape: { x: header.x + HEATMAP_SECTOR_FRAME_PX, y: header.y + header.height - 1, width: Math.max(0, header.width - HEATMAP_SECTOR_FRAME_PX * 2), height: 1 },
+      style: { fill: color },
+    }));
+  }
+
+  /** `#rgb`·`#rrggbb`에 투명도를. 그 밖의 형식(rgb() 등)은 그대로 돌려준다. */
+  function heatmapWithAlpha(color, alpha) {
+    const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
+    if (!match) return color;
+    const hex = match[1].length === 3 ? match[1].replace(/./g, (c) => c + c) : match[1];
+    const value = parseInt(hex, 16);
+    return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+  }
+
+  /** 카드 배경색. 머리띠 구분선이 종목 사이 틈(카드가 비쳐 나온다)과 같은 색이어야 한다. */
+  function heatmapSurfaceColor(element) {
+    const value = element ? getComputedStyle(element).backgroundColor : "";
+    return value && value !== "rgba(0, 0, 0, 0)" && value !== "transparent" ? value : "";
+  }
+
+  function heatmapTooltipTheme() {
+    const css = getComputedStyle(document.documentElement);
+    const token = (name, fallback) => {
+      const value = css.getPropertyValue(name).trim();
+      return value && !/^(var|color-mix)\(/i.test(value) ? value : fallback;
+    };
+    return {
+      backgroundColor: token("--folio-surface-dark", "#101829"),
+      borderColor: token("--folio-border-strong", "#c5ccd8"),
+      color: token("--folio-ink-inverse", "#ffffff"),
+      // 섹터 바깥선(기본 꺼짐). 라이트에선 어두운 잉크, 다크에선 밝은 잉크다.
+      outline: HEATMAP_SECTOR_OUTLINE_ALPHA > 0 ? heatmapWithAlpha(token("--folio-ink", "#07111f"), HEATMAP_SECTOR_OUTLINE_ALPHA) : "",
+    };
   }
 
   function createRequestGate() {
@@ -901,8 +1155,8 @@
   function metaText(snapshot) {
     const coverage = snapshot.coverage || {};
     const ratio = finite(coverage.ratio);
-    const coverageText = ratio === null ? coverage.status || "확인 불가" : `${Math.round(ratio * 100)}%`;
-    return `${snapshot.asOf || snapshot.marketSessionDate || "기준일 없음"} · ${snapshot.provider || "provider 미상"} · coverage ${coverageText}`;
+    const coverageText = ratio === null ? "확인 불가" : `${Math.round(ratio * 100)}%`;
+    return `${snapshot.asOf || snapshot.marketSessionDate || "기준일 없음"} · 저장 자료 범위 ${coverageText}`;
   }
 
   function cardShell(snapshot, title, kind) {
@@ -914,9 +1168,10 @@
     card.innerHTML = `
       <header class="briefing-visual-header">
         <div><span class="briefing-visual-kicker">${escapeHtml(snapshot.market || "MARKET")}</span><h3>${escapeHtml(title)}</h3></div>
-        <span class="briefing-visual-freshness" data-state="${escapeHtml(snapshot.freshness || "unavailable")}">${escapeHtml(snapshot.freshness || "unavailable")}</span>
+        <span class="briefing-visual-freshness" data-state="${escapeHtml(snapshot.freshness || "unavailable")}">${escapeHtml(snapshot.type === "story_share_series" ? "수집 기사 기준" : ({ close_snapshot: "종가 기준", snapshot: "저장 시점", delayed: "지연 자료", stale: "오래된 자료", unavailable: "자료 없음" }[snapshot.freshness] || "저장 자료"))}</span>
       </header>
       <p class="briefing-visual-meta">${escapeHtml(metaText(snapshot))}</p>
+      <details class="briefing-visual-data-details"><summary>자료 정보</summary><p>${escapeHtml(snapshot.provider || "제공처 미상")} · 자료 범위는 수집 대상 기준이며 사실의 정확성이나 모든 거래일 확보를 뜻하지 않습니다.</p></details>
       <div class="briefing-visual-stage" role="img" aria-label="${escapeHtml(title)}"></div>`;
     return { id, card, stage: card.querySelector(".briefing-visual-stage") };
   }
@@ -945,7 +1200,7 @@
     card.append(footer);
   }
 
-  function renderTrend(snapshot, title, variant, comparison) {
+  function renderTrend(snapshot, title, variant, comparison, options = {}) {
     if (!shouldRenderTrend(snapshot)) {
       // 본문이 부른 이름을 어느 기업인지 확정하지 못한 경우와, 기업은 알지만 가격이
       // 없는 경우는 원인이 다르다. 같은 문구로 덮으면 읽는 사람이 무엇을 확인해야
@@ -965,7 +1220,8 @@
     const controls = document.createElement("div");
     controls.className = "briefing-price-controls";
     originalStage.before(controls);
-    const state = initialPriceState(snapshot);
+    const periods = availablePeriods(snapshot);
+    const state = initialPriceState(snapshot, options.defaultPeriod);
     let chart = null;
     let stopAutoFit = null;
 
@@ -996,7 +1252,7 @@
       const indexButtons = (snapshot.series || []).length > 1
         ? `<div class="briefing-index-strip" role="group" aria-label="지수 선택">${snapshot.series.map((row) => `<button type="button" data-ticker="${escapeHtml(row.ticker)}" aria-pressed="${row.ticker === state.selectedTicker}"><span>${escapeHtml(row.label || row.ticker)}</span><small>${escapeHtml(row.ticker)}</small></button>`).join("")}</div>`
         : "";
-      controls.innerHTML = `${indexButtons}<div class="briefing-chart-controls"><div role="group" aria-label="차트 기간">${["1D", "1M", "3M", "YTD", "1Y"].map((period) => controlButton(period, period === state.period, "period")).join("")}</div><div role="group" aria-label="차트 유형">${controlButton("라인", state.chartType === "line", "chart-type", "line")}${controlButton("캔들", state.chartType === "candle", "chart-type", "candle")}</div></div>`;
+      controls.innerHTML = `${indexButtons}<div class="briefing-chart-controls"><div role="group" aria-label="차트 기간">${periods.map((period) => controlButton(period, period === state.period, "period")).join("")}</div><div role="group" aria-label="차트 유형">${controlButton("라인", state.chartType === "line", "chart-type", "line")}${controlButton("캔들", state.chartType === "candle", "chart-type", "candle")}</div></div>`;
       controls.querySelectorAll("[data-ticker]").forEach((button) => button.addEventListener("click", () => { state.selectedTicker = button.dataset.ticker; draw(); }));
       controls.querySelectorAll("[data-period]").forEach((button) => button.addEventListener("click", () => { state.period = button.dataset.period; draw(); }));
       controls.querySelectorAll("[data-chart-type]").forEach((button) => button.addEventListener("click", () => { state.chartType = button.dataset.chartType; draw(); }));
@@ -1022,6 +1278,7 @@
       const pointByTime = new Map();
       values.forEach((row, index) => {
         const original = selected.points[index] || {};
+        // 5분봉만 봉 끝으로 옮긴다(`intervalMinutes` 주석). 시간봉·일봉은 저장된 시각 그대로다.
         const displayTime = selected.interval === "5m"
           ? intradayDisplayTime(original.time || row.time, selected.interval)
           : (original.time || row.time);
@@ -1034,7 +1291,12 @@
         layout: { background: { type: "solid", color: theme.background }, textColor: theme.text, attributionLogo: true },
         grid: { vertLines: { visible: false }, horzLines: { color: theme.grid, style: LC.LineStyle?.Dotted ?? 1 } },
         rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.08 } },
-        timeScale: { borderVisible: false, rightOffset: 1, barSpacing: state.period === "1D" ? 6 : 8, minBarSpacing: 2, timeVisible: state.period === "1D", secondsVisible: false },
+        // 오른쪽 여백은 **한 봉 너비**다. 봉이 수십 개면 눈에 띄지 않지만 주간 `1W`처럼
+        // 다섯 개뿐이면 `fitContent()`가 자리를 1/6이나 비워 두어(실측 462px 중 116px)
+        // 그 주가 수요일에 끝난 것처럼 보인다. 봉이 적을 때만 여백을 없앤다.
+        // 축의 시각 표시는 **기간 이름이 아니라 실제 봉 단위**가 정한다. `1W`가 시간봉으로
+        // 내려오는데 날짜만 찍으면 하루에 봉 예닐곱 개가 같은 라벨 아래 겹쳐 선다.
+        timeScale: { borderVisible: false, rightOffset: values.length <= 8 ? 0 : 1, barSpacing: state.period === "1D" ? 6 : 8, minBarSpacing: 2, timeVisible: isIntradayInterval(selected.interval), secondsVisible: false },
         localization: { locale: "ko-KR", dateFormat: "yyyy-MM-dd", timeFormatter: lightweightTimeLabel },
         crosshair: { mode: LC.CrosshairMode?.Normal ?? 0 },
         handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
@@ -1089,10 +1351,11 @@
 
   // ── 주간 그림 ─────────────────────────────────────────────────────────────
   //
-  // 일간 차트(`renderTrend`)는 **하루 세션**의 계약이다 — 지수 하나를 골라 절대가로
-  // 그리고 1D/1M/3M/YTD/1Y 기간을 고른다. 주간은 묻는 것이 다르다: "이번 주 시장이
-  // 어디서 어디로 갔나". 그래서 대표 지수를 **함께** 겹치고, 값은 주초 대비 %이며,
-  // 기간 버튼이 없다(기간이 곧 그 주다).
+  // `renderWeeklyFlow`는 이제 **옛 저장본 전용**이다. 대표 지수를 함께 겹쳐 주초 대비
+  // %로 그리고 기간 버튼이 없다(그 저장본이 가진 것이 그 주 5점뿐이라 기간이 곧 그 주다).
+  // 자기 일봉 이력을 담은 새 저장본은 `renderTrend`가 일간과 **같은 차트**로 그리고
+  // 기본 구간만 `1W`로 둔다(`hasStoredDailyHistory`가 둘을 가른다). 저장 시각자료는
+  // 불변이므로 이 함수를 지우면 옛 주간 보고서의 그림이 사라진다.
 
   // 색은 이 파일이 이미 쓰는 `PALETTE`를 그대로 쓴다. 차트는 canvas에 그려 CSS 변수를
   // 못 읽으므로 hex가 필요한데, 목록을 따로 두면 두 그림이 서서히 다른 색이 된다.
@@ -1140,6 +1403,7 @@
         <i style="background:${PALETTE[index % PALETTE.length]}" aria-hidden="true"></i>
         <b>${escapeHtml(row.label || row.ticker)}</b>
         <em data-direction="${signedPercent(row.changePct) === "—" ? "flat" : (finite(row.changePct) || 0) > 0 ? "up" : finite(row.changePct) < 0 ? "down" : "flat"}">${escapeHtml(signedPercent(row.changePct))}</em>
+        <small>${escapeHtml(String(row.points?.[0]?.time || "주초"))} 종가=0 · 전체 주간 ${escapeHtml(signedPercent(row.weeklyReturn))}${finite(row.weeklyReturn) === null ? " (비교 자료 없음)" : ""}</small>
       </span>`).join("");
     stage.before(legend);
 
@@ -1170,7 +1434,7 @@
         lastValueVisible: false,
         crosshairMarkerVisible: true,
       });
-      api.setData((row.points || []).map((point) => ({ time: point.time, value: finite(point.changePct) ?? 0 })));
+      api.setData((row.points || []).map((point) => finite(point.changePct) === null ? { time: point.time } : { time: point.time, value: finite(point.changePct) }));
       return { api, row };
     });
 
@@ -1217,49 +1481,159 @@
     return card;
   }
 
+  function heatmapHoverText(row) {
+    const parts = [escapeHtml(row[0]), `등락 ${signedPercent(row[1])}`];
+    if (finite(row[2]) !== null) parts.push(`종가 ${formatNumber(row[2])}`);
+    if (row[3]) parts.push(escapeHtml(row[3]));
+    return parts.join("<br>");
+  }
+
+  function storyShareValue(day, label, otherLabel) {
+    const value = finite(label === otherLabel ? day.otherShare : day.shares?.[label]);
+    return value !== null && value >= 0 && value <= 1 ? value : null;
+  }
+
+  /** 이야기 비중 그림의 좌표계 — **1 user unit = 1 CSS px**.
+   *
+   *  이 그림만 SVG라 viewBox를 고정폭(640)으로 두면 카드 폭에 비례해 글자·선·점이
+   *  함께 줄어든다. 옆 차트들은 CSS 픽셀로 그리므로 같은 카드 안에서 서식이 갈렸다 —
+   *  실측으로 축 글자 11.2px(데스크톱)/12.0px(모바일), 선 1.79px/**0.96px**였고
+   *  히트맵 라벨 13px·LWC 선 2~3px과 어긋났다. 모바일 글자만 미디어 쿼리로 두 배
+   *  키우고 선·점은 그대로 둔 보정이 그 어긋남을 더 벌렸다.
+   *
+   *  viewBox를 실제 폭에 맞추면 `--fs-meta`에 적은 12.5px가 그대로 12.5px로 나온다.
+   *  폭을 아직 재지 못한 첫 렌더는 640으로 그리고 `relayout()`/ResizeObserver가 고친다. */
+  const STORY_SHARE_HEIGHT = 275;
+  function storyShareGeometry(width) {
+    const measured = Math.round(finite(width) || 0);
+    const box = measured >= 240 ? measured : 640;
+    // 여백은 실제 글자 크기가 정한다. `100%`(12.5px에서 약 34px)가 왼쪽 밖으로 나가지
+    // 않고, 가운데 정렬한 마지막 날짜 라벨의 절반(약 17px)이 오른쪽에서 잘리지 않아야
+    // 한다 — 실측으로 오른쪽 12px에서는 `09.06`이 잘렸다.
+    return {
+      width: box,
+      height: STORY_SHARE_HEIGHT,
+      left: 52,
+      right: Math.max(160, box - 24),
+      baseline: 234,
+      span: 210,
+    };
+  }
+
   function renderStoryShareBars(snapshot, title) {
-    const days = (snapshot.days || []).filter((row) => row.date);
+    const days = (snapshot.days || []).filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date || "") && Number.isFinite(Date.parse(`${row.date}T00:00:00Z`)));
     if (!days.length) {
       return unavailableCard(snapshot, title, "그 주 수집된 뉴스가 없어 이야기 비중을 그리지 못했습니다.");
     }
-    const { card, stage } = cardShell(snapshot, title, "story-share");
+    const { id, card, stage } = cardShell(snapshot, title, "story-share");
     card.classList.add("briefing-story-share-card");
     const drivers = [...(snapshot.drivers || [])];
     const otherLabel = snapshot.otherLabel || "그 외 이야기";
     const rows = [...drivers, otherLabel];
     const colorOf = (index) => index < drivers.length
-      ? PALETTE[index % PALETTE.length]
-      : "var(--folio-border-strong, #9aa4b2)";
-    const shareOf = (day, label) => label === otherLabel
-      ? finite(day.otherShare) || 0
-      : finite((day.shares || {})[label]) || 0;
-
-    // Plotly를 쓰지 않는다. 다섯 칸짜리 쌓은 막대라 라이브러리가 필요 없고, 축·글자가
-    // 앱 토큰을 그대로 쓰는 편이 히트맵보다 정직하다.
+      ? `var(--folio-chart-${index % 5 + 1})`
+      : "var(--folio-ink-muted)";
+    const shareOf = (day, label) => storyShareValue(day, label, otherLabel);
+    const shareText = (day, label) => {
+      const share = shareOf(day, label);
+      return share === null ? "자료 없음" : `${(share * 100).toFixed(1)}%`;
+    };
+    const countText = (day) => finite(day.docCount) === null ? "기사 수 미상" : `${day.docCount}건`;
+    const dates = days.map((day) => Date.parse(`${day.date}T00:00:00Z`));
+    const start = Math.min(...dates), end = Math.max(...dates);
+    let geometry = storyShareGeometry(0);
+    const x = (index) => end === start
+      ? (geometry.left + geometry.right) / 2
+      : geometry.left + (dates[index] - start) / (end - start) * (geometry.right - geometry.left);
+    const y = (share) => geometry.baseline - share * geometry.span;
+    const chartMarkup = () => {
+      const paths = rows.map((label, index) => {
+        let connected = false;
+        const path = days.map((day, dayIndex) => {
+          const value = shareOf(day, label);
+          if (value === null) { connected = false; return ""; }
+          if (dayIndex && dates[dayIndex] - dates[dayIndex - 1] > 86400000) connected = false;
+          const command = `${connected ? "L" : "M"}${x(dayIndex)},${y(value)}`;
+          connected = true;
+          return command;
+        }).join(" ");
+        const points = days.map((day, dayIndex) => {
+          const value = shareOf(day, label);
+          return value === null ? "" : `<circle cx="${x(dayIndex)}" cy="${y(value)}" r="3" />`;
+        }).join("");
+        return `<g style="color:${colorOf(index)}"><path d="${path}" fill="none" stroke="currentColor" stroke-width="2"/>${points.replaceAll('<circle ', '<circle fill="currentColor" ')}</g>`;
+      }).join("");
+      // 날짜 라벨은 **카드 폭**이 정한다. 뷰포트 미디어 쿼리로 감추면 도크·노트 패널이
+      // 열려 카드만 좁아진 경우를 놓친다. 감춘 라벨은 아예 그리지 않는다 — CSS로만
+      // 숨기면 내보낸 PNG(스타일 없는 SVG)에서 도로 겹쳐 나온다.
+      const spacing = (geometry.right - geometry.left) / Math.max(days.length - 1, 1);
+      const dateLabels = days.map((day, index) => (spacing < 44 && index % 2 && index !== days.length - 1)
+        ? ""
+        : `<text class="story-share-date" x="${x(index)}" y="${geometry.baseline + 29}" text-anchor="middle">${escapeHtml(day.date.slice(5).replace("-", "."))}</text>`).join("");
+      return `<svg class="briefing-story-share-lines" viewBox="0 0 ${geometry.width} ${geometry.height}" width="${geometry.width}" height="${geometry.height}" role="img" aria-label="${escapeHtml(title)}: 기사 비중 0~100%, 수집 날짜별 추이">
+        ${[0, 25, 50, 75, 100].map((value) => `<line x1="${geometry.left}" x2="${geometry.right}" y1="${y(value / 100)}" y2="${y(value / 100)}" class="story-share-grid"/><text x="${geometry.left - 10}" y="${y(value / 100) + 4}" text-anchor="end">${value}%</text>`).join("")}
+        ${paths}
+        ${dateLabels}
+      </svg>`;
+    };
     stage.classList.add("briefing-story-share-stage");
     stage.innerHTML = `
-      <div class="briefing-story-share-bars">${days.map((day) => `
-        <div class="briefing-story-share-col">
-          <div class="briefing-story-share-stack" role="presentation">${rows.map((label, index) => {
-            const share = shareOf(day, label);
-            return share <= 0 ? "" : `<span style="height:${(share * 100).toFixed(2)}%;background:${colorOf(index)}" title="${
-              escapeHtml(label)} ${(share * 100).toFixed(1)}%"></span>`;
-          }).join("")}</div>
-          <div class="briefing-story-share-axis">
-            <b>${escapeHtml(String(day.date).slice(5).replace("-", "."))}</b>
-            <small>${escapeHtml(String(day.docCount))}건</small>
-          </div>
-        </div>`).join("")}
-      </div>
+      <p class="briefing-visual-caption">수집 기사 주제 비중 · 날짜별 수집 기사 수가 분모입니다. 시장 수익률이나 주가 기여도가 아닙니다.</p>
+      <div class="briefing-story-share-plot"></div>
       <div class="briefing-story-share-legend">${rows.map((label, index) => `
         <span><i style="background:${colorOf(index)}" aria-hidden="true"></i>${escapeHtml(label)}</span>`).join("")}
-      </div>`;
-    // 색만으로 알리지 않는다. 그림을 못 읽는 환경에서도 같은 값을 말한다.
-    stage.setAttribute("role", "img");
-    stage.setAttribute("aria-label", `${title}: ${days.map((day) => `${day.date} ${rows.map((label) =>
-      `${label} ${(shareOf(day, label) * 100).toFixed(0)}%`).join(", ")}`).join(" / ")}`);
-
-    let note = "거래일별 수집 뉴스의 동인 비중입니다. 보도량의 이동이지 내용의 변화가 아닙니다.";
+      </div>
+      <label class="briefing-story-share-selection">수집 날짜 <select aria-label="이야기 비중 수집 날짜">${days.map((day, index) => `<option value="${index}">${escapeHtml(day.date)} · ${escapeHtml(countText(day))}</option>`).join("")}</select></label>
+      <div class="briefing-story-share-values" aria-live="polite"></div>
+      <details><summary>날짜별 전체 값</summary><div class="table-wrap"><table><thead><tr><th>수집 날짜</th><th>기사 수</th>${rows.map((label) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${days.map((day) => `<tr><th scope="row">${escapeHtml(day.date)}</th><td>${escapeHtml(countText(day))}</td>${rows.map((label) => `<td>${shareText(day, label)}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details>`;
+    stage.removeAttribute("role");
+    stage.removeAttribute("aria-label");
+    // 그림만 다시 그린다. 고른 날짜와 펼쳐 둔 표는 폭이 바뀌어도 그대로 남는다.
+    const plot = stage.querySelector(".briefing-story-share-plot");
+    const drawChart = () => {
+      geometry = storyShareGeometry(plot.clientWidth || stage.clientWidth);
+      plot.innerHTML = chartMarkup();
+    };
+    const select = stage.querySelector("select");
+    let activeDay = -1;
+    const showDay = (index) => {
+      // 같은 날을 다시 그리지 않는다 — hover가 픽셀마다 aria-live 영역을 새로 쓰면
+      // 스크린 리더가 같은 값을 계속 읽는다.
+      if (index === activeDay || !days[index]) return;
+      activeDay = index;
+      select.value = String(index);
+      const day = days[index];
+      stage.querySelector(".briefing-story-share-values").innerHTML = `<b>${escapeHtml(day.date)} · ${escapeHtml(countText(day))}</b><ul>${rows.map((label) => `<li><span>${escapeHtml(label)}</span><b>${shareText(day, label)}</b></li>`).join("")}</ul>`;
+    };
+    select.addEventListener("change", () => showDay(Number(select.value)));
+    plot.addEventListener("pointermove", (event) => {
+      if (event.pointerType === "touch") return;
+      const rect = plot.getBoundingClientRect();
+      if (!rect.width) return;
+      const position = (event.clientX - rect.left) / rect.width * geometry.width;
+      showDay(days.reduce((best, _, index) => Math.abs(x(index) - position) < Math.abs(x(best) - position) ? index : best, 0));
+    });
+    drawChart();
+    showDay(0);
+    let observer = null;
+    if (typeof root.ResizeObserver === "function") {
+      let lastWidth = geometry.width;
+      observer = new root.ResizeObserver(() => {
+        const width = storyShareGeometry(plot.clientWidth || stage.clientWidth).width;
+        if (width === lastWidth) return;
+        lastWidth = width;
+        drawChart();
+      });
+      observer.observe(plot);
+    }
+    chartRecords.set(id, {
+      kind: "svg",
+      title,
+      element: stage,
+      redraw: drawChart,
+      cleanup: () => observer?.disconnect(),
+    });
+    let note = "주말을 포함한 수집 날짜별 보도량입니다. 저장된 비중을 그대로 표시하며 자료가 없는 값은 선을 연결하지 않습니다.";
     if (snapshot.smallSample) {
       // 표본이 적으면 기사 한두 건이 비중을 수십 %p 움직인다. 그 사실을 숨기면
       // 수집량 변동이 이야기의 변화처럼 읽힌다.
@@ -1269,10 +1643,59 @@
     return card;
   }
 
-  /** 추천의 `variant`가 어떤 그림인지 정한다. 주간 두 종은 일간 렌더러로 그릴 수
-   *  없다 — 계약이 다르다(기간 버튼 없음, 값이 %, 막대). */
+  /** 주간 지수 카드의 "전체 주간" 값. 창 안 첫 종가(=0%)가 아니라 **직전 주 종가**가
+   *  기준이라 그림의 곡선과는 다른 수치다. 그래서 값과 기준일을 함께 적는다. */
+  function weeklyReturnSummary(snapshot) {
+    const parts = (snapshot?.series || []).map((row) => {
+      const label = row.label || row.ticker || "";
+      if (finite(row.weeklyReturn) === null) return `${label} 전체 주간 비교 자료 없음`;
+      const baseline = String(row.weeklyBaselineDate || "").slice(5);
+      return `${label} 전체 주간 ${signedPercent(row.weeklyReturn)}${baseline ? `(${baseline} 종가 대비)` : ""}`;
+    });
+    return parts.join(" · ");
+  }
+
+  /** 새 주간 저장본만 일간 차트로 보낸다.
+   *
+   *  옛 주간 저장본은 계열마다 `points`(주초=0%로 재기준한 **퍼센트**) 하나뿐인데
+   *  그 점에도 원 종가가 함께 들어 있어 `shouldRenderTrend`는 통과한다. 게다가
+   *  `normalizePriceSubject`가 `daily`가 없으면 그 `points`를 일봉 자리에 되돌려주므로,
+   *  통과시키면 5점짜리 주간 계열이 1M·3M·1Y 버튼을 단 지수 차트로 그려진다 —
+   *  버튼은 답할 자료가 없고 그림은 그 주만 반복한다. 그래서 **자기 일봉 이력을 가진**
+   *  저장본만 새 경로로 보내고, 기준은 저장본이 스스로 밝힌 최소 점수(`minimumTrendPoints`)다.
+   *  한 주의 거래일보다 많은 값이라 이 문턱을 넘으면 기간 버튼이 실제로 답할 수 있다. */
+  /** `1W`가 실제로 어떤 봉으로 그려지는지. 시간봉 조회가 실패한 저장본은 일봉으로
+   *  그리므로 캡션이 없는 단위를 말하지 않게 저장본을 보고 정한다. */
+  function weekBarUnit(snapshot) {
+    const hourly = (snapshot?.series || [])
+      .some((row) => (normalizePriceSubject(row).hourly.points || []).length >= 2);
+    return hourly ? "1시간봉" : "일봉";
+  }
+
+  function hasStoredDailyHistory(snapshot) {
+    const declared = finite(snapshot?.dataSufficiency?.minimumTrendPoints);
+    const minimum = Math.max(2, Math.round(declared || 8));
+    return (snapshot?.series || []).some((row) => {
+      const points = row && row.daily && Array.isArray(row.daily.points) ? row.daily.points : [];
+      return points.filter((point) => finite(point.close) !== null).length >= minimum;
+    });
+  }
+
+  /** 추천의 `variant`가 어떤 그림인지 정한다.
+   *
+   *  주간 지수는 예전에 전용 렌더러(주초=0% 겹쳐 그리기)를 썼다. 지금은 저장본이
+   *  일간과 같은 가격 이력을 담으므로 **같은 차트**로 그리고 기본 구간만 그 주로 둔다.
+   *  이력이 없는 옛 저장본은 저장 시각자료가 불변이므로 예전 그림 그대로 읽힌다. */
   function renderRecommendation(snapshot, recommendation, comparison) {
-    if (recommendation.variant === "weekly_flow_chart") return renderWeeklyFlow(snapshot, recommendation.title);
+    if (recommendation.variant === "weekly_flow_chart") {
+      if (!hasStoredDailyHistory(snapshot)) return renderWeeklyFlow(snapshot, recommendation.title);
+      const card = renderTrend(snapshot, recommendation.title, recommendation.variant, comparison, {
+        defaultPeriod: recommendation.defaultPeriod || "1W",
+      });
+      const summary = weeklyReturnSummary(snapshot);
+      appendCaption(card, weeklyCaption(snapshot, `${summary ? `${summary}. ` : ""}기본은 그 주 구간(${weekBarUnit(snapshot)})이고, 기간 버튼으로 더 긴 흐름을 함께 봅니다.`));
+      return card;
+    }
     if (recommendation.variant === "story_share_bars") return renderStoryShareBars(snapshot, recommendation.title);
     if (recommendation.variant === "treemap_heatmap") {
       const card = renderHeatmap(snapshot, recommendation.title, comparison);
@@ -1290,85 +1713,163 @@
   }
 
   function renderHeatmap(snapshot, title, comparison) {
+    const coverage = snapshot.coverage || {};
+    const ratio = finite(coverage.ratio);
+    const incomplete = (coverage.status && coverage.status !== "complete")
+      || (ratio !== null && ratio < 1);
+    if (incomplete) {
+      const declaredMissing = finite(coverage.missingCount);
+      const requested = finite(coverage.requested);
+      const returned = finite(coverage.returned);
+      const missing = declaredMissing !== null
+        ? declaredMissing
+        : requested !== null && returned !== null ? Math.max(0, requested - returned) : null;
+      const detail = missing === null ? "전체 구성 종목 범위를 확인할 수 없습니다." : `누락 종목 ${Math.max(0, Math.round(missing))}개`;
+      return unavailableCard(snapshot, title, `히트맵 자료가 완전하지 않아 전체 시장 지도를 표시하지 않습니다. ${detail}`);
+    }
     const rows = snapshot.rows || [];
     // 뿌리 화면은 산업 층을 접은 쪽, 들어간 뒤에는 계층이 있는 쪽을 쓴다.
     const flatNodes = heatmapNodes(rows, { flat: true });
     if (!flatNodes.ids.length) {
       return unavailableCard(snapshot, title, "저장된 히트맵 구성 종목이 없습니다.");
     }
-    if (!root.Plotly?.newPlot) return unavailableCard(snapshot, title, "히트맵 라이브러리를 불러오지 못했습니다.");
+    if (!root.echarts?.init) return unavailableCard(snapshot, title, "히트맵 라이브러리를 불러오지 못했습니다.");
     const groupedNodes = heatmapNodes(rows);
+    const flatTree = heatmapTree(flatNodes);
+    const groupedTree = heatmapTree(groupedNodes);
     const { id, card, stage } = cardShell(snapshot, title, "heatmap");
     stage.classList.add("briefing-heatmap-stage");
+    const values = document.createElement("details");
+    values.className = "briefing-visual-values";
+    values.innerHTML = `<summary>종목별 수치</summary><div class="table-wrap"><table><thead><tr><th>종목</th><th>등락</th><th>종가</th></tr></thead><tbody>${rows.map((row) => `<tr><th scope="row">${escapeHtml(row.label || row.ticker)}</th><td>${signedPercent(row.changePct)}</td><td>${finite(row.close) === null ? "자료 없음" : escapeHtml(formatNumber(row.close))}</td></tr>`).join("")}</tbody></table></div>`;
+    card.append(values);
     const nav = document.createElement("nav");
     nav.className = "briefing-heatmap-path";
     nav.setAttribute("aria-label", "히트맵 위치");
     stage.insertAdjacentElement("beforebegin", nav);
 
     let level = "";
-    let drawing = null;
+    let wanted = false;
+    let chart = null;
+    let resizeObserver = null;
+    let lastSize = "";
+    let headers = [];
 
-    /** 이 층에서 무엇을 몇 겹까지 그릴지.
+    const findNode = (tree, nodeId) => {
+      for (const node of tree) {
+        if (node.id === nodeId) return node;
+        const hit = node.children && findNode(node.children, nodeId);
+        if (hit) return hit;
+      }
+      return null;
+    };
+
+    /** 이 층에서 무엇을 몇 겹까지 그릴지. `roots`는 이 층의 새 뿌리, `depth`는 뿌리부터 잎까지 겹 수다.
      *
-     *  뿌리는 섹터→종목이다. 섹터에 들어가면 그 안에서 산업이 열리고(넓은 화면은
-     *  종목까지 한 겹 더), 산업에 들어가면 그 산업의 종목만 남는다. 누를 때마다
-     *  더 자세해지는 방향이라 되돌아오는 길은 위 경로 버튼이 맡는다.
+     *  뿌리는 섹터→종목이다. 섹터에 들어가면 그 섹터의 산업이 새 뿌리가 되고(넓은 화면은 종목까지 한
+     *  겹 더), 산업에 들어가면 그 산업의 종목만 남는다. 이름 띠는 위 경로 버튼이 이미 보여 주므로 다시
+     *  그리지 않는다. 누를 때마다 더 자세해지는 방향이라 되돌아오는 길은 경로 버튼이 맡는다.
      */
     const viewFor = (levelId) => {
       const compact = heatmapCompact(stage);
-      if (!levelId) return { nodes: flatNodes, maxdepth: compact ? 1 : -1 };
-      if (levelId.startsWith("sector:")) return { nodes: groupedNodes, maxdepth: compact ? 2 : 3 };
-      return { nodes: groupedNodes, maxdepth: 2 };
+      const rootView = { roots: flatTree, depth: compact ? 1 : 2 };
+      if (!levelId) return rootView;
+      const node = findNode(groupedTree, levelId);
+      if (!node || !node.children) return rootView;
+      if (levelId.startsWith("sector:")) return { roots: node.children, depth: compact ? 1 : 2 };
+      return { roots: node.children, depth: 1 };
     };
 
-    const traceFor = (nodes, view) => ({
-      type: "treemap",
-      ids: nodes.ids,
-      labels: nodes.labels,
-      parents: nodes.parents,
-      values: nodes.values,
-      branchvalues: "total",
-      // 라벨은 그린 뒤 실측해서 얹는다. 처음에는 비워 두고 크기를 잰다.
-      text: nodes.ids.map(() => ""),
-      texttemplate: "%{text}",
-      // 빈 문자열을 넣어도 Plotly는 기본 라벨(`labels`)로 되돌린다. 비운 칸이
-      // 실제로 비어 있으려면 이 fallback을 꺼야 한다.
-      textinfo: "none",
-      customdata: nodes.customdata,
-      marker: { colors: nodes.colors, line: { color: "#ffffff", width: 0.45 } },
-      textfont: { family: HEATMAP_FONT_FAMILY, color: "#ffffff", size: HEATMAP_BASE_FONT_PX },
-      textposition: "middle center",
-      hovertemplate: "%{customdata[0]}<br>등락 %{customdata[1]:+.2f}%<br>종가 %{customdata[2]:,.2f}<br>%{customdata[3]}<extra></extra>",
-      tiling: { packing: "squarify", pad: 0 },
-      // Plotly pathbar는 글자도 비어 있는 얇은 띠라 나갈 방법이 보이지 않는다.
-      // 좁은 화면에서 쓰던 우리 경로 버튼을 넓은 화면에서도 그대로 쓴다.
-      pathbar: { visible: false },
-      level: viewFor(level).nodes === nodes ? level : "",
-      maxdepth: view.maxdepth,
-      sort: true,
-    });
+    const onClick = (params) => {
+      const nodeId = String(params?.data?.id || "");
+      if (nodeId) {
+        // 종목이 마지막 층이다. 더 들어갈 곳이 없다.
+        if (!nodeId.startsWith("ticker:")) goToLevel(nodeId);
+        return;
+      }
+      // 머리띠·틈을 누르면 부모가 아니라 보이지 않는 뿌리가 온다. 좌표로 어느 머리띠인지 가린다.
+      const hit = heatmapHeaderAt(headers, params?.event?.offsetX, params?.event?.offsetY);
+      if (hit) goToLevel(hit);
+    };
 
     const draw = () => {
+      const width = stage.clientWidth;
+      const height = stage.clientHeight;
+      // 숨은 탭·접힌 곳에서는 폭이 0이다. 보이면 ResizeObserver와 relayout이 다시 부른다.
+      if (!(width > 0) || !(height > 0)) return;
+      lastSize = `${width}x${height}`;
       const view = viewFor(level);
-      const nodes = view.nodes;
+      // 라벨 계획이 노드를 바꾸므로 층마다 복사본을 쓴다(같은 트리를 다른 깊이로 다시 그린다).
+      const roots = JSON.parse(JSON.stringify(view.roots));
+      const series = Object.assign(heatmapSeriesBase(view.depth), { data: roots });
+      const total = roots.reduce((sum, node) => sum + node.value, 0);
+      // 배치를 먼저 물어 타일 폭·높이를 안다 — 그 값으로 들어가는 라벨만 고른다.
+      const rects = heatmapTileSizes(root.echarts, series, width, height);
+      headers = heatmapPlanLabels(roots, { rects, total, width, height, depth: view.depth, measure: measureLabelWidth });
+      if (!chart) {
+        chart = root.echarts.init(stage, null, { renderer: "svg" });
+        chart.on("click", onClick);
+      }
+      const tooltip = heatmapTooltipTheme();
+      chart.setOption({
+        animation: false,
+        backgroundColor: "transparent",
+        tooltip: {
+          confine: true,
+          backgroundColor: tooltip.backgroundColor,
+          borderColor: tooltip.borderColor,
+          borderWidth: 1,
+          textStyle: { color: tooltip.color, fontSize: 12, fontFamily: HEATMAP_FONT_FAMILY },
+          formatter: (params) => (params?.data?._row ? heatmapHoverText(params.data._row) : ""),
+        },
+        series: [series],
+        graphic: { elements: [...heatmapSectorOutlines(roots, rects, tooltip.outline), ...heatmapHeaderRules(headers, heatmapSurfaceColor(card))] },
+      }, { notMerge: true });
       stage.dataset.rendered = "true";
       card.dataset.heatmapCompact = heatmapCompact(stage) ? "true" : "false";
-      drawing = Promise.resolve(root.Plotly.react(stage, [traceFor(nodes, view)], {
-        height: heatmapLayoutHeight(stage),
-        margin: { l: 0, r: 0, t: 0, b: 0 },
-        paper_bgcolor: "rgba(0,0,0,0)",
-        font: { family: HEATMAP_FONT_FAMILY, color: chartTheme().text, size: 14 },
-        hoverlabel: { font: { family: HEATMAP_FONT_FAMILY, size: 14 } },
-      }, { responsive: true, displayModeBar: false, scrollZoom: false }))
-        .then(() => heatmapApplyLabels(stage, nodes))
-        .then(() => {
-          renderPath();
-          bindDrill();
-        });
-      return drawing;
+      renderPath();
+      redrawWhenFontsLoad();
     };
 
-    const plot = () => (stage.dataset.rendered === "true" ? drawing || Promise.resolve() : draw());
+    /** 글꼴이 다 내려온 뒤 한 번 더 그린다.
+     *
+     *  라벨 폭은 캔버스로 재는데, 웹 글꼴(Inter·IBM Plex·SUIT)이 아직 안 내려왔으면 대체 글꼴로 잰다. 다 내려온 뒤
+     *  ECharts가 진짜 글꼴로 그리면 글자가 조금 넓어져 계획한 폭에 딱 맞던 라벨이 `...`로 잘린다(브라우저 실측:
+     *  `Heavy Industr...`). 다 내려온 뒤 다시 재서 계획을 새로 세운다. 이미 다 내려와 있으면 아무것도 안 한다. */
+    let fontRedrawQueued = false;
+    const redrawWhenFontsLoad = () => {
+      const fonts = root.document?.fonts;
+      if (!fonts || fonts.status === "loaded" || fontRedrawQueued) return;
+      fontRedrawQueued = true;
+      Promise.resolve(fonts.ready).then(() => {
+        fontRedrawQueued = false;
+        if (chart) {
+          lastSize = "";
+          draw();
+        }
+      }).catch(() => { fontRedrawQueued = false; });
+    };
+
+    const plot = () => {
+      wanted = true;
+      if (stage.dataset.rendered !== "true") draw();
+      return Promise.resolve();
+    };
+
+    /** 폭이 바뀌면 라벨 계획이 달라진다(깊이도 폭이 정한다). 다시 물어 다시 그린다 — 읽을 비동기 레이아웃이
+     *  없으므로 경합이 없다. */
+    const redraw = () => {
+      // 아직 한 번도 못 그렸다면(폭 0에서 시작) 그릴 차례가 온 것이다.
+      if (!chart) {
+        if (wanted) draw();
+        return;
+      }
+      const size = `${stage.clientWidth}x${stage.clientHeight}`;
+      if (size === lastSize) return;
+      lastSize = size;
+      chart.resize();
+      draw();
+    };
 
     function goToLevel(nodeId) {
       level = String(nodeId || "");
@@ -1425,35 +1926,25 @@
       }
     }
 
-    // `maxdepth`를 걸면 하위가 렌더되지 않아 Plotly의 기본 드릴다운이 걸릴 대상을
-    // 못 찾는다(섹터를 눌러도 아무 일이 없었다). 우리가 직접 `level`을 옮긴다.
-    function bindDrill() {
-      if (stage.dataset.drillBound === "true" || typeof stage.on !== "function") return;
-      stage.dataset.drillBound = "true";
-      stage.on("plotly_treemapclick", (event) => {
-        const nodeId = String(event?.points?.[0]?.id || "");
-        // 종목이 마지막 층이다. 더 들어갈 곳이 없다.
-        if (!nodeId || nodeId.startsWith("ticker:")) return false;
-        goToLevel(nodeId);
-        return false;
-      });
+    // 깊이는 폭이 정한다. 도크를 접거나 화면을 돌려 폭이 두 배가 돼도 섹터 열한 개만 남으면 안 된다.
+    if (typeof root.ResizeObserver === "function") {
+      resizeObserver = new root.ResizeObserver(redraw);
+      resizeObserver.observe(stage);
     }
-
-    // 깊이는 폭이 정한다. 첫 렌더에서 한 번 정하고 끝내면 도크를 접거나 화면을
-    // 돌려 폭이 두 배가 돼도 섹터 열한 개만 남는다.
-    const syncDepth = () => {
-      if (stage.dataset.rendered !== "true") return;
-      const next = heatmapCompact(stage) ? "true" : "false";
-      if (next === card.dataset.heatmapCompact) return;
-      draw();
-    };
-    root.addEventListener?.("resize", syncDepth);
     chartRecords.set(id, {
-      kind: "plotly",
+      kind: "echarts",
       title,
       element: stage,
       ensureRendered: plot,
-      cleanup: () => root.removeEventListener?.("resize", syncDepth),
+      redraw: () => {
+        lastSize = "";
+        redraw();
+      },
+      cleanup: () => {
+        resizeObserver?.disconnect();
+        chart?.dispose();
+        chart = null;
+      },
     });
     if (typeof root.IntersectionObserver === "function") {
       const observer = new root.IntersectionObserver((entries) => {
@@ -1498,8 +1989,12 @@
         if (record.kind === "lightweight") {
           record.chart.resize(el.clientWidth, el.clientHeight || 360);
           record.chart.timeScale().fitContent();
-        } else if (record.kind === "plotly" && root.Plotly?.Plots?.resize) {
-          root.Plotly.Plots.resize(el);
+        } else if (record.kind === "echarts") {
+          // 폭이 바뀌면 라벨 계획이 달라진다 — 다시 물어 다시 그린다.
+          record.redraw?.();
+        } else if (record.kind === "svg") {
+          // 1:1 좌표계라 폭이 바뀌면 다시 그려야 글자·선 두께가 유지된다.
+          record.redraw?.();
         }
       } catch (_) {}
     }
@@ -1521,12 +2016,9 @@
               horzLines: { color: theme.grid },
             },
           });
-        } else if (record.kind === "plotly" && root.Plotly?.relayout) {
-          root.Plotly.relayout(record.element, {
-            paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: theme.background,
-            "font.color": theme.text,
-          });
+        } else if (record.kind === "echarts") {
+          // 타일 색은 테마와 무관하지만 섹터 바깥선은 잉크 토큰이라 테마를 따른다.
+          record.redraw?.();
         }
       } catch (_) {}
     }
@@ -1538,7 +2030,6 @@
       try {
         record.cleanup?.();
         if (record.kind === "lightweight") record.chart.remove();
-        else if (record.kind === "plotly") root.Plotly?.purge(record.element);
       } catch (_) {}
       chartRecords.delete(id);
     }
@@ -1561,7 +2052,51 @@
         if (/^data:image\/png;base64,/i.test(dataUrl || "")) return dataUrl;
       } catch (_) {}
     }
-    return "";
+    return card?._storySharePng || "";
+  }
+
+  async function captureStoryShare(card) {
+    const original = card.querySelector?.(".briefing-story-share-lines");
+    if (!original) return;
+    const clone = original.cloneNode(true);
+    const sources = [original, ...original.querySelectorAll("*")];
+    [clone, ...clone.querySelectorAll("*")].forEach((element, index) => {
+      const style = getComputedStyle(sources[index]);
+      for (const name of ["fill", "stroke", "color", "font-family", "font-size"]) element.style.setProperty(name, style.getPropertyValue(name));
+    });
+    const lines = [...card.querySelectorAll(".briefing-story-share-legend span")].map((item) => item.textContent);
+    lines.push(...[...card.querySelectorAll("select option")].map((item) => item.textContent));
+    // viewBox는 이제 카드 폭을 따라간다(1:1 좌표계). 640을 다시 적으면 내보낸 그림만
+    // 화면과 다른 축척으로 나온다.
+    const [, , boxWidth, boxHeight] = String(original.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+    const plotWidth = Number.isFinite(boxWidth) && boxWidth > 0 ? boxWidth : 640;
+    const plotHeight = Number.isFinite(boxHeight) && boxHeight > 0 ? boxHeight : STORY_SHARE_HEIGHT;
+    const height = plotHeight + 25 + lines.length * 20;
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("viewBox", `0 0 ${plotWidth} ${height}`);
+    clone.setAttribute("width", String(plotWidth)); clone.setAttribute("height", String(height));
+    lines.forEach((line, index) => {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", "48"); text.setAttribute("y", String(plotHeight + 17 + index * 20));
+      text.setAttribute("fill", getComputedStyle(card).color); text.setAttribute("font-size", "14");
+      text.textContent = line;
+      if (index < card.querySelectorAll(".briefing-story-share-legend i").length) {
+        text.setAttribute("fill", getComputedStyle(card.querySelectorAll(".briefing-story-share-legend i")[index]).backgroundColor);
+      }
+      clone.append(text);
+    });
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" }));
+    try {
+      const bitmap = new Image(); bitmap.src = url;
+      await bitmap.decode();
+      const canvas = document.createElement("canvas"); canvas.width = plotWidth * 2; canvas.height = height * 2;
+      const context = canvas.getContext("2d");
+      context.fillStyle = chartTheme().background; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      card._storySharePng = canvas.toDataURL("image/png");
+    } catch (_) {
+      // 그림 하나를 못 만들었다고 나머지 내보내기까지 멈추지 않는다.
+    } finally { URL.revokeObjectURL(url); }
   }
 
   async function render(container, briefing, mode = "snapshot", currentPayload = null) {
@@ -1648,7 +2183,11 @@
         && (placement.sectionRole !== "leading_company" || Number(candidate.dataset.ordinal) === Number(placement.ordinal))
       );
       const stored = snapshots[recommendation.snapshotId];
-      if (!slot || !stored) continue;
+      if (!slot) continue;
+      if (!stored) {
+        slot.append(unavailableCard({ market: recommendation.market, id: recommendation.snapshotId }, recommendation.title, "이 시각자료의 저장 데이터를 찾지 못했습니다."));
+        continue;
+      }
       let snapshot = stored;
       if (placement.sectionRole === "market_flow" && stored.type === "price_series" && (stored.series || []).length > 1) {
         const preferred = preferredIndexTicker(slot._sectionText, stored.series, stored.market);
@@ -1658,7 +2197,17 @@
         };
       }
       const card = renderRecommendation(snapshot, recommendation, comparisons[snapshot.id]);
-      slot.append(card);
+      // Keep the section's interpretation between its two large figures.
+      let anchor = slot.nextElementSibling;
+      if (recommendation.variant === "treemap_heatmap") {
+        while (anchor && !isSectionBoundaryTag(anchor.tagName) && anchor.tagName !== "P") anchor = anchor.nextElementSibling;
+      }
+      if (recommendation.variant === "treemap_heatmap" && anchor?.tagName === "P") {
+        const later = document.createElement("div");
+        later.className = "briefing-inline-visual-slot";
+        anchor.insertAdjacentElement("afterend", later);
+        later.append(card);
+      } else slot.append(card);
     }
 
     // 주간 지수 흐름도 Lightweight Charts로 그린다 — 같은 credit이 붙어야 한다.
@@ -1675,6 +2224,7 @@
   async function captureImages(container) {
     const images = [];
     for (const card of visualCards(container).slice(0, 12)) {
+      await captureStoryShare(card);
       const dataUrl = visualCardCanvasDataUrl(card);
       if (!dataUrl) continue;
       images.push({
@@ -1689,6 +2239,7 @@
 
   async function replaceWithStaticImages(clone, original) {
     const originals = visualCards(original);
+    await Promise.all(originals.map(captureStoryShare));
     visualCards(clone).forEach((card, index) => {
       const dataUrl = visualCardCanvasDataUrl(originals[index]);
       const stage = card.querySelector?.(".briefing-visual-stage");
@@ -1731,14 +2282,33 @@
     renderRecommendation,
     weeklyCaption,
     signedPercent,
+    heatmapHoverText,
+    storyShareValue,
+    storyShareGeometry,
+    availablePeriods,
+    weeklyReturnSummary,
+    hasStoredDailyHistory,
+    isIntradayInterval,
+    weekBarUnit,
     preferredIndexTicker,
     buildSectionSlots,
     heatmapNodes,
-    heatmapLabelMarkup,
+    heatmapLabelPlan,
+    heatmapRichLabel,
+    heatmapHeaderPlan,
+    heatmapHeaderLabel,
+    heatmapTree,
+    heatmapSeriesBase,
+    heatmapTileSizes,
+    heatmapFallbackSize,
+    heatmapPlanLabels,
+    heatmapHeaderAt,
+    heatmapSectorOutlines,
+    heatmapHeaderRules,
+    heatmapWithAlpha,
     heatmapTickerLabel,
     heatmapGroupName,
     abbreviateHeatmapLabel,
-    heatmapLayoutHeight,
     createRequestGate,
     controlButton,
     exportControlSelector,

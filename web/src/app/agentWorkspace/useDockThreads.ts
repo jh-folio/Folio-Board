@@ -58,6 +58,16 @@ export function useDockThreads(welcome: AgentMessage) {
     return rows.length ? rows.map(toAgentMessage) : [{ ...welcome, createdAt: new Date().toISOString() }];
   }, [welcome]);
 
+  const deleteEmptyThread = useCallback(async (id: string) => {
+    await deleteJson(`/api/agent/threads/${encodeURIComponent(id)}`, { confirm: true });
+    if (threadId === id) {
+      setThreadId("");
+      setScope(null);
+      setPending(null);
+    }
+    bumpList();
+  }, [bumpList, threadId]);
+
   /** 브라우저에만 있던 대화를 서버 스레드로 한 번 옮긴다. 실패하면 원본을 지우지 않는다. */
   const migrateLocalThread = useCallback(async () => {
     if (migratedRef.current) return;
@@ -92,6 +102,21 @@ export function useDockThreads(welcome: AgentMessage) {
     }
   }, [bumpList]);
 
+  /** 잡 결과가 정확한 assistantMessageId를 알려줄 때 쓰는 단일 bounded fetch —
+   *  전체 스레드를 다시 읽지 않는다(Agent Dock Stage C). 검색 metadata도
+   *  함께 돌려준다(Stage E가 답변 아래 "웹 검색 · 출처 N개" 줄에 쓴다).
+   *  실패하면 빈 content를 돌려주고, 호출부가 `latestReply()`로 보강한다. */
+  const getMessage = useCallback(async (id: string, messageId: string): Promise<{ content: string; search?: ConsultationMessage["search"] }> => {
+    try {
+      const message = await getJson<ConsultationMessage>(
+        `/api/agent/threads/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}`,
+      );
+      return { content: String(message.content || ""), search: message.search };
+    } catch {
+      return { content: "" };
+    }
+  }, []);
+
   /** 마지막 Agent 답변. 잡 결과에는 transcript를 담지 않으므로 스레드에서 읽는다. */
   const latestReply = useCallback(async (id: string): Promise<string> => {
     try {
@@ -108,5 +133,5 @@ export function useDockThreads(welcome: AgentMessage) {
 
   useEffect(() => { void migrateLocalThread(); }, [migrateLocalThread]);
 
-  return { threadId, setThreadId, scope, setScope, pending, setPending, refreshKey, bumpList, createThread, openThread, latestReply };
+  return { threadId, setThreadId, scope, setScope, pending, setPending, refreshKey, bumpList, createThread, openThread, deleteEmptyThread, latestReply, getMessage };
 }

@@ -283,7 +283,7 @@ function AgentProviderMenu() {
   );
 }
 
-// 아침에 앱을 여는 순서를 따른다 — 무엇이 달라졌나(홈·대시보드)를 보고, 읽고(뉴스),
+// 아침에 앱을 여는 순서를 따른다 — 시장 흐름(홈·대시보드)을 보고, 읽고(뉴스),
 // 그게 내 것에 무슨 의미인지 보고(투자), 필요하면 파고든다(리서치).
 // 설정은 제목 없이 맨 아래다. 항목 하나를 위해 제목 한 줄을 쓰지 않는다.
 const NAV_GROUPS: Array<{ id: string; title: string; routes: RouteId[] }> = [
@@ -620,7 +620,7 @@ export function AppShell() {
             <path d="M10 3.5 L5.5 8 L10 12.5" />
           </svg>
         </button>
-        <nav className="react-left-nav" aria-label="Folio OS 화면">
+        <nav className="react-left-nav" aria-label="Folio Board 화면">
           <div className="react-left-nav-title">Navigate</div>
           {NAV_GROUPS.map((group) => (
             <section className="react-left-nav-group" data-nav-group={group.id} key={group.id}>
@@ -635,6 +635,7 @@ export function AppShell() {
                       <button
                         type="button"
                         data-tooltip={route.label}
+                        aria-label={route.label}
                         data-qa={route.id === "deep-research" ? "nav-deep-research" : undefined}
                         // 둘러보기가 이 버튼을 찾아 조명하는 앵커다. 클래스는 여럿이
                         // 공유하므로 화면 순서에 기대지 않을 이름이 필요하다.

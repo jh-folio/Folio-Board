@@ -315,6 +315,8 @@ def project_terminal_result(
                 adapter=job.adapter,
                 mode=job.mode,
                 proposalId=_text(safe, "proposalId") or job.proposalId,
+                sessionId=_text(safe, "sessionId") or None,
+                assistantMessageId=_text(safe, "assistantMessageId") or None,
             )
         case (
             TaskType.BRIEFING

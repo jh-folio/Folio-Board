@@ -11,7 +11,6 @@ from features.common.change_intelligence.baseline import select_report_baseline
 from features.common.change_intelligence.basis import content_hash, normalize_basis
 from features.common.change_intelligence.comparator import compare_basis
 from features.common.change_intelligence.projection import invalidation_token, project_report
-from features.common.change_intelligence.semantic import apply_semantic_verdicts, evaluate_semantic_changes
 
 ADAPTERS = {
     "briefing": build_briefing_basis,
@@ -32,11 +31,26 @@ def build_basis(artifact_kind: str, candidate: dict, *, native_context: dict | N
     return ADAPTERS[artifact_kind](candidate)
 
 
-# 의미 비교를 돌리는 생성 모드. `rules`는 LLM을 부르지 않으므로 제외한다.
-SEMANTIC_GENERATION_MODES = frozenset({"llm", "agent"})
+def strip_change_metadata(candidate: dict) -> dict:
+    """Return a briefing candidate without legacy Change Intelligence fields.
+
+    Briefings no longer create a comparison basis, semantic verdict, or change
+    projection.  The helper is intentionally limited to the three top-level
+    fields written by that feature so historical reports and nested daily-news
+    semantic metadata remain readable.
+    """
+    cleaned = dict(candidate)
+    for key in ("changeBasis", "changeSummary", "changeIntelligence"):
+        cleaned.pop(key, None)
+    return cleaned
 
 
 def decorate_candidate(artifact_kind: str, candidate: dict, *, data_dir: Path, native_context: dict | None = None, generation_provenance: bool = True) -> dict:
+    if artifact_kind == "briefing":
+        # Kept as a compatibility seam for callers that still use the common
+        # decorator.  A briefing save must never compare, semantically assess,
+        # or project the candidate.
+        return strip_change_metadata(candidate)
     if not generation_provenance:
         return dict(candidate)
     decorated = dict(candidate)
@@ -47,20 +61,6 @@ def decorate_candidate(artifact_kind: str, candidate: dict, *, data_dir: Path, n
         "id": basis.get("artifactId"), "revision": None, "contentHash": content_hash(basis),
     }
     summary = compare_basis(basis, previous, current_ref=current_ref, baseline_ref=baseline_ref)
-    if artifact_kind == "briefing":
-        # 의미 비교는 브리핑 생성이라는 명시적 사용자 action의 연장에서만 실행한다.
-        # 규칙 모드 생성은 LLM을 호출하지 않고 not_evaluated 게이트만 적용한다.
-        #
-        # **`agent`도 그 action이다.** Agent CLI 산출물의 mode는 `agent`인데
-        # (`agent_mode/schema.py::agent_generation`) 예전에는 `llm`만 통과시켜,
-        # CLI로 브리핑을 만드는 구성에서는 의미 판정이 아예 돌지 않았다.
-        generation_mode = str((decorated.get("generation") or {}).get("mode") or "")
-        evaluation = (
-            evaluate_semantic_changes(summary)
-            if generation_mode in SEMANTIC_GENERATION_MODES
-            else {"status": "not_evaluated", "verdicts": {}, "reason": "generation_rules_mode"}
-        )
-        summary = apply_semantic_verdicts(summary, evaluation)
     decorated["changeBasis"] = basis
     decorated["changeSummary"] = summary
     decorated["changeIntelligence"] = {

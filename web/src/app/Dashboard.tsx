@@ -17,7 +17,7 @@ export function Dashboard() {
       <RouteHero
         eyebrow="Research Cockpit"
         title="대시보드"
-        description="새 보고서에서 확인된 변화, 집중 차트, 시장 일정을 한 화면에서 점검합니다."
+        description="시장 뉴스 분포, 주요 일정, 가격 차트를 한 화면에서 확인합니다."
       />
       <ResearchCockpit />
     </div>

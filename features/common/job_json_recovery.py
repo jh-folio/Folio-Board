@@ -174,6 +174,49 @@ def _terminalize_recovery_failure(
     )
 
 
+def _validate_investment_review_recovery_authority(data_root: Path, bundle: StagedJobBundle, journal: JobCommitJournal | None) -> None:
+    """Do not promote a staged review if its external personal inputs moved.
+
+    Callbacks are intentionally process-local, so recovery reconstructs this
+    narrow check from the staged candidate.  It is intentionally not a new
+    manifest protocol: immutable journal redesign belongs to a later stage.
+    """
+    from features.common.job_json_codec import read_logical
+    from features.investment_review.review_v2 import build_input_basis, gather_inputs
+
+    # Once every artifact is durably promoted, recovery verifies and completes
+    # that immutable intent; a later authority change cannot retroactively
+    # invalidate an already-written target.
+    if journal is not None and journal.status is CommitJournalStatus.ARTIFACTS_WRITTEN:
+        return
+    for artifact in bundle.artifacts:
+        if artifact.manifest.expected.type != "investment_review":
+            continue
+        if not artifact.staged_path.exists():
+            # Promotion already consumed this staged payload; target/hash
+            # verification below owns recovery from this point onward.
+            continue
+        staged = read_logical(artifact.staged_path, artifact.manifest.expected.storage)
+        basis = staged.get("inputBasis") if isinstance(staged, dict) else None
+        expected = basis.get("fingerprint") if isinstance(basis, dict) else ""
+        analytics_authority = basis.get("analytics") if isinstance(basis, dict) else None
+        # Staged U.5 reviews pin their report-selection policy in the saved
+        # basis. Versionless v2 stages must retain the original legacy
+        # fingerprint shape during recovery rather than being reselected.
+        selection_version = basis.get("reportSelectionVersion") if isinstance(basis, dict) else ""
+        actual = build_input_basis(gather_inputs(
+            data_root, analytics_authority=analytics_authority,
+            report_selection_version=str(selection_version or ""),
+        )).get("fingerprint")
+        # Generic historic test/producer artifacts labelled investment_review
+        # may predate v2 inputBasis.  Only a real v2 staged candidate gets the
+        # external-authority guard; otherwise recovery retains its lifecycle.
+        if not isinstance(expected, str) or not expected:
+            continue
+        if expected != actual:
+            raise JobArtifactConflictError("investment_review_external_input_changed_reopen_generation")
+
+
 def recover_json_job(
     data_root: Path,
     job_id: str,
@@ -185,6 +228,7 @@ def recover_json_job(
     committer = JobArtifactCommitter(data_root, clock=clock)
     try:
         bundle, existing_journal = _load_recovery_bundle(data_root, job_id, store)
+        _validate_investment_review_recovery_authority(data_root, bundle, existing_journal)
         journal = existing_journal or committer._write_journal(bundle, CommitJournalStatus.PREPARED)
         for artifact in bundle.artifacts:
             committer._promote(artifact, bundle.intent)

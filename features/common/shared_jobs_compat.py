@@ -67,6 +67,8 @@ def worker_projection(result) -> dict[str, str | int | bool | None]:
         "artifactId",
         "savedCount",
         "snapshotId",
+        "sessionId",
+        "assistantMessageId",
         # 건너뛴 이유는 결과에 남아야 한다. 떨어뜨리면 화면이 "수집 완료. 신규 0개"로
         # 그려서 조용한 건너뛰기가 된다(§6 절대 규칙 2).
         "skipped",
@@ -131,6 +133,12 @@ def compatibility_job(job: SharedJob, live_detail: TerminalLiveDetail | None = N
         "attemptedEngine": job.attemptedEngine.value if job.attemptedEngine is not None else None,
         "finalEngine": job.finalEngine.value if job.finalEngine is not None else None,
         "fallbackReason": job.fallbackReason.value if job.fallbackReason is not None else None,
+        "phaseCode": job.phaseCode.value if job.phaseCode is not None else None,
+        "queueWaitMs": job.queueWaitMs,
+        "contextMs": job.contextMs,
+        "cliMs": job.cliMs,
+        "postprocessMs": job.postprocessMs,
+        "totalMs": job.totalMs,
         # 실패 이유를 코드로만 노출한다. 없으면 키를 만들지 않는다.
         **({"failureDetail": job.failureDetail} if getattr(job, "failureDetail", None) else {}),
     }

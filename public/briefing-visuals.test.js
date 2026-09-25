@@ -1,6 +1,140 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+test("weekly index snapshots use the daily chart with a one-week default", () => {
+  const { availablePeriods, initialPriceState, periodPoints, weeklyReturnSummary } = require("./briefing-visuals.js");
+  const daily = { interval: "1d", points: [
+    { time: "2026-08-28", close: 100 }, { time: "2026-08-31", close: 101 },
+    { time: "2026-09-02", close: 102 }, { time: "2026-09-04", close: 103 },
+  ] };
+  const weekly = { series: [{ ticker: "^KS11", label: "KOSPI", daily, weeklyReturn: -1.95, weeklyBaselineDate: "2026-08-28" }] };
+  // 주간 저장본에는 분봉이 없다 — 누르면 빈 차트가 될 1D는 아예 만들지 않는다.
+  assert.deepEqual(availablePeriods(weekly), ["1W", "1M", "3M", "YTD", "1Y"]);
+  assert.equal(initialPriceState(weekly, "1W").period, "1W");
+  // 답할 수 없는 기간을 권해도 저장본이 가진 것으로 내려온다.
+  assert.equal(initialPriceState(weekly, "1D").period, "1W");
+  // 1W는 그 주만 담는다. 직전 주 세션(08-28)은 들어오지 않는다.
+  assert.deepEqual(
+    periodPoints(weekly.series[0], "1W", "2026-09-04").points.map((row) => row.time),
+    ["2026-08-31", "2026-09-02", "2026-09-04"],
+  );
+  // 일간 저장본은 그대로 1D부터 시작한다.
+  const dailySnapshot = { series: [{ ticker: "^GSPC", intraday: { interval: "5m", points: [{ time: "2026-09-04T10:00:00-04:00", close: 5 }] }, daily }] };
+  assert.deepEqual(availablePeriods(dailySnapshot), ["1D", "1W", "1M", "3M", "YTD", "1Y"]);
+  assert.equal(initialPriceState(dailySnapshot).period, "1D");
+  // 전체 주간 값은 곡선(주초=0%)이 아니라 직전 주 종가 기준이라 기준일을 함께 적는다.
+  assert.equal(weeklyReturnSummary(weekly), "KOSPI 전체 주간 -1.95%(08-28 종가 대비)");
+  assert.equal(
+    weeklyReturnSummary({ series: [{ label: "KOSDAQ", weeklyReturn: null, weeklyReturnReason: "prior_week_close_missing" }] }),
+    "KOSDAQ 전체 주간 비교 자료 없음",
+  );
+});
+
+test("1W draws hourly bars but still reports the move in closes", () => {
+  const {
+    periodPoints, priceSummaryForPeriod, hoverTooltipContent, lightweightRows,
+    isIntradayInterval, weekBarUnit,
+  } = require("./briefing-visuals.js");
+  // 실측값이다(^KS11, 2026-08-31 주). 월요일 09시 봉 종가와 월요일 일봉 종가가 2.8%p 다르다.
+  const subject = {
+    ticker: "^KS11", label: "KOSPI",
+    hourly: { interval: "1h", points: [
+      { time: "2026-08-31T09:00:00+09:00", close: 6631.82 },
+      { time: "2026-08-31T10:00:00+09:00", close: 6700.5 },
+      { time: "2026-09-04T14:00:00+09:00", close: 6687.21 },
+    ] },
+    daily: { interval: "1d", points: [
+      { time: "2026-08-28", close: 6789.2 }, { time: "2026-08-31", close: 6820.02 },
+      { time: "2026-09-04", close: 6687.21 },
+    ] },
+  };
+  assert.equal(isIntradayInterval("5m"), true);
+  assert.equal(isIntradayInterval("1h"), true);
+  assert.equal(isIntradayInterval("1d"), false);
+
+  const week = periodPoints(subject, "1W", "2026-09-04");
+  assert.equal(week.interval, "1h");
+  assert.equal(week.points.length, 3);
+  // 더 긴 구간은 시간봉 저장 창(한 주) 밖이라 일봉 그대로다.
+  assert.equal(periodPoints(subject, "1M", "2026-09-04").interval, "1d");
+  // 시간봉이 없는 저장본은 `1W`도 일봉으로 그린다.
+  assert.equal(periodPoints({ daily: subject.daily }, "1W", "2026-09-04").interval, "1d");
+
+  // 값은 그린 날들의 **일봉 종가**로 말한다. 시간봉 첫 점을 기준 삼으면 +0.84%가 되어
+  // 같은 카드의 캡션·본문이 말하는 주간 등락과 어긋난다.
+  const summary = priceSummaryForPeriod(subject, "1W", week.points);
+  assert.equal(summary.close, 6687.21);
+  assert.equal(summary.changePct.toFixed(2), "-1.95");
+  // hover 기준선도 같아야 툴팁과 머리 숫자가 같은 말을 한다.
+  const tooltip = hoverTooltipContent(subject, "1W", week.points[2], { currency: "KRW" }, week.points);
+  assert.match(tooltip, /-1\.95%/);
+  assert.match(tooltip, /2026-09-04 14:00/);
+
+  // 시간봉은 **봉 시작** 시각 그대로다. 한 시간을 더하면 미국장 15:30 봉이 마감(16:00) 뒤가 된다.
+  const rows = lightweightRows(subject.hourly.points, "line", "1h");
+  assert.equal(rows[0].time, Date.UTC(2026, 7, 31, 9, 0, 0) / 1000);
+  assert.equal(rows.length, 3);
+  // 일봉은 지금처럼 날짜 문자열이다.
+  assert.equal(lightweightRows(subject.daily.points, "line", "1d")[0].time, "2026-08-28");
+
+  assert.equal(weekBarUnit({ series: [subject] }), "1시간봉");
+  assert.equal(weekBarUnit({ series: [{ daily: subject.daily }] }), "일봉");
+});
+
+test("legacy weekly snapshots keep the old overlay chart", () => {
+  const { hasStoredDailyHistory, shouldRenderTrend, normalizePriceSubject } = require("./briefing-visuals.js");
+  // 저장된 옛 주간 보고서의 실제 모양: 주초=0%로 재기준한 5점뿐이고 `daily`가 없다.
+  // 그 점에도 원 종가가 들어 있어 기존 판정은 통과한다 — 그래서 판정을 하나 더 둔다.
+  const legacy = { series: [{ ticker: "^KS11", label: "KOSPI", points: [
+    { time: "2026-08-31", close: 6820.02, changePct: 0 }, { time: "2026-09-01", close: 6760.1, changePct: -0.88 },
+    { time: "2026-09-02", close: 6712.4, changePct: -1.58 }, { time: "2026-09-03", close: 6701.9, changePct: -1.73 },
+    { time: "2026-09-04", close: 6687.1, changePct: -1.95 },
+  ] }] };
+  assert.equal(shouldRenderTrend(legacy), true);
+  // `normalizePriceSubject`가 그 %-계열을 일봉 자리에 되돌려주므로 기간 버튼도 생겼을 것이다.
+  assert.equal(normalizePriceSubject(legacy.series[0]).daily.points.length, 5);
+  assert.equal(hasStoredDailyHistory(legacy), false);
+
+  const stored = (count) => ({
+    dataSufficiency: { minimumTrendPoints: 8 },
+    series: [{ ticker: "^KS11", daily: { interval: "1d", points: Array.from({ length: count }, (_, i) => ({ time: `2026-08-${10 + i}`, close: 100 + i })) } }],
+  });
+  assert.equal(hasStoredDailyHistory(stored(255)), true);
+  // 한 주의 거래일만큼만 담긴 저장본은 기간 버튼이 답할 것이 없어 옛 그림으로 남는다.
+  assert.equal(hasStoredDailyHistory(stored(5)), false);
+  // 저장본이 문턱을 밝히지 않으면 8을 쓴다.
+  assert.equal(hasStoredDailyHistory({ series: stored(8).series }), true);
+});
+
+test("story share draws in CSS pixels so type and stroke match the other charts", () => {
+  const { storyShareGeometry } = require("./briefing-visuals.js");
+  // 1 user unit = 1 CSS px. 폭이 달라져도 높이·여백은 픽셀로 고정된다.
+  for (const width of [1180, 574, 308]) {
+    const box = storyShareGeometry(width);
+    assert.equal(box.width, width);
+    assert.equal(box.height, 275);
+    assert.equal(box.left, 52);
+    // 가운데 정렬한 마지막 날짜 라벨의 절반이 잘리지 않을 만큼 오른쪽을 비운다.
+    assert.equal(box.right, width - 24);
+    assert.ok(box.right > box.left + 100);
+  }
+  // 아직 폭을 재지 못한 첫 렌더는 기본 좌표계로 그리고 relayout이 고친다.
+  for (const unmeasured of [0, null, undefined, "", 120]) {
+    assert.equal(storyShareGeometry(unmeasured).width, 640);
+  }
+});
+
+test("saved share values preserve missing versus zero and heatmap hover omits missing close", () => {
+  const { storyShareValue, heatmapHoverText, priceSummary } = require("./briefing-visuals.js");
+  const day = { shares: { A: .123456, B: 0, C: null }, otherShare: null };
+  assert.equal(storyShareValue(day, "A", "other"), .123456);
+  assert.equal(storyShareValue(day, "B", "other"), 0);
+  for (const label of ["C", "D", "other"]) assert.equal(storyShareValue(day, label, "other"), null);
+  assert.equal(heatmapHoverText(["Technology", -3.288084787, null, ""]), "Technology<br>등락 -3.29%");
+  assert.match(heatmapHoverText(["A", 1.2345, 1234.5, "2026-09-01"]), /등락 \+1.23%<br>종가/);
+  assert.equal(priceSummary([{ close: null }]).close, null);
+});
+
 const {
   indexSeries,
   heatmapColor,
@@ -21,11 +155,22 @@ const {
   signedPercent,
   preferredIndexTicker,
   heatmapNodes,
-  heatmapLabelMarkup,
+  heatmapLabelPlan,
+  heatmapRichLabel,
+  heatmapHeaderPlan,
+  heatmapHeaderLabel,
+  heatmapTree,
+  heatmapSeriesBase,
+  heatmapTileSizes,
+  heatmapFallbackSize,
+  heatmapPlanLabels,
+  heatmapHeaderAt,
+  heatmapSectorOutlines,
+  heatmapHeaderRules,
+  heatmapWithAlpha,
   heatmapTickerLabel,
   heatmapGroupName,
   abbreviateHeatmapLabel,
-  heatmapLayoutHeight,
   createRequestGate,
   controlButton,
   exportControlSelector,
@@ -213,12 +358,6 @@ test("heatmap labels abbreviate long market groups without changing full hover n
   assert.equal(nodes.customdata[0][0], "Consumer Discretionary");
 });
 
-test("heatmap layout fills the responsive stage instead of leaving unused space", () => {
-  assert.equal(heatmapLayoutHeight({ clientHeight: 720 }), 720);
-  assert.equal(heatmapLayoutHeight({ clientHeight: 0 }), 620);
-  assert.equal(heatmapLayoutHeight({ clientHeight: 360 }), 520);
-});
-
 test("request gate accepts only the newest render request", () => {
   const gate = createRequestGate();
   const first = gate.next();
@@ -389,53 +528,53 @@ test("snapshot selection cancels a pending current request", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 라벨은 그린 뒤 타일을 재서 정한다.
-// 예전에는 시가총액 비율(7 + 21·√(cap/max))로만 크기를 정해 타일 픽셀을 몰랐다.
-// 넘치는 라벨은 Plotly가 통째로 축소해 1~5px 얼룩으로 남았고, 실측 US 데스크톱
-// 에서 그려진 라벨 424개 중 276개가 6px 미만이었다.
+// 라벨은 그리기 **전에** 정확한 타일 크기로 정한다.
+// 예전에는 그린 뒤 타일을 재서 라벨을 얹고 Plotly가 축소하면 예산을 깎아 다시 그렸다
+// (4패스 + 비동기 대기). ECharts는 축소하지 않고 `...`로 잘라 버리므로, 들어가는 것만 미리 고른다.
 // 아래 측정 함수는 결정적인 stub이다(어느 글꼴이 깔려 있든 같은 답이 나온다).
 // ---------------------------------------------------------------------------
 const measureStub = (text, size) => String(text).length * size * 0.6;
-const labelSize = (markup) => Number(String(markup).match(/font-size:(\d+)px/)[1]);
-const lineSizes = (markup) => [...String(markup).matchAll(/font-size:(\d+)px/g)].map((m) => Number(m[1]));
+// 좌우 여백은 칸 폭의 8%(최소 3px)씩, 위아래는 3px씩이다.
+const sidePad = (width) => Math.max(3, width * 0.08);
+const VERTICAL_PAD = 3;
 
-// Plotly의 줄 간격은 span 크기가 아니라 트레이스 기본 글꼴(13px) 기준 `dy="1.3em"`으로
-// 고정이다. 줄이 둘 이상이면 그 16.9px 안에 들어와야 겹치지 않는다.
-const LINE_STEP = 13 * 1.3;
-const assertNoOverlap = (markup) => {
-  const sizes = lineSizes(markup);
-  const lines = String(markup).split(/<br>/).length;
-  const perLine = lines > 1 && sizes.length === 1 ? [sizes[0], sizes[0]] : sizes;
-  for (let i = 0; i < perLine.length - 1; i += 1) {
-    const needed = perLine[i] * 0.25 + perLine[i + 1] * 0.95;
-    assert.ok(needed <= LINE_STEP + 0.01, `${perLine[i]}px 위에 ${perLine[i + 1]}px가 겹친다`);
-  }
-};
+// 계획이 요구하는 세로 높이. 줄 상자는 글꼴의 1.2배, 줄 간격은 우리가 정한 lineHeight다.
+const neededHeight = (plan) =>
+  plan.size * 1.2 + (plan.lines.length - 1) * plan.nameStep + (plan.suffix ? plan.tailStep : 0);
 
-test("라벨은 타일에 들어갈 때만 그려지고, 크기는 실제 상자에서 나온다", () => {
-  const roomy = heatmapLabelMarkup("NVDA", "+2.00%", { width: 200, height: 120 }, measureStub);
-  assert.match(roomy, /NVDA/);
-  assert.match(roomy, /\+2\.00%/);
-  assert.ok(labelSize(roomy) >= 14, `넓은 타일인데 ${labelSize(roomy)}px`);
+test("라벨은 타일에 들어갈 때만 정해지고, 크기는 실제 상자에서 나온다", () => {
+  const roomy = heatmapLabelPlan("NVDA", "+2.00%", { width: 200, height: 120 }, measureStub);
+  assert.deepEqual(roomy.lines, ["NVDA"]);
+  assert.equal(roomy.suffix, "+2.00%");
+  assert.ok(roomy.size >= 14, `넓은 타일인데 ${roomy.size}px`);
 
-  const tight = heatmapLabelMarkup("NVDA", "+2.00%", { width: 60, height: 30 }, measureStub);
-  assert.ok(labelSize(tight) < labelSize(roomy), "작은 타일이 더 작은 글자를 받아야 한다");
+  const tight = heatmapLabelPlan("NVDA", "+2.00%", { width: 60, height: 30 }, measureStub);
+  assert.ok(tight.size < roomy.size, "작은 타일이 더 작은 글자를 받아야 한다");
 });
 
-test("여러 줄 라벨은 고정 줄 간격 안에 들어와 겹치지 않는다", () => {
-  // 큰 타일에서 종목명 30px + 등락률 19px이 14.3px 간격에 얹혀 통째로 겹쳤다(실측).
-  assertNoOverlap(heatmapLabelMarkup("NVDA", "+2.00%", { width: 400, height: 300 }, measureStub));
-  assertNoOverlap(heatmapLabelMarkup("NVDA", "+2.00%", { width: 200, height: 120 }, measureStub));
-  assertNoOverlap(heatmapLabelMarkup("Mitsubishi UFJ Financial", "+1.00%", { width: 90, height: 100 }, measureStub));
-  // 아무리 넓어도 간격이 허락하는 크기를 넘지 않는다.
-  const huge = heatmapLabelMarkup("NVDA", "+2.00%", { width: 800, height: 800 }, measureStub);
-  assert.ok(labelSize(huge) <= 20, `${labelSize(huge)}px는 아랫줄을 덮는다`);
+test("고른 라벨은 반드시 상자 안에 들어간다 — 세로로도, 가로로도", () => {
+  const boxes = [[400, 300], [200, 120], [90, 100], [60, 30], [130, 60], [45, 40]];
+  const labels = [["NVDA", "+2.00%"], ["Mitsubishi UFJ Financial", "+1.00%"], ["Samsung Electronics", "-0.53%"], ["MU", "+1.00%"]];
+  for (const [width, height] of boxes) {
+    for (const [label, change] of labels) {
+      const plan = heatmapLabelPlan(label, change, { width, height }, measureStub);
+      if (!plan) continue;
+      assert.ok(neededHeight(plan) <= height - VERTICAL_PAD * 2 + 0.01, `${label}@${width}x${height}: 높이 ${neededHeight(plan)}가 넘친다`);
+      // ECharts는 폭을 넘는 글자를 `...`로 자른다. 등락률이 잘리면 -0.53%가 -0.5로 읽혀 틀린 숫자가 된다.
+      for (const line of plan.lines) {
+        assert.ok(measureStub(line, plan.size) <= width - sidePad(width) * 2 + 0.01, `${label}@${width}x${height}: "${line}"이 잘린다`);
+      }
+      if (plan.suffix) {
+        assert.ok(measureStub(plan.suffix, plan.tailSize) <= width - sidePad(width) * 2 + 0.01, `${label}@${width}x${height}: 등락률이 잘린다`);
+      }
+    }
+  }
 });
 
 test("글자 크기는 칸 크기를 따라간다 — 짧은 티커라고 작은 칸에서 커지지 않는다", () => {
   // 크기를 "들어가기만 하면 최대"로 두면 글자 길이가 크기를 정한다. 작은 칸이라도
   // 티커가 짧으면(MU) 큰 칸과 같은 크기를 받아 칸에 비해 글자가 컸다.
-  const sizeAt = (w, h) => labelSize(heatmapLabelMarkup("MU", "+1.00%", { width: w, height: h }, measureStub));
+  const sizeAt = (w, h) => heatmapLabelPlan("MU", "+1.00%", { width: w, height: h }, measureStub).size;
   const big = sizeAt(250, 160);
   const mid = sizeAt(90, 70);
   const small = sizeAt(40, 30);
@@ -443,30 +582,477 @@ test("글자 크기는 칸 크기를 따라간다 — 짧은 티커라고 작은
   // 완전 비례는 아니다. 면적이 33배인데 글자는 3배를 넘지 않는다.
   assert.ok(big < small * 3, `${big}px는 ${small}px에 비해 과하게 크다`);
   // 상한과 하한은 지킨다.
-  assert.ok(sizeAt(2000, 2000) <= 20, "겹침 상한을 넘지 않는다");
-  for (const [w, h] of [[250, 160], [90, 70], [40, 30], [30, 22]]) {
+  assert.ok(sizeAt(2000, 2000) <= 20, "상한을 넘지 않는다");
+  for (const [w, h] of [[250, 160], [90, 70], [50, 30]]) {
     assert.ok(sizeAt(w, h) >= 6, `${w}x${h}에서 하한 미만`);
   }
 });
 
 test("이름이 길면 어절 단위로 줄을 나눈다", () => {
   // 실측: 이 줄바꿈 하나가 JP에서 라벨 20개, KR에서 12개를 살린다.
-  const markup = heatmapLabelMarkup("Mitsubishi UFJ Financial", "+1.00%", { width: 90, height: 100 }, measureStub);
-  assert.match(markup, /Mitsubishi UFJ<br>Financial/);
-  assert.ok(labelSize(markup) >= 9);
+  const plan = heatmapLabelPlan("Mitsubishi UFJ Financial", "+1.00%", { width: 110, height: 100 }, measureStub);
+  assert.equal(plan.lines.length, 2);
+  // 어절 경계로만 나눈다 — 한 어절을 가르지 않고, 이어 붙이면 원래 이름이다.
+  assert.equal(plan.lines.join(" "), "Mitsubishi UFJ Financial");
+  assert.ok(plan.size >= 8);
 });
 
 test("자리가 모자라면 등락률 줄을 먼저 버린다", () => {
-  const markup = heatmapLabelMarkup("NVDA", "+2.00%", { width: 60, height: 20 }, measureStub);
-  assert.match(markup, /NVDA/);
-  assert.doesNotMatch(markup, /%/, "이름을 살리려면 등락률이 먼저 빠져야 한다");
+  const plan = heatmapLabelPlan("NVDA", "+2.00%", { width: 70, height: 16 }, measureStub);
+  assert.deepEqual(plan.lines, ["NVDA"]);
+  assert.equal(plan.suffix, "", "이름을 살리려면 등락률이 먼저 빠져야 한다");
 });
 
 test("들어가지 않는 라벨은 잘라내지 않고 비운다", () => {
   // 어절 단위로 잘라내면 KR `Samsung…`이 12개사를, JP `Mitsubishi…`가 7개사를
   // 가리킨다. 다른 회사 이름을 말하느니 색만 남기고 hover에 맡긴다.
-  assert.equal(heatmapLabelMarkup("NVDA", "+2.00%", { width: 20, height: 20 }, measureStub), "");
-  assert.equal(heatmapLabelMarkup("Samsung Electronics", "-1.00%", { width: 24, height: 24 }, measureStub), "");
+  assert.equal(heatmapLabelPlan("NVDA", "+2.00%", { width: 20, height: 20 }, measureStub), null);
+  assert.equal(heatmapLabelPlan("Samsung Electronics", "-1.00%", { width: 24, height: 24 }, measureStub), null);
+  assert.equal(heatmapLabelPlan("", "+1.00%", { width: 200, height: 200 }, measureStub), null);
+});
+
+test("좌우 여백 3px 안쪽에만 라벨이 선다 — 여백보다 좁은 칸은 비운다", () => {
+  // 6px(양쪽 3px) 이하의 칸에는 글자 폭이 남지 않는다.
+  assert.equal(heatmapLabelPlan("A", "", { width: 6, height: 100 }, measureStub), null);
+  assert.notEqual(heatmapLabelPlan("A", "", { width: 20, height: 100 }, measureStub), null);
+});
+
+test("라벨은 칸 폭의 84%를 넘지 않는다 — 가장자리에 붙어 보이지 않게 비율로 여백을 둔다", () => {
+  // 3px 고정 여백일 때는 폭에 꼭 맞는 라벨이 칸 가장자리에 붙어 보였다(실측: 폭의 85%를 넘는 타일이 KR 8개·JP 14개).
+  // 칸 폭의 8%(최소 3px)씩이면 폭 38px 이상에서 라벨은 폭의 84% 안이다.
+  for (const width of [40, 60, 90, 130, 200, 400]) {
+    for (const [label, change] of [["Samsung Electronics", "-0.53%"], ["NVDA", "+2.00%"], ["Mitsubishi UFJ Financial", "+1.00%"]]) {
+      const plan = heatmapLabelPlan(label, change, { width, height: 200 }, measureStub);
+      if (!plan) continue;
+      const widest = Math.max(...plan.lines.map((line) => measureStub(line, plan.size)), plan.suffix ? measureStub(plan.suffix, plan.tailSize) : 0);
+      assert.ok(widest / width <= 0.84 + 1e-9, `${label}@${width}: 폭의 ${(widest / width * 100).toFixed(0)}%를 차지한다`);
+    }
+  }
+  // 아주 좁은 칸은 최소 3px씩만 남긴다.
+  const narrow = heatmapLabelPlan("AB", "", { width: 20, height: 100 }, measureStub);
+  assert.ok(measureStub(narrow.lines[0], narrow.size) <= 20 - 6 + 1e-9);
+});
+
+// 머리띠는 ECharts가 글자 폭을 좌우 padding(6px씩)과 틀 두께(1px씩)만큼 줄여 잰다. 계획도 그만큼과 여유 2px을 뺀다.
+const HEADER_CHROME = 6 * 2 + 1 * 2 + 2;
+
+test("머리띠는 이름과 섹터 평균 등락을 한 줄에 쓴다", () => {
+  const plan = heatmapHeaderPlan("Financials", "-0.71%", 200, measureStub);
+  assert.deepEqual(plan.lines, ["Financials"]);
+  assert.equal(plan.tail, "-0.71%");
+  // 이름이 가장 눈에 띄어야 한다 — 크게, 등락은 한 걸음 작게.
+  assert.ok(plan.size >= 12, `머리띠 이름이 ${plan.size}px로 작다`);
+  assert.ok(plan.tailSize < plan.size);
+});
+
+test("머리띠 글자는 띠의 세로 가운데에 앉는다 — 줄 높이를 띠 높이에 맞춘다", () => {
+  // 줄 높이가 글자 크기와 같으면 ECharts가 글자를 띠 맨 위에 붙여 그렸다(글자 중심이 띠 중심보다 7px 위, 브라우저 실측).
+  // verticalAlign은 효과가 없어서, 줄 상자를 띠 높이(28px)만큼 높여 그 안에서 가운데에 앉힌다.
+  const one = heatmapHeaderPlan("Financials", "-0.71%", 200, measureStub);
+  assert.equal(one.lines.length, 1);
+  assert.equal(one.lineHeight, 28);
+  const label = heatmapHeaderLabel(one);
+  assert.equal(label.rich.n.lineHeight, 28);
+  assert.equal(label.rich.c.lineHeight, 28, "등락도 이름과 같은 줄 높이여야 같은 세로 위치에 앉는다");
+  // 두 줄은 줄 높이 14px씩 — 두 줄이 정확히 띠를 채워 위아래 여백이 같다.
+  const two = heatmapHeaderPlan("Energy & Chemicals", "-0.40%", 70, measureStub);
+  assert.equal(two.lines.length, 2);
+  assert.equal(two.lineHeight * 2, 28);
+});
+
+test("머리띠 글자는 이름 폭 + 등락 폭이 ECharts가 쓸 수 있는 폭 안에 들어갈 때만 한 줄에 함께 쓴다", () => {
+  for (const width of [90, 120, 160, 240, 500]) {
+    for (const [name, change] of [["Financials", "-0.71%"], ["Health Care", "+1.20%"], ["Consumer Disc.", "-1.22%"]]) {
+      const plan = heatmapHeaderPlan(name, change, width, measureStub);
+      if (!plan || plan.lines.length > 1) continue;
+      const used = measureStub(plan.lines[0], plan.size) + (plan.tail ? plan.tailGap + measureStub(plan.tail, plan.tailSize) : 0);
+      assert.ok(used <= width - HEADER_CHROME + 0.01, `${name}@${width}: ${used}px가 ${width - HEADER_CHROME}px를 넘는다(잘린다)`);
+    }
+  }
+});
+
+test("이름이 등락까지 못 들어가면 이름만 남긴다", () => {
+  const plan = heatmapHeaderPlan("Health Care", "+1.20%", 100, measureStub);
+  assert.deepEqual(plan.lines, ["Health Care"]);
+  assert.equal(plan.tail, "", "이름을 살리려면 등락이 먼저 빠져야 한다");
+});
+
+test("한 줄에 안 들어가는 좁은 섹터는 두 줄로 나눈다 — 통째로 비우면 어느 섹터인지 알 수 없다", () => {
+  const plan = heatmapHeaderPlan("Energy & Chemicals", "-0.40%", 70, measureStub);
+  assert.equal(plan.lines.length, 2);
+  // 어절 경계로만 나누고, 이어 붙이면 원래 이름이다.
+  assert.equal(plan.lines.join(" "), "Energy & Chemicals");
+  assert.equal(plan.tail, "", "두 줄일 때는 등락을 쓰지 않는다");
+  assert.ok(plan.size >= 9 && plan.size <= 10);
+  // 두 줄이 28px 머리띠 안에 들어간다.
+  assert.ok(plan.lineHeight * 2 <= 28, `두 줄이 ${plan.lineHeight * 2}px로 띠(28px)를 넘는다`);
+});
+
+test("이름이 읽히는 크기 밑으로는 내려가지 않는다 — 너무 좁으면 비우고 hover에 맡긴다", () => {
+  assert.equal(heatmapHeaderPlan("Steels & Materials", "+0.20%", 40, measureStub), null);
+  assert.equal(heatmapHeaderPlan("", "+0.20%", 300, measureStub), null);
+  // 한 줄 최소 11px.
+  const single = heatmapHeaderPlan("Industrials", "", 300, measureStub);
+  assert.ok(single.size >= 11 && single.size <= 14);
+});
+
+test("머리띠 서식: 이름은 굵게, 등락은 한 걸음 물러난 톤으로", () => {
+  const label = heatmapHeaderLabel({ lines: ["Financials"], size: 14, lineHeight: 14, tail: "-0.71%", tailSize: 12, tailGap: 8 });
+  assert.equal(label.formatter, "{n|Financials}{c|-0.71%}");
+  assert.equal(label.rich.n.fontWeight, 700);
+  assert.equal(label.rich.n.fontSize, 14);
+  assert.ok(label.rich.c.fontSize < label.rich.n.fontSize);
+  assert.match(label.rich.c.color, /0\.78/);
+  const two = heatmapHeaderLabel({ lines: ["Energy &", "Chemicals"], size: 10, lineHeight: 12, tail: "", tailSize: 10, tailGap: 8 });
+  assert.equal(two.formatter, "{n|Energy &}\n{n|Chemicals}");
+  // 예약 문자는 지운다.
+  assert.equal(heatmapHeaderLabel({ lines: ["A{b|c}"], size: 12, lineHeight: 12, tail: "", tailSize: 10, tailGap: 8 }).formatter, "{n|Abc}");
+});
+
+test("계획은 ECharts 라벨 설정이 된다 — 줄 간격도 우리가 정한다", () => {
+  const plan = heatmapLabelPlan("NVDA", "+2.00%", { width: 200, height: 120 }, measureStub);
+  const label = heatmapRichLabel(plan);
+  assert.equal(label.formatter, "{n|NVDA}\n{c|+2.00%}");
+  assert.equal(label.rich.n.fontSize, plan.size);
+  assert.equal(label.rich.n.lineHeight, plan.nameStep);
+  assert.equal(label.rich.c.fontSize, plan.tailSize);
+  assert.equal(label.rich.n.fontWeight, 700);
+});
+
+test("여러 줄과 등락률이 없는 라벨의 서식", () => {
+  assert.equal(
+    heatmapRichLabel({ lines: ["Mitsubishi UFJ", "Financial"], size: 12, suffix: "", tailSize: 8, nameStep: 16, tailStep: 10 }).formatter,
+    "{n|Mitsubishi UFJ}\n{n|Financial}",
+  );
+});
+
+test("서식 예약 문자는 이름에서 지운다 — 남으면 라벨이 통째로 깨진다", () => {
+  const label = heatmapRichLabel({ lines: ["A{b|c}d"], size: 12, suffix: "+1.00%", tailSize: 8, nameStep: 16, tailStep: 10 });
+  assert.equal(label.formatter, "{n|Abcd}\n{c|+1.00%}");
+});
+
+const treeRows = [
+  { ticker: "NVDA", label: "NVIDIA", sector: "Technology", industry: "Semiconductors", marketCap: 300, changePct: 2.5, close: 100, asOf: "2026-09-01" },
+  { ticker: "AVGO", label: "Broadcom", sector: "Technology", industry: "Semiconductors", marketCap: 100, changePct: -1.2, close: 50, asOf: "2026-09-01" },
+  { ticker: "MSFT", label: "Microsoft", sector: "Technology", industry: "Software", marketCap: 200, changePct: 0.3, close: 400, asOf: "2026-09-01" },
+  { ticker: "JPM", label: "JPMorgan", sector: "Financials", industry: "Banks", marketCap: 150, changePct: 1.1, close: 200, asOf: "2026-09-01" },
+];
+
+test("heatmapTree는 평면 배열을 중첩 트리로 바꾼다", () => {
+  const tree = heatmapTree(heatmapNodes(treeRows));
+  assert.deepEqual(tree.map((node) => node.id), ["sector:Technology", "sector:Financials"]);
+  const tech = tree[0];
+  assert.deepEqual(tech.children.map((node) => node.id), ["industry:Technology:Semiconductors", "industry:Technology:Software"]);
+  const semis = tech.children[0];
+  assert.deepEqual(semis.children.map((node) => node.id), ["ticker:NVDA", "ticker:AVGO"]);
+  // 잎에는 children 키가 없다(ECharts는 빈 배열도 부모로 본다).
+  assert.equal("children" in semis.children[0], false);
+  assert.equal(semis.children[0].value, 300);
+  assert.equal(semis.children[0].itemStyle.color, heatmapColor(2.5));
+  // hover가 쓸 원본 행.
+  assert.equal(semis.children[0]._row[0], "NVIDIA");
+});
+
+test("뿌리(평면) 트리는 섹터 아래에 종목이 바로 붙는다", () => {
+  const tree = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  assert.deepEqual(tree[0].children.map((node) => node.id), ["ticker:NVDA", "ticker:AVGO", "ticker:MSFT"]);
+});
+
+test("시리즈 설정은 깊이와 머리띠 규칙을 담는다 — 진짜 차트와 배치 선계산이 같은 것을 쓴다", () => {
+  const series = heatmapSeriesBase(2);
+  assert.equal(series.type, "treemap");
+  assert.equal(series.leafDepth, 2);
+  assert.equal(series.nodeClick, false, "드릴다운은 우리가 직접 한다");
+  // 기본값 `▶ `가 붙으면 그만큼 폭이 줄어 계획한 라벨이 잘린다(브라우저 실측: `Heavy Indust...`).
+  assert.equal(series.drillDownIcon, "");
+  // 트리맵 라벨 기본 padding 5는 글자 폭을 칸보다 10px 줄여 계획한 라벨을 잘랐다(브라우저 실측).
+  assert.equal(series.label.padding, 0);
+  // 머리띠 글자는 좌우 6px 여백을 둔다(ECharts가 글자 폭에서 그만큼 뺀다 — heatmapHeaderPlan이 같은 값을 뺀다).
+  assert.equal(series.upperLabel.height, 28);
+  assert.deepEqual(series.upperLabel.padding, [0, 6, 0, 6]);
+  // 보이지 않는 뿌리가 머리띠를 갖으면 맨 위 26px이 빈 띠로 남는다.
+  assert.equal(series.levels[0].upperLabel.show, false);
+  assert.equal(heatmapSeriesBase(1).leafDepth, 1);
+  // 섹터 사이 틈은 종목 사이 틈보다 뚜렷하게 굵다 — 그래야 섹터가 한 묶음으로 갈라져 보인다.
+  assert.ok(series.levels[0].itemStyle.gapWidth >= 3 * series.levels[1].itemStyle.gapWidth, "섹터 틈이 종목 틈보다 굵어야 한다");
+  // 섹터는 틀로 둘러싸인다. 틀 색은 노드마다 자기 섹터 색을 준다(시리즈 기본에 색을 박지 않는다).
+  assert.equal(series.levels[1].itemStyle.borderColor, undefined);
+  assert.ok(series.levels[1].itemStyle.borderWidth >= 1);
+  // 종목 칸은 테두리 없이 1px 틈만 둔다.
+  assert.equal(series.itemStyle.borderWidth, 0);
+  assert.equal(series.itemStyle.gapWidth, 1);
+});
+
+test("섹터 머리띠는 섹터 평균 등락 색 그대로이고, 그 위 흰 글자는 어느 등락 색에서도 AA(4.5:1) 이상이다", () => {
+  // 띠 색을 등락 색에서 떼어 내지 않는 대신 글자가 읽혀야 한다. 흰 글자 대비를 등락 색 9단 전부에서 확인한다.
+  const channel = (value) => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const luminance = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255); };
+  for (const change of [-9, -3, -2, -1, -0.3, 0, 0.3, 1, 2, 3, 9, null]) {
+    const band = heatmapColor(change);
+    const contrast = 1.05 / (luminance(band) + 0.05);
+    assert.ok(contrast >= 4.5, `${change}% 띠(${band}) 위 흰 글자 대비가 ${contrast.toFixed(2)}:1이다`);
+  }
+});
+test("머리띠 아래에 종목 사이 틈과 같은 1px 구분선을 둔다 — 띠가 아래 칸과 한 덩어리로 보이지 않게", () => {
+  const headers = [{ id: "sector:A", x: 10, y: 20, width: 200, height: 28 }, { id: "sector:B", x: 220, y: 20, width: 80, height: 28 }];
+  const rules = heatmapHeaderRules(headers, "rgb(19, 21, 27)");
+  assert.equal(rules.length, 2);
+  // 띠의 맨 아래 1px, 틀(1px)만큼 안쪽.
+  assert.deepEqual(rules[0].shape, { x: 11, y: 47, width: 198, height: 1 });
+  assert.equal(rules[0].style.fill, "rgb(19, 21, 27)");
+  assert.equal(rules[0].silent, true, "머리띠 클릭을 막지 않는다");
+  // 카드 색을 못 읽으면 그리지 않는다(엉뚱한 색 선보다 낫다).
+  assert.deepEqual(heatmapHeaderRules(headers, ""), []);
+  assert.deepEqual(heatmapHeaderRules([], "#000"), []);
+});
+
+test("지도가 한 장으로 읽힌다 — 경계는 간격의 위계로 말하고 굵은 바깥선을 두르지 않는다", () => {
+  const series = heatmapSeriesBase(2);
+  const tileGap = series.itemStyle.gapWidth;
+  const sectorGap = series.levels[0].itemStyle.gapWidth;
+  const frame = series.levels[1].itemStyle.borderWidth;
+  // 섹터 사이(틈 + 양쪽 틀)가 종목 사이 틈보다 뚜렷하게 넓다.
+  assert.ok(sectorGap + frame * 2 >= tileGap * 4, `섹터 사이 ${sectorGap + frame * 2}px, 종목 사이 ${tileGap}px`);
+  // 틈은 모두 투명 — 같은 색(카드 배경)으로 지도 전체가 나뉜다.
+  assert.equal(series.itemStyle.borderColor, "transparent");
+  // 굵고 진한 섹터 바깥선은 지도를 카드 여러 개로 갈랐다(사용자 피드백). 기본으로 끈다.
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "briefing-visuals.js"), "utf8");
+  assert.match(source, /const HEATMAP_SECTOR_OUTLINE_ALPHA = 0;/);
+});
+
+test("섹터 바깥선은 등락 색과 따로, 섹터 사각형마다 선만 그린다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const rects = fakeRects([["sector:Technology", 500, 400, 0, 0], ["sector:Financials", 160, 400, 504, 0]]);
+  const outlines = heatmapSectorOutlines(roots, rects, "rgba(7, 17, 31, 0.72)");
+  assert.equal(outlines.length, 2);
+  const first = outlines[0];
+  assert.equal(first.type, "rect");
+  // 채움 없이 선만 — 아래 등락 색을 가리지 않는다.
+  assert.equal(first.style.fill, "none");
+  assert.equal(first.style.stroke, "rgba(7, 17, 31, 0.72)");
+  // 클릭·hover는 통과한다(머리띠 클릭과 툴팁이 계속 동작해야 한다).
+  assert.equal(first.silent, true);
+  // 선은 사각형 안쪽으로 그려 이웃 섹터 쪽 틈을 침범하지 않는다.
+  assert.deepEqual(first.shape, { x: 0.5, y: 0.5, width: 499, height: 399 });
+  assert.ok(first.z > 0, "트리맵 위에 얹혀야 한다");
+});
+
+test("섹터 바깥선: 좌표를 못 읽었거나 색이 없으면 그리지 않는다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  assert.deepEqual(heatmapSectorOutlines(roots, null, "#000"), []);
+  assert.deepEqual(heatmapSectorOutlines(roots, fakeRects([["sector:Technology", 10, 10]]), ""), []);
+  // 배치에 없는 섹터는 건너뛴다.
+  assert.equal(heatmapSectorOutlines(roots, fakeRects([["sector:Technology", 100, 100]]), "#000").length, 1);
+  assert.equal(heatmapSectorOutlines(roots, fakeRects([["sector:Technology", 1, 1]]), "#000")[0].shape.width, 0, "아주 작아도 음수 폭이 되지 않는다");
+});
+
+test("heatmapWithAlpha는 hex를 rgba로 풀고 다른 형식은 그대로 둔다", () => {
+  assert.equal(heatmapWithAlpha("#07111f", 0.72), "rgba(7, 17, 31, 0.72)");
+  assert.equal(heatmapWithAlpha("#fff", 0.5), "rgba(255, 255, 255, 0.5)");
+  assert.equal(heatmapWithAlpha("rgb(1, 2, 3)", 0.5), "rgb(1, 2, 3)");
+});
+
+test("heatmapHeaderAt은 클릭 좌표로 머리띠를 가린다", () => {
+  const headers = [
+    { id: "sector:A", x: 0, y: 0, width: 100, height: 26 },
+    { id: "sector:B", x: 100, y: 0, width: 80, height: 26 },
+  ];
+  assert.equal(heatmapHeaderAt(headers, 50, 10), "sector:A");
+  assert.equal(heatmapHeaderAt(headers, 150, 25), "sector:B");
+  assert.equal(heatmapHeaderAt(headers, 50, 40), "", "머리띠 아래는 아니다");
+  assert.equal(heatmapHeaderAt(headers, undefined, 10), "");
+  assert.equal(heatmapHeaderAt([], 5, 5), "");
+});
+
+const fakeRects = (entries) => new Map(entries.map(([id, width, height, x = 0, y = 0]) => [id, { x, y, width, height }]));
+
+test("라벨 계획은 머리띠·잎·깊이 상한의 그룹을 모두 다룬다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const rects = fakeRects([
+    ["sector:Technology", 500, 400, 0, 0], ["ticker:NVDA", 240, 160], ["ticker:AVGO", 100, 30], ["ticker:MSFT", 160, 120],
+    ["sector:Financials", 160, 400, 500, 0], ["ticker:JPM", 150, 200],
+  ]);
+  const headers = heatmapPlanLabels(roots, { rects, total: 750, width: 660, height: 400, depth: 2, measure: measureStub });
+  // 머리띠: 섹터가 이름을 받고, 띠 색은 틈 색(borderColor)으로 간다.
+  // 이름 + 섹터 평균 등락(시가총액 가중: (300×2.5 + 100×-1.2 + 200×0.3) / 600 = +1.15%).
+  assert.equal(roots[0].upperLabel.formatter, "{n|Technology}{c|+1.15%}");
+  assert.equal(roots[0].upperLabel.height, 28);
+  // 띠 색은 섹터 평균 등락 색 그대로다 — 색이 "이 섹터가 오늘 어땠는가"의 답이다. 경계는 바깥선이 따로 맡는다.
+  assert.equal(roots[0].itemStyle.color, heatmapColor(1.15));
+  // 틀·틈은 투명이다 — 카드 배경이 비쳐 지도 전체가 같은 색 선으로 나뉜 한 장으로 읽힌다.
+  assert.equal(roots[0].itemStyle.borderColor, "transparent");
+  // 트리맵은 띠·틀·틈을 borderColor 한 색으로 칠하므로, 띠 색은 라벨 배경으로 따로 준다.
+  assert.equal(roots[0].upperLabel.backgroundColor, heatmapColor(1.15));
+  // 잎: 이름 + 등락률.
+  const nvda = roots[0].children[0];
+  assert.equal(nvda.label.show, true);
+  assert.match(nvda.label.formatter, /NVDA/);
+  assert.match(nvda.label.formatter, /\+2\.50%/);
+  // 머리띠 좌표는 클릭 판정에 쓰인다.
+  assert.deepEqual(headers.map((h) => h.id), ["sector:Technology", "sector:Financials"]);
+  assert.deepEqual(headers[1], { id: "sector:Financials", x: 500, y: 0, width: 160, height: 28 });
+});
+
+test("마우스를 올려도 라벨이 그대로다 — 강조 상태의 라벨 표시를 평상시와 같게 못 박는다", () => {
+  // 올린 칸은 별도의 강조(emphasis) 상태로 그려지는데, 그 상태의 라벨은 시리즈 기본(show: false)을 따라 통째로 꺼졌다.
+  // 기업명이 사라지는 것으로 보였다(브라우저 실측). 라벨이 있는 칸은 강조 상태에서도 켜고, 없는 칸은 켜지 않는다.
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const rects = fakeRects([
+    ["sector:Technology", 500, 400, 0, 0], ["ticker:NVDA", 240, 160], ["ticker:AVGO", 12, 12], ["ticker:MSFT", 160, 120],
+    ["sector:Financials", 160, 400, 500, 0], ["ticker:JPM", 150, 200],
+  ]);
+  heatmapPlanLabels(roots, { rects, total: 750, width: 660, height: 400, depth: 2, measure: measureStub });
+  const [nvda, avgo] = roots[0].children;
+  assert.equal(nvda.label.show, true);
+  assert.deepEqual(nvda.emphasis, { label: { show: true } });
+  assert.equal(avgo.label.show, false);
+  assert.deepEqual(avgo.emphasis, { label: { show: false } }, "라벨이 없는 칸은 올려도 기본 이름이 튀어나오면 안 된다");
+});
+
+test("깊이 상한에서 잎이 된 그룹은 잘리지 않고 이름과 등락률을 받는다", () => {
+  // 좁은 화면(depth 1): 섹터가 타일이다. 예전 기본 처리는 `▶ M...`처럼 잘랐다.
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const rects = fakeRects([["sector:Technology", 200, 300], ["sector:Financials", 60, 60]]);
+  const headers = heatmapPlanLabels(roots, { rects, total: 750, width: 260, height: 300, depth: 1, measure: measureStub });
+  assert.deepEqual(headers, [], "이 깊이에는 머리띠가 없다");
+  assert.equal(roots[0].label.show, true);
+  assert.match(roots[0].label.formatter, /Technology/);
+  assert.equal("upperLabel" in roots[0], false);
+});
+
+test("안 들어가는 라벨은 비우고, 머리띠는 남기되 글자만 비운다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const rects = fakeRects([
+    ["sector:Technology", 40, 300, 0, 0], ["ticker:NVDA", 15, 15], ["ticker:AVGO", 15, 15], ["ticker:MSFT", 15, 15],
+    ["sector:Financials", 160, 300, 40, 0], ["ticker:JPM", 150, 200],
+  ]);
+  heatmapPlanLabels(roots, { rects, total: 750, width: 200, height: 300, depth: 2, measure: measureStub });
+  // 40px 머리띠에는 이름이 안 들어간다. show를 끄면 띠 자체가 사라져 자식이 그 자리를 먹는다.
+  assert.equal(roots[0].upperLabel.show, true);
+  // 빈 문자열은 서식 없음으로 읽혀 ECharts가 기본 이름을 잘라 그린다 — 공백으로 글자 없음을 명시한다.
+  assert.equal(roots[0].upperLabel.formatter, " ");
+  assert.equal(roots[0].children[0].label.show, false);
+});
+
+test("정확한 크기를 못 읽으면 보수적인 추정으로 물러난다 — 라벨은 줄지만 잘리지는 않는다", () => {
+  const roots = heatmapTree(heatmapNodes(treeRows, { flat: true }));
+  const total = 750;
+  const fallback = heatmapFallbackSize(300, total, 660, 400);
+  // 실측 타일 폭 / √면적의 최소가 0.58이다. 그보다 좁게 가정한다.
+  assert.ok(Math.abs(fallback.width / fallback.height - 0.58) < 1e-9);
+  assert.equal(fallback.x, null);
+  const headers = heatmapPlanLabels(roots, { rects: null, total, width: 660, height: 400, depth: 2, measure: measureStub });
+  assert.deepEqual(headers, [], "좌표를 모르면 머리띠 클릭 판정은 끈다");
+  // 그래도 큰 종목은 라벨을 받는다.
+  assert.equal(roots[0].children[0].label.show, true);
+});
+
+// ---------------------------------------------------------------------------
+// canary — 배치를 읽는 경로가 ECharts 비공개 API라서 실제 벤더 번들로 매번 확인한다.
+// ECharts를 올리는 사람이 여기서 먼저 걸린다. 실패하면 라벨 여백(3px)도 다시 재야 한다.
+// ---------------------------------------------------------------------------
+const loadVendorEcharts = () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const scope = {};
+  scope.window = scope;
+  scope.self = scope;
+  new Function("window", "self", fs.readFileSync(path.join(__dirname, "vendor", "echarts.js"), "utf8"))(scope, scope);
+  return scope.echarts;
+};
+const vendorEcharts = loadVendorEcharts();
+
+const probeSeries = () => ({
+  ...heatmapSeriesBase(2),
+  data: [
+    { id: "a", name: "A", value: 60, children: [{ id: "a1", name: "A1", value: 40 }, { id: "a2", name: "A2", value: 20 }] },
+    { id: "b", name: "B", value: 40 },
+  ],
+});
+
+test("canary: 벤더 번들에서 모든 그려진 노드의 크기가 유한하게 읽힌다", () => {
+  const rects = heatmapTileSizes(vendorEcharts, probeSeries(), 800, 600);
+  assert.ok(rects, "배치를 읽지 못했다 — ECharts 비공개 경로가 바뀌었을 수 있다");
+  assert.deepEqual([...rects.keys()].sort(), ["a", "a1", "a2", "b"]);
+  for (const rect of rects.values()) {
+    assert.ok(Number.isFinite(rect.width) && rect.width > 0);
+    assert.ok(Number.isFinite(rect.height) && rect.height > 0);
+  }
+});
+
+test("canary: squarify 결과가 고정된 버전에서 바뀌지 않았다", () => {
+  // ECharts 6.1.0 실측(800x600). 면적에 비례한다: A=60%·B=40%. 섹터 사이 틈 4px, 섹터 틀 1.5px, 머리띠 28px.
+  const rects = heatmapTileSizes(vendorEcharts, probeSeries(), 800, 600);
+  const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) <= 1, `${message}: ${actual} != ${expected}`);
+  near(rects.get("a").width, 478.4, "A 폭");
+  near(rects.get("b").width, 317.6, "B 폭");
+  assert.equal(rects.get("a").height, 600);
+  near(rects.get("b").x - (rects.get("a").x + rects.get("a").width), 4, "섹터 사이 틈");
+  // 자식은 틀(1.5px)과 머리띠(28px)만큼 안쪽에 앉는다.
+  near(rects.get("a1").x, 1.5, "자식의 왼쪽 여백(틀)");
+  near(rects.get("a1").y, 28, "자식의 위쪽 여백(머리띠)");
+  near(rects.get("a1").width, rects.get("a").width - 3, "자식 폭");
+});
+test("canary: 같은 입력은 같은 배치다", () => {
+  const first = heatmapTileSizes(vendorEcharts, probeSeries(), 640, 480);
+  const second = heatmapTileSizes(vendorEcharts, probeSeries(), 640, 480);
+  assert.deepEqual([...first], [...second]);
+});
+
+test("canary: 깊이 상한 아래의 노드는 배치가 없어 건너뛰고, 실패로 치지 않는다", () => {
+  const series = { ...probeSeries(), leafDepth: 1 };
+  const rects = heatmapTileSizes(vendorEcharts, series, 800, 600);
+  assert.ok(rects, "depth 1도 읽혀야 한다(좁은 화면)");
+  assert.ok(rects.has("a") && rects.has("b"));
+  assert.equal(rects.has("a1"), false, "그려지지 않는 자식은 없다");
+});
+
+test("읽지 못하면 null이다 — 틀린 크기를 조용히 내주지 않는다", () => {
+  assert.equal(heatmapTileSizes({ init() { throw new Error("no renderer"); } }, probeSeries(), 800, 600), null);
+  assert.equal(heatmapTileSizes(vendorEcharts, probeSeries(), 0, 600), null);
+  assert.equal(heatmapTileSizes(null, probeSeries(), 800, 600), null);
+  // 배치 경로가 사라진 버전을 흉내 낸다.
+  assert.equal(heatmapTileSizes({ init: () => ({ setOption() {}, dispose() {} }) }, probeSeries(), 800, 600), null);
+});
+
+test("ssr 인스턴스를 남기지 않는다 — 6.1.0은 dispose하지 않으면 Node가 끝나지 않는다", () => {
+  let disposed = 0;
+  const spy = {
+    init: (...args) => {
+      const chart = vendorEcharts.init(...args);
+      const original = chart.dispose.bind(chart);
+      chart.dispose = () => { disposed += 1; original(); };
+      return chart;
+    },
+  };
+  heatmapTileSizes(spy, probeSeries(), 800, 600);
+  assert.equal(disposed, 1);
+});
+
+test("파이프라인: 실제 배치로 고른 라벨은 어느 것도 타일 폭을 넘지 않는다", () => {
+  const nodes = heatmapNodes(treeRows, { flat: true });
+  const roots = heatmapTree(nodes);
+  const series = { ...heatmapSeriesBase(2), data: roots };
+  const rects = heatmapTileSizes(vendorEcharts, series, 660, 400);
+  const total = roots.reduce((sum, node) => sum + node.value, 0);
+  const headers = heatmapPlanLabels(roots, { rects, total, width: 660, height: 400, depth: 2, measure: measureStub });
+  assert.equal(headers.length, 2);
+  const visit = (node) => {
+    const rect = rects.get(node.id);
+    const label = node.label && node.label.show ? node.label : null;
+    if (label) {
+      const lines = label.formatter.split("\n").map((line) => line.replace(/^\{[nc]\|/, "").replace(/\}$/, ""));
+      for (const line of lines) {
+        const style = line === lines[lines.length - 1] && /%$/.test(line) ? label.rich.c : label.rich.n;
+        assert.ok(measureStub(line, style.fontSize) <= rect.width - sidePad(rect.width) * 2 + 0.01, `${node.id}: "${line}"이 ${rect.width}px 칸에서 잘린다`);
+      }
+    }
+    (node.children || []).forEach(visit);
+  };
+  roots.forEach(visit);
+  // 머리띠 좌표는 배치가 준 실제 좌표다.
+  const tech = headers.find((header) => header.id === "sector:Technology");
+  assert.deepEqual(tech, { id: "sector:Technology", x: rects.get("sector:Technology").x, y: rects.get("sector:Technology").y, width: rects.get("sector:Technology").width, height: 28 });
 });
 
 test("종목 이름은 읽히는 쪽을 쓰고 거래소·법인격 꼬리를 뗀다", () => {

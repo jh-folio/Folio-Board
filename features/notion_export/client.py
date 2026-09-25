@@ -188,8 +188,9 @@ def _table_block(table_lines):
 
 def markdown_to_blocks(markdown):
     """Convert a Markdown string to a list of Notion block dicts."""
+    from features.common.report_citations import visible_citation_markdown
     blocks = []
-    lines = (markdown or "").splitlines()
+    lines = visible_citation_markdown(markdown or "").splitlines()
     i = 0
     while i < len(lines):
         raw = lines[i]

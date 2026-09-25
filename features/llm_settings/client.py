@@ -1,27 +1,21 @@
-"""LLM HTTP client, provider config, and env settings management."""
+"""CLI generation configuration and shared environment settings."""
 import json
 import os
 import re
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 from features.llm_settings.model_catalog import normalize_model_id
+from features.llm_settings.reasoning import (
+    is_supported_reasoning_effort,
+    normalize_reasoning_effort,
+)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
-ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
-GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_OPENAI_MODEL = "gpt-5.5"
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+GLOBAL_REASONING_ENV = "AI_AGENT_REASONING_EFFORT"
+TOSS_OPEN_API_DEFAULT_BASE_URL = "https://openapi.tossinvest.com"
 SECRET_STORE_SERVICE = "Folio OS"
 SECRET_ENV_KEYS = {
-    "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
-    "ANTHROPIC_API_KEY",
     "DART_API_KEY",
     "FRED_API_KEY",
     "BOK_API_KEY",
@@ -32,11 +26,10 @@ SECRET_ENV_KEYS = {
 }
 
 
-class LlmRequestError(RuntimeError):
-    def __init__(self, status_code, message, body=""):
-        self.status_code = status_code
-        self.body = body
-        super().__init__(f"HTTP {status_code}: {message}" + (f" · {body[:500]}" if body else ""))
+# A producer binds one resolved task configuration for the duration of its
+# request.  Feature modules intentionally import ``selected_cli_config``
+# directly, so a ContextVar gives all nested calls the same provider/model
+# without mutating ``os.environ`` or the process-wide global setting.
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +49,8 @@ def load_dotenv():
                 continue
             key, value = line.split("=", 1)
             key = key.strip()
+            if key in {"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"}:
+                continue
             value = value.strip().strip('"').strip("'")
             if key and key not in os.environ:
                 os.environ[key] = value
@@ -94,25 +89,6 @@ def load_dotenv():
             os.environ[key] = value
 
 
-def openai_config():
-    load_dotenv()
-    provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower() or "openai"
-    enabled = ai_agent_enabled()
-    return {
-        "provider": provider,
-        "apiKey": os.environ.get("OPENAI_API_KEY", "").strip(),
-        "geminiApiKey": os.environ.get("GEMINI_API_KEY", "").strip(),
-        "anthropicApiKey": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
-        "model": os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL,
-        "geminiModel": os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL,
-        "anthropicModel": normalize_model_id(
-            "claude",
-            os.environ.get("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL).strip() or DEFAULT_ANTHROPIC_MODEL,
-        ),
-        "enabled": enabled,
-    }
-
-
 def ai_agent_enabled() -> bool:
     load_dotenv()
     explicit = os.environ.get("AI_AGENT_ENABLED")
@@ -132,20 +108,33 @@ def ai_agent_mode() -> str:
     return "cli"
 
 
+def configured_global_reasoning_effort(*, mode: str, provider: str, model: str, runtime: bool = False) -> str:
+    """Read the global effort without treating a display label as transport.
+
+    A missing new setting is deliberately exposed as ``provider_default`` so
+    existing installations do not acquire a new persisted preference.  At
+    runtime, an older Astra-only environment setting keeps its prior behavior
+    (including the historical low default) until the user explicitly saves a
+    global effort in Settings.
+    """
+    load_dotenv()
+    raw = os.environ.get(GLOBAL_REASONING_ENV)
+    if raw is None:
+        return "provider_default"
+    try:
+        normalized = normalize_reasoning_effort(raw)
+    except ValueError as exc:
+        raise ValueError("Invalid AI_AGENT_REASONING_EFFORT") from exc
+    if not is_supported_reasoning_effort(mode, provider, model, normalized):
+        raise ValueError("Unsupported AI_AGENT_REASONING_EFFORT for selected model")
+    return normalized
+
+
 def default_generation_mode() -> str:
     if not ai_agent_enabled():
         return "rules"
-    return "llm_api" if ai_agent_mode() == "api" else "llm_cli"
-
-
-def selected_llm_config():
-    cfg = openai_config()
-    provider = cfg["provider"]
-    if provider == "gemini":
-        return {"provider": provider, "apiKey": cfg["geminiApiKey"], "model": cfg["geminiModel"], "enabled": cfg["enabled"]}
-    if provider in {"claude", "anthropic"}:
-        return {"provider": "claude", "apiKey": cfg["anthropicApiKey"], "model": cfg["anthropicModel"], "enabled": cfg["enabled"]}
-    return {"provider": "openai", "apiKey": cfg["apiKey"], "model": cfg["model"], "enabled": cfg["enabled"]}
+    require_cli_mode()
+    return "llm_cli"
 
 
 def mask_secret(value):
@@ -210,19 +199,26 @@ def write_env_values(updates):
                 pass
             else:
                 next_rows.append(f"{key}={value}")
-                os.environ[key] = str(value)
             seen.add(key)
         else:
             next_rows.append(line)
     for key, value in updates.items():
         if key not in seen and value is not None and key not in SECRET_ENV_KEYS:
             next_rows.append(f"{key}={value}")
-            os.environ[key] = str(value)
-        elif value is not None and key in SECRET_ENV_KEYS:
-            os.environ[key] = str(value)
     # Secret values are stored through the OS credential service, never in .env.
     # codeql[py/clear-text-storage-sensitive-data]
-    env_path.write_text("\n".join(next_rows).rstrip() + "\n", encoding="utf-8")
+    from features.common.atomic_replace import write_bytes_atomic
+    if env_path.exists() and updates.get("AI_AGENT_MODE") == "cli":
+        previous_modes = [line.split("=", 1)[1].strip().strip("\"'").lower().replace("-", "_")
+                          for line in rows if "=" in line and line.split("=", 1)[0].strip() == "AI_AGENT_MODE"]
+        if any(mode in {"api", "llm_api"} for mode in previous_modes):
+            backup = env_path.with_name(".env.llm-api-transition.bak")
+            if not backup.exists():
+                write_bytes_atomic(backup, env_path.read_bytes())
+    write_bytes_atomic(env_path, ("\n".join(next_rows).rstrip() + "\n").encode("utf-8"))
+    for key, value in updates.items():
+        if value is not None:
+            os.environ[key] = str(value)
 
 
 def bool_override(value):
@@ -259,11 +255,10 @@ def toss_open_api_key():
 
 
 def toss_open_api_enabled() -> bool:
-    """Return whether the hidden Toss Open API adapter may be used.
+    """Return whether the optional read-only Toss provider may be used.
 
-    Toss Securities Open API is excluded from the 0.1 public surface.  Existing
-    adapter code remains for future/internal validation, but credentials alone
-    must not activate the provider path.
+    Credentials alone never activate the REST/realtime provider: the local
+    operator must explicitly opt in with ``FOLIO_ENABLE_TOSS_OPEN_API``.
     """
     load_dotenv()
     return os.environ.get("FOLIO_ENABLE_TOSS_OPEN_API", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -281,7 +276,11 @@ def toss_open_api_client_secret():
 
 def toss_open_api_base_url():
     load_dotenv()
-    return os.environ.get("TOSS_OPEN_API_BASE_URL", "https://openapi.tossinvest.com").strip()
+    # REST and realtime share this opt-in settings boundary.  A blank value in
+    # a copied template is not a custom endpoint; use the pinned official REST
+    # origin instead.
+    value = os.environ.get("TOSS_OPEN_API_BASE_URL", "").strip()
+    return value or TOSS_OPEN_API_DEFAULT_BASE_URL
 
 
 def sec_user_agent():
@@ -300,30 +299,34 @@ def use_llm_analysis():
 
 
 def use_web_search_for_briefing():
+    """Whether the briefing find-pass may use web search — distinct from
+    whether LLM generation itself is on.
+
+    This used to read `USE_LLM_BRIEFING` (the legacy LLM-enable flag `
+    ai_agent_enabled()` also reads), so the documented `USE_WEB_SEARCH_FOR_BRIEFING`
+    variable had no effect at all — turning it off did nothing. Web search
+    obviously still needs the LLM path enabled to run at all.
+    """
+    if not ai_agent_enabled():
+        return False
     load_dotenv()
-    return os.environ.get("USE_LLM_BRIEFING", os.environ.get("USE_OPENAI_BRIEFING", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    return os.environ.get("USE_WEB_SEARCH_FOR_BRIEFING", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def use_web_search_for_analysis():
-    return use_llm_analysis()
+    """Same distinction as `use_web_search_for_briefing()`: this used to just
+    return `use_llm_analysis()` outright, so `USE_WEB_SEARCH_FOR_ANALYSIS` was
+    never actually read."""
+    if not use_llm_analysis():
+        return False
+    load_dotenv()
+    return os.environ.get("USE_WEB_SEARCH_FOR_ANALYSIS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 # ---------------------------------------------------------------------------
 # HTTP transport
 # ---------------------------------------------------------------------------
 
-def post_json(url, body, headers, timeout):
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        try:
-            body_text = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            body_text = ""
-        raise LlmRequestError(exc.code, exc.reason, body_text[:900]) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -338,79 +341,6 @@ def strip_llm_citation_markers(text):
     text = re.sub(r"\[\s*(?:turn\d+(?:search|news|source|ref)\d+\s*)+\]", "", text)
     text = re.sub(r"\s+([.,;:!?])", r"\1", text)
     return text
-
-
-def extract_response_text(payload):
-    if isinstance(payload.get("output_text"), str):
-        return strip_llm_citation_markers(payload["output_text"]).strip()
-    parts = []
-    for item in payload.get("output", []) or []:
-        for content in item.get("content", []) or []:
-            if isinstance(content.get("text"), str):
-                parts.append(content["text"])
-    return strip_llm_citation_markers("\n".join(parts)).strip()
-
-
-def extract_gemini_text(payload):
-    parts = []
-    for candidate in payload.get("candidates", []) or []:
-        content = candidate.get("content", {}) or {}
-        for part in content.get("parts", []) or []:
-            if isinstance(part.get("text"), str):
-                parts.append(part["text"])
-    return "\n".join(parts).strip()
-
-
-def extract_anthropic_text(payload):
-    parts = []
-    for block in payload.get("content", []) or []:
-        if block.get("type") == "text" and isinstance(block.get("text"), str):
-            parts.append(block["text"])
-    return "\n".join(parts).strip()
-
-
-def extract_openai_usage(payload):
-    usage = payload.get("usage") or {}
-    if not isinstance(usage, dict):
-        return {}
-    return {
-        "inputTokens": usage.get("input_tokens"),
-        "outputTokens": usage.get("output_tokens"),
-        "totalTokens": usage.get("total_tokens"),
-        "providerRaw": usage,
-    }
-
-
-def extract_gemini_usage(payload):
-    usage = payload.get("usageMetadata") or {}
-    if not isinstance(usage, dict):
-        return {}
-    input_tokens = usage.get("promptTokenCount")
-    output_tokens = usage.get("candidatesTokenCount")
-    total_tokens = usage.get("totalTokenCount")
-    return {
-        "inputTokens": input_tokens,
-        "outputTokens": output_tokens,
-        "totalTokens": total_tokens,
-        "providerRaw": usage,
-    }
-
-
-def extract_anthropic_usage(payload):
-    usage = payload.get("usage") or {}
-    if not isinstance(usage, dict):
-        return {}
-    input_tokens = usage.get("input_tokens")
-    output_tokens = usage.get("output_tokens")
-    total = None
-    if input_tokens is not None or output_tokens is not None:
-        total = int(input_tokens or 0) + int(output_tokens or 0)
-    return {
-        "inputTokens": input_tokens,
-        "outputTokens": output_tokens,
-        "totalTokens": total,
-        "providerRaw": usage,
-    }
 
 
 def extract_json_object(text):
@@ -439,98 +369,59 @@ def json_repair_prompt():
 # Provider request functions
 # ---------------------------------------------------------------------------
 
-def request_openai(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
-    body = {
-        "model": cfg["model"],
-        "instructions": prompt,
-        "input": context,
-        "max_output_tokens": int(max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000"))),
-    }
-    if json_mode:
-        body["text"] = {"format": {"type": "json_object"}}
-        # OpenAI Responses API는 json_object 포맷 사용 시 input 안에 literal "json"을 요구한다.
-        # 프롬프트(instructions)가 아니라 input(context)을 검사하므로, 없으면 지시문을 덧붙인다.
-        if "json" not in (context or "").lower():
-            body["input"] = f"{context}\n\n위 자료를 바탕으로 하나의 유효한 JSON 객체로만 응답하세요."
-    if web_search:
-        body["tools"] = [{"type": os.environ.get("OPENAI_WEB_SEARCH_TOOL", "web_search")}]
-    payload = post_json(
-        OPENAI_RESPONSES_URL,
-        body,
-        {
-            "Authorization": f"Bearer {cfg['apiKey']}",
-            "Content-Type": "application/json",
-        },
-        int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
+
+def require_cli_mode():
+    if ai_agent_mode() == "api":
+        from features.llm_settings.task_policy import TaskPolicyError
+        raise TaskPolicyError("llm_api_removed", "LLM API 지원이 종료되었습니다. 설정에서 CLI를 선택해 저장하거나 AI를 꺼 주세요.", status=409)
+
+
+def selected_cli_config():
+    """Resolve a credential-free CLI configuration, inheriting the frozen task."""
+    from features.llm_settings.task_runtime import current_task_policy, generation_mode
+    policy = current_task_policy()
+    if policy is not None:
+        enabled = generation_mode(policy) == "llm_cli"
+        return {**policy, "enabled": enabled}
+    if not ai_agent_enabled():
+        return {"enabled": False, "provider": "", "model": ""}
+    require_cli_mode()
+    from features.agent_mode.setup import configured_provider, configured_model
+    provider = configured_provider()
+    model = configured_model(provider) if provider != "auto" else ""
+    return {"enabled": True, "provider": provider, "model": model,
+            "reasoningEffort": configured_global_reasoning_effort(mode="cli", provider=provider, model=model)}
+
+
+def request_cli_text(cfg, prompt, context, *, web_search=False, max_output_tokens=None,
+                     json_mode=False, include_usage=False, timeout_seconds=None, facts_sink=None,
+                     result_sink=None):
+    """Execute through the existing CLI bridge; never resolve API credentials.
+
+    CLI adapters do not promise an exact output token cap. Keep the caller's
+    argument for compatibility, and let the bridge enforce its output bound.
+    result_sink is opt-in and memory-only; never serialize it into report data.
+    """
+    if cfg.get("mode") in {"api", "llm_api"}:
+        raise ValueError("llm_api_removed")
+    if not cfg.get("enabled") or not ai_agent_enabled():
+        raise RuntimeError("ai_disabled")
+    from features.agent_mode.bridge import run_agent_prompt
+    suffix = "\nReturn only valid JSON." if json_mode else ""
+    response = run_agent_prompt(
+        str(prompt) + suffix + "\n\n" + str(context),
+        adapter=str(cfg.get("provider") or ""), model=str(cfg.get("model") or ""),
+        reasoning_effort=str(cfg.get("reasoningEffort") or ""),
+        timeout=timeout_seconds or 300, web_search=web_search,
+        diagnostic_primary=False,
+        **({"observe_result": True} if facts_sink is not None else {}),
+        **({"result_sink": result_sink} if result_sink is not None else {}),
     )
-    result = (extract_response_text(payload), payload.get("id", ""))
-    if include_usage:
-        return (*result, extract_openai_usage(payload))
-    return result
-
-
-def request_gemini(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
-    model = urllib.parse.quote(cfg["model"], safe="")
-    body = {
-        "system_instruction": {"parts": [{"text": prompt}]},
-        "contents": [{"parts": [{"text": context}]}],
-        "generationConfig": {
-            "maxOutputTokens": int(max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000"))),
-        },
-    }
-    if web_search:
-        body["tools"] = [{"google_search": {}}]
-    elif json_mode:
-        body["generationConfig"]["responseMimeType"] = "application/json"
-    else:
-        body["generationConfig"]["responseMimeType"] = "text/plain"
-    payload = post_json(
-        GEMINI_GENERATE_URL.format(model=model),
-        body,
-        {
-            "x-goog-api-key": cfg["apiKey"],
-            "Content-Type": "application/json",
-        },
-        int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
-    )
-    result = (extract_gemini_text(payload), "")
-    if include_usage:
-        return (*result, extract_gemini_usage(payload))
-    return result
-
-
-def request_claude(cfg, prompt, context, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
-    body = {
-        "model": cfg["model"],
-        "max_tokens": int(max_output_tokens or os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000"))),
-        "system": prompt + ("\n\nReturn only one valid JSON object. No prose, no Markdown." if json_mode else ""),
-        "messages": [{"role": "user", "content": context}],
-    }
-    if web_search:
-        body["tools"] = [{
-            "type": os.environ.get("ANTHROPIC_WEB_SEARCH_TOOL", "web_search_20250305"),
-            "name": "web_search",
-            "max_uses": int(os.environ.get("LLM_WEB_SEARCH_MAX_USES", "5")),
-        }]
-    payload = post_json(
-        ANTHROPIC_MESSAGES_URL,
-        body,
-        {
-            "x-api-key": cfg["apiKey"],
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-        int(timeout_seconds or os.environ.get("LLM_TIMEOUT_SECONDS", os.environ.get("OPENAI_TIMEOUT_SECONDS", "120"))),
-    )
-    result = (extract_anthropic_text(payload), payload.get("id", ""))
-    if include_usage:
-        return (*result, extract_anthropic_usage(payload))
-    return result
-
-
-def request_llm_text(cfg, prompt, context, *, web_search=False, max_output_tokens=None, json_mode=False, include_usage=False, timeout_seconds=None):
-    if cfg["provider"] == "gemini":
-        return request_gemini(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage, timeout_seconds=timeout_seconds)
-    if cfg["provider"] == "claude":
-        return request_claude(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage, timeout_seconds=timeout_seconds)
-    return request_openai(cfg, prompt, context, web_search=web_search, max_output_tokens=max_output_tokens, json_mode=json_mode, include_usage=include_usage, timeout_seconds=timeout_seconds)
+    if facts_sink is not None:
+        facts_sink.update(response.get("executionFacts") or {})
+    output = str(response.get("output") or "").strip()
+    if not output:
+        raise RuntimeError("cli_empty_response")
+    result = (output, str(response.get("responseId") or ""))
+    usage = {**(response.get("usage") or {}), "transport": "cli", "outputTokenCapEnforced": False}
+    return (*result, usage) if include_usage else result

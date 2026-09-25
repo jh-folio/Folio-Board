@@ -8,6 +8,7 @@ from pathlib import Path
 from features.agent_mode import schema as A
 from features.agent_mode.hypothesis_context import build_hypothesis_review_context
 from features.agent_mode.briefing_contract import (
+    BriefingOutputContractError,
     briefing_contract_violations,
     briefing_output_contract,
 )
@@ -15,7 +16,7 @@ from features.common.utils import kst_date, now_iso, read_json, write_json
 from features.common.dataframe_ops import top_records
 from features.common.research_library.indexing.service import IMPACT_TERMS, build_index, load_index
 from features.common.research_library.search.service import group_docs, search_documents
-from features.common.market_data.snapshot import fetch_market_snapshot
+from features.common.market_data.snapshot import fetch_market_snapshot, snapshot_cache_suffix, snapshot_cutoff_date
 from features.common.market_data.providers import fetch_korea_market_data
 from features.common.market_data.tape import build_market_tape
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
@@ -31,14 +32,14 @@ from features.common.quality_generation.quality_targets import render_quality_ta
 from features.common.quality_generation.schema import normalize_quality_mode
 from features.daily_briefing.limits import (
     ISSUE_COVERAGE_LIMIT,
+    merged_source_limit,
     source_ref_limit,
 )
 from features.daily_briefing.source_window import scope_session_documents
 from features.daily_briefing.source_integrity import reconcile_source_ledger, source_manifest_prompt
-from features.daily_briefing.claim_integrity import enforce_claim_integrity
-from features.daily_briefing.style_check import briefing_style_check
 from features.daily_briefing.weekly_visuals import collect_weekly_visuals
 from features.daily_briefing.weekly import (
+    build_weekly_rules_markdown,
     calendar_preview,
     render_calendar_preview,
     weekly_documents,
@@ -51,14 +52,14 @@ from features.daily_briefing.service import (
     append_briefing_sources,
     strip_markdown_sources_section,
     briefing_checkpoint_headings,
-    briefing_sources_from_headlines,
     build_llm_context,
+    build_prompt_markdown,
+    briefing_market_windows,
     briefing_prompt_path_label,
     extract_prev_checklist,
     group_digest,
     load_prev_briefing,
     news_documents,
-    prioritized_source_refs,
     read_briefing_prompt,
     select_briefing_docs,
     source_refs,
@@ -106,12 +107,16 @@ from features.daily_briefing.visuals import (
     write_visual_sidecar,
 )
 from features.market_memory.memory import build_memory_from_briefing, list_briefing_memories, upsert_memory
+from features.market_memory.snapshot import render_market_memory_context
 from features.market_memory.market_state_ref import MarketStateRefQuery, resolve_market_state_ref
 from features.market_memory.service import (
+    add_role_candidates_to_context,
     build_memory_llm_context,
+    finalize_role_classification,
     normalize_llm_memory_entry,
     read_market_memory_prompt,
 )
+from features.market_memory.evidence_roles import safe_build_role_candidates
 from features.market_memory.snapshot import (
     MARKET_STATE_SNAPSHOT_PROMPT,
     build_market_state_context,
@@ -248,8 +253,14 @@ def _cache_json(path: Path, ttl_seconds: int, fetcher):
     return value
 
 
-def cached_market_snapshot():
-    return _cache_json(DATA_DIR / "market-snapshot.json", 1200, fetch_market_snapshot)
+def cached_market_snapshot(as_of_date=None):
+    path = DATA_DIR / f"market-snapshot{snapshot_cache_suffix(as_of_date)}.json"
+    fetcher = fetch_market_snapshot if as_of_date is None else lambda: fetch_market_snapshot(as_of_date=as_of_date)
+    return _cache_json(path, 1200, fetcher)
+
+
+def _snapshot_cutoff(date, market_windows, kind, weekly_window=None):
+    return snapshot_cutoff_date(date, market_windows, kind, weekly_window)
 
 
 def cached_korea_market_data(date: str, market_windows=None):
@@ -296,6 +307,140 @@ def _briefing_headlines(groups):
     return headlines
 
 
+def build_rules_briefing_markdown_from_pack(pack: dict) -> str:
+    """Build a deterministic briefing from the server-owned context pack.
+
+    This is a save-preserving fallback for a CLI result that cannot pass the
+    final fact validator.  It deliberately uses only the documents and
+    market metadata already pinned in the pack; it does not collect new data,
+    call an LLM, or write anything.
+    """
+    draft = pack.get("draftArtifact") or {}
+    internal = pack.get("internal") or {}
+    date = str(draft.get("date") or pack.get("artifactId") or kst_date())
+    kind = normalize_briefing_kind(draft.get("kind"))
+    market_scope = normalize_market_scope(draft.get("marketScope") or "both")
+    requested_markets = list(
+        normalize_market_selection(draft.get("generationMarkets") or market_scope)
+    )
+    market_windows = draft.get("marketWindows") or briefing_market_windows(date)
+    source_date = str((draft.get("stats") or {}).get("sourceDate") or date)
+    briefing_type = normalize_briefing_type(draft.get("briefingType") or "default")
+
+    # The pack stores the bounded writer groups, including their source rows.
+    # Reconstruct one deduplicated document pool so the fallback cannot widen
+    # the evidence boundary beyond what the CLI received.
+    documents = []
+    seen_keys = set()
+    for group in internal.get("groups") or []:
+        for document in group.get("docs") or []:
+            key = str(
+                document.get("path")
+                or document.get("url")
+                or document.get("sourceId")
+                or document.get("title")
+                or ""
+            )
+            if key and key in seen_keys:
+                continue
+            if key:
+                seen_keys.add(key)
+            documents.append(deepcopy(document))
+
+    concentration_by_market = internal.get("concentrationByMarket") or {}
+    markdown_parts = []
+    for scope in requested_markets:
+        scoped_docs = documents_for_scope(documents, scope)
+        scoped_groups = []
+        scoped_keys = {
+            str(
+                document.get("path")
+                or document.get("url")
+                or document.get("sourceId")
+                or document.get("title")
+                or ""
+            )
+            for document in scoped_docs
+        }
+        # Preserve the pack's selected group order. Re-ranking here could make
+        # the fallback disagree with the already pinned concentration decision.
+        for group in internal.get("groups") or []:
+            selected_group_docs = [
+                deepcopy(document)
+                for document in group.get("docs") or []
+                if str(
+                    document.get("path")
+                    or document.get("url")
+                    or document.get("sourceId")
+                    or document.get("title")
+                    or ""
+                ) in scoped_keys
+            ]
+            if selected_group_docs:
+                scoped_groups.append({**deepcopy(group), "docs": selected_group_docs})
+        if not scoped_groups:
+            scoped_groups = prioritize_briefing_groups(
+                group_docs(scoped_docs), market_windows, limit=6, market_scope=scope
+            )
+        drivers = derive_market_drivers(scoped_docs, market_windows, limit=4)
+        issues = build_issue_coverage(
+            scoped_docs,
+            scope.upper(),
+            market_windows,
+            limit=ISSUE_COVERAGE_LIMIT,
+            coherence_policy=(scope == "kr" and kind == DEFAULT_BRIEFING_KIND),
+        )
+        session_modes = session_modes_from_windows(market_windows)
+        control = concentration_by_market.get(scope) or {}
+        leading_companies = None
+        if control.get("mode") == "active":
+            decision = control.get("leaderDecision") or {}
+            by_id = {
+                row.get("candidateId"): row
+                for row in control.get("signatures") or []
+            }
+            leading_companies = [
+                str(by_id[candidate].get("subject") or "")
+                for candidate in decision.get("finalPair") or []
+                if candidate in by_id and by_id[candidate].get("subject")
+            ][:2]
+
+        if kind == "weekly":
+            window = build_weekly_window(date)
+            calendar = render_calendar_preview(
+                calendar_preview(MARKET_MEMORY_DB_PATH, scope, window), window
+            )
+            part = build_weekly_rules_markdown(
+                scope,
+                window,
+                docs=scoped_docs,
+                market_drivers=drivers,
+                issue_coverage=issues,
+                calendar_block=calendar,
+                memory_context=render_market_memory_context(MARKET_MEMORY_DB_PATH),
+            )
+        else:
+            part = build_prompt_markdown(
+                date,
+                source_date,
+                scoped_docs,
+                scoped_groups,
+                _briefing_headlines(scoped_groups),
+                market_drivers=drivers,
+                market_windows=market_windows,
+                market_snapshot=draft.get("marketSnapshot") or {},
+                korea_market_data=draft.get("koreaMarketData") or {},
+                market_scope=scope,
+                briefing_type=briefing_type,
+                issue_coverage=issues,
+                session_modes=session_modes,
+                leading_companies=leading_companies,
+            )
+        markdown_parts.append(str(part or "").strip())
+
+    return "\n\n---\n\n".join(part for part in markdown_parts if part)
+
+
 class WeeklyWindowEmptyError(ValueError):
     """주간 창에 자료가 하나도 없다. CLI를 부르기 전에 멈춘다."""
 
@@ -306,7 +451,7 @@ def _write_pack(pack: dict, owner_job_id: str | None) -> Path:
     return A.write_pack(pack, owner_job_id=owner_job_id)
 
 
-def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality_mode="diagnose_only", market_scope="both", briefing_type="default", markets=None, kind=DEFAULT_BRIEFING_KIND, web_search=None, owner_job_id: str | None = None) -> tuple[dict, Path]:
+def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality_mode="diagnose_only", market_scope="both", briefing_type="default", markets=None, kind=DEFAULT_BRIEFING_KIND, web_search=None, owner_job_id: str | None = None, selection_context=None, semantic_adapter="", semantic_model="") -> tuple[dict, Path]:
     generated_at = now_iso()
     date = date or kst_date()
     kind = normalize_briefing_kind(kind)
@@ -318,6 +463,8 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     )
     market_scope = market_selection_scope(requested_markets)
     briefing_type = normalize_briefing_type(briefing_type)
+    from features.daily_briefing.news_selection_runtime import pin_selection_context, prepare_selection_candidates, safe_selection_metadata
+    selection_context = selection_context or pin_selection_context(date, requested_markets, kind, analysis_as_of=generated_at)
     try:
         build_index(incremental=True)
     except Exception:
@@ -342,6 +489,25 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         )
         for target in requested_markets
     }
+    selection_results = {}
+    from features.daily_briefing.news_semantic_engine import make_news_semantic_engine
+    from features.common.quality_generation.call_budget import current_briefing_budget
+    selection_budget = current_briefing_budget()
+    for target in requested_markets:
+        # Only the running bridge supplies its selected engine; preparing a
+        # pack alone must never start a nested CLI process.
+        semantic_callback = make_news_semantic_engine(
+            market=target, kind=kind, mode=str(selection_context.get("mode") or "off"),
+            selected_markets=requested_markets, engine="cli" if semantic_adapter else "rules",
+            adapter=semantic_adapter, model=semantic_model, job_id=owner_job_id or "",
+            budget=current_briefing_budget(),
+        )
+        selection_results[target] = prepare_selection_candidates(
+            scope_docs[target], index, target, kind, selection_context,
+            semantic_callback=semantic_callback, selected_markets=requested_markets,
+            deadline=getattr(selection_budget, "deadline", None), cancelled=getattr(selection_budget, "cancelled", None),
+        )
+        scope_docs[target] = selection_results[target]["operationalCandidates"]
     session_pool = []
     seen_keys = set()
     for rows in scope_docs.values():
@@ -396,12 +562,25 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             concentration_by_market[target] = control
     if requested_markets == ["kr"]:
         groups = effective_groups_by_market["kr"]
+    elif len(requested_markets) > 1:
+        # The shared writer builder splits aggregate contexts into one leg per
+        # requested market. Feed it the same per-market ranked groups that the
+        # single-market API builder receives; a global top-six list can omit an
+        # otherwise eligible JP/EU group before the leg is even assembled.
+        groups = [
+            group
+            for target in requested_markets
+            for group in effective_groups_by_market.get(target, [])
+        ]
     # **동인과 참고자료는 시장마다 다르다.** 예전에는 합쳐진 풀로 한 번만 만들어 네 시장
     # 보고서가 같은 동인과 같은 참고자료를 실었다. 동인에는 시장을 붙여야 저장 시
     # `_single_market_briefing`의 필터가 그 시장 것만 남긴다 — 시장이 비어 있으면
     # 모든 시장을 통과한다.
     market_drivers = []
     issue_coverage_raw = []
+    # Filled after build_llm_context fixes the final writer set.  Selecting
+    # references here would let the Agent catalog diverge from the documents
+    # actually rendered in the prompt.
     sources_by_market = {}
     for target in requested_markets:
         target_docs = market_docs[target]
@@ -414,13 +593,6 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         issue_coverage_raw.extend(target_issues)
         for driver in derive_market_drivers(target_docs, market_windows, limit=4):
             market_drivers.append({**driver, "market": target})
-        target_sources = prioritized_source_refs(
-            target_docs, market_windows, limit=ref_limit, issue_coverage=target_issues, market_scope=target,
-        ) or briefing_sources_from_headlines(
-            _briefing_headlines(prioritize_briefing_groups(group_docs(target_docs), market_windows, limit=6, market_scope=target)),
-            limit=ref_limit,
-        )
-        sources_by_market[target] = source_refs(target_sources, limit=ref_limit)
     visual_scope_results = {}
     for target in requested_markets:
         target_docs = market_docs[target]
@@ -450,7 +622,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             "visualRecommendations": [], "visualSnapshots": [], "sidecar": {},
             "warnings": ["visual_snapshot_collection_failed"],
         }
-    market_snapshot = cached_market_snapshot()
+    market_snapshot = cached_market_snapshot(
+        as_of_date=_snapshot_cutoff(date, market_windows, kind, week)
+    )
     # 규칙 생성과 같은 기준이다 — 발행일이 아니라 한국장 세션일로 부른다.
     korea_market_data = cached_korea_market_data(_scope_session_date("kr", market_windows) or date, market_windows)
     market_tape = build_market_tape(
@@ -465,8 +639,11 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
         "marketTape": market_tape,
     })
     memories = list_briefing_memories(MARKET_MEMORY_DB_PATH, limit=12)
-    prev_briefing = load_prev_briefing(date)
-    prev_checklist = extract_prev_checklist((prev_briefing or {}).get("markdown", ""))
+    from features.daily_briefing.service import previous_checklists_by_market
+    prev_checklist = previous_checklists_by_market(date, requested_markets,
+        kind=kind, market_windows=market_windows,
+        weekly_window=week.to_dict() if week is not None else None, cutoff=generated_at,
+        selection_context=selection_context)
     calendar_block = ""
     if week is not None:
         # 여러 시장이 한 pack에 실릴 수 있으므로 시장별 표를 이어 붙인다. 시장 라벨을
@@ -527,10 +704,22 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
     hint_block = render_prompt_hints(quality_preflight)
     if hint_block:
         context = "\n\n".join([context, hint_block])
-    sources = prioritized_source_refs(
-        scoped_docs, market_windows, limit=ref_limit, issue_coverage=issue_coverage_raw, market_scope=market_scope,
-    ) or briefing_sources_from_headlines(_briefing_headlines(groups), limit=ref_limit)
-    sources = source_refs(sources, limit=ref_limit)
+    # ``used_docs`` is the single final writer set selected by the shared
+    # context builder.  Keep stable source IDs identical across context,
+    # manifest, draft, and per-market ledgers; do not reselect from all docs.
+    # Multi-market packs carry the union of each market's bounded writer set.
+    # The per-market ledgers below remain capped at ``ref_limit``.
+    merged_ref_limit = merged_source_limit(len(requested_markets), kind)
+    sources = source_refs(used_docs, limit=merged_ref_limit)
+    for target in requested_markets:
+        target_keys = {
+            str(row.get("path") or row.get("url") or row.get("title") or "")
+            for row in market_docs.get(target, [])
+        }
+        sources_by_market[target] = source_refs(
+            [row for row in used_docs if str(row.get("path") or row.get("url") or row.get("title") or "") in target_keys],
+            limit=ref_limit,
+        )
     context = "\n\n".join([context, source_manifest_prompt(sources)])
     session_counts = session_doc_counts(scoped_docs, market_windows)
     draft = {
@@ -617,6 +806,8 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             **session_counts,
         },
     }
+    if selection_context.get("mode") == "active":
+        draft["newsSelection"] = {target: safe_selection_metadata(selection_results.get(target), selection_context, target) for target in requested_markets}
     pack = A.build_pack(
         task_type="briefing",
         artifact_type="briefing",
@@ -654,9 +845,9 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
                 if control.get("mode") == "active"
             },
             leader_section_modes={
-                target: "qualified_zero_to_two"
-                for target, control in concentration_by_market.items()
-                if control.get("mode") == "active"
+                target: "fixed_two"
+                for target in requested_markets
+                if kind == "daily" and target in {"us", "kr"}
             },
         ),
         # 실제 저장 경로는 여기서 정하지 않는다 — 시장별 **세션 키**가 파일명을 정하고
@@ -676,12 +867,19 @@ def prepare_briefing_pack(date: str | None = None, *, strict_date=False, quality
             # 보고서가 같은 참고자료를 싣는다.
             "sourcesByMarket": sources_by_market,
             "concentrationByMarket": deepcopy(concentration_by_market),
+            "selectionDiagnostics": {target: safe_selection_metadata(selection_results.get(target), selection_context, target) for target in requested_markets},
         },
     )
     return pack, _write_pack(pack, owner_job_id)
 
 
-def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = True) -> dict:
+def write_briefing_from_markdown(
+    pack: dict,
+    markdown: str,
+    *,
+    persist: bool = True,
+    validate_contract: bool = True,
+) -> dict:
     draft = dict(pack.get("draftArtifact") or {})
     date = draft.get("date") or str(pack.get("artifactId") or "").removesuffix(".weekly") or kst_date()
     market_scope = normalize_market_scope(draft.get("marketScope", "both"))
@@ -691,9 +889,10 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     contract = pack.get("outputContract") or briefing_output_contract(
         market_scope, draft.get("briefingType", "default"), kind=kind
     )
-    violations = briefing_contract_violations(markdown, contract)
-    if violations:
-        raise ValueError(f"CLI 브리핑 출력 계약 위반: {'; '.join(violations)}")
+    if validate_contract:
+        violations = briefing_contract_violations(markdown, contract)
+        if violations:
+            raise BriefingOutputContractError(violations)
     leader_subjects = leading_company_subjects_from_markdown(markdown)
     visual_scope_results = (pack.get("internal") or {}).get("visualScopeResults") or {}
     aligned_visuals = {
@@ -721,17 +920,25 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
                 "leading_company_visual_alignment_failed"
             )
     draft = replace_leading_company_visuals(draft, aligned_visuals)
-    candidate_sources = source_refs(pack.get("sources") or draft.get("sources") or [], limit=ref_limit)
-    markdown, sources, generation_evidence, claim_ledger = reconcile_source_ledger(
-        str(markdown or "").strip(), candidate_sources, limit=ref_limit,
-    )
-    # 저장된 pack의 시장 목록이 권위다(아래 requested_scopes와 같은 규칙).
     generation_scopes = list(
         normalize_market_selection(draft.get("generationMarkets") or market_scope)
     )
+    merged_ref_limit = merged_source_limit(len(generation_scopes), kind)
+    candidate_sources = source_refs(
+        # The prompt-side catalog is capped earlier.  Writeback must see the
+        # complete pack so a manifest's external aliases and claims cannot be
+        # invalidated by a second pre-reconciliation cap.
+        pack.get("sources") or draft.get("sources") or [], limit=None
+    )
+    markdown, sources, generation_evidence, claim_ledger = reconcile_source_ledger(
+        str(markdown or "").strip(), candidate_sources, limit=merged_ref_limit,
+    )
+    # 저장된 pack의 시장 목록이 권위다(아래 requested_scopes와 같은 규칙).
     resolved_sources_by_market = {}
     if len(generation_scopes) <= 1:
-        markdown, claim_ledger = enforce_claim_integrity(markdown, sources, claim_ledger)
+        # Claim-integrity semantic rewrites are explicit/offline evaluation
+        # only.  Normal Agent writeback preserves authored Markdown.
+        claim_ledger = deepcopy(claim_ledger or {"version": 1, "claims": []})
         markdown = append_briefing_sources(markdown, sources, limit=ref_limit, kind=kind)
         if generation_scopes:
             resolved_sources_by_market[generation_scopes[0]] = sources
@@ -780,9 +987,9 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
             )
             resolved_sources_by_market[scope_key] = market_sources
             generation_evidence.setdefault("byMarket", {})[scope_key] = market_evidence
-            scoped_markdown, market_claims = enforce_claim_integrity(
-                scoped_markdown, market_sources, market_claims,
-            )
+            # Keep the source ledger structural; do not semantic-rewrite the
+            # market body during ordinary Agent writeback.
+            market_claims = deepcopy(market_claims or {"version": 1, "claims": []})
             claim_ledger.setdefault("byMarket", {})[scope_key] = market_claims
             if kind != "weekly":
                 scoped_markdown = append_briefing_sources(
@@ -883,25 +1090,17 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
     }
     try:
         generation_preflight = (pack.get("internal") or {}).get("qualityPreflight")
-        postflight = preflight_from_context("briefing", briefing, {"artifactId": date})
         briefing = apply_quality_loop(
             "briefing",
             briefing,
             mode=(pack.get("internal") or {}).get("qualityMode", "diagnose_only"),
-            preflight=postflight,
+            preflight={"artifactType": "briefing", "status": "not_assessed", "assessmentStatus": "not_assessed"},
         )
         briefing.setdefault("qualityGeneration", {})["generationPreflight"] = generation_preflight
     except Exception:
         briefing["quality"] = {"status": "warn", "warnings": ["quality_evaluation_failed"]}
     # 주간은 내러티브에 적재하지 않는다(§builder와 같은 규칙). 같은 이슈를 일간이 이미
     # 그 주에 넣었고, 다시 넣으면 한 사건이 두 번 세어져 regime 근거 카운트가 부푼다.
-    if persist and kind != "weekly" and market_scope == "both":
-        try:
-            for entry in build_memory_from_briefing(briefing, (pack.get("internal") or {}).get("groups") or []):
-                upsert_memory(MARKET_MEMORY_DB_PATH, entry)
-        except Exception:
-            briefing.setdefault("warnings", []).append("agent writeback skipped market memory update")
-
     if persist:
         BRIEFINGS_DIR.mkdir(parents=True, exist_ok=True)
     # 저장된 pack의 시장 목록이 권위다. 레이블에서 되짚으면 이름 없는 조합이
@@ -932,13 +1131,19 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
             legacy = read_json(BRIEFINGS_DIR / briefing_file_name(date), None)
             existing = briefing_scope_view(legacy, scope) if isinstance(legacy, dict) else None
         scoped_briefing = merge_briefing_report(scoped_briefing, existing, scope)
-        # 이 시장 본문의 문체 실측(§builder와 같은 계약). 검사만 하고 되돌리지 않는다 —
-        # 예약 발행물이 문체 때문에 막히면 안 된다.
-        scoped_briefing["styleCheck"] = briefing_style_check(
-            str((market_markdowns.get(scope) or {}).get("markdown") or scoped_briefing.get("markdown") or "")
-        )
         scoped_briefing["webLookup"] = deepcopy((draft.get("webLookup") or {}).get(scope) or {})
         if persist:
+            from features.daily_briefing.finalize import BriefingFinalizationError, finalize_briefing_candidate
+            from features.common.quality_generation.call_budget import current_briefing_budget
+            try:
+                scoped_briefing = finalize_briefing_candidate(
+                    scoped_briefing,
+                    repair_budget=current_briefing_budget(),
+                    visual_context=_sidecar_for_market(sidecar, scope),
+                    require_structure=True,
+                )
+            except BriefingFinalizationError:
+                continue
             write_json(save_path, scoped_briefing)
         try:
             scoped_sidecar = _sidecar_for_market(sidecar, scope)
@@ -956,12 +1161,25 @@ def write_briefing_from_markdown(pack: dict, markdown: str, *, persist: bool = T
                 write_json(save_path, scoped_briefing)
         saved_reports[scope] = scoped_briefing
 
+    if persist and not saved_reports:
+        raise BriefingFinalizationError("briefing_final_validation_failed")
+    if persist and kind != "weekly" and market_scope == "both" and len(saved_reports) == len(requested_scopes):
+        try:
+            for entry in build_memory_from_briefing(briefing, (pack.get("internal") or {}).get("groups") or []):
+                upsert_memory(MARKET_MEMORY_DB_PATH, entry)
+        except Exception:
+            briefing.setdefault("warnings", []).append("agent writeback skipped market memory update")
     if len(requested_scopes) == 1:
         result = saved_reports.get(requested_scopes[0], briefing)
     else:
         briefing["briefings"] = {
             scope: saved_reports[scope] for scope in requested_scopes if scope in saved_reports
         }
+        briefing["markdown"] = "\n\n---\n\n".join(str(report.get("markdown") or "") for report in saved_reports.values())
+        briefing["includedMarkets"] = [scope.upper() for scope in saved_reports]
+        briefing["expectedMarkets"] = [scope.upper() for scope in requested_scopes]
+        if len(saved_reports) < len(requested_scopes):
+            briefing["coverageWarnings"] = ["briefing_final_validation_partial"]
         result = briefing_scope_view(briefing, market_scope)
     if persist:
         return result
@@ -1019,6 +1237,7 @@ def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", w
 def write_company_analysis_from_markdown(pack: dict, markdown: str, *, persist: bool = True) -> dict:
     report = dict(pack.get("draftArtifact") or {})
     report["markdown"] = str(markdown or "").strip()
+    report["executionFacts"] = dict(pack.get("executionFacts") or {})
     report["generation"] = A.agent_generation(len(report.get("sources") or []), model=str(pack.get("executedAdapter") or ""))
     try:
         report = apply_quality_loop(
@@ -1054,11 +1273,20 @@ def prepare_topic_report_pack(
     topic_plan = None
     if use_planner:
         try:
+            # `llm_override`를 고정하지 않는다. `build_topic_plan()`이 None일 때
+            # `use_llm_analysis()`(API 키 또는 Agent CLI 중 설정된 엔진)로 스스로
+            # 판단하게 둔다 — 승인 플로우(`approved_request.py`)도 같은 기본값을
+            # 쓴다. 예전에 여기서만 `False`로 고정해, CLI 경로의 custom 주제
+            # 딥 리서치가 항상 규칙 기반 planner로 떨어졌다: 하위질문이 "AI
+            # 에이전트 사람 대신해..."처럼 조사가 잘려나간 기계적 문장이 되고
+            # `candidateTickers`가 항상 비어(실측 200913 "AI 에이전트 웹 전환"
+            # 재실행) 정작 물어본 미국 빅테크 개별 기업 분석이 전부 데이터
+            # 공백으로 빠졌다 — 같은 함수를 승인 경로와 공유해도 넘기는 값이
+            # 갈리면 같은 일이 난다(§6 규칙 14).
             topic_plan = build_topic_plan(
                 topic_key,
                 custom_label=custom_label,
                 user_context=user_context,
-                llm_override=False,
                 preset_config=topic if topic_key != "custom" else None,
             )
         except Exception:
@@ -1408,6 +1636,8 @@ def write_thesis_delta_from_json(pack: dict, delta_payload: dict) -> dict:
 def prepare_market_memory_pack(date: str | None = None, *, owner_job_id: str | None = None) -> tuple[dict, Path]:
     date = date or kst_date()
     context, used_docs, source_date = build_memory_llm_context(date)
+    role_selection = safe_build_role_candidates(MARKET_MEMORY_DB_PATH)
+    context = add_role_candidates_to_context(context, role_selection)
     pack = A.build_pack(
         task_type="market_memory_llm",
         artifact_type="market_memory",
@@ -1419,11 +1649,18 @@ def prepare_market_memory_pack(date: str | None = None, *, owner_job_id: str | N
             "format": "json",
             "requiredFields": ["entries"],
             "maxEntries": 3,
+            "optionalFields": ["evidenceRoles"],
+            "evidenceRoleFields": ["stateKey", "memoryId", "role"],
         },
         write_back_contract={"method": "write_json", "target": "market-memory.sqlite3::market_memory"},
         save_target=str(MARKET_MEMORY_DB_PATH),
         sources=source_refs(used_docs, limit=12),
-        internal={"date": date, "sourceDate": source_date, "usedDocs": used_docs},
+        internal={
+            "date": date,
+            "sourceDate": source_date,
+            "usedDocs": used_docs,
+            "roleSelection": role_selection,
+        },
     )
     return pack, _write_pack(pack, owner_job_id)
 
@@ -1455,17 +1692,29 @@ def prepare_market_memory_writeback(pack: dict, payload: dict) -> dict:
         "droppedCount": len(dropped),
         "droppedReasons": dropped,
         "entries": prepared,
+        "roleSelection": internal.get("roleSelection") or {},
         "message": f"AI 에이전트 시장 내러티브 {len(prepared)}건을 준비했습니다.",
         "generation": A.agent_generation(len(used_docs), model=str(pack.get("executedAdapter") or "")),
     }
 
 
 def write_market_memory_from_json(pack: dict, payload: dict) -> dict:
+    # 저장은 API 키 경로와 **같은 함수**를 쓴다 — 구조화 체크포인트 병합 계약이
+    # 한쪽 경로에만 붙는 일이 구조적으로 불가능해야 한다(§6 규칙 14).
+    from features.market_memory.service import save_memory_entries
+
     prepared = prepare_market_memory_writeback(pack, payload)
-    saved = [upsert_memory(MARKET_MEMORY_DB_PATH, entry) for entry in prepared.pop("entries")]
+    stored = save_memory_entries(prepared.pop("entries"), db_path=MARKET_MEMORY_DB_PATH)
+    role_classification = finalize_role_classification(
+        prepared.pop("roleSelection", {}), payload, db_path=MARKET_MEMORY_DB_PATH
+    )
+    saved = stored["saved"]
     return {
         **prepared,
         "saved": saved,
+        "checkpointsMerged": stored["checkpointsMerged"],
+        "checkpointsDropped": stored["checkpointsDropped"],
+        "roleClassification": role_classification,
         "message": f"AI 에이전트 시장 내러티브 {len(saved)}건을 저장했습니다.",
     }
 
@@ -1548,7 +1797,7 @@ def prepare_quality_repair_pack(artifact_type: str, artifact_id: str, *, owner_j
         "dataGaps": artifact.get("dataGaps") or [],
         "markdown": artifact.get("markdown") or "",
     }, ensure_ascii=False, indent=2)
-    prompt = """Improve only weak sections of the stored Folio OS report. Use no facts outside the supplied evidence and source ledger. Preserve the report type, headings, supported numbers, counter-evidence, uncertainties, checkpoints, and Source & Data Notes. Return the complete repaired Markdown only."""
+    prompt = """Improve only weak sections of the stored Folio Board report. Use no facts outside the supplied evidence and source ledger. Preserve the report type, headings, supported numbers, counter-evidence, uncertainties, checkpoints, and Source & Data Notes. Return the complete repaired Markdown only."""
     pack = A.build_pack(
         task_type="quality_repair",
         artifact_type="quality_repair",
@@ -1590,6 +1839,9 @@ def write_quality_repair_from_markdown(pack: dict, markdown: str, *, persist: bo
         "qualityAfter": artifact["quality"],
         "generation": A.agent_generation(len(artifact.get("sources") or []), model=str(pack.get("executedAdapter") or "")),
     }
+    if artifact_type == "company_analysis":
+        artifact["executionFacts"] = dict(pack.get("executionFacts") or {})
+        artifact = finalize_company_report(artifact)
     if not persist:
         return artifact
     if artifact_type == "briefing":
@@ -1648,11 +1900,15 @@ def write_investment_review_from_markdown(pack: dict, markdown: str, *, persist:
     review["mode"] = "agent"
     review["generation"] = A.agent_generation(0, model=str(pack.get("executedAdapter") or ""))
     if persist:
-        from features.common.canonical_report_io import safe_child_path
-
-        REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-        # date는 저장된 pack에서도 올 수 있어 경로 조립 전에 봉쇄한다(리뷰 캐시 경로 조작 방지).
-        write_json(safe_child_path(REVIEW_DIR, f"{date}.json"), review)
+        # Agent is allowed to replace only derived Markdown.  The shared v2
+        # finalizer preserves all structured fields and owns CAS/fingerprint
+        # checks so an older CLI result cannot clobber a newer same-day review.
+        from features.investment_review.review_v2 import finalize_and_commit, load_raw
+        from features.investment_review.schema import normalize_review
+        if "baseReviewRevision" not in review:
+            current = load_raw(REVIEW_DIR, str(date))
+            review["baseReviewRevision"] = normalize_review(current, date=str(date)).get("reviewRevision", 0) if current else 0
+        review = finalize_and_commit(data_dir(), REVIEW_DIR, review)
     return review
 
 
@@ -1702,6 +1958,9 @@ def prepare_pack(task_type: str, **kwargs) -> tuple[dict, Path]:
             # 호출자(자동화 스케줄러)에게 웹 보완이 조용히 꺼진다(기업분석에서 실측).
             web_search=kwargs.get("web_search"),
             owner_job_id=owner_job_id,
+            selection_context=kwargs.get("selection_context"),
+            semantic_adapter=kwargs.get("semantic_adapter", ""),
+            semantic_model=kwargs.get("semantic_model", ""),
         )
     if task_type == "company_analysis":
         return prepare_company_analysis_pack(

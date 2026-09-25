@@ -1,0 +1,60 @@
+{
+  "openApiVersion": "1.2.14",
+  "wireSchema": {
+    "accounts": {
+      "result": "Account[]",
+      "required": {
+        "accountNo": "nonempty_string",
+        "accountSeq": "int64",
+        "accountType": "nonempty_string"
+      }
+    },
+    "holdings": {
+      "result": "HoldingsOverview",
+      "overviewObjectFields": ["totalPurchaseAmount", "marketValue", "profitLoss", "dailyProfitLoss"],
+      "items": "HoldingsItem[]",
+      "itemStringFields": ["symbol", "name", "marketCountry", "currency"],
+      "itemDecimalStrings": ["quantity", "lastPrice", "averagePurchasePrice"],
+      "itemObjectFields": ["marketValue", "profitLoss", "dailyProfitLoss", "cost"]
+    }
+  },
+  "accounts": {
+    "result": [
+      {"accountNo": "000000000000", "accountSeq": 7, "accountType": "BROKERAGE"}
+    ]
+  },
+  "holdings": {
+    "result": {
+      "totalPurchaseAmount": {"krw": "0", "usd": "300"},
+      "marketValue": {
+        "amount": {"krw": "0", "usd": "400"},
+        "amountAfterCost": {"krw": "0", "usd": "399"}
+      },
+      "profitLoss": {
+        "amount": {"krw": "0", "usd": "100"},
+        "amountAfterCost": {"krw": "0", "usd": "99"},
+        "rate": "0.333333",
+        "rateAfterCost": "0.33"
+      },
+      "dailyProfitLoss": {
+        "amount": {"krw": "0", "usd": "3"},
+        "rate": "0.0075"
+      },
+      "items": [
+        {
+          "symbol": "AAPL",
+          "name": "Apple",
+          "marketCountry": "US",
+          "currency": "USD",
+          "quantity": "2",
+          "lastPrice": "200",
+          "averagePurchasePrice": "150",
+          "marketValue": {"purchaseAmount": "300", "amount": "400", "amountAfterCost": "399"},
+          "profitLoss": {"amount": "100", "amountAfterCost": "99", "rate": "0.333333", "rateAfterCost": "0.33"},
+          "dailyProfitLoss": {"amount": "3", "rate": "0.0075"},
+          "cost": {"commission": "1", "tax": null}
+        }
+      ]
+    }
+  }
+}

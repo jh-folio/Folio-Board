@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import re
 from collections.abc import Callable
 
@@ -60,6 +62,12 @@ PROMPT = """당신은 리서치 에디터다. 아래 초안을 **다시 쓰지 �
   "현재로서는 A가 더 설득력 있다. 다만 B를 배제하기에는 데이터가 부족하다"로 바꾼다.
 - **caveat를 압축한다.** 같은 불확실성이 여러 번 나오면 가장 중요한 한 곳에만 남긴다.
   한 문단에 유보 표현은 원칙적으로 한 번이다. 불확실성을 **없애지 말고 모아라.**
+- **조건부 서술을 실제 관찰값으로 바꾼다.** "~라면 ~일 수 있다"고 쓴 자리에 초안이
+  이미 가진 관찰값이 답을 주면, 가정법 대신 그 관찰을 말한다 — "금리가 오르면"이 아니라
+  "10년물은 X%까지 올랐다"(그 X가 초안에 있을 때만, 초안의 표기 그대로). **초안에 없는
+  수치를 새로 넣는 것은 여전히 금지이고, 초안이 연결하지 않은 인과를 새로 만드는 것도
+  금지다** — 관찰과 결과를 초안이 잇지 않았다면 당신이 잇지 마라. 그것은 편집이 아니라
+  분석이다.
 - **반복을 통합한다.** 같은 판단이 여러 섹션에서 되풀이되면 한 곳에서 제대로 말하고
   나머지는 짧게 참조한다.
 - **발언은 실명과 시점을 살린다.** "연준은 ~라고 설명했다"처럼 뭉개지 말고,
@@ -229,7 +237,8 @@ def edit_report(
         return {"markdown": original, "status": "skipped", "violations": []}
     try:
         raw = run_call(PROMPT, _context(original, thesis, section_budgets))
-    except Exception:  # noqa: BLE001 - 편집 실패가 보고서를 죽이지 않는다
+    except Exception as error:  # noqa: BLE001 - 편집 실패가 보고서를 죽이지 않는다
+        propagate_interruption(error)
         return {"markdown": original, "status": "unavailable", "violations": []}
     edited = re.sub(r"^```(?:markdown)?\s*|\s*```$", "", str(raw or "").strip(), flags=re.IGNORECASE | re.DOTALL)
     violations = check_edit(original, edited)

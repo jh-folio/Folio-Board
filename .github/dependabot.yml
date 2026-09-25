@@ -1,4 +1,4 @@
-# Folio OS keeps three reproducibility gates that Dependabot cannot satisfy on its own:
+# Folio Board keeps three reproducibility gates that Dependabot cannot satisfy on its own:
 #
 #   1. tests/test_todo15_ci_workflow_contract.py pins every action to a commit SHA, so an
 #      action bump fails until the same commit updates ACTION_PINS.

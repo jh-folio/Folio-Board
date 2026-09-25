@@ -94,7 +94,7 @@ def parse_wikipedia_kospi200(html_text: str) -> list[dict]:
 
 
 def fetch_wikipedia_html(url: str = WIKIPEDIA_URL) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Folio-OS/1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Folio-Board/1.0"})
     with urllib.request.urlopen(request, timeout=25) as response:
         return response.read().decode("utf-8", "replace")
 

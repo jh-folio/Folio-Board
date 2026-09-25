@@ -1,6 +1,7 @@
 """Daily briefing generation service."""
 import os
 import re
+import datetime as dt
 from pathlib import Path
 
 from features.common.canonical_report_io import safe_child_path
@@ -57,14 +58,15 @@ from features.daily_briefing.selection import (
 )
 from features.daily_briefing.source_integrity import (
     attach_source_ids,
+    attach_source_ids_preserving_aliases,
+    markdown_external_links,
+    normalize_source_url,
     reconcile_source_ledger,
     source_manifest_prompt,
 )
 from features.llm_settings.client import (
-    request_claude,
-    request_gemini,
-    request_openai,
-    selected_llm_config,
+    request_cli_text,
+    selected_cli_config,
     strip_llm_citation_markers,
     use_web_search_for_briefing,
 )
@@ -72,7 +74,10 @@ from features.common.quality_generation.prompt_hints import render_prompt_hints
 from features.common.quality_generation.preflight_enrichment import build_preflight_evidence_context
 from features.common.quality_generation.quality_targets import render_quality_target_context
 from features.common.quality_generation.telemetry import normalize_token_usage
-from features.market_memory.snapshot import render_market_memory_context
+from features.market_memory.snapshot import (
+    current_market_state_snapshot,
+    render_market_memory_context,
+)
 from features.common.workspace import data_dir
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -303,6 +308,19 @@ _SOURCE_HEADING_LOOSE_RE = re.compile(
 )
 
 
+def _strip_trailing_rules(text: str) -> str:
+    """끝에 연달아 붙은 `---` 구분선 줄을 걷어낸다.
+
+    정규식 `(?:\\n\\s*---\\s*)+$`와 같은 결과지만, `\\s`가 줄바꿈까지 먹어 구분선이
+    수십 개 이어지면 지수적으로 되짚는다(22개에 0.8초). 줄 단위로 걸어 선형으로 둔다.
+    """
+    while True:
+        body, newline, last = text.rstrip().rpartition("\n")
+        if not newline or last.strip() != "---":
+            return text
+        text = body
+
+
 def strip_markdown_sources_section(markdown):
     """본문의 모든 참고자료 섹션을 떼어내고 다른 섹션은 보존한다."""
     text = str(markdown or "")
@@ -317,7 +335,7 @@ def strip_markdown_sources_section(markdown):
         tail = rest[next_heading.start():] if next_heading else ""
         head = text[:match.start()].rstrip()
         # 코드가 붙이던 구분선(`---`)이 꼬리에 남지 않게 한다.
-        head = re.sub(r"(?:\n\s*---\s*)+$", "", head).rstrip()
+        head = _strip_trailing_rules(head).rstrip()
         reduced = f"{head}\n\n{tail.lstrip()}".strip() if tail.strip() else head
         if reduced == text:
             return text.strip()
@@ -355,7 +373,25 @@ def append_briefing_sources(markdown, sources, limit=SOURCE_REF_LIMIT, kind=DEFA
     markdown = strip_markdown_sources_section(str(markdown or "").strip())
     if is_weekly(kind):
         return markdown
-    sources = source_refs(sources or [], limit=limit)
+    # The JSON ledger may intentionally contain the complete safe writer
+    # ledger.  The reader list is a bounded presentation view, with visible
+    # links preferred so an authored link is not hidden by unrelated rows.
+    # Reader rendering intentionally deduplicates the already-complete ledger;
+    # the raw-alias-preserving ``limit=None`` mode belongs to writeback input.
+    source_rows = source_refs(
+        sources or [], limit=max(1, len(sources or []))
+    )
+    visible_urls = [
+        normalize_source_url(row.get("url"))
+        for row in markdown_external_links(markdown)
+        if normalize_source_url(row.get("url"))
+    ]
+    visible_set = set(visible_urls)
+    source_rows = [
+        *[row for url in visible_urls for row in source_rows if normalize_source_url(row.get("url")) == url],
+        *[row for row in source_rows if normalize_source_url(row.get("url")) not in visible_set],
+    ]
+    sources = source_rows[: max(1, int(limit or 1))]
     if not markdown or not sources:
         return markdown
     return f"{markdown}\n\n---\n\n## 참고자료\n\n{source_lines(sources, limit=limit)}"
@@ -373,6 +409,12 @@ def source_refs(docs, limit=SOURCE_REF_LIMIT):
     보고서 전체가 후보 전량 fallback으로 떨어지고 선언된 claim이 버려진다.
     `SOURCE_REF_LIMIT == CONTEXT_DOC_LIMIT` 계약도 그만큼 깎였다.
     """
+    # Writeback passes the complete pack with ``limit=None``. Preserve raw
+    # duplicate-URL IDs in that path so reconcile_source_ledger can canonicalize
+    # aliases and detect cross-URL collisions. Prompt/reference views keep the
+    # historical bounded, deduplicated behavior.
+    if limit is None:
+        return attach_source_ids_preserving_aliases(docs)
     rows = []
     seen = set()
     for d in docs:
@@ -635,14 +677,13 @@ def _fmt_krw(value):
 def korea_market_data_to_markdown(korea_market_data):
     data = korea_market_data or {}
     provider = data.get("provider") or "미확인"
-    warnings = data.get("warnings") or []
+    # Transport/configuration warnings are operational metadata, not evidence
+    # for the writer. Keep them in koreaMarketData, never in reader prose.
     if not data.get("ok"):
         lines = [
             f"한국장 시장 수치를 불러오지 못했습니다(provider={provider}).",
             "- 입력 자료에서 한국장 종가 등락률은 확인되지 않는다.",
         ]
-        if warnings:
-            lines.append(f"- provider 경고: {'; '.join(str(w) for w in warnings[:3])}")
         fx = (data.get("fx") or {}).get("USDKRW") if isinstance(data.get("fx"), dict) else None
         if fx:
             lines.append(f"- 원·달러 환율: {_fmt_num(fx.get('close'), 2)}원 / {_fmt_pct(fx.get('changePct'))} ({fx.get('asOfDate', '')}, {fx.get('source', '')})")
@@ -689,8 +730,6 @@ def korea_market_data_to_markdown(korea_market_data):
         lines.append(f"- 원·달러 환율: {_fmt_num(fx.get('close'), 2)}원 / {_fmt_pct(fx.get('changePct'))} ({fx.get('asOfDate', '')}, {fx.get('source', '')})")
     else:
         lines.append("- 원·달러 환율: 확인 안 됨")
-    if warnings:
-        lines.append(f"- provider 경고: {'; '.join(str(w) for w in warnings[:3])}")
     return "\n".join(lines)
 
 
@@ -754,7 +793,152 @@ def _weekly_context_header(
     ]
 
 
-def _web_supplement_block(market_scope, date, market_snapshot, korea_market_data, *, web_search, lookup, sink, markets=None):
+_KST = dt.timezone(dt.timedelta(hours=9))
+
+
+def _known_kst_date(value):
+    """Return a conservatively parsed calendar date, or ``None``.
+
+    Weekly retrospectives are keyed by a KST calendar date while Market Memory
+    snapshots normally store an ISO timestamp in UTC.  A timezone-less
+    timestamp is intentionally not treated as known: doing so could move a
+    snapshot across the weekly cutoff and silently introduce future context.
+    """
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is None:
+            return None
+        return value.astimezone(_KST).date()
+    if isinstance(value, dt.date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(_KST).date()
+
+
+def _render_market_memory_snapshot_context(snapshot, *, max_sources=6):
+    """Render only the already-checked snapshot; never re-read the database."""
+    if not isinstance(snapshot, dict):
+        return ""
+
+    def _items(value, limit):
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [str(item) for item in value[:limit] if item]
+
+    lines = [
+        "## Market Memory Context",
+        "이 블록은 Folio Board의 중기 시장 배경입니다. 기업 고유 사실의 evidence가 아니라 시장 배경/context로만 사용하세요.",
+        "- layer: source-grounded market context (비교 맥락 전용)",
+        f"- source: market_state_snapshot",
+        f"- asOf: {snapshot.get('asOf', '')}",
+        f"- freshness: {snapshot.get('freshness', '')}",
+        f"- headline: {snapshot.get('headline', '')}",
+        f"- summary: {snapshot.get('oneLineSummary', '')}",
+    ]
+    for key in ("marketRegime", "actionPosture"):
+        if snapshot.get(key):
+            lines.append(f"- {key}: {snapshot.get(key)}")
+
+    watch_items = _items(snapshot.get("watchItems"), 5)
+    if watch_items:
+        lines.extend(["", "### Watch Items", *[f"- {item}" for item in watch_items]])
+
+    views = snapshot.get("marketViews")
+    if isinstance(views, dict) and views:
+        lines.extend(["", "### Market Views"])
+        for key in ("overall", "us", "kr", "europe", "jp"):
+            view = views.get(key)
+            if not isinstance(view, dict):
+                continue
+            lines.append(
+                f"- {key}: {view.get('headline', '')} | "
+                f"{view.get('marketInterpretation', '')} | "
+                f"{view.get('actionSummary', '')}".strip()
+            )
+
+    drivers = snapshot.get("keyDrivers")
+    if isinstance(drivers, (list, tuple)) and drivers:
+        lines.extend(["", "### Key Drivers"])
+        for driver in drivers[:5]:
+            if not isinstance(driver, dict):
+                continue
+            title = driver.get("title") or driver.get("stateLabel") or ""
+            summary = driver.get("summary") or ""
+            if title or summary:
+                lines.append(f"- {title}: {summary}".strip())
+
+    counter = _items(snapshot.get("counterEvidence"), 5)
+    if counter:
+        lines.extend(["", "### Counter Evidence", *[f"- {item}" for item in counter]])
+    uncertainties = _items(snapshot.get("uncertainties"), 5)
+    if uncertainties:
+        lines.extend(["", "### Uncertainties", *[f"- {item}" for item in uncertainties]])
+
+    sources = snapshot.get("sourceRefs")
+    if isinstance(sources, (list, tuple)) and sources:
+        lines.extend(["", "### Source Refs"])
+        for source in sources[: int(max_sources or 6)]:
+            if not isinstance(source, dict):
+                continue
+            label = " | ".join(
+                str(part)
+                for part in (
+                    source.get("id", ""), source.get("source", ""),
+                    source.get("title", ""), source.get("date", ""),
+                )
+                if part
+            )
+            if label:
+                lines.append(f"- {label}")
+    return "\n".join(lines).strip()
+
+
+def _weekly_market_memory_context(weekly_window):
+    """Use Market Memory only when its existing snapshot predates the window.
+
+    There is no historical snapshot lookup here by design.  If the current
+    snapshot cannot be proven to belong to the retrospective (or its date is
+    unknown), expose an unavailable marker instead of promoting newer state as
+    if it were historical context.
+    """
+    cutoff = _known_kst_date((weekly_window or {}).get("weekEnd"))
+    if cutoff is None:
+        reason = "weekly cutoff is unavailable"
+    else:
+        try:
+            snapshot = current_market_state_snapshot(MARKET_MEMORY_DB_PATH)
+        except Exception:  # noqa: BLE001
+            snapshot = None
+        snapshot_date = _known_kst_date(snapshot.get("asOf")) if isinstance(snapshot, dict) else None
+        if snapshot_date is not None and snapshot_date <= cutoff:
+            context = _render_market_memory_snapshot_context(snapshot)
+            if context:
+                return context
+            reason = "matching Market Memory snapshot is unavailable"
+        elif snapshot_date is None:
+            reason = "Market Memory snapshot date is unavailable"
+        else:
+            reason = "current Market Memory snapshot is after the weekly cutoff"
+    return "\n".join([
+        "## Market Memory Context",
+        "status: unavailable",
+        "해당 주간 회고 구간에 맞는 Market Memory 스냅샷을 복원할 수 없습니다.",
+        f"{reason}. 최신 스냅샷을 과거 근거로 사용하지 않습니다.",
+    ])
+
+
+def _web_supplement_block(market_scope, date, market_snapshot, korea_market_data, *, web_search, lookup, sink, markets=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, market_windows=None, session_modes=None):
     """시장별 웹 보완 블록. 실패는 빈 블록으로 끝난다 — 조회가 브리핑을 죽이지 않는다.
 
     **시장은 범위 이름이 아니라 목록으로 받는다.** 이름으로 다시 풀면 임의 조합이
@@ -766,12 +950,19 @@ def _web_supplement_block(market_scope, date, market_snapshot, korea_market_data
     blocks = []
     for scope in targets:
         try:
+            from features.daily_briefing.schema import briefing_session_date
+            session_date = briefing_session_date(
+                date, scope, market_windows=market_windows,
+                session_mode=(session_modes or {}).get(scope, ""),
+            )
             block, summary = briefing_web_supplement(
-                scope, date,
+                scope, session_date,
                 market_snapshot=market_snapshot,
                 korea_market_data=korea_market_data if scope == "kr" else None,
                 web_search=bool(web_search),
                 lookup=lookup,
+                kind=kind,
+                weekly_window=weekly_window,
             )
         except Exception:  # noqa: BLE001
             block, summary = "", {"ok": False, "reason": "supplement_failed"}
@@ -810,6 +1001,75 @@ def build_llm_context(
     market_scope = normalize_market_scope(market_scope)
     briefing_type = normalize_briefing_type(briefing_type)
     kind = normalize_briefing_kind(kind)
+
+    # A multi-market Agent pack must carry one bounded writer set per market.
+    # API generation calls this function once per market; dispatching the same
+    # way here keeps the two production paths value-equivalent while retaining
+    # a single-market public return shape.
+    requested_markets = [str(scope).lower() for scope in (markets or []) if scope]
+    if len(requested_markets) > 1 and market_scope in AGGREGATE_SCOPES:
+        combined_contexts = []
+        combined_docs = []
+        seen_writer_keys = set()
+        original_docs = list(docs or [])
+        for target in requested_markets:
+            target_docs = documents_for_scope(original_docs, target)
+            target_keys = {_doc_key(doc) for doc in target_docs if _doc_key(doc)}
+            target_groups = [
+                {
+                    **group,
+                    "docs": [doc for doc in group.get("docs", []) if _doc_key(doc) in target_keys],
+                }
+                for group in (groups or [])
+            ]
+            target_groups = [group for group in target_groups if group.get("docs")]
+            target_drivers = [
+                {
+                    **driver,
+                    "docs": [doc for doc in driver.get("docs", []) if _doc_key(doc) in target_keys],
+                }
+                for driver in (market_drivers or [])
+            ]
+            target_drivers = [driver for driver in target_drivers if driver.get("docs")]
+            target_issues = []
+            for issue in issue_coverage or []:
+                issue_market = str(issue.get("market") or "").lower()
+                issue_keys = {
+                    _doc_key(doc) for doc in issue.get("docs", []) if _doc_key(doc)
+                }
+                if issue_market == target or issue_keys & target_keys:
+                    target_issues.append(issue)
+            target_context, target_writer_docs = build_llm_context(
+                date,
+                source_date,
+                target_docs,
+                target_groups,
+                market_drivers=target_drivers,
+                market_snapshot=market_snapshot,
+                memories=memories,
+                market_windows=market_windows,
+                prev_checklist=prev_checklist.get(target, "") if isinstance(prev_checklist, dict) else "",
+                korea_market_data=korea_market_data,
+                market_scope=target,
+                briefing_type=briefing_type,
+                issue_coverage=target_issues,
+                session_modes=session_modes,
+                kind=kind,
+                weekly_window=weekly_window,
+                calendar_block=calendar_block,
+                concentration_context=concentration_context,
+                web_search=web_search,
+                web_lookup_call=web_lookup_call,
+                web_lookup_sink=web_lookup_sink,
+                markets=[target],
+            )
+            combined_contexts.append(f"## {target.upper()} writer input\n\n{target_context}")
+            for doc in target_writer_docs:
+                key = _doc_key(doc)
+                if key and key not in seen_writer_keys:
+                    seen_writer_keys.add(key)
+                    combined_docs.append(doc)
+        return "\n\n".join(combined_contexts), combined_docs
     doc_limit = context_doc_limit(kind)
     docs = documents_for_scope(docs, market_scope)
     doc_keys = {_doc_key(doc) for doc in docs}
@@ -929,6 +1189,21 @@ def build_llm_context(
     )
     diversity_warnings.extend(warning for warning in cap_warnings if warning not in diversity_warnings)
 
+    # Final writer set is fixed before any context text is rendered.  The same
+    # rows (and stable IDs) are returned to API/CLI callers and fed to the
+    # manifest catalog; no later source re-selection may diverge from the text.
+    def _ref_tier(doc):
+        return _source_priority_tier(doc, market_windows, driver_keys, company_group_keys, market_scope)
+
+    for d in selected:
+        d["refTier"] = _ref_tier(d)
+    selected, final_warnings = diversify_ranked_documents(
+        sorted(selected, key=lambda d: _reference_sort_key(d, market_windows, market_scope), reverse=True),
+        limit=doc_limit, per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
+    )
+    diversity_warnings.extend(warning for warning in final_warnings if warning not in diversity_warnings)
+    selected = attach_source_ids(selected, limit=doc_limit)
+
     def _tier(doc):
         key = _doc_key(doc)
         if key in driver_keys:
@@ -937,8 +1212,26 @@ def build_llm_context(
             return "group"
         return "support"
 
+    # Persist the exact bounded excerpt that is rendered below. Q3 can validate
+    # claims against the writer input actually supplied to the model instead of
+    # reconstructing an unknown slice from the full article later.
+    for d in selected:
+        d["writerExcerpt"] = briefing_doc_excerpt(
+            d, clean_brief_text, _tier(d)
+        )
+    # A row containing only page chrome/menu text is a candidate, not writer
+    # evidence. Headline-only rows with a real title still have their title in
+    # the normal document fields and remain eligible when the title is the
+    # stored summary (the established intake shape).
+    selected = [d for d in selected if d.get("writerExcerpt")]
+    writer_keys = {_doc_key(doc) for doc in selected}
+
     from features.common.market_data.snapshot import snapshot_to_markdown
-    market_memory_context = render_market_memory_context(MARKET_MEMORY_DB_PATH)
+    market_memory_context = (
+        _weekly_market_memory_context(weekly_window)
+        if kind == WEEKLY
+        else render_market_memory_context(MARKET_MEMORY_DB_PATH)
+    )
     if kind == WEEKLY:
         # 주간은 세션 지침을 태우지 않는다. 아래 일간 블록은 절반이 "오늘 어느 세션을
         # 다루는가"에 대한 지시라, 한 주를 덮는 글에 그대로 넣으면 모델이 마지막 하루를
@@ -953,6 +1246,12 @@ def build_llm_context(
             market_memory_context=market_memory_context,
             doc_count=len(docs),
         )
+        lines.append(_web_supplement_block(
+            market_scope, date, market_snapshot, korea_market_data,
+            web_search=web_search, lookup=web_lookup_call, sink=web_lookup_sink,
+            markets=markets, kind=kind, weekly_window=weekly_window,
+            market_windows=market_windows, session_modes=session_modes,
+        ))
     else:
         lines = [
             f"브리핑 대상일: {date}",
@@ -1027,6 +1326,8 @@ def build_llm_context(
                 market_scope, date, market_snapshot, korea_market_data,
                 web_search=web_search, lookup=web_lookup_call, sink=web_lookup_sink,
                 markets=markets,
+                kind=kind, weekly_window=weekly_window,
+                market_windows=market_windows, session_modes=session_modes,
             ),
             "",
             "## 한국장 시장 수치",
@@ -1107,11 +1408,13 @@ def build_llm_context(
         )
     if not memories:
         lines.append("- 참고할 만한 누적 시장 흐름 요약 없음")
+    if isinstance(prev_checklist, dict):
+        prev_checklist = prev_checklist.get(market_scope, "")
     if prev_checklist:
         lines += [
             "",
-            "## 전일 브리핑 체크포인트",
-            "아래는 전일 브리핑에서 '오늘 확인할 것'으로 남긴 항목입니다.",
+            "## 이전 주간 브리핑 확인 사항" if kind == WEEKLY else "## 이전 동일 시장 브리핑 체크포인트",
+            "아래는 같은 시장·같은 종류의 이전 완료 보고서에 남긴 비교 맥락이며 새 독립 근거가 아닙니다.",
             "오늘 자료에서 각 항목의 진행 상황을 확인하고, 브리핑 본문과 새 체크리스트에 반영하세요.",
             "결과가 확인된 항목은 '→ 결과: ...' 형태로 간단히 언급해도 됩니다.",
             "",
@@ -1131,17 +1434,20 @@ def build_llm_context(
             ),
         ]
         for i, driver in enumerate(market_drivers, 1):
+            writer_driver_docs = [doc for doc in driver.get("docs", []) if _doc_key(doc) in writer_keys]
+            if not writer_driver_docs:
+                continue
             markets = ", ".join(driver.get("markets", [])) or "미상"
-            sources = ", ".join(driver.get("sources", [])) or "미상"
+            sources = ", ".join(sorted({str(doc.get("source") or "") for doc in writer_driver_docs if doc.get("source")})) or "미상"
             tags = ", ".join(driver.get("impactTags", [])[:6]) or "없음"
             sectors = ", ".join(driver.get("sectors", [])[:6]) or "없음"
             lines.append(
                 f"\n{i}. driver={driver.get('driver', '')} | score={driver.get('score', 0):.1f} "
                 f"| markets={markets} | sources={sources} | tags={tags} | sectors={sectors}"
             )
-            for dd in driver.get("docs", [])[:3]:
+            for dd in writer_driver_docs[:3]:
                 dtitle = clean_brief_text(dd.get("title", ""), 160)
-                dbrief = doc_brief_text(dd, 320)
+                dbrief = clean_brief_text(dd.get("writerExcerpt", ""), 320)
                 lines.append(
                     f"   - [{dd.get('source', '')}, {dd.get('date', '')}, {dd.get('marketBucket', '')}, "
                     f"score={dd.get('briefingDocScore', 0):.1f}] {dtitle}"
@@ -1155,21 +1461,27 @@ def build_llm_context(
         "묶음 순서는 **종합 점수 순**이다 — 이야기(보도량·적합도) 점수에 시장 영향력 점수(시총 상위 구성종목 가산)를 더했다. 최종 선정은 프롬프트의 선정 기준을 따른다.",
     ]
     for i, group in enumerate(groups[:6], 1):
+        writer_group_docs = [doc for doc in group.get("docs", []) if _doc_key(doc) in writer_keys]
+        if not writer_group_docs:
+            continue
         subject = group.get("company") or group.get("sector") or "시장"
         tags = []
-        for d in group.get("docs", []):
+        for d in writer_group_docs:
             for tag in d.get("impactTags", []) + d.get("sectors", []):
                 if tag and tag not in tags:
                     tags.append(tag)
         # 종합 점수의 가중 근거를 그대로 보여준다 — 모델이 왜 이 순서인지 알아야
         # 순위를 시장 영향력으로 오독하지 않는다.
         major_mark = " | 시장 시총 상위" if group.get("isMajor") else ""
-        lines.append(f"\n{i}. {subject} | 태그: {', '.join(tags[:6]) or '없음'} | 관련자료: {len(group.get('docs', []))}건{major_mark}")
+        lines.append(f"\n{i}. {subject} | 태그: {', '.join(tags[:6]) or '없음'} | 관련자료: {len(writer_group_docs)}건{major_mark}")
         # sourceWeight가 아니라 브리핑 적합도(분석 우선순위 가중 포함)로 정렬해 KR D-1
         # 정규장 자료가 계속 상단에 노출되지 않게 한다.
-        for gd in sorted(group.get("docs", []), key=lambda d: briefing_doc_score(d, market_windows), reverse=True)[:3]:
+        for gd in sorted(
+            writer_group_docs,
+            key=lambda d: briefing_doc_score(d, market_windows), reverse=True,
+        )[:3]:
             gtitle = clean_brief_text(gd.get("title", ""), 160)
-            gbrief = doc_brief_text(gd, 240)
+            gbrief = clean_brief_text(gd.get("writerExcerpt", ""), 240)
             suffix = f" — {gbrief}" if gbrief and gbrief.lower() != gtitle.lower() else ""
             lines.append(f"   [{doc_analysis_priority(gd, market_windows)} | {doc_market_bucket(gd, market_windows)} | {gd.get('source', '')}] {gtitle}{suffix}")
 
@@ -1180,47 +1492,30 @@ def build_llm_context(
     for i, d in enumerate(selected, 1):
         tier = _tier(d)
         title = clean_brief_text(d.get("title", ""), 220)
-        summary = briefing_doc_excerpt(d, clean_brief_text, tier)
+        summary = d.get("writerExcerpt", "")
         companies = ", ".join(c.get("name", "") for c in d.get("companies", [])) or "없음"
         tags = ", ".join((d.get("impactTags", []) + d.get("sectors", []))[:8]) or "없음"
         url = d.get("url", "")
         lines.append(
-            f"[{i}] 자료등급: {tier_label[tier]} | 분석우선순위: {doc_analysis_priority(d, market_windows)} | 출처: {canonical_publisher(d)} | 본문가용성: {d.get('bodyAvailability', '미상')} | 발행일: {d.get('date', '')} | 시장기준일(추정): {d.get('marketSessionDate') or d.get('date', '')} | 시장시간대: {doc_market_bucket(d, market_windows)} | 기업: {companies} | 태그: {tags}\n"
+            f"[{i}] sourceId={d.get('sourceId', '')} | 자료등급: {tier_label[tier]} | 분석우선순위: {doc_analysis_priority(d, market_windows)} | 출처: {canonical_publisher(d)} | 본문가용성: {d.get('bodyAvailability', '미상')} | 발행일: {d.get('date', '')} | 시장기준일(추정): {d.get('marketSessionDate') or d.get('date', '')} | 시장시간대: {doc_market_bucket(d, market_windows)} | 기업: {companies} | 태그: {tags}\n"
             f"제목: {title}\n"
             f"요약: {summary}\n"
             f"URL: {url or '(local file: ' + d.get('path', '') + ')'}\n"
         )
 
-    # 참고자료 우선순위 4단계: 핵심 동인(core_driver) → 주도 기업(leading_company)
-    # → 시장 가격/수급 흐름 연결(market_flow) → 나머지(support).
-    # 같은 등급 안에서는 단순 최신순이 아니라 브리핑 적합도(시장 반응 연결성 포함)가
-    # 높은 자료를 우선해, driver 키워드만 스친 단발 기사가 상단에 올라오지 않게 한다.
-    # (source_refs가 앞에서부터 N개를 취하므로 정렬 순서가 곧 참고자료 우선순위가 된다.)
-    def _ref_tier(doc):
-        return _source_priority_tier(doc, market_windows, driver_keys, company_group_keys, market_scope)
-
-    for d in selected:
-        d["refTier"] = _ref_tier(d)
-    selected_for_refs = sorted(
-        selected, key=lambda d: _reference_sort_key(d, market_windows, market_scope), reverse=True,
-    )
-    selected_for_refs, final_warnings = diversify_ranked_documents(
-        selected_for_refs, limit=doc_limit, per_publisher=PER_PUBLISHER_CAP, minimum_publishers=MINIMUM_PUBLISHERS,
-    )
-    for warning in final_warnings:
-        if warning not in diversity_warnings:
-            diversity_warnings.append(warning)
-    return "\n".join(lines), selected_for_refs
+    return "\n".join(lines), selected
 
 
 def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, web_search_override=None, llm_override=None, market_snapshot=None, memories=None, market_windows=None, prev_checklist=None, korea_market_data=None, quality_preflight=None, market_scope="both", briefing_type="default", issue_coverage=None, session_modes=None, kind=DEFAULT_BRIEFING_KIND, weekly_window=None, calendar_block="", concentration_context="", markets=None):
-    cfg = selected_llm_config()
+    if llm_override is False:
+        return None, "disabled"
+    cfg = selected_cli_config()
     kind = normalize_briefing_kind(kind)
     llm_on = cfg["enabled"] if llm_override is None else bool(llm_override)
     if not llm_on:
         return None, "disabled"
-    if not cfg["apiKey"]:
-        return None, f"missing_{cfg['provider']}_api_key"
+    if not cfg["enabled"]:
+        return None, "cli_disabled"
     prompt = read_briefing_prompt(market_scope, kind)
     if not prompt:
         return None, "missing_prompt"
@@ -1276,14 +1571,14 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
     candidate_sources = source_refs(used_docs, limit=source_ref_limit(kind))
     context = "\n\n".join([context, source_manifest_prompt(candidate_sources)])
     web_status = "web_search" if web_search else "local_only"
+    from features.common.quality_generation.call_budget import current_briefing_budget
+    budget = current_briefing_budget()
+    timing = {"timeout_seconds": budget.remaining_seconds()} if budget else {}
     try:
         max_tokens = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "7000")))
-        if cfg["provider"] == "gemini":
-            text, response_id, usage = request_gemini(cfg, prompt, context, web_search=web_search, include_usage=True)
-        elif cfg["provider"] == "claude":
-            text, response_id, usage = request_claude(cfg, prompt, context, web_search=web_search, include_usage=True)
-        else:
-            text, response_id, usage = request_openai(cfg, prompt, context, web_search=web_search, include_usage=True)
+        text, response_id, usage = request_cli_text(cfg, prompt, context, web_search=False, include_usage=True, **timing)
+        if budget:
+            budget.check_active()
         if not text:
             return None, "empty_response"
         text, resolved_sources, generation_evidence, claim_ledger = reconcile_source_ledger(
@@ -1311,12 +1606,28 @@ def generate_llm_briefing(date, source_date, docs, groups, market_drivers=None, 
             "claimLedger": claim_ledger,
             "responseId": response_id,
             "webSearch": web_search,
+            "writerWebSearch": False,
             # 시장별 웹 보완 요약. 저장 JSON까지 가야 "웹이 실제로 기여했나"를 나중에
             # 확인할 수 있다 — 배선이 죽어 있던 것을 저장물이 말해 준 전례가 있다.
             "webLookup": web_lookup_sink,
             "tokenUsage": normalize_token_usage(usage, prompt=prompt, context=context, output=text, max_output_tokens=max_tokens),
         }, f"ok_{web_status}"
-    except Exception:
+    except Exception as error:
+        # This path intentionally retains the established rules fallback.
+        # Observe the real provider failure before returning that fallback;
+        # never expose provider text or change the report's authority.
+        try:
+            from features.common.jobs import current_diagnostic_recorder, diagnostic_stage_failure
+
+            diagnostic_stage_failure(
+                current_diagnostic_recorder(),
+                error,
+                stage_id=None,
+                stage_code="generate",
+                boundary="generic",
+            )
+        except Exception:
+            pass
         return None, "generation_failed"
 
 
@@ -1339,14 +1650,24 @@ def llm_status_message(generation):
     return "규칙 기반 브리핑으로 생성했습니다."
 
 
-def choose_leaders(groups):
+def choose_leaders(groups, *, qualified_only=False):
     leaders = []
     for g in groups:
         company = g.get("company")
+        if qualified_only:
+            # Company mentions in sector group metadata alone are not a
+            # company-specific event. Require a direct headline and excerpt.
+            direct = [d for d in g.get("docs", []) if company and
+                      str(company).casefold() in str(d.get("title") or "").casefold() and
+                      briefing_doc_excerpt(d, clean_brief_text, "group")]
+            if not direct:
+                continue
         if company and company not in leaders:
             leaders.append(company)
         if len(leaders) >= 2:
             break
+    if qualified_only:
+        return leaders[:2]
     if len(leaders) < 2:
         for g in groups:
             sector = g.get("sector")
@@ -1459,15 +1780,7 @@ def _rule_checkpoints(market_drivers, leaders):
 
 def _rule_leader_sections(market_label, leaders, leader_groups, company_reaction_note):
     if not leaders:
-        return """## 3. 오늘의 기업 신호
-
-**한 줄 결론:** 직접 근거가 충분한 개별 주도 기업을 억지로 채우지 않습니다.
-
-· 기업별 직접 기사 근거 부족
-· 업종 또는 시장 단위 흐름을 우선
-· 다음 거래일 가격·수급 확인 필요
-
-오늘 자료만으로 별도 기업 섹션을 만들 만큼 직접 근거가 충분한 종목은 확인되지 않았습니다. 핵심 변수와 업종 흐름은 앞 절에서 다루고, 개별 기업 판단은 후속 기사와 가격·수급 반응을 기다립니다."""
+        return ""
     sections = []
     for index, leader in enumerate(leaders[:2]):
         ordinal = "①" if index == 0 else "②"
@@ -1513,7 +1826,22 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
         else f"Daily Market Briefing — {date.replace('-', '.')}"
     )
     weekend_mode = bool(market_windows.get("weekendOrHolidayNewsMode"))
-    leaders = list(leading_companies)[:2] if leading_companies is not None else choose_leaders(groups)
+    if leading_companies is not None:
+        leaders = list(leading_companies)[:2]
+        # Concentration may nominate fewer than two candidates. Keep its
+        # nominated order, then fill only from other directly evidenced
+        # companies. Never manufacture a placeholder; the fixed-two contract
+        # will reject the rules candidate if two real names are unavailable.
+        if market_scope in {"us", "kr"}:
+            for candidate in choose_leaders(groups, qualified_only=True):
+                if candidate not in leaders:
+                    leaders.append(candidate)
+                if len(leaders) >= 2:
+                    break
+    else:
+        leaders = choose_leaders(
+            groups, qualified_only=market_scope in {"us", "kr"},
+        )
     top_groups = groups[:4]
 
     # 시장 흐름 섹션 수치 앵커: 스냅샷이 있으면 실제 지수/자산가격 수치를 제시한다.
@@ -1668,6 +1996,8 @@ def build_prompt_markdown(date, source_date, docs, groups, headlines, market_dri
 
 ## 오늘의 결론
 
+**한 줄 결론:** {conclusion_character}
+
 **오늘의 시장 성격:** {conclusion_character}
 
 **핵심 변수:** {key_vars}.
@@ -1706,7 +2036,7 @@ _PREV_CHECKLIST_RE = re.compile(
 )
 
 
-def extract_prev_checklist(markdown):
+def extract_prev_checklist(markdown, *, kind=DEFAULT_BRIEFING_KIND):
     """브리핑 Markdown에서 다음 거래일 확인 항목 섹션을 추출한다.
 
     제목은 `briefing_checkpoint_headings()`(MARKET_LABELS 파생)에서 조립해 네 시장을
@@ -1714,7 +2044,11 @@ def extract_prev_checklist(markdown):
     함께 인식한다. 섹션 번호(예: '6. ')가 붙어도 매칭되고, 다음 H1~H3 제목 직전까지
     본문을 가져온다.
     """
-    m = _PREV_CHECKLIST_RE.search(str(markdown or ""))
+    if normalize_briefing_kind(kind) == WEEKLY:
+        headings = "|".join(re.escape(h) for h in briefing_checkpoint_headings(kind=WEEKLY))
+        m = re.search(rf"^##\s+(?:\d+\.\s*)?(?:{headings})[^\n]*\n(.*?)(?=^#{{1,3}}\s|\Z)", str(markdown or ""), re.M | re.S)
+    else:
+        m = _PREV_CHECKLIST_RE.search(str(markdown or ""))
     return m.group(1).strip() if m else ""
 
 
@@ -2114,13 +2448,32 @@ def delete_briefing(date, market=None, kind=DEFAULT_BRIEFING_KIND):
     return result
 
 
-def load_prev_briefing(current_date):
+def load_prev_briefing(current_date, *, market_scope=None, kind=DEFAULT_BRIEFING_KIND, current_session_date=None, current_cutoff=""):
     """current_date 이전에 저장된 가장 최근 **일간** 브리핑을 반환한다.
 
     주간은 세지 않는다. 전일 체크포인트를 잇는 자리라 한 주를 덮는 보고서를 물어오면
     오늘의 세션 체크리스트가 지난주 확인 항목으로 바뀐다.
     """
     import json
+
+    if market_scope in SINGLE_MARKET_SCOPES:
+        from features.daily_briefing.news_selection import select_prior_briefing_baseline
+        rows = []
+        for path in _briefing_report_paths():
+            report = _read_briefing_json(path)
+            if not isinstance(report, dict):
+                continue
+            actual = str(report.get("marketScope") or "")
+            if actual == market_scope:
+                rows.append(report)
+            elif isinstance(report.get("briefings"), dict) and market_scope in report["briefings"]:
+                rows.append(briefing_scope_view(report, market_scope))
+        selected = select_prior_briefing_baseline(
+            rows, market=market_scope, kind=kind,
+            current_session_date=current_session_date or current_date,
+            current_cutoff=current_cutoff,
+        )
+        return dict(selected.report) if selected.report is not None else None
 
     for path in _briefing_report_paths(BRIEFING_DAILY_REPORT_FILE_RE):
         if path.stem < current_date:
@@ -2129,6 +2482,68 @@ def load_prev_briefing(current_date):
             except Exception:
                 continue
     return None
+
+
+def previous_checklists_by_market(
+    date,
+    markets,
+    *,
+    kind=DEFAULT_BRIEFING_KIND,
+    market_windows=None,
+    weekly_window=None,
+    cutoff="",
+    selection_context=None,
+):
+    from features.daily_briefing.schema import briefing_session_date
+    result = {}
+    for scope in markets:
+        # Q5 shadow/active US/KR daily runs must use the detached baseline that
+        # was pinned before intake.  Reading the report directory again here
+        # would allow newly collected material to change the writer's prior
+        # checkpoint comparison.  Off and unsupported scopes retain the legacy
+        # read path exactly.
+        pinned_mode = str((selection_context or {}).get("mode") or "").strip().lower()
+        if (
+            kind == DEFAULT_BRIEFING_KIND
+            and scope in {"us", "kr"}
+            and pinned_mode in {"shadow", "active"}
+        ):
+            baseline = ((selection_context or {}).get("baselines") or {}).get(scope)
+            if not isinstance(baseline, dict) or baseline.get("status") != "baseline_ready":
+                result[scope] = ""
+                continue
+            report = baseline.get("report") if isinstance(baseline.get("report"), dict) else {}
+            if "writerPreviousChecklist" in report:
+                result[scope] = str(report["writerPreviousChecklist"] or "")
+                continue
+            values = []
+            for key in ("checkpointQuestions", "checkpoints", "previousCheckpoints"):
+                value = report.get(key)
+                if isinstance(value, (list, tuple)):
+                    values.extend(value)
+                elif value:
+                    values.append(value)
+            value = report.get("checkpoint") or report.get("checklist")
+            if isinstance(value, dict):
+                values.extend(value.values())
+            elif value:
+                values.append(value)
+            lines = []
+            for item in values[:2]:
+                if isinstance(item, dict):
+                    line = str(item.get("text") or item.get("question") or item.get("condition") or "").strip()
+                else:
+                    line = str(item).strip()
+                if line:
+                    lines.append(line)
+            result[scope] = "\n".join(lines)
+            continue
+        session = ((weekly_window or {}).get("weekEnd") if kind == WEEKLY else
+                   briefing_session_date(date, scope, market_windows=market_windows))
+        previous = load_prev_briefing(date, market_scope=scope, kind=kind,
+            current_session_date=session or date, current_cutoff=cutoff)
+        result[scope] = extract_prev_checklist((previous or {}).get("markdown", ""), kind=kind)
+    return result
 
 
 def list_briefings():
@@ -2142,13 +2557,8 @@ def list_briefings():
             return None
 
     rows = [_read_json(p) for p in _briefing_report_paths()]
-    out = [r for r in rows if r]
-    for row in out:
-        if row.get("quality") or not row.get("markdown"):
-            continue
-        try:
-            from features.common.research_quality.evaluator import evaluate_artifact
-            row["quality"] = evaluate_artifact("briefing", row)
-        except Exception:
-            pass
-    return out
+    # Listing is a read-only presentation path.  Do not lazily run the
+    # briefing semantic evaluator or attach a derived quality field to a
+    # loaded report; production briefing content is assessed only by the
+    # explicit offline evaluation endpoint.
+    return [r for r in rows if r]

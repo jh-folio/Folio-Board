@@ -1,6 +1,6 @@
 # React SPA Browser Smoke Test
 
-Folio OS의 기본 프론트엔드는 React SPA다. 자동/수동 브라우저 smoke test는 빌드 산출물과 실제 서버 화면의 최소 계약을 확인한다.
+Folio Board의 기본 프론트엔드는 React SPA다. 자동/수동 브라우저 smoke test는 빌드 산출물과 실제 서버 화면의 최소 계약을 확인한다.
 
 ## 실행 전 조건
 

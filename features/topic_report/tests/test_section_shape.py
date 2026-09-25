@@ -35,16 +35,17 @@ def test_plan_sections_follow_the_analysis_axes():
 
 
 def test_reserved_names_and_duplicates_are_filtered_out():
-    sections = compose_sections(["결론", "나만의 축", "Executive Summary", "또 다른 축", "나만의 축"])
+    sections = compose_sections(["반론과 리스크", "나만의 축", "Executive Summary", "또 다른 축", "나만의 축"])
     assert body_sections(sections) == ["나만의 축", "또 다른 축"]
-    assert sections.count("결론") == 1, "꼬리 이름을 본문에 다시 쓰지 않는다"
+    assert sections.count("반론과 리스크") == 1, "꼬리 이름을 본문에 다시 쓰지 않는다"
     assert sections.count("Executive Summary") == 1
 
 
 def test_too_few_usable_body_sections_falls_back_to_the_default_skeleton():
     # 계획이 쓸 수 있는 본문을 못 내놓으면 기존 골격으로 되돌린다 — 섹션 하나짜리
-    # 보고서를 내보내는 것보다 낫다.
-    sections = compose_sections(["결론", "나만의 축"])
+    # 보고서를 내보내는 것보다 낫다. "결론"은 0.6 Phase 1(2026-09-13)부터 예약 이름이
+    # 아니라서(꼬리 헤딩에서 빠졌다) 여기서는 계속 예약 이름인 "반론과 리스크"로 예시를 든다.
+    sections = compose_sections(["반론과 리스크", "나만의 축"])
     assert body_sections(sections) == ["현재 상황", "작동 경로", "수혜/피해 자산과 기업"]
 
 
@@ -122,7 +123,11 @@ def _validate(markdown, expected):
 
 def test_missing_required_tail_blocks():
     expected = compose_sections(["축1", "축2"])
-    broken = _report(["축1", "축2"]).replace("## 결론\n\n내용 결론 4.75% 이상이면 악화.\n\n", "")
+    # "결론"은 0.6 Phase 1(2026-09-13)부터 고정 꼬리가 아니라서 꼬리 가운데 항목인
+    # "앞으로 확인할 체크포인트"를 지워 같은 회귀(필수 꼬리 하나 누락)를 재현한다.
+    broken = _report(["축1", "축2"]).replace(
+        "## 앞으로 확인할 체크포인트\n\n내용 앞으로 확인할 체크포인트 4.75% 이상이면 악화.\n\n", ""
+    )
     codes = {row["code"] for row in _validate(broken, expected)["defects"]}
     assert "required_sections_missing" in codes
 

@@ -557,7 +557,9 @@ pandas==2.3.3 \
     --hash=sha256:ee67acbbf05014ea6c763beb097e03cd629961c8a632075eeb34247120abcb4b \
     --hash=sha256:f086f6fe114e19d92014a1966f43a3e62285109afe874f067f5abbdcbb10e59c \
     --hash=sha256:f8bfc0e12dc78f777f323f55c58649591b2cd0c43534e8355c51d3fede5f4dee
-    # via yfinance
+    # via
+    #   -r requirements.txt
+    #   yfinance
 peewee==4.3.0 \
     --hash=sha256:62a43d5934e7986747285124059c5ad8908cc70e538472aadae5cb5e9f10006c \
     --hash=sha256:f2e6686e6fc61d236fd12f370bfd42955b7b42bbd9954f207d02434a0328c3de
@@ -980,7 +982,9 @@ websockets==17.0.1 \
     --hash=sha256:f47b0815af3948ec6a440b3afa02f05b18cc0939549e91b5c677b5d9c2c8472a \
     --hash=sha256:f991247276797d0c61ab7770bc9791eadc16f683b4d83517f624932adc1a8bab \
     --hash=sha256:ffad64ce7ad3703d652a3fd9af26238377d24ce52c6ad8ff35d26d82f61f493f
-    # via yfinance
+    # via
+    #   -r requirements.txt
+    #   yfinance
 yfinance==1.5.2 \
     --hash=sha256:197fc03485c246547a5a9184956c60150ea33b6f740d877e02a97f123d5cd2b9 \
     --hash=sha256:5935d457fc62cf2f7e9bf1b2d019a8fec8fb0072f58a095eb53740b70a6a06ed

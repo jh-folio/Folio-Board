@@ -14,6 +14,7 @@ from features.investment_notes.intelligence_schema import (
     Freshness,
     HypothesisCheckpoint,
 )
+from features.common.research_schema.tracked_checkpoints import checkpoint_labels
 from features.thesis_tracking import model as thesis_model
 
 
@@ -122,13 +123,13 @@ def state_from_thesis(thesis: dict, *, now: datetime | None = None) -> ReviewSta
     next_review_at = derive_next_review_at(reviewed_at, cycle)
     checkpoints = tuple(
         HypothesisCheckpoint(
-            id=_checkpoint_id(ticker, str(label)),
-            label=str(label)[:240],
+            id=_checkpoint_id(ticker, label),
+            label=label,
             state=CheckpointState.OPEN,
             reasonCode="thesis_checkpoint",
         )
-        for label in (thesis.get("next_checkpoints") or [])[:20]
-        if str(label).strip()
+        # 구조화 체크포인트(dict)가 섞여 있어도 라벨은 사람이 읽는 한 줄이다.
+        for label in checkpoint_labels((thesis.get("next_checkpoints") or [])[:20])
     )
     return ReviewState(
         ticker=ticker,
@@ -146,10 +147,7 @@ def _completed_checkpoints(
 ) -> tuple[HypothesisCheckpoint, ...]:
     retained = {checkpoint.id: checkpoint for checkpoint in previous}
     result: list[HypothesisCheckpoint] = []
-    for raw_label in labels[:20]:
-        label = str(raw_label or "").strip()[:240]
-        if not label:
-            continue
+    for label in checkpoint_labels(list(labels)[:20]):
         checkpoint_id = _checkpoint_id(ticker, label)
         prior = retained.get(checkpoint_id)
         if prior and prior.state in {CheckpointState.CHECKED, CheckpointState.INVALIDATED}:

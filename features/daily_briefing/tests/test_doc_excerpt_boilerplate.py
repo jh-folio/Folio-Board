@@ -63,3 +63,46 @@ def test_a_document_with_only_full_text_still_says_something():
     excerpt = doc_brief_text({"summary": "# Full Text\n실제 기사 본문이 여기 있습니다."}, 280)
 
     assert "실제 기사 본문" in excerpt
+
+
+def test_briefing_excerpt_keeps_relevant_full_text_after_short_summary():
+    doc = {
+        "summary": "시장은 혼조세를 보였다.",
+        "content": (
+            "# Full Text\n"
+            "현대차 주가는 5.62% 급락했다. 외국인은 5034억원 순매도했다. "
+            "기관은 1조6690억원 순매수로 전환했다. 공유하기 추천기사 많이 본 기사"
+        ),
+    }
+
+    excerpt = briefing_doc_excerpt(doc, clean_brief_text, "driver")
+
+    assert "시장은 혼조세를 보였다" in excerpt
+    assert "5.62%" in excerpt
+    assert "5034억원" in excerpt
+    assert "1조6690억원" in excerpt
+    assert "공유하기" not in excerpt
+    assert "추천기사" not in excerpt
+
+
+def test_combined_summary_preserves_six_day_flow_and_newline_menu_noise():
+    doc = {
+        "summary": (
+            "# Summary\n09-04 KR 지수는 +1.64% 상승했다.\n"
+            "# Full Text\n09-02 현대차는 -5.62% 하락했다.\n"
+            "09-03 외국인은 5034억원 순매도했다.\n"
+            "09-04 기관은 1조6690억원 순매수로 전환했다.\n"
+            "09-05 외국인 순매수로 다시 전환했다.\n"
+            "09-06 지수는 +2.95% 반등했다.\n"
+            "09-07 시장은 상승으로 마감했다.\n"
+            "추천기사\n다른 회사 메뉴"
+        ),
+        "content": "",
+    }
+
+    excerpt = briefing_doc_excerpt(doc, clean_brief_text, "driver")
+
+    for fact in ("+1.64%", "-5.62%", "5034억원", "1조6690억원", "+2.95%"):
+        assert fact in excerpt
+    assert "추천기사" not in excerpt
+    assert "다른 회사 메뉴" not in excerpt

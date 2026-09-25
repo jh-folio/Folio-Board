@@ -370,7 +370,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description="Supervise one marker-owned packaged Folio OS server.")
+    result = argparse.ArgumentParser(description="Supervise one marker-owned packaged Folio Board server.")
     result.add_argument("--manifest", required=True, type=Path)
     result.add_argument("--readiness-timeout", type=float, default=30.0)
     result.add_argument("--poll-interval", type=float, default=0.1)

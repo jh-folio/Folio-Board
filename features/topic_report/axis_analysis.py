@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+from features.topic_report.execution import propagate_interruption
+
 import json
 import re
 from collections.abc import Callable, Iterable
@@ -178,8 +180,21 @@ def build_axis_briefs(
     material_context: str = "",
     web_directive: str = "",
     max_calls: int = MAX_AXIS_CALLS,
+    existing: list[dict] | None = None,
+    on_brief: Callable[[dict], None] | None = None,
 ) -> list[dict]:
+    """축마다 브리프 하나.
+
+    `existing`은 앞선 실행이 이미 만든 브리프다(재개). 그 축은 호출을 쓰지 않고 그대로
+    쓴다 — 사용량 한도로 끊긴 실행이 다시 돌 때 성공한 축을 다시 태우지 않기 위해서다.
+    `on_brief`는 성공한 브리프 하나가 나올 때마다 불린다(체크포인트 저장).
+    """
     axes = list((plan or {}).get("analysisAxes") or [])
+    done = {
+        str(row.get("axisKey") or ""): dict(row)
+        for row in existing or []
+        if isinstance(row, dict) and str(row.get("status") or "") == "ok"
+    }
     asked = str((plan or {}).get("topic") or "").strip()
     subquestions = list(((plan or {}).get("deepResearch") or {}).get("subQuestions") or [])
     briefs: list[dict] = []
@@ -196,6 +211,9 @@ def build_axis_briefs(
             for row in subquestions
             if str(row.get("axisKey") or "") == axis_key
         }
+        if axis_key in done:
+            briefs.append(done[axis_key])
+            continue
         rows = axis_evidence(axis_key, question_ids, evidence_items)
         brief = {
             "axisKey": axis_key,
@@ -225,7 +243,8 @@ def build_axis_briefs(
                     _axis_context(axis, questions, rows, material_context, asked, web_directive, axes),
                 )
             )
-        except Exception:
+        except Exception as error:
+            propagate_interruption(error)
             briefs.append(brief)
             continue
         known = {str(row.get("id") or "") for row in rows}
@@ -246,6 +265,8 @@ def build_axis_briefs(
         if not brief["findings"]:
             brief["status"] = "empty"
         briefs.append(brief)
+        if on_brief is not None and brief["status"] == "ok":
+            on_brief(brief)
     return briefs
 
 

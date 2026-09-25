@@ -563,6 +563,12 @@ export type WorkLogEntry = {
   readonly proposalId: string | null;
   readonly proposalStatus: WorkLogProposalStatus | null;
   readonly resultStatus: "done" | "cancelled" | "failed" | null;
+  // Agent Dock Stage A (2026-09-15): observed stage timings, numeric-only.
+  readonly queueWaitMs: number | null;
+  readonly contextMs: number | null;
+  readonly cliMs: number | null;
+  readonly postprocessMs: number | null;
+  readonly totalMs: number | null;
 };
 
 export type WorkLogList = {
@@ -591,7 +597,7 @@ export type AgentProposalRecord = {
   readonly userRequest: string | null;
 };
 
-export const WORK_LOG_ENTRY_KEYS = ["id", "jobId", "category", "kind", "taskType", "labelCode", "status", "progress", "messageCode", "createdAt", "startedAt", "updatedAt", "finishedAt", "errorCode", "generationMode", "adapter", "requestedMode", "mode", "attemptedEngine", "finalEngine", "fallbackReason", "artifactTypes", "artifactCount", "proposalId", "proposalStatus", "resultStatus"] as const;
+export const WORK_LOG_ENTRY_KEYS = ["id", "jobId", "category", "kind", "taskType", "labelCode", "status", "progress", "messageCode", "createdAt", "startedAt", "updatedAt", "finishedAt", "errorCode", "generationMode", "adapter", "requestedMode", "mode", "attemptedEngine", "finalEngine", "fallbackReason", "artifactTypes", "artifactCount", "proposalId", "proposalStatus", "resultStatus", "queueWaitMs", "contextMs", "cliMs", "postprocessMs", "totalMs"] as const;
 const WORK_LOG_LIST_KEYS = ["schemaVersion", "storeRevision", "jobsStoreRevision", "retention", "total", "entries"] as const;
 const RETENTION_KEYS = ["maxEntries", "maxDays"] as const;
 const WORK_LOG_CATEGORIES = new Set(["companion", "task"]);
@@ -621,6 +627,7 @@ function isWorkLogEntry(value: unknown): value is WorkLogEntry {
   if (!hasExactKeys(value, WORK_LOG_ENTRY_KEYS)) return false;
   const nullableIn = (item: unknown, values: ReadonlySet<string>) => item === null || values.has(item as string);
   const nullableUtc = (item: unknown) => item === null || (typeof item === "string" && UTC_Z.test(item));
+  const nullableNonNegativeInt = (item: unknown) => item === null || (Number.isInteger(item) && (item as number) >= 0);
   return typeof value.id === "string" && /^wl_[0-9a-f]{24}$/.test(value.id) && typeof value.jobId === "string"
     && WORK_LOG_CATEGORIES.has(value.category as string) && WORK_LOG_KINDS.has(value.kind as string)
     && WORK_LOG_TASK_TYPES.has(value.taskType as string) && WORK_LOG_LABEL_CODES.has(value.labelCode as string)
@@ -633,7 +640,9 @@ function isWorkLogEntry(value: unknown): value is WorkLogEntry {
     && nullableIn(value.fallbackReason, WORK_LOG_FALLBACK_REASONS) && Array.isArray(value.artifactTypes)
     && value.artifactTypes.every((item) => typeof item === "string") && Number.isInteger(value.artifactCount) && (value.artifactCount as number) >= 0
     && (value.proposalId === null || typeof value.proposalId === "string") && nullableIn(value.proposalStatus, WORK_LOG_PROPOSAL_STATUSES)
-    && nullableIn(value.resultStatus, WORK_LOG_RESULT_STATUSES);
+    && nullableIn(value.resultStatus, WORK_LOG_RESULT_STATUSES)
+    && nullableNonNegativeInt(value.queueWaitMs) && nullableNonNegativeInt(value.contextMs) && nullableNonNegativeInt(value.cliMs)
+    && nullableNonNegativeInt(value.postprocessMs) && nullableNonNegativeInt(value.totalMs);
 }
 
 export function parseWorkLogList(value: unknown): WorkLogList {
@@ -643,19 +652,359 @@ export function parseWorkLogList(value: unknown): WorkLogList {
   return value as WorkLogList;
 }
 
+// 0.6 D3 — 안전한 진단 상세(features/common/diagnostics). jobId 또는 runId로 조회하며
+// 본문/프롬프트/스택 원문은 절대 실리지 않는다(서버 schema v1의 closed allow-list).
+export type DiagnosticSourceFrame = { readonly moduleCode: string; readonly functionCode: string; readonly line: number };
+export type DiagnosticFailure = {
+  readonly errorId: string;
+  readonly stageId: string | null;
+  readonly stageCode: string | null;
+  readonly errorCode: string | null;
+  readonly reasonCode: string;
+  readonly exceptionCode: string;
+  readonly frames: readonly DiagnosticSourceFrame[];
+  readonly confirmation: "observed" | "inferred" | "unknown";
+  readonly nextActionCode: string;
+  readonly fingerprint: string;
+};
+export type DiagnosticEventRecord = {
+  readonly seq: number;
+  readonly eventId: string;
+  readonly stageId: string;
+  readonly stageCode: string;
+  readonly eventCode: "start" | "end" | "failure" | "skip" | "fallback" | "resume";
+  readonly producerEpoch: string;
+  readonly at: string;
+  readonly durationMs: number | null;
+  readonly errorId: string | null;
+  readonly count: number;
+};
+export type DiagnosticTerminalObservation = { readonly observedStatus: string; readonly observedAt: string; readonly processEpoch: string };
+export type DiagnosticRecord = {
+  readonly schemaVersion: 1;
+  readonly runId: string;
+  readonly jobId: string | null;
+  readonly requestId: string | null;
+  readonly parentRunId: string | null;
+  readonly retryOfRunId: string | null;
+  readonly processEpoch: string;
+  readonly featureCode: string;
+  readonly routeCode: string;
+  readonly taskType: string | null;
+  readonly authorityKind: "shared_job" | "automation" | "direct" | "recovery";
+  readonly appVersion: string;
+  readonly buildId: string | null;
+  readonly os: string;
+  readonly pythonVersion: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly finishedAt: string | null;
+  readonly elapsedMs: number | null;
+  readonly observedStatus: string;
+  readonly attemptedEngine: "api" | "cli" | "rules" | "none" | null;
+  readonly finalEngine: "api" | "cli" | "rules" | "none" | null;
+  readonly adapter: WorkLogEntry["adapter"] | null;
+  readonly fallbackReason: WorkLogEntry["fallbackReason"];
+  readonly events: readonly DiagnosticEventRecord[];
+  readonly errors: readonly DiagnosticFailure[];
+  readonly firstFailure: DiagnosticFailure | null;
+  readonly terminalFailure: DiagnosticFailure | null;
+  readonly terminalObservation: DiagnosticTerminalObservation | null;
+  readonly droppedEvents: number;
+  readonly droppedErrors: number;
+  readonly droppedIssues: number;
+  readonly issueCodes: readonly string[];
+  readonly requiredProducerCoverage: "complete" | "partial";
+};
+export type DiagnosticWarning = { readonly code: string; readonly runId: string };
+export type DiagnosticDetail = {
+  readonly version: 1;
+  readonly runId: string | null;
+  readonly diagnosticQuality: "complete" | "partial" | "unavailable" | "legacy_unavailable";
+  readonly availabilityReason: "present" | "disabled" | "writer_conflict" | "quota_exceeded" | "read_failed" | "corrupt" | "unsupported_version" | "missing_unknown" | "legacy_no_detail" | "expired";
+  readonly authorityState: "matched" | "changed" | "unavailable" | "not_applicable";
+  readonly authorityStatus: string | null;
+  readonly record: DiagnosticRecord | null;
+  readonly warnings: readonly DiagnosticWarning[];
+};
+
+const DIAGNOSTIC_QUALITIES = new Set(["complete", "partial", "unavailable", "legacy_unavailable"]);
+const DIAGNOSTIC_AVAILABILITY_REASONS = new Set(["present", "disabled", "writer_conflict", "quota_exceeded", "read_failed", "corrupt", "unsupported_version", "missing_unknown", "legacy_no_detail", "expired"]);
+const DIAGNOSTIC_AUTHORITY_STATES = new Set(["matched", "changed", "unavailable", "not_applicable"]);
+const DIAGNOSTIC_AUTHORITY_KINDS = new Set(["shared_job", "automation", "direct", "recovery"]);
+const DIAGNOSTIC_PRODUCER_COVERAGE = new Set(["complete", "partial"]);
+const DIAGNOSTIC_CONFIRMATIONS = new Set(["observed", "inferred", "unknown"]);
+const DIAGNOSTIC_EVENT_CODES = new Set(["start", "end", "failure", "skip", "fallback", "resume"]);
+const DIAGNOSTIC_RECORD_KEYS = ["schemaVersion", "runId", "jobId", "requestId", "parentRunId", "retryOfRunId", "processEpoch", "featureCode", "routeCode", "taskType", "authorityKind", "appVersion", "buildId", "os", "pythonVersion", "createdAt", "updatedAt", "finishedAt", "elapsedMs", "observedStatus", "attemptedEngine", "finalEngine", "adapter", "fallbackReason", "events", "errors", "firstFailure", "terminalFailure", "terminalObservation", "droppedEvents", "droppedErrors", "droppedIssues", "issueCodes", "requiredProducerCoverage"] as const;
+const DIAGNOSTIC_FAILURE_KEYS = ["errorId", "stageId", "stageCode", "errorCode", "reasonCode", "exceptionCode", "frames", "confirmation", "nextActionCode", "fingerprint"] as const;
+const DIAGNOSTIC_EVENT_KEYS = ["seq", "eventId", "stageId", "stageCode", "eventCode", "producerEpoch", "at", "durationMs", "errorId", "count"] as const;
+const DIAGNOSTIC_FRAME_KEYS = ["moduleCode", "functionCode", "line"] as const;
+const DIAGNOSTIC_TERMINAL_OBSERVATION_KEYS = ["observedStatus", "observedAt", "processEpoch"] as const;
+const DIAGNOSTIC_WARNING_KEYS = ["code", "runId"] as const;
+const DIAGNOSTIC_DETAIL_KEYS = ["version", "runId", "diagnosticQuality", "availabilityReason", "authorityState", "authorityStatus", "record", "warnings"] as const;
+
+function isDiagnosticFrame(value: unknown): value is DiagnosticSourceFrame {
+  return hasExactKeys(value, DIAGNOSTIC_FRAME_KEYS) && typeof value.moduleCode === "string" && typeof value.functionCode === "string" && Number.isInteger(value.line);
+}
+
+function isDiagnosticFailure(value: unknown): value is DiagnosticFailure {
+  if (!hasExactKeys(value, DIAGNOSTIC_FAILURE_KEYS)) return false;
+  const nullableString = (item: unknown) => item === null || typeof item === "string";
+  return typeof value.errorId === "string" && nullableString(value.stageId) && nullableString(value.stageCode) && nullableString(value.errorCode)
+    && typeof value.reasonCode === "string" && typeof value.exceptionCode === "string"
+    && Array.isArray(value.frames) && value.frames.every(isDiagnosticFrame)
+    && DIAGNOSTIC_CONFIRMATIONS.has(value.confirmation as string)
+    && typeof value.nextActionCode === "string" && typeof value.fingerprint === "string";
+}
+
+function isDiagnosticEvent(value: unknown): value is DiagnosticEventRecord {
+  if (!hasExactKeys(value, DIAGNOSTIC_EVENT_KEYS)) return false;
+  return Number.isInteger(value.seq) && typeof value.eventId === "string" && typeof value.stageId === "string"
+    && typeof value.stageCode === "string" && DIAGNOSTIC_EVENT_CODES.has(value.eventCode as string)
+    && typeof value.producerEpoch === "string" && typeof value.at === "string"
+    && (value.durationMs === null || Number.isInteger(value.durationMs))
+    && (value.errorId === null || typeof value.errorId === "string") && Number.isInteger(value.count);
+}
+
+function isDiagnosticRecord(value: unknown): value is DiagnosticRecord {
+  if (!hasExactKeys(value, DIAGNOSTIC_RECORD_KEYS)) return false;
+  const nullableString = (item: unknown) => item === null || typeof item === "string";
+  return value.schemaVersion === 1 && typeof value.runId === "string" && nullableString(value.jobId)
+    && nullableString(value.requestId) && nullableString(value.parentRunId) && nullableString(value.retryOfRunId)
+    && typeof value.processEpoch === "string" && typeof value.featureCode === "string" && typeof value.routeCode === "string"
+    && nullableString(value.taskType) && DIAGNOSTIC_AUTHORITY_KINDS.has(value.authorityKind as string)
+    && typeof value.appVersion === "string" && nullableString(value.buildId) && typeof value.os === "string"
+    && typeof value.pythonVersion === "string" && typeof value.createdAt === "string" && typeof value.updatedAt === "string"
+    && nullableString(value.finishedAt) && (value.elapsedMs === null || Number.isInteger(value.elapsedMs))
+    && typeof value.observedStatus === "string" && nullableString(value.attemptedEngine) && nullableString(value.finalEngine)
+    && nullableString(value.adapter) && nullableString(value.fallbackReason)
+    && Array.isArray(value.events) && value.events.every(isDiagnosticEvent)
+    && Array.isArray(value.errors) && value.errors.every(isDiagnosticFailure)
+    && (value.firstFailure === null || isDiagnosticFailure(value.firstFailure))
+    && (value.terminalFailure === null || isDiagnosticFailure(value.terminalFailure))
+    && (value.terminalObservation === null || (hasExactKeys(value.terminalObservation, DIAGNOSTIC_TERMINAL_OBSERVATION_KEYS) && typeof value.terminalObservation.observedStatus === "string" && typeof value.terminalObservation.observedAt === "string" && typeof value.terminalObservation.processEpoch === "string"))
+    && Number.isInteger(value.droppedEvents) && Number.isInteger(value.droppedErrors) && Number.isInteger(value.droppedIssues)
+    && Array.isArray(value.issueCodes) && value.issueCodes.every((item) => typeof item === "string")
+    && DIAGNOSTIC_PRODUCER_COVERAGE.has(value.requiredProducerCoverage as string);
+}
+
+export function parseDiagnosticDetail(value: unknown): DiagnosticDetail {
+  if (
+    !hasExactKeys(value, DIAGNOSTIC_DETAIL_KEYS) || value.version !== 1
+    || !DIAGNOSTIC_QUALITIES.has(value.diagnosticQuality as string)
+    || !DIAGNOSTIC_AVAILABILITY_REASONS.has(value.availabilityReason as string)
+    || !DIAGNOSTIC_AUTHORITY_STATES.has(value.authorityState as string)
+    || (value.runId !== null && typeof value.runId !== "string")
+    || (value.authorityStatus !== null && typeof value.authorityStatus !== "string")
+    || (value.record !== null && !isDiagnosticRecord(value.record))
+    || !Array.isArray(value.warnings)
+    || !value.warnings.every((item) => hasExactKeys(item, DIAGNOSTIC_WARNING_KEYS) && typeof item.code === "string" && typeof item.runId === "string")
+  ) {
+    throw new Error("diagnostic_detail_contract_invalid");
+  }
+  return value as DiagnosticDetail;
+}
+
+// 0.6 D3 다음 단계 — 공통 진단 목록(`GET /api/diagnostics/runs`). Work Log 26필드 목록과는
+// 별도 계약이다: 실패/대체/기간으로 non-job(자동화·RSS·색인·direct) 실행까지 함께 찾는다.
+export type DiagnosticOutcome = "failed" | "succeeded" | "cancelled" | "running" | "unknown";
+export type DiagnosticListItem = {
+  readonly runId: string;
+  readonly createdAt: string;
+  readonly finishedAt: string | null;
+  readonly observedStatus: string;
+  readonly observedOutcome: DiagnosticOutcome;
+  /** 현재 권위와 일치가 확인된 결과만. matched가 아니면 null — observedOutcome과 다르다. */
+  readonly outcome: DiagnosticOutcome | null;
+  readonly featureCode: string;
+  readonly routeCode: string;
+  readonly authorityKind: "shared_job" | "automation" | "direct" | "recovery";
+  readonly authorityState: "matched" | "changed" | "unavailable" | "not_applicable";
+  readonly authorityStatus: string | null;
+  readonly taskType: string | null;
+  readonly jobId: string | null;
+  /** 있으면 기존 Work Log 26필드 항목과 같은 실행이다 — 별도 카드로 세지 않는다. */
+  readonly workLogId: string | null;
+  readonly diagnosticQuality: "complete" | "partial";
+  readonly adapter: string | null;
+  readonly attemptedEngine: string | null;
+  readonly finalEngine: string | null;
+  readonly fallbackReason: string | null;
+  /** null은 "대체 없었음 증명"이 아니라 "관측 안 됨"이다. */
+  readonly fallbackObserved: boolean | null;
+  readonly failureReasonCode: string | null;
+  readonly failureStageCode: string | null;
+};
+export type DiagnosticListScan = { readonly entriesScanned: number; readonly runsScanned: number; readonly complete: boolean; readonly deadlineMs: number };
+export type DiagnosticListError = { readonly code: string };
+export type DiagnosticListResponse = {
+  readonly version: 1;
+  /** 이 페이지가 고정한 snapshot 기준 시각. "지금"이 아니라 이 목록을 만든 시각이다. */
+  readonly snapshotAt: string;
+  readonly items: readonly DiagnosticListItem[];
+  readonly nextCursor: string | null;
+  /** true면 전체 검사가 아직 끝나지 않았다 — 이 페이지에서는 nextCursor가 항상 null이다. */
+  readonly truncated: boolean;
+  readonly scan: DiagnosticListScan;
+  readonly errors: readonly DiagnosticListError[];
+};
+
+export type DiagnosticListFilter = {
+  readonly outcome?: "all" | DiagnosticOutcome;
+  readonly fallback?: "all" | "observed";
+  readonly from?: string;
+  readonly to?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+};
+
+export function diagnosticListQuery(filter: DiagnosticListFilter): string {
+  const params = new URLSearchParams({ version: "1" });
+  if (filter.limit) params.set("limit", String(filter.limit));
+  if (filter.outcome && filter.outcome !== "all") params.set("outcome", filter.outcome);
+  if (filter.fallback && filter.fallback !== "all") params.set("fallback", filter.fallback);
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  if (filter.cursor) params.set("cursor", filter.cursor);
+  return `/api/diagnostics/runs?${params.toString()}`;
+}
+
+const DIAGNOSTIC_OUTCOMES = new Set(["failed", "succeeded", "cancelled", "running", "unknown"]);
+const DIAGNOSTIC_LIST_ITEM_KEYS = ["runId", "createdAt", "finishedAt", "observedStatus", "observedOutcome", "outcome", "featureCode", "routeCode", "authorityKind", "authorityState", "authorityStatus", "taskType", "jobId", "workLogId", "diagnosticQuality", "adapter", "attemptedEngine", "finalEngine", "fallbackReason", "fallbackObserved", "failureReasonCode", "failureStageCode"] as const;
+const DIAGNOSTIC_LIST_SCAN_KEYS = ["entriesScanned", "runsScanned", "complete", "deadlineMs"] as const;
+const DIAGNOSTIC_LIST_KEYS = ["version", "snapshotAt", "items", "nextCursor", "truncated", "scan", "errors"] as const;
+const DIAGNOSTIC_CODE_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
+
+function isDiagnosticCode(value: unknown): value is string {
+  return typeof value === "string" && DIAGNOSTIC_CODE_PATTERN.test(value);
+}
+
+function isDiagnosticTimestamp(value: unknown): value is string {
+  return typeof value === "string" && UTC_Z.test(value);
+}
+
+function isDiagnosticListItem(value: unknown): value is DiagnosticListItem {
+  if (!hasExactKeys(value, DIAGNOSTIC_LIST_ITEM_KEYS)) return false;
+  const nullableCode = (item: unknown) => item === null || isDiagnosticCode(item);
+  const nullableOutcome = (item: unknown) => item === null || (typeof item === "string" && DIAGNOSTIC_OUTCOMES.has(item));
+  return validateDiagnosticRunId(value.runId) !== null && isDiagnosticTimestamp(value.createdAt) && (value.finishedAt === null || isDiagnosticTimestamp(value.finishedAt))
+    && isDiagnosticCode(value.observedStatus) && DIAGNOSTIC_OUTCOMES.has(value.observedOutcome as string) && nullableOutcome(value.outcome)
+    && (value.outcome === null || value.authorityState === "matched")
+    && isDiagnosticCode(value.featureCode) && isDiagnosticCode(value.routeCode)
+    && DIAGNOSTIC_AUTHORITY_KINDS.has(value.authorityKind as string) && DIAGNOSTIC_AUTHORITY_STATES.has(value.authorityState as string)
+    && nullableCode(value.authorityStatus) && nullableCode(value.taskType) && nullableCode(value.jobId) && nullableCode(value.workLogId)
+    && DIAGNOSTIC_PRODUCER_COVERAGE.has(value.diagnosticQuality as string)
+    && nullableCode(value.adapter) && nullableCode(value.attemptedEngine) && nullableCode(value.finalEngine) && nullableCode(value.fallbackReason)
+    && (value.fallbackObserved === null || typeof value.fallbackObserved === "boolean")
+    && nullableCode(value.failureReasonCode) && nullableCode(value.failureStageCode);
+}
+
+export function parseDiagnosticList(value: unknown): DiagnosticListResponse {
+  if (
+    !hasExactKeys(value, DIAGNOSTIC_LIST_KEYS) || value.version !== 1 || !isDiagnosticTimestamp(value.snapshotAt)
+    || !Array.isArray(value.items) || !value.items.every(isDiagnosticListItem)
+    || (value.nextCursor !== null && (typeof value.nextCursor !== "string" || value.nextCursor.length === 0 || value.nextCursor.length > 4096))
+    || typeof value.truncated !== "boolean"
+    || !hasExactKeys(value.scan, DIAGNOSTIC_LIST_SCAN_KEYS)
+    || !Number.isInteger(value.scan.entriesScanned) || (value.scan.entriesScanned as number) < 0
+    || !Number.isInteger(value.scan.runsScanned) || (value.scan.runsScanned as number) < 0
+    || typeof value.scan.complete !== "boolean" || !Number.isInteger(value.scan.deadlineMs) || (value.scan.deadlineMs as number) < 0
+    || value.truncated !== !value.scan.complete || (value.truncated && value.nextCursor !== null)
+    || !Array.isArray(value.errors) || !value.errors.every((item) => hasExactKeys(item, ["code"]) && isDiagnosticCode(item.code))
+  ) {
+    throw new Error("diagnostic_list_contract_invalid");
+  }
+  return value as DiagnosticListResponse;
+}
+
 export type ApiErrorPayload = Readonly<Record<string, unknown>>;
+
+export type TossImportAccount = {
+  readonly label: string;
+  readonly accountType: string;
+  readonly selectable: boolean;
+  readonly reason: string;
+  readonly selectionId?: string;
+};
+export type TossImportAccounts = { readonly accounts: readonly TossImportAccount[]; readonly provider: "toss_open_api"; readonly openApiVersion: "1.2.14" };
+export type TossImportIssue = { readonly positionKey: string | null; readonly issueCodes: readonly string[] };
+export type TossImportBuckets = {
+  readonly additions: readonly string[];
+  readonly updates: readonly string[];
+  readonly preservedManual: readonly string[];
+  readonly unchanged: readonly string[];
+  readonly conflicts: readonly TossImportIssue[];
+  readonly unsupported: readonly TossImportIssue[];
+};
+export type TossImportDetail = {
+  readonly positionKey: string;
+  readonly action: "add" | "update" | "unchanged";
+  readonly ticker: string;
+  readonly currency: string;
+  readonly before: { readonly quantity: string; readonly averagePrice: string } | null;
+  readonly after: { readonly quantity: string; readonly averagePrice: string };
+  readonly delta: { readonly quantity: string; readonly averagePrice: string };
+};
+export type TossImportPreview = { readonly previewId: string; readonly expectedRevision: number; readonly canConfirm: boolean; readonly status: "ready" | "empty"; readonly buckets: TossImportBuckets; readonly details: readonly TossImportDetail[]; readonly provider: "toss_open_api"; readonly openApiVersion: "1.2.14" };
+export type TossImportConfirm<TPortfolio> = { readonly portfolio: TPortfolio; readonly metadataStatus: "ready" | "recovery_pending" | "recovered" | "stale"; readonly idempotent: boolean };
 
 export class ApiRequestError extends Error {
   readonly name = "ApiRequestError";
+  readonly requestId: string | null;
+  readonly runId: string | null;
 
   constructor(
     readonly path: string,
     readonly status: number,
     readonly code: string,
     readonly payload: ApiErrorPayload | null,
+    requestId: string | null = null,
+    runId: string | null = null,
   ) {
     super(`${path} failed: ${status}${code ? ` (${code})` : ""}`);
+    this.requestId = validateDiagnosticRequestId(requestId);
+    this.runId = validateDiagnosticRunId(runId);
   }
+}
+
+/**
+ * A response-less fetch failure is deliberately kept separate from HTTP
+ * failures.  It must not be presented as proof that the server-side job
+ * failed: there was no response to inspect.
+ */
+export class ApiTransportError extends Error {
+  readonly name = "ApiTransportError";
+
+  constructor() {
+    super("서버 처리 결과를 확인할 수 없습니다.");
+  }
+}
+
+/** The HTTP response arrived, but a successful body could not be read. */
+export class ApiResponseReadError extends Error {
+  readonly name = "ApiResponseReadError";
+
+  constructor() {
+    super("서버 처리 결과를 확인할 수 없습니다.");
+  }
+}
+
+const DIAGNOSTIC_UUID_V4 = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const DIAGNOSTIC_REQUEST_ID_PATTERN = new RegExp(`^req_${DIAGNOSTIC_UUID_V4}$`);
+const DIAGNOSTIC_RUN_ID_PATTERN = new RegExp(`^run_${DIAGNOSTIC_UUID_V4}$`);
+
+/** Header values are untrusted until they match the backend's exact ID schema. */
+export function validateDiagnosticRequestId(value: unknown): string | null {
+  return typeof value === "string" && value.length === 40 && DIAGNOSTIC_REQUEST_ID_PATTERN.test(value) ? value : null;
+}
+
+/** Header values are untrusted until they match the backend's exact ID schema. */
+export function validateDiagnosticRunId(value: unknown): string | null {
+  return typeof value === "string" && value.length === 40 && DIAGNOSTIC_RUN_ID_PATTERN.test(value) ? value : null;
+}
+
+export function isAbortError(error: unknown, signal?: AbortSignal | null): boolean {
+  return Boolean(signal?.aborted || (error instanceof Error && error.name === "AbortError"));
 }
 
 export function isActiveJobStatus(status: JobStatus): boolean {
@@ -670,23 +1019,48 @@ function isRecord(value: unknown): value is ApiErrorPayload {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function parseJson<T>(res: Response): Promise<T | null> {
+const RESPONSE_BODY_UNAVAILABLE = Symbol("response_body_unavailable");
+
+async function parseJson<T>(res: Response, signal?: AbortSignal | null): Promise<T | null | typeof RESPONSE_BODY_UNAVAILABLE> {
   try {
     const payload: unknown = await res.json();
     return payload as T;
-  } catch {
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error;
+    // Invalid JSON is still a usable non-JSON HTTP error response. Other
+    // failures indicate that an otherwise successful response body vanished.
+    if (!(error instanceof SyntaxError)) return RESPONSE_BODY_UNAVAILABLE;
     return null;
   }
 }
 
 async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
-  const payload = await parseJson<T>(res);
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch (error) {
+    // Keep the caller's abort semantics.  Other failures have no HTTP
+    // response and therefore cannot be assigned a server status or run ID.
+    if (isAbortError(error, init.signal)) throw error;
+    throw new ApiTransportError();
+  }
+  const parsedPayload = await parseJson<T>(res, init.signal);
+  if (parsedPayload === RESPONSE_BODY_UNAVAILABLE && res.ok) throw new ApiResponseReadError();
+  const payload = parsedPayload === RESPONSE_BODY_UNAVAILABLE ? null : parsedPayload;
   if (!res.ok) {
     const record = isRecord(payload) ? payload : null;
-    const rawCode = record?.error;
+    const detail = isRecord(record?.detail) ? record.detail : null;
+    const rawCode = record?.error ?? detail?.code;
     const code = typeof rawCode === "string" ? rawCode : "request_failed";
-    throw new ApiRequestError(path, res.status, code, record);
+    const headers = res.headers;
+    throw new ApiRequestError(
+      path,
+      res.status,
+      code,
+      record,
+      validateDiagnosticRequestId(headers?.get("X-Folio-Request-Id")),
+      validateDiagnosticRunId(headers?.get("X-Folio-Run-Id")),
+    );
   }
   if (payload === null) throw new Error(`${path} returned an empty response`);
   return payload;
@@ -726,6 +1100,174 @@ export async function updateHypothesisCheckpoint(
   return postJson<HypothesisIntelligencePayload>(
     `/api/theses/${encodeURIComponent(ticker)}/review/checkpoints`,
     body,
+    options,
+  );
+}
+
+// --- 0.6 검증 루프 읽기 projection ------------------------------------------
+// 화면은 저장된 판정을 읽기만 한다 — 판정·저장은 서버의 규칙 pass가 소유한다.
+
+export type CheckpointEvidenceCopy = {
+  date: string;
+  title: string;
+  /** 내러티브 근거 풀에만 있다. thesis 풀(문서)에는 role 분류가 없다. */
+  role?: string;
+};
+
+export type TrackedCheckpointView = {
+  id: string;
+  item: string;
+  direction: string;
+  status: string;
+  statusLabel: string;
+  dueBy: string | null;
+  keywords?: string[];
+  tickers?: string[];
+  lastVerdict: {
+    verdict: string;
+    verdictLabel: string;
+    at: string;
+    evidence: CheckpointEvidenceCopy[];
+  } | null;
+  historyCount?: number;
+  history?: Array<{ at: string; from: string; to: string; verdict: string; verdictLabel: string }>;
+};
+
+export type NarrativeVerificationState = {
+  stateId: string;
+  stateKey: string;
+  label: string;
+  status: string;
+  momentum: string;
+  momentumLabel: string;
+  evidenceCounts: { d7: number; d30: number; d90: number };
+  lastEvidenceAt: string;
+  lastConfirmedAt: string;
+  lastChallengedAt: string;
+  silence: { days: number | null; level: string; label: string; note: string };
+  checkpoints: TrackedCheckpointView[];
+  checkpointCounts: Record<string, number>;
+  unverifiableCount: number;
+  templates: string[];
+  timeline: Array<{ at: string; kind: string; from: string; to: string; reason: string; evidenceCount: number }>;
+};
+
+export type NarrativeVerificationPayload = {
+  asOf: string;
+  states: NarrativeVerificationState[];
+  summary: {
+    stateCount: number;
+    checkpointCount: number;
+    confirmed: number;
+    challenged: number;
+    cooling: number;
+    unverifiable: number;
+  };
+};
+
+export type ThesisWorkspacePayload = {
+  ticker: string;
+  hasThesis: boolean;
+  thesis: {
+    ticker: string;
+    company: string;
+    coreThesis: string;
+    keyAssumptions: string[];
+    supportingSignals: string[];
+    weakeningSignals: string[];
+    falsificationTriggers: string[];
+    keyMetrics: string[];
+    linkedRegimes: string[];
+    reviewCycle: string;
+    conviction: string;
+    status: string;
+    lastReviewedAt: string;
+    notePath: string;
+  } | null;
+  ownership: {
+    source: string;
+    appOwned: boolean;
+    vaultNote: { title: string; relPath: string } | null;
+    syncPaused: boolean;
+    message: string;
+  } | null;
+  latestDelta: {
+    deltaId: string;
+    verdict: string;
+    verdictLabel: string;
+    generatedAt: string;
+    period: string;
+    summary: string;
+    supportingEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
+    counterEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
+    contradictions: string[];
+    uncertainties: string[];
+  } | null;
+  checkpoints: {
+    structured: TrackedCheckpointView[];
+    templates: string[];
+    unverifiableCount: number;
+    counts: Record<string, number>;
+  };
+  regimeAlerts: Array<{
+    stateId: string;
+    stateKey: string;
+    label: string;
+    status: string;
+    momentum: string;
+    reasons: Array<{ kind: string; detail: string }>;
+  }>;
+  deltaHistory: Array<{ deltaId: string; verdict: string; verdictLabel: string; generatedAt: string; summary: string }>;
+  layer: string;
+  reuseAsEvidence: boolean;
+};
+
+export type SaveThesisRequest = {
+  ticker: string;
+  company?: string;
+  coreThesis?: string;
+  keyAssumptions?: string[];
+  falsificationTriggers?: string[];
+  reviewCycle?: string;
+  conviction?: string;
+};
+
+export async function saveThesis(
+  body: SaveThesisRequest,
+  options: JsonRequestOptions = {},
+): Promise<{ ok: boolean; thesis: ThesisWorkspacePayload["thesis"] }> {
+  return postJson("/api/theses", body, options);
+}
+
+export async function getNarrativeVerification(
+  options: JsonRequestOptions = {},
+): Promise<NarrativeVerificationPayload> {
+  return getJson<NarrativeVerificationPayload>("/api/memory/verification", options);
+}
+
+export async function getThesisWorkspace(
+  ticker: string,
+  options: JsonRequestOptions = {},
+): Promise<ThesisWorkspacePayload> {
+  return getJson<ThesisWorkspacePayload>(`/api/theses/${encodeURIComponent(ticker)}/workspace`, options);
+}
+
+export type PromoteNoteToThesisResult = {
+  ok: boolean;
+  noteId: string;
+  /** created = 빈자리를 채웠다 · updated = 명시적 갱신 · skipped_* = 아무것도 하지 않았다 */
+  status: string;
+  ticker: string;
+};
+
+export async function promoteNoteToThesis(
+  noteId: string,
+  overwrite = false,
+  options: JsonRequestOptions = {},
+): Promise<PromoteNoteToThesisResult> {
+  return postJson<PromoteNoteToThesisResult>(
+    `/api/investment-notes/${encodeURIComponent(noteId)}/thesis`,
+    { overwrite },
     options,
   );
 }

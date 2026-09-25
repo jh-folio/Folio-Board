@@ -174,7 +174,11 @@ def workspace_payload() -> dict:
     """설정 화면이 읽는 현재 상태."""
     root = workspace_root()
     files, total = _usage(root)
-    documents = workspace.documents_workspace()
+    # 자료가 있는 문서 폴더(새 이름 우선, 구 이름 폴백)를 먼저 본다. 이동 목적지
+    # 함수(`documents_workspace()`)만 쓰면 구 문서 폴더를 쓰는 사용자에게 자신이
+    # 쓰지 않는 `~/Documents/FolioBoard`를 보여주게 된다(§4.4) — 아무 후보에도
+    # 자료가 없을 때만(즉 옮기기가 아직 실행된 적이 없을 때만) 목적지로 폴백한다.
+    documents = workspace.discover_documents_workspace() or workspace.documents_workspace()
     pinned = _env_pinned()
     return {
         "path": str(root),

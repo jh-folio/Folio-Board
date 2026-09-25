@@ -33,7 +33,11 @@ test("visible research routes embed the shared context card without automatic Ag
 
   assert.match(home, /<InvestmentContextCard[\s\S]*?mode="home"/);
   assert.match(home, /dismissible/);
-  assert.match(memory, /<InvestmentContextCard[\s\S]*?mode="market-memory"/);
+  // 시장 내러티브는 카드가 아니라 "다음 확인" 아래 한 줄과 검증 알림의 내 종목 표시다
+  // (2026-09-25). 카드로 올리면 개인 참고 정보가 시장 상태를 밀어냈다.
+  assert.doesNotMatch(memory, /<InvestmentContextCard/);
+  assert.match(memory, /personalContext=\{<InvestmentContextStrip summary=\{contextSummary\} \/>\}/);
+  assert.match(memory, /<NarrativeVerificationPanel[^>]*ownedTickers=\{ownedTickers\}/);
   assert.match(collection, /<InvestmentContextCard[\s\S]*?mode="collection"[\s\S]*?collectionId=\{workspace\.collection\.id\}/);
   assert.match(deep, /<InvestmentContextCard[\s\S]*?mode="deep-research"/);
   assert.match(deep, /onReference=\{referenceInvestmentContext\}/);
@@ -74,6 +78,18 @@ test("navigation exposes Watchlist while responsive context card styling stays b
   assert.doesNotMatch(routes, /id: "watchlist"[^\n]+visibleInNav: false/);
   assert.match(routes, /id: "portfolio", label: "포트폴리오", group: "portfolio"/);
   assert.match(css, /\.investment-context-card\s*\{[\s\S]*?min-width:\s*0/);
+  // 개인 층은 워시가 아니라 3px 보라 줄이 말한다. 옅은 보라 배경은 HDR에서 사라졌다.
+  const cardRule = css.match(/\.investment-context-card\s*\{([^}]*)\}/)?.[1] || "";
+  const stripRule = css.match(/\.investment-context-strip\s*\{([^}]*)\}/)?.[1] || "";
+  for (const rule of [cardRule, stripRule]) {
+    assert.match(rule, /border-left:\s*3px solid var\(--folio-purple\)/);
+    assert.doesNotMatch(rule, /purple-soft/);
+  }
+  assert.match(css, /\.chip\[data-tone="purple"\]/);
+  // 뒤쪽 무테 규칙이 앞의 보라 줄을 지우지 못하게, 마지막 카드 규칙이 줄을 다시 선언해야 한다.
+  const cardRules = [...css.matchAll(/(?:^|\n)\.investment-context-card\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.match(cardRules.at(-1) || "", /border-left:\s*3px solid var\(--folio-purple\)/);
+  assert.doesNotMatch(css, /\.investment-context-ledger a,\s*\.investment-context-ledger button[^{]*\{[^}]*border:\s*1px/);
   assert.match(css, /\.investment-context-ledger\s*\{[\s\S]*?grid-template-columns/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*?\.investment-context-ledger[\s\S]*?grid-template-columns:\s*1fr/);
   assert.match(css, /\.investment-context-card[\s\S]*?overflow-wrap:\s*anywhere/);

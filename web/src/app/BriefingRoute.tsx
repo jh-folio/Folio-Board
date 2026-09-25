@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useContentRevision } from "./useContentRevision";
 import { groupMeta, listDate } from "./savedListFormat";
 import { useMarketScope } from "./useMarketScope";
-import { getJson, isActiveJobStatus, postJson, MARKET_CODE_LABELS, type JobStatus } from "../api";
+import { deleteJson, getJson, isAbortError, isActiveJobStatus, postJson, MARKET_CODE_LABELS, type JobStatus } from "../api";
 import { openReactAgentDock, setReactAgentContextScope } from "./agentContext";
 import { PROPOSAL_LIFECYCLE_EVENT, proposalTargetsContext, type ProposalLifecycleResult } from "./agentProposalLifecycle";
 import { legacyBridge } from "./legacyBridge";
@@ -11,8 +11,7 @@ import { ReportBody } from "./reportReader/ReportBody";
 import { ReportReaderShell } from "./reportReader/ReportReaderShell";
 import { RouteHero } from "./RouteHero";
 import { parsePersonalOverlayPayload } from "./deepResearchPayload";
-import { BriefingChangeStrip } from "./briefing/BriefingChangeStrip";
-import type { ChangeEvent } from "./changeEvents";
+import { captureReportError, ReportErrorDiagnostic, reportErrorMessage, type CapturedReportError } from "./reportErrorDiagnostic";
 
 // `all`은 네 시장 생성 범위, `both`는 US/KR만 담은 예전 저장본이다.
 type MarketScope = "us" | "kr" | "europe" | "jp" | "all" | "both" | "multi";
@@ -67,6 +66,7 @@ type BriefingArchivePayload = {
 };
 
 type Briefing = {
+  generatedAt?: string;
   title?: string;
   date?: string;
   publicationDate?: string;
@@ -80,7 +80,6 @@ type Briefing = {
   generation?: { message?: string; mode?: string; generatedAt?: string };
   canonicalRevision?: unknown;
   personalOverlay?: unknown;
-  changeSummary?: ChangeEvent;
 };
 
 type AgentJob = {
@@ -316,6 +315,20 @@ export function BriefingRoute() {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const [generationError, setGenerationError] = useState<CapturedReportError | null>(null);
+  const [generationErrorMessage, setGenerationErrorMessage] = useState("");
+  const generationOperationId = useRef(0);
+  const [listErrorMessage, setListErrorMessage] = useState("");
+  const [listErrorDiagnostic, setListErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const [readErrorMessage, setReadErrorMessage] = useState("");
+  const [readErrorDiagnostic, setReadErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState("");
+  const [actionErrorDiagnostic, setActionErrorDiagnostic] = useState<CapturedReportError | null>(null);
+  const listRequestId = useRef(0);
+  const listController = useRef<AbortController | null>(null);
+  const readRequestId = useRef(0);
+  const actionRequestId = useRef(0);
+  const actionController = useRef<AbortController | null>(null);
   const [actionStatus, setActionStatus] = useState("");
   const [actionBusy, setActionBusy] = useState("");
   // 생성 대상은 시장 집합이다. 하나만 고르면 그 시장, 여럿이면 각각 만들어진다.
@@ -348,9 +361,53 @@ export function BriefingRoute() {
   const [archiveView, setArchiveView] = useState<ArchiveViewMode>("recent");
   const [proposalReloadKey, setProposalReloadKey] = useState(0);
 
+  function clearGenerationDiagnostic() {
+    setGenerationError(null);
+    setGenerationErrorMessage("");
+  }
+
+  function beginGenerationDiagnostic() {
+    generationOperationId.current += 1;
+    clearGenerationDiagnostic();
+    return generationOperationId.current;
+  }
+
+  function invalidateGenerationDiagnostic() {
+    generationOperationId.current += 1;
+    clearGenerationDiagnostic();
+  }
+
+  function beginReportAction() {
+    actionController.current?.abort();
+    const id = ++actionRequestId.current;
+    const controller = new AbortController();
+    actionController.current = controller;
+    setActionErrorMessage("");
+    setActionErrorDiagnostic(null);
+    return { id, controller };
+  }
+
+  function isCurrentReportAction(id: number, controller: AbortController) {
+    return id === actionRequestId.current && actionController.current === controller && !controller.signal.aborted;
+  }
+
+  function invalidateReportAction() {
+    actionRequestId.current += 1;
+    actionController.current?.abort();
+    actionController.current = null;
+    setActionErrorMessage("");
+    setActionErrorDiagnostic(null);
+    setActionBusy("");
+  }
+
   const loadArchive = useCallback(async () => {
+    const requestId = ++listRequestId.current;
+    listController.current?.abort();
+    const controller = new AbortController();
+    listController.current = controller;
     setLoading(true);
-    setError("");
+    setListErrorMessage("");
+    setListErrorDiagnostic(null);
     try {
       const params = new URLSearchParams({
         offset: "0",
@@ -362,13 +419,20 @@ export function BriefingRoute() {
         dateFrom: archiveStart,
         dateTo: archiveEnd,
       });
-      const payload = await getJson<BriefingArchivePayload>(`/api/briefings/index?${params}`);
+      const payload = await getJson<BriefingArchivePayload>(`/api/briefings/index?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted || requestId !== listRequestId.current) return;
       setArchive(payload);
       setReactAgentContextScope("briefing", { surface: "briefing", viewId: "briefing", reportKind: "", reportId: "" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "브리핑 목록을 불러오지 못했습니다.");
+      if (isAbortError(err, controller.signal) || requestId !== listRequestId.current) return;
+      const message = reportErrorMessage(err, "브리핑 목록을 불러오지 못했습니다.");
+      setListErrorMessage(message);
+      setListErrorDiagnostic(captureReportError(err, requestId));
     } finally {
-      setLoading(false);
+      if (requestId === listRequestId.current) {
+        listController.current = null;
+        setLoading(false);
+      }
     }
   }, [archiveEnd, archiveKind, archiveMarket, archiveQuery, archiveStart, archiveType]);
 
@@ -398,12 +462,19 @@ export function BriefingRoute() {
 
   useEffect(() => {
     let alive = true;
+    let controller: AbortController | null = null;
     async function loadDetail(date: string, scope: MarketScope, kind: BriefingKind) {
+      const requestId = ++readRequestId.current;
+      const requestController = new AbortController();
+      controller = requestController;
       setLoading(true);
+      invalidateGenerationDiagnostic();
+      setReadErrorMessage("");
+      setReadErrorDiagnostic(null);
       setError("");
       try {
-        const payload = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`);
-        if (!alive) return;
+        const payload = await getJson<Briefing>(`/api/briefings/${encodeURIComponent(date)}?includePersonal=true&marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`, { signal: requestController.signal });
+        if (!alive || requestController.signal.aborted || requestId !== readRequestId.current) return;
         setBriefing(payload);
         setReactAgentContextScope("briefing", {
           surface: "briefing_reader",
@@ -413,22 +484,32 @@ export function BriefingRoute() {
           marketScope: scope,
         });
       } catch (err) {
-        if (!alive) return;
+        if (!alive || isAbortError(err, requestController.signal) || requestId !== readRequestId.current) return;
+        const message = reportErrorMessage(err, "브리핑을 불러오지 못했습니다.");
+        setReadErrorMessage(message);
+        setReadErrorDiagnostic(captureReportError(err, requestId));
         setBriefing(null);
-        setError(err instanceof Error ? err.message : "브리핑을 불러오지 못했습니다.");
+        setError(message);
       } finally {
-        if (alive) setLoading(false);
+        if (alive && requestId === readRequestId.current && !requestController.signal.aborted) setLoading(false);
       }
     }
 
     if (detailRoute) {
+      invalidateReportAction();
       loadDetail(detailRoute.date, detailRoute.scope, detailRoute.kind);
     } else {
+      invalidateReportAction();
+      readRequestId.current += 1;
+      setReadErrorMessage("");
+      setReadErrorDiagnostic(null);
       setBriefing(null);
       setReactAgentContextScope("briefing", { surface: "briefing", viewId: "briefing", reportKind: "", reportId: "" });
     }
     return () => {
       alive = false;
+      controller?.abort();
+      readRequestId.current += 1;
     };
   }, [detailRoute, proposalReloadKey]);
 
@@ -439,22 +520,31 @@ export function BriefingRoute() {
     // 발행일이라 같은 날 일간과 날짜가 겹친다. 일간이 없는 날이면 404가 된다.
     const kind = normalizedKind(briefing?.kind || detailRoute?.kind);
     if (!date) return;
+    const action = beginReportAction();
     setActionBusy(target);
     setActionStatus(target === "notion" ? "Notion에 내보내는 중..." : "Obsidian에 내보내는 중...");
     try {
       const query = `marketScope=${encodeURIComponent(scope)}&kind=${encodeURIComponent(kind)}`;
       const result = target === "notion"
-        ? await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-notion?${query}`, { marketScope: scope, kind })
-        : await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-obsidian?${query}`, { marketScope: scope, kind });
+        ? await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-notion?${query}`, { marketScope: scope, kind }, { signal: action.controller.signal })
+        : await postJson<ExportResult>(`/api/briefings/${encodeURIComponent(date)}/export-obsidian?${query}`, { marketScope: scope, kind }, { signal: action.controller.signal });
+      if (!isCurrentReportAction(action.id, action.controller)) return;
       if (target === "notion") {
         setActionStatus(result.notionUrl ? `Notion 내보냄: ${result.title || result.notionUrl}` : "Notion에 내보냈습니다.");
       } else {
         setActionStatus(`Obsidian 내보냄: ${result.filename || date}`);
       }
     } catch (err) {
-      setActionStatus(err instanceof Error ? err.message : "내보내기에 실패했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller) || isAbortError(err, action.controller.signal)) return;
+      setActionErrorDiagnostic(captureReportError(err, action.id));
+      const message = reportErrorMessage(err, "내보내기에 실패했습니다.");
+      setActionErrorMessage(message);
+      setActionStatus(message);
     } finally {
-      setActionBusy("");
+      if (isCurrentReportAction(action.id, action.controller)) {
+        actionController.current = null;
+        setActionBusy("");
+      }
     }
   }
 
@@ -465,6 +555,7 @@ export function BriefingRoute() {
     // 주간 보고서를 일간으로 바꿔치기한다.
     const kind = normalizedKind(briefing?.kind || detailRoute?.kind);
     if (!date) return;
+    invalidateReportAction();
     setActionBusy("overlay");
     setActionStatus("개인 해석을 생성하는 중...");
     try {
@@ -487,7 +578,9 @@ export function BriefingRoute() {
   async function deleteBriefing(date: string, scope: MarketScope, kind: BriefingKind = "daily") {
     if (!date) return;
     if (!window.confirm(`${date} ${SCOPE_LABELS[scope]} ${BRIEFING_KIND_LABELS[kind]} 브리핑을 삭제할까요?`)) return;
+    const action = beginReportAction();
     setActionBusy(`delete-${date}-${scope}-${kind}`);
+    invalidateGenerationDiagnostic();
     try {
       // 통합 범위 삭제는 그 날짜 전체를 지운다. 시장 하나만 지울 때만 market을 붙인다.
       // `multi`도 통합이다 — 서버가 아는 단일 시장(us/kr/europe/jp)이 아니라서
@@ -498,19 +591,28 @@ export function BriefingRoute() {
       const params = new URLSearchParams({ kind });
       if (!isAggregate) params.set("market", scope);
       const query = `?${params}`;
-      const res = await fetch(`/api/briefings/${encodeURIComponent(date)}${query}`, { method: "DELETE" });
-      // 응답을 보지 않으면 400·404가 성공처럼 보이고 목록만 그대로 다시 그려진다.
-      if (!res.ok) throw new Error(res.status === 404 ? "삭제할 브리핑을 찾지 못했습니다." : "브리핑 삭제에 실패했습니다.");
+      const result = await deleteJson<{ readonly deleted?: boolean }>(`/api/briefings/${encodeURIComponent(date)}${query}`, {}, { signal: action.controller.signal });
+      // HTTP 200만으로는 삭제가 확정되지 않는다. 백엔드는 항상 JSON 결과를 준다.
+      if (!result || result.deleted !== true) throw new Error("브리핑 삭제 결과를 확인하지 못했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller)) return;
       await loadArchive();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "브리핑 삭제에 실패했습니다.");
+      if (!isCurrentReportAction(action.id, action.controller) || isAbortError(err, action.controller.signal)) return;
+      setActionErrorDiagnostic(captureReportError(err, action.id));
+      const message = reportErrorMessage(err, "브리핑 삭제에 실패했습니다.");
+      setActionErrorMessage(message);
+      setError(message);
     } finally {
-      setActionBusy("");
+      if (isCurrentReportAction(action.id, action.controller)) {
+        actionController.current = null;
+        setActionBusy("");
+      }
     }
   }
 
   async function generateBriefing(targetDate?: string) {
     setGenerating(true);
+    const operationId = beginGenerationDiagnostic();
     setError("");
     try {
       const strictDate = Boolean(targetDate);
@@ -549,7 +651,11 @@ export function BriefingRoute() {
       await loadArchive();
       if (date) setBriefingHash(date, readerScope(response.marketScope || marketScope, selectedMarkets), briefingKind);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "브리핑 생성에 실패했습니다.");
+      if (isAbortError(err) || operationId !== generationOperationId.current) return;
+      setGenerationError(captureReportError(err, operationId));
+      const message = reportErrorMessage(err, "브리핑 생성에 실패했습니다.");
+      setGenerationErrorMessage(message);
+      setError(message);
     } finally {
       setGenerating(false);
     }
@@ -605,11 +711,13 @@ export function BriefingRoute() {
   if (detailRoute && briefing) {
     return (
       <div className="react-briefing-route" data-briefing-route>
-        {error && <p className="react-dashboard-error">{error}</p>}
+        {readErrorMessage && <p className="react-dashboard-error">{readErrorMessage}</p>}
+        {error && !readErrorMessage && <p className="react-dashboard-error">{error}</p>}
+        {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
         <ReportReaderShell
           eyebrow={detailRoute.kind === "weekly" ? "WEEKLY BRIEFING" : "DAILY BRIEFING"}
           title={readerTitle}
-          meta={`${formatArchiveDate(publicationDate)} KST 발행`}
+          meta={`보고서 날짜 ${formatArchiveDate(publicationDate)}${briefing.generatedAt || briefing.generation?.generatedAt ? ` · 생성 ${new Date(briefing.generatedAt || briefing.generation?.generatedAt || "").toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })} KST` : " · 생성 시각 미상"}`}
           agentContext={{
             surface: "briefing_reader",
             viewId: "briefing",
@@ -657,6 +765,7 @@ export function BriefingRoute() {
                 </ReaderActionButton>
               </ReaderActionGroup>
               {actionStatus && <p className="react-reader-status">{actionStatus}</p>}
+              {actionErrorDiagnostic && <ReportErrorDiagnostic diagnostic={actionErrorDiagnostic} />}
             </>
           )}
           noteIdentity={briefingNoteIdentity(
@@ -666,7 +775,6 @@ export function BriefingRoute() {
           noteLinkedTitle={readerTitle}
           noteOverlay={parsePersonalOverlayPayload(briefing.personalOverlay, briefing.canonicalRevision)}
         >
-          <BriefingChangeStrip summary={briefing.changeSummary} />
           <ReportBody
             markdown={readerContent.body || briefing.markdown || ""}
             marketScope={normalizedScope(briefing.marketScope || detailRoute.scope)}
@@ -761,7 +869,15 @@ export function BriefingRoute() {
         </section>
       </section>
 
-      {error && <p className="react-dashboard-error">{error}</p>}
+      {generationErrorMessage && <p className="react-dashboard-error">{generationErrorMessage}</p>}
+      {generationError && <ReportErrorDiagnostic diagnostic={generationError} />}
+      {readErrorMessage && <p className="react-dashboard-error">{readErrorMessage}</p>}
+      {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
+      {listErrorMessage && <p className="react-dashboard-error">{listErrorMessage}</p>}
+      {listErrorDiagnostic && <ReportErrorDiagnostic diagnostic={listErrorDiagnostic} />}
+      {!briefing && actionErrorMessage && <p className="react-dashboard-error">{actionErrorMessage}</p>}
+      {!briefing && actionErrorDiagnostic && <ReportErrorDiagnostic diagnostic={actionErrorDiagnostic} />}
+      {error && !generationErrorMessage && !readErrorMessage && !listErrorMessage && !actionErrorMessage && <p className="react-dashboard-error">{error}</p>}
 
       {/* 찾기 바. 필터가 패널 안(검색·날짜)과 패널 밖(시장·유형·보기)으로 갈라져 있었다.
           한 줄에 모으고 건수는 목록 헤더로 올린다. */}

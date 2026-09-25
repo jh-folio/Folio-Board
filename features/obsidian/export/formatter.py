@@ -188,8 +188,14 @@ def inject_wikilinks(text: str, names: list[str]) -> str:
         escaped = re.escape(name)
         # Word-boundary aware: avoid matching inside longer words or existing [[...]]
         pattern = r"(?<!\[\[)(?<![A-Za-z0-9가-힣])(" + escaped + r")(?![A-Za-z0-9가-힣])(?!\]\])"
-        replacement = r"[[\1]]"
-        new_text = re.sub(pattern, replacement, text, count=1)
+        # Keep citation labels/URLs and code intact. Only prose gets wikilinks.
+        protected = [(m.start(), m.end()) for m in re.finditer(
+            r"(?ms)```.*?```|~~~.*?~~~|`[^`\n]*`|!?\[[^\]\n]*\]\([^\n]*?\)|https?://[^\s<>]+",
+            text,
+        )]
+        match = next((m for m in re.finditer(pattern, text)
+                      if not any(a <= m.start() < b for a, b in protected)), None)
+        new_text = text[:match.start()] + "[[" + match.group(1) + "]]" + text[match.end():] if match else text
         if new_text != text:
             text = new_text
             already_linked.add(name)
