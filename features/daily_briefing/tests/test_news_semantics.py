@@ -285,3 +285,19 @@ def test_not_evaluated_is_not_no_new_information():
     assert result["status"] == "not_evaluated"
     assert result["reason"] in {"input_hash_mismatch", "no_valid_results"}
     assert all(row.get("verdict") != "no_new_information" for row in result.get("rows", []))
+
+
+def test_the_callback_timeout_never_exceeds_the_contract_maximum(monkeypatch):
+    """`(now + MAX) - now`가 반올림으로 MAX를 넘는 monotonic 값에서도 계약을 지킨다 (Ubuntu CI 간헐 실패)."""
+    maximum = float(semantics.MAX_TIMEOUT_SECONDS)
+    now = next(n for n in (i * 0.013 + 0.0071 for i in range(1, 200_000)) if (n + maximum) - n > maximum)
+    monkeypatch.setattr(semantics.time, "monotonic", lambda: now)
+    seen = []
+
+    def adapter(payload, *, timeout_seconds, max_output_tokens):
+        seen.append(timeout_seconds)
+        return _adapter(payload, timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens)
+
+    result = _run([_candidate("e-rounding")], callback=adapter, cache=semantics.BoundedSemanticCache())
+    assert seen == [maximum]
+    assert result["status"] == "evaluated"
