@@ -181,3 +181,43 @@ def test_notion_export_service_sends_real_link_payload(monkeypatch, kind):
     (service.export_analysis if kind == "company" else service.export_topic_report)(report)
     content = json.dumps(payloads, ensure_ascii=False)
     assert "annual%282026%29" in content and "folio-citation-links" not in content
+
+
+# ------------------------------------------------------------------ 링크 이름 (계획 §12 F)
+def _link_text(markdown: str, ledger: list[dict]) -> str:
+    rendered = render_citation_links(markdown, ledger)
+    return next(line for line in rendered.splitlines() if line.startswith("인용 출처: "))
+
+
+def test_a_web_fact_link_names_its_source_and_a_short_gist():
+    ledger = [{
+        "sourceId": "web_001", "type": "web_reference", "source": "sec.gov",
+        "url": "https://www.sec.gov/ex99.htm",
+        "title": "2026년 2분기 매출은 $2.547B로 전년 대비 24% 증가했고, 인수·매각 영향을 제외한 유기적 성장률은 21%였다.",
+    }]
+    line = _link_text("본문 <!-- folio-source-ids: web_001 -->", ledger)
+    assert line.startswith("인용 출처: [sec.gov — 2026년 2분기 매출은")
+    assert "…](" in line and "21%였다" not in line
+
+
+def test_a_long_title_is_cut_at_a_word_boundary_with_an_ellipsis():
+    title = "John Plant, 이사회 의장 겸 최고경영자 " + "중동 문제에도 신규 항공기 주문은 계속 늘었고 전체 수주잔고도 증가했다 " * 3
+    ledger = [{"sourceId": "ev_001", "source": "yahoo", "url": "https://finance.yahoo.com/a", "title": title}]
+    line = _link_text("본문 <!-- folio-source-ids: ev_001 -->", ledger)
+    label = line[len("인용 출처: ["):line.index("](")]
+    assert label.endswith("…") and len(label) <= 121
+    assert title.startswith(label[:-1])  # 단어 중간이 아니라 공백에서 끊는다
+    assert label[-2] != " "
+
+
+def test_short_titles_and_non_web_rows_keep_their_title():
+    ledger = [{"sourceId": "ev_001", "source": "매일경제", "url": "https://mk.co.kr/1", "title": "머스크 한마디에 전력인프라株 울상"}]
+    assert "[머스크 한마디에 전력인프라株 울상](" in _link_text("본문 <!-- folio-source-ids: ev_001 -->", ledger)
+
+
+def test_the_same_url_is_linked_once_per_block():
+    ledger = [
+        {"sourceId": "web_001", "type": "web_reference", "source": "sec.gov", "url": "https://www.sec.gov/ex99.htm", "title": "사실 A"},
+    ]
+    line = _link_text("본문 <!-- folio-source-ids: web_001, web_001 --> [web_001]", ledger)
+    assert line.count("https://www.sec.gov/ex99.htm") == 1

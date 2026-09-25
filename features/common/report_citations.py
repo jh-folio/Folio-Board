@@ -48,6 +48,33 @@ def _protected(text: str) -> list[tuple[int, int]]:
     return [(m.start(), m.end()) for m in re.finditer(pattern, text)]
 
 
+def _clean(value) -> str:
+    return " ".join(re.sub(r"[\[\]<>`*_\\\r\n]", " ", str(value or "")).split())
+
+
+def _shorten(text: str, limit: int) -> str:
+    """단어 경계에서 자르고 줄임표를 붙인다. 문장 중간에서 끊긴 이름은 잘린 줄 모른다."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    space = cut.rfind(" ")
+    if space >= limit // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,.·—-") + "…"
+
+
+def _label(row: dict) -> str:
+    """링크 이름은 출처를 알아보게 한다.
+
+    웹 조회 항목은 원장 `title`이 사실 문장이라 그대로 쓰면 링크 이름이 긴 문장이 되고,
+    발언은 중간에서 끊겼다(2026-09 HWM 실측). 이 항목은 출처 이름과 짧은 요지를 함께 쓴다.
+    """
+    title, source = _clean(row.get("title")), _clean(row.get("source"))
+    if row.get("type") == "web_reference" and source and title:
+        return f"{source} — {_shorten(title, 60)}"
+    return _shorten(title or source or _clean(row.get("sourceId")), 120) or "출처"
+
+
 def render_citation_links(markdown: str, source_ledger, *, execution=None) -> str:
     """Keep original tags/text; insert links after their paragraph/block.
 
@@ -76,8 +103,7 @@ def render_citation_links(markdown: str, source_ledger, *, execution=None) -> st
         # End of the containing paragraph avoids splitting links, lists and tables.
         boundary = re.search(r"\n\s*\n|\n(?=#{1,6}\s)", text[end:])
         position = end + boundary.start() if boundary else len(text)
-        label = re.sub(r"[\[\]<>`*_\\\r\n]", " ", str(row.get("title") or row.get("source") or row.get("sourceId") or "출처"))
-        label = " ".join(label.split())[:120] or "출처"
+        label = _label(row)
         link_url = quote(url, safe=":/?#@!$&'+,;=%~._-")
         placements.setdefault(position, {})[url] = f"[{label}]({link_url})"
 
