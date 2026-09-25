@@ -66,7 +66,8 @@ def _section_body(markdown: str, markers: tuple) -> str:
 
 # 기업분석 보고서의 고정 섹션 이름(`company_analysis/report_contract.py`와 같다).
 _COMPANY_SCENARIO_SECTION = "성장 전망과 체크포인트"
-_H2_NUMBER = re.compile(r"^\s*\d+[.)]\s*")
+# "6. ", "6) ", "6 " 번호와 볼드 표시(`**…**`)를 떼고 절 이름을 비교한다.
+_H2_NUMBER = re.compile(r"^\s*\d+[.)]?\s+")
 
 
 def _top_section_body(markdown: str, title: str) -> str:
@@ -79,7 +80,7 @@ def _top_section_body(markdown: str, title: str) -> str:
         if top:
             if capturing:
                 break
-            heading = _H2_NUMBER.sub("", stripped.lstrip("#").strip())
+            heading = _H2_NUMBER.sub("", stripped.lstrip("#").strip().strip("*").strip())
             capturing = heading.startswith(title)
             continue
         if capturing:
@@ -263,7 +264,9 @@ def evaluate_report(
         # 있다. 첫 '시나리오' 헤딩을 잡으면 PER 표만 읽고 뒤의 조건을 놓친다(HWM 2026-09).
         scenario_body = _top_section_body(md, _COMPANY_SCENARIO_SECTION)
         has_scenario = bool(scenario_body.strip())
-    else:
+    if artifact_type != "company_analysis" or not has_scenario:
+        # 그 절이 없는 옛 기업분석(2026-08 이전 제목)은 예전 방식으로 읽는다. 재평가 때 점수가
+        # 절 이름 하나 때문에 떨어지지 않게 한다.
         scenario_body = _section_body(md, _SECTION_MARKERS["scenario"])
         has_scenario = _has_section(low, "scenario")
     if has_scenario:

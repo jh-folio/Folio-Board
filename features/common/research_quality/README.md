@@ -43,7 +43,7 @@ POST /api/research-quality/recheck/{artifact_type}/{artifact_id}
 - `sourceGrounding`, `personalBiasRisk`, `hallucinationRisk`는 코드에서 계산한다.
 - `briefing`의 `numericSupport`는 최종 validator가 확인한 서로 다른 `factKey`/`kind`만 센다. 참고자료의 URL·날짜·본문에 우연히 남은 숫자는 숫자 근거로 세지 않는다. 다른 artifact의 기존 숫자 평가 규칙은 유지한다.
 - 평가 실패는 보고서를 깨뜨리지 않고 warning 또는 낮은 score로 남긴다.
-- `company_analysis`의 `scenario_quality`는 첫 '시나리오' 헤딩이 아니라 번호를 무시한 최상위 `성장 전망과 체크포인트` 절(하위 헤딩 포함, 다음 `##` 전까지)의 조건 낱말을 센다. 기업분석은 PER 배수 표에 '시나리오' 헤딩을 쓰기 때문에 예전 방식은 PER 표만 읽었다(2026-09 HWM). 절이 없으면 기존처럼 0.2다. 다른 유형의 검사 위치·가중치는 바뀌지 않았다.
+- `company_analysis`의 `scenario_quality`는 첫 '시나리오' 헤딩이 아니라 번호를 무시한 최상위 `성장 전망과 체크포인트` 절(하위 헤딩 포함, 다음 `##` 전까지)의 조건 낱말을 센다. 기업분석은 PER 배수 표에 '시나리오' 헤딩을 쓰기 때문에 예전 방식은 PER 표만 읽었다(2026-09 HWM). 번호(`6.`·`6)`·`6 `)와 볼드 표시는 무시한다. 그 절이 없는 옛 보고서는 예전 방식('시나리오' 헤딩)으로 읽어 재평가 점수가 절 이름 때문에 떨어지지 않게 한다. 다른 유형의 검사 위치·가중치는 바뀌지 않았다.
 
 ## 테스트
 

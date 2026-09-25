@@ -67,6 +67,15 @@ def build_buyback_quality(sec_summary: dict, *, price: float | None = None, curr
     return result
 
 
+def _amount(value, currency) -> str:
+    """독자용 금액. 통화를 모르면 기호를 지어내지 않고 숫자 뒤에 밝힌다."""
+    if currency:
+        return format_value(value, "Amount", currency)
+    sign = "-" if float(value) < 0 else ""
+    digits = format_value(abs(float(value)), "Amount", "USD").removeprefix("$")
+    return f"{sign}{digits} (통화 확인 필요)"
+
+
 def render_buyback_quality(quality: dict) -> str:
     """생성 컨텍스트 블록. 금액만 주면 본문도 금액만 쓴다."""
     if not quality:
@@ -75,13 +84,13 @@ def render_buyback_quality(quality: dict) -> str:
     lines = [
         "## 자사주 매입의 질",
         "",
-        f"- 최근 회계연도({quality.get('fiscalYear', '')}) 매입: {format_value(quality['amount'], 'Amount', unit)}",
+        f"- 최근 회계연도({quality.get('fiscalYear', '')}) 매입: {_amount(quality['amount'], quality.get('currency'))}",
     ]
     if "buybackYieldPct" in quality:
         lines.append(f"- 매입 수익률(매입액 ÷ 시가총액): {quality['buybackYieldPct']}%")
     if "stockBasedCompensation" in quality:
         lines.append(
-            f"- 주식보상비용: {format_value(quality['stockBasedCompensation'], 'Amount', unit)} "
+            f"- 주식보상비용: {_amount(quality['stockBasedCompensation'], quality.get('currency'))} "
             f"(매입액의 {quality['offsetRatio'] * 100:.0f}%)"
         )
     if "dilutedSharesChangePct" in quality:

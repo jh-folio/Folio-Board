@@ -122,3 +122,16 @@ class TestTableConditions:
     def test_the_requirements_block_shows_how_to_write_table_cells(self):
         block = render_quality_requirements()
         assert "체크포인트 표의 칸" in block and "한 자릿수가 되면" in block
+
+
+class TestOlderAndVariantHeadings:
+    def test_an_older_report_without_the_section_falls_back_to_the_scenario_heading(self):
+        old = "# 회사\n\n## 핵심 판단\n\n본문.\n\n## 시나리오\n\n매출이 10%를 넘으면 판단을 올립니다.\n\n## 참고자료\n\n출처."
+        score, _ = _scenario(old)
+        assert score > 0.5
+
+    def test_bold_or_undotted_numbers_in_the_heading_are_recognised(self):
+        for heading in ("## **성장 전망과 체크포인트**", "## 6 성장 전망과 체크포인트", "## 6) 성장 전망과 체크포인트"):
+            markdown = f"# 회사\n\n## 밸류에이션\n\n{_PER_TABLE}\n\n{heading}\n\n원가율이 66%를 넘으면 다시 봅니다."
+            score, _ = _scenario(markdown)
+            assert score > 0.5, heading

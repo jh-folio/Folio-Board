@@ -176,3 +176,18 @@ def test_a_long_multi_number_fact_is_not_cut_at_the_old_300_characters():
         {"topic": "segments", "statement": statement, "url": "https://x.com/q2"},
     ], "quotes": []}))
     assert row["facts"][0]["statement"] == statement
+
+
+def test_untagged_facts_keep_the_total_cap_and_do_not_claim_missing_bundles():
+    facts = [{"statement": f"사실 {i}", "url": f"https://x.com/{i}"} for i in range(8)]
+    row = W.assign_source_ids(W.lookup_company({"name": "X"}, "", _call({"facts": facts, "quotes": []})))
+    assert len(row["facts"]) == 8
+    assert "찾지 못한 묶음" not in W.render_lookup(row)
+
+
+def test_topic_spelling_variants_are_normalised():
+    row = W.lookup_company({"name": "X"}, "", _call({"facts": [
+        {"topic": "Capital-Return", "statement": "배당 인상", "url": "https://x.com/a"},
+        {"topic": "end markets", "statement": "시장별 성장", "url": "https://x.com/b"},
+    ], "quotes": []}))
+    assert [fact["topic"] for fact in row["facts"]] == ["capital_return", "end_markets"]

@@ -352,11 +352,21 @@ def debt_position(concepts: dict, currency: str = "USD") -> dict:
         return {"ok": False, "reason": "no_cash_balance"}
     needed = {concept for _, names, _ in DEBT_POSITION_BASES for concept in names}
     debt_by_concept = {name: _instant_values(concepts, name, currency) for name in needed}
+    # 완전한 조합을 먼저 모든 날짜에서 찾는다. 최신 분기가 장기부채만 보고했다고 단기차입까지
+    # 있는 연말 조합을 덮으면 차입금이 줄어든다(리뷰 재현: 연말 3,000 → 분기 1,000).
+    for want_complete in (True, False):
+        found = _first_position(dates, cash_by_concept, debt_by_concept, want_complete)
+        if found:
+            return found
+    return {"ok": False, "reason": "no_debt_on_cash_dates"}
+
+
+def _first_position(dates, cash_by_concept, debt_by_concept, want_complete: bool) -> dict:
     for end in dates:
         cash_concept = next((name for name in DEBT_POSITION_CASH if end in cash_by_concept[name]), "")
         cash_row = cash_by_concept[cash_concept][end]
         for basis, names, complete in DEBT_POSITION_BASES:
-            if not all(end in debt_by_concept[name] for name in names):
+            if complete != want_complete or not all(end in debt_by_concept[name] for name in names):
                 continue
             parts = {name: float(debt_by_concept[name][end]["val"]) for name in names}
             total = sum(parts.values())
@@ -374,7 +384,7 @@ def debt_position(concepts: dict, currency: str = "USD") -> dict:
                 "cashIncludesRestricted": cash_concept != DEBT_POSITION_CASH[0],
                 "form": str(cash_row.get("form") or ""),
             }
-    return {"ok": False, "reason": "no_debt_on_cash_dates"}
+    return {}
 
 
 def _latest_fact_end(concepts: dict) -> str:

@@ -399,12 +399,19 @@ def net_debt_from(sec_summary: dict) -> dict:
     않게 — HWM 실측: 2025년 말 기준 $2.31B vs 2026-06-30 기준 $3.94B). 없으면 연차 행으로
     계산하고, 그 사실을 `basis`에 남긴다.
     """
-    long_term = financial_engine.latest_value(sec_summary, "Long-Term Debt") or 0.0
-    short_term = financial_engine.latest_value(sec_summary, "Short-Term Debt") or 0.0
-    cash = financial_engine.latest_value(sec_summary, "Cash & Equivalents") or 0.0
+    raw = {
+        "장기부채": financial_engine.latest_value(sec_summary, "Long-Term Debt"),
+        "단기차입": financial_engine.latest_value(sec_summary, "Short-Term Debt"),
+        "현금": financial_engine.latest_value(sec_summary, "Cash & Equivalents"),
+    }
+    long_term, short_term, cash = (float(value or 0.0) for value in raw.values())
     annual_end = financial_engine.latest_end(sec_summary, "Long-Term Debt")
     position = (sec_summary or {}).get("debtPosition") or {}
-    if position.get("ok") and str(position.get("asOf") or "") >= annual_end:
+    usable = position.get("ok") and str(position.get("asOf") or "") >= annual_end
+    # 단기차입 보고가 없는 날짜의 합계는 불완전하다. 연차 행에 단기차입이 있으면 그쪽을 쓴다.
+    if usable and not position.get("complete") and raw["단기차입"] is not None:
+        usable = False
+    if usable:
         parts = position.get("components") or {}
         # 합계 태그 하나로만 잡힌 날은 장·단기 구분을 모른다. 0으로 나누어 적지 않는다.
         split = "DebtLongtermAndShorttermCombinedAmount" not in parts
@@ -426,6 +433,8 @@ def net_debt_from(sec_summary: dict) -> dict:
         "totalDebt": round(long_term + short_term, 2),
         "asOf": annual_end,
         "basis": "annual_rows",
+        # 계산은 예전처럼 없는 값을 0으로 두지만, 그 사실을 숨기지 않는다. 표시하는 쪽이 읽는다.
+        "missing": [name for name, value in raw.items() if value is None],
     }
 
 
@@ -643,9 +652,12 @@ def render_dcf_context(dcf: dict) -> str:
             f"(없는 입력: {', '.join(discount.get('missing') or []) or '알 수 없음'})"
         )
     debt = dcf.get("netDebt") or {}
-    if debt.get("netDebt") is not None:
+    missing = debt.get("missing") or []
+    if debt.get("netDebt") is not None and not {"장기부채", "현금"} <= set(missing):
         as_of = f"{debt['asOf']} 기준 " if debt.get("asOf") else ""
         partial = "" if debt.get("complete", True) else " — 그 날짜의 단기차입 보고가 없어 불완전할 수 있음"
+        if missing:
+            partial += f" — 확인되지 않은 항목({', '.join(missing)})은 0으로 두고 계산됨"
         lines.append(
             f"- 순차입금 {_amount(debt['netDebt'], unit)} ({as_of}차입금 {_amount(debt.get('totalDebt') or 0, unit)}"
             f" − 현금 {_amount(debt.get('cash') or 0, unit)}){partial}"

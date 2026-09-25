@@ -170,3 +170,40 @@ class TestCandidateTags:
             InterestIncomeExpenseNonoperatingNet=[{"start": "2025-01-01", "end": "2025-12-31", "val": -151, "form": "10-K"}],
         )
         assert S._facts_for_metric(concepts, "Interest Expense") == ("", [])
+
+
+class TestReviewFindings:
+    def test_an_incomplete_later_date_does_not_replace_a_complete_year_end(self):
+        """분기가 장기부채만 보고했다고 단기차입까지 있는 연말 조합을 덮지 않는다."""
+        concepts = _concepts(
+            LongTermDebt=[_instant("2025-12-31", 1_000, "10-K"), _instant("2026-06-30", 1_000)],
+            ShortTermBorrowings=[_instant("2025-12-31", 2_000, "10-K")],
+            CashAndCashEquivalentsAtCarryingValue=[_instant("2025-12-31", 100, "10-K"), _instant("2026-06-30", 100)],
+        )
+        row = S.debt_position(concepts)
+        assert row["asOf"] == "2025-12-31" and row["totalDebt"] == 3_000 and row["complete"] is True
+
+    def test_an_incomplete_position_yields_to_annual_short_term_rows(self):
+        position = {"ok": True, "asOf": "2026-06-30", "totalDebt": 1_000.0, "cash": 100.0, "netDebt": 900.0,
+                    "components": {"LongTermDebt": 1_000.0}, "complete": False, "basis": "long_term_only"}
+        summary = _summary(*BASE_ROWS, _annual("Short-Term Debt", [(2025, 2_000)]), position=position)
+        row = D.net_debt_from(summary)
+        assert row["basis"] == "annual_rows" and row["totalDebt"] == 3_050 + 2_000
+
+    def test_missing_annual_inputs_are_named_not_hidden(self):
+        summary = _summary(_annual("Revenue", [(2025, 100)]))
+        row = D.net_debt_from(summary)
+        assert set(row["missing"]) == {"장기부채", "단기차입", "현금"}
+        assert "순차입금" not in D.render_dcf_context({
+            "ok": True, "currency": "USD", "netDebt": row,
+            "baseFcf": {"value": 1.0, "method": "recent_only"},
+            "discountRate": {"method": "fixed", "rate": 0.1, "missing": []},
+            "terminalGrowth": 0.025, "growth": {"rate": 0.05, "basis": "fallback"},
+            "fadePath": [0.05, 0.025], "scenarios": [], "price": 1.0,
+        })
+
+    def test_unknown_currency_is_said_instead_of_a_dollar_sign(self):
+        from features.company_analysis.buyback import render_buyback_quality
+
+        block = render_buyback_quality({"fiscalYear": "2025", "currency": "", "amount": 1_200_000_000.0})
+        assert "1.20B (통화 확인 필요)" in block and "$" not in block

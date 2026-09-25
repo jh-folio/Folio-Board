@@ -120,9 +120,12 @@ def _rows(values, keys: tuple[str, ...], *, limit: int, per_topic: int | None = 
         if not any(cleaned.values()):
             continue
         if per_topic is not None:
-            topic = str(row.get("topic") or "").strip().lower()
+            topic = re.sub(r"[\s-]+", "_", str(row.get("topic") or "").strip().lower())
             topic = topic if topic in FACT_TOPICS else _OTHER_TOPIC
-            if per_topic_count.get(topic, 0) >= per_topic:
+            # 묶음 표시가 없는 사실은 묶음 상한이 아니라 전체 상한만 받는다. 모델이 topic을
+            # 빼먹었다고 예전(8건)보다 적게 남기면 안 된다(리뷰 재현: 8건 → 3건).
+            cap = per_topic if topic != _OTHER_TOPIC else limit
+            if per_topic_count.get(topic, 0) >= cap:
                 continue
             per_topic_count[topic] = per_topic_count.get(topic, 0) + 1
             cleaned["topic"] = topic
@@ -240,7 +243,9 @@ def render_lookup(row: dict) -> str:
             lines.append(f"- [{fact.get('sourceId', '')}] {fact['statement']} — {fact['url']}")
     missing = [label.split(" — ")[0] for topic, label in FACT_TOPICS.items()
                if not any(fact.get("topic") == topic for fact in facts)]
-    if missing:
+    # 묶음 표시가 하나도 없으면 무엇이 빠졌는지 알 수 없다. 모른다는 것을 '못 찾음'으로 쓰지 않는다.
+    tagged = any((fact.get("topic") or _OTHER_TOPIC) != _OTHER_TOPIC for fact in facts)
+    if missing and tagged:
         # 조회가 못 찾은 것과 회사가 공시하지 않은 것은 다르다.
         lines.append(
             f"- 이번 조회에서 찾지 못한 묶음: {', '.join(missing)}. "

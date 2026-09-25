@@ -946,6 +946,8 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
         else "yfinance marketCap (시장가치 통화 확인 필요)"
     )
     net_debt_as_of = f" ({net_debt_row['asOf']} 기준)" if net_debt_row.get("asOf") else ""
+    if net_debt_row.get("missing"):
+        net_debt_as_of += f", 확인되지 않음: {', '.join(net_debt_row['missing'])}(0으로 계산)"
     table = [
         "| 지표 | 계산값 | 사용 입력/계산식 |",
         "| --- | ---: | --- |",
