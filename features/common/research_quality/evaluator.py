@@ -64,6 +64,29 @@ def _section_body(markdown: str, markers: tuple) -> str:
     return "\n".join(out)
 
 
+# 기업분석 보고서의 고정 섹션 이름(`company_analysis/report_contract.py`와 같다).
+_COMPANY_SCENARIO_SECTION = "성장 전망과 체크포인트"
+_H2_NUMBER = re.compile(r"^\s*\d+[.)]\s*")
+
+
+def _top_section_body(markdown: str, title: str) -> str:
+    """번호를 무시하고 그 이름의 최상위(`## `) 절 본문. 하위 헤딩은 포함하고 다음 `## `에서 멈춘다."""
+    out: list[str] = []
+    capturing = False
+    for line in str(markdown or "").split("\n"):
+        stripped = line.lstrip()
+        top = stripped.startswith("## ") or (stripped.startswith("# ") and not stripped.startswith("##"))
+        if top:
+            if capturing:
+                break
+            heading = _H2_NUMBER.sub("", stripped.lstrip("#").strip())
+            capturing = heading.startswith(title)
+            continue
+        if capturing:
+            out.append(line)
+    return "\n".join(out)
+
+
 def _artifact_markdown(artifact_type: str, artifact: dict) -> str:
     if artifact_type == "regime_state":
         return "\n\n".join([
@@ -235,8 +258,15 @@ def evaluate_report(
         warnings.append("반론과 리스크가 약합니다(확증편향 방지).")
         suggested.append("반대 근거 또는 이 판단이 틀릴 조건을 추가하세요.")
 
-    scenario_body = _section_body(md, _SECTION_MARKERS["scenario"])
-    if _has_section(low, "scenario"):
+    if artifact_type == "company_analysis":
+        # 기업분석의 조건은 PER 배수 표('PER 조건별 시나리오')가 아니라 성장 체크포인트 절에
+        # 있다. 첫 '시나리오' 헤딩을 잡으면 PER 표만 읽고 뒤의 조건을 놓친다(HWM 2026-09).
+        scenario_body = _top_section_body(md, _COMPANY_SCENARIO_SECTION)
+        has_scenario = bool(scenario_body.strip())
+    else:
+        scenario_body = _section_body(md, _SECTION_MARKERS["scenario"])
+        has_scenario = _has_section(low, "scenario")
+    if has_scenario:
         cond_hits = sum(1 for w in _CONDITION_WORDS if w in scenario_body)
         scores["scenario_quality"] = min(1.0, 0.5 + cond_hits * 0.17)
         if cond_hits == 0:

@@ -593,6 +593,17 @@ def build_dcf(
     return result
 
 
+def _amount(value, unit: str) -> str:
+    """독자용 금액 표시. 계산 객체의 정밀도는 그대로 두고 **보여 줄 때만** B/M 단위로 줄인다.
+
+    `$16,083,265,018` 같은 전체 자릿수는 가정 위의 추정치에 없는 정밀함을 보이고, 본문이
+    그 숫자를 그대로 옮겨 적었다(HWM 2026-09 실측).
+    """
+    from features.company_analysis.sec_companyfacts import format_value
+
+    return format_value(float(value), "Amount", unit or "USD")
+
+
 def render_dcf_context(dcf: dict) -> str:
     """생성 컨텍스트 블록. 숫자와 **그 숫자가 선 가정**을 함께 준다."""
     if not dcf or not dcf.get("ok"):
@@ -609,7 +620,7 @@ def render_dcf_context(dcf: dict) -> str:
     lines = [
         "## DCF (이 값을 그대로 쓰세요)",
         "",
-        f"- 기준 FCF: {base['value']:,.0f} {unit} — {_BASE_METHOD_LABELS.get(base.get('method'), base.get('method'))}",
+        f"- 기준 FCF: {_amount(base['value'], unit)} — {_BASE_METHOD_LABELS.get(base.get('method'), base.get('method'))}",
     ]
     if base.get("deviationFromRecent") is not None:
         trend_note = {
@@ -617,7 +628,7 @@ def render_dcf_context(dcf: dict) -> str:
             "decreasing": " (마진이 다년간 악화 추세라 최근 연도 가중이 이 차이를 줄였습니다)",
         }.get(base.get("marginTrend"), "")
         lines.append(
-            f"  최근 연도 실제 FCF {base['recent']:,.0f} 대비 {base['deviationFromRecent'] * 100:+.1f}%"
+            f"  최근 연도 실제 FCF {_amount(base['recent'], unit)} 대비 {base['deviationFromRecent'] * 100:+.1f}%"
             f"{trend_note}"
         )
     if discount["method"] == "wacc":
@@ -636,8 +647,8 @@ def render_dcf_context(dcf: dict) -> str:
         as_of = f"{debt['asOf']} 기준 " if debt.get("asOf") else ""
         partial = "" if debt.get("complete", True) else " — 그 날짜의 단기차입 보고가 없어 불완전할 수 있음"
         lines.append(
-            f"- 순차입금 {debt['netDebt']:,.0f} {unit} ({as_of}차입금 {float(debt.get('totalDebt') or 0):,.0f}"
-            f" − 현금 {float(debt.get('cash') or 0):,.0f}){partial}"
+            f"- 순차입금 {_amount(debt['netDebt'], unit)} ({as_of}차입금 {_amount(debt.get('totalDebt') or 0, unit)}"
+            f" − 현금 {_amount(debt.get('cash') or 0, unit)}){partial}"
         )
     lines += [
         f"- 영구성장률 {dcf['terminalGrowth'] * 100:.1f}% · 성장률 {dcf['growth']['rate'] * 100:.1f}%"
@@ -652,7 +663,7 @@ def render_dcf_context(dcf: dict) -> str:
     for row in dcf["scenarios"]:
         if row.get("ok"):
             lines.append(
-                f"| {row['name']} | {row['growth'] * 100:.1f}% | {row['equityValue']:,.0f} | {row['perShare']:,.2f} |"
+                f"| {row['name']} | {row['growth'] * 100:.1f}% | {_amount(row['equityValue'], unit)} | {row['perShare']:,.2f} |"
             )
         else:
             lines.append(f"| {row['name']} | {row['growth'] * 100:.1f}% | 계산 불가 | 계산 불가 |")

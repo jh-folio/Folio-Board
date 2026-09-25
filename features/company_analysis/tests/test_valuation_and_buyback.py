@@ -81,7 +81,10 @@ class TestBuybackQuality:
         """`TreasuryStockSharesAcquired`를 등재하지 않는 회사가 많다(실측 HWM)."""
         without = build_buyback_quality(_summary({"Share Repurchases": [700_000_000]}))
         assert "averagePrice" not in without
-        assert "계산할 수 없습니다" in render_buyback_quality(without)
+        block = render_buyback_quality(without)
+        assert "계산하지 않았습니다" in block
+        # 구조화 자료에 없다는 것을 회사 미공시로 바꿔 말하지 않는다 (계획 §12 B).
+        assert "공시하지 않았다고 쓰지 말고" in block
 
         with_shares = build_buyback_quality(_summary({
             "Share Repurchases": [700_000_000],
