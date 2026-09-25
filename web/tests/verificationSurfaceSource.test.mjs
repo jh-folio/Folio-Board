@@ -177,3 +177,11 @@ test("new screen CSS uses tokens, not raw radius or weight numbers", async () =>
   assert.ok(!/font-weight:\s*\d/.test(block), "굵기에 숫자를 직접 썼습니다(토큰만 허용)");
   assert.ok(!/min-height:(?! 44px)/.test(block), "44px 터치 타깃 외 min-height를 직접 썼습니다");
 });
+
+test("a verification alert names my linked tickers by state ID in the personal-layer colour", async () => {
+  // 개인 층(보라)이 판정 칩과 섞이지 않고, 이름이 아니라 상태 ID로만 잇는다(2026-09-25).
+  const panel = await read(PANEL);
+  assert.match(panel, /ownedTickers=\{ownedTickers\[state\.stateId\]\}/);
+  assert.match(panel, /className="chip verification-owned-chip" data-tone="purple" data-layer="hypothesis"/);
+  assert.match(panel, /내 종목 \{ownedTickers\.join\(" · "\)\}/);
+});

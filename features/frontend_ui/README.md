@@ -258,11 +258,24 @@ public/react/folio-react.js
 
 - `InvestmentContextCard.tsx`는 `GET /api/investment-context/summary`의 동일한
   metadata-only projection을 Home, Market Memory, Smart Collection, Deep Research에 표시한다.
+- **Market Memory는 카드가 아니다(0.6.0).** 카드로 올리면 개인 참고 정보가 시장 상태를 밀어내고
+  화면의 주인공처럼 보였다. `InvestmentContextStrip`이 Market State의 "다음 확인" 바로 아래에
+  한 줄로 놓이고(`MarketStateDashboard`의 `personalContext` 자리), 그 흐름의 검증 알림에는
+  `내 종목 NVDA · GOOGL` 보라 칩이 붙는다. 칩은 내러티브 **상태 ID**(`ownedTickersByState`)로만
+  잇고 이름으로 잇지 않는다. 연결 링크는 포트폴리오 종목이면 `#/portfolio`, 워치리스트에 있으면
+  `#/watchlist`로 간다.
+- **개인 층은 3px 보라 줄과 보라 라벨이 말한다.** 옅은 보라 워시는 쓰지 않는다 — 0.5 무테 규칙이
+  카드의 보라 줄을 지워 워시만 남았고, HDR에서 채도가 눌리면 개인 층인 줄 알 수 없었다.
+  카드는 말미 무테 규칙 뒤에서 줄을 다시 선언한다. 실측 대비(라벨 글자/보라 줄 vs 면): 다크 8.61,
+  라이트 5.94. 버튼은 `.btn` 프리미티브(`btn--sm`, 링크는 `btn--text`)다.
+- 확인 예정은 0이면 숨긴다. 맨 아래 경계 문구는 "내 포트폴리오·워치리스트 기준 참고 정보예요.
+  보고서 근거로는 쓰지 않아요."로 화면 말을 쓴다.
 - 네 표면의 ticker, stance, 예정 checkpoint, 연결 route는 같은 컴포넌트 계약을 사용한다.
   Portfolio와 Watchlist의 독립 route는 계속 기본 navigation에서 숨긴다.
 - 연결된 맥락이 없으면 어떤 화면에서도 렌더링하지 않는다(로딩·실패도 마찬가지). 홈에서
   빈 카드가 상시 떠 있으면 아직 쓰지 않은 기능을 계속 광고하게 된다. 닫기는
-  `folio.investmentContext.dismissed.v1`에 저장해 화면을 옮겨도 유지한다.
+  `folio.investmentContext.dismissed.v1`에 저장해 화면을 옮겨도 유지한다. 닫기 버튼이 있는
+  카드(홈)에만 적용한다 — 예전에는 홈에서 닫은 것이 닫기 버튼도 없는 화면의 카드까지 숨겼다.
 - 카드는 `data-layer="hypothesis"`를 유지하고 포트폴리오 수량·비중·가격이나 note body를
   렌더링하지 않는다. 외부 evidence와 Canonical 보고서 본문도 이 카드와 구분한다.
 - context 자동 조회는 read-only다. Agent는 사용자가 `Agent로 위험 설명`을 눌렀을 때만

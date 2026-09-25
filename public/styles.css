@@ -9243,7 +9243,9 @@ body.report-reader-open { overflow: hidden; }
   border: 1px solid var(--folio-border);
   border-left: 3px solid var(--folio-purple);
   border-radius: var(--folio-radius);
-  background: color-mix(in srgb, var(--folio-purple-soft) 42%, var(--folio-surface-clean));
+  /* 워시 없이 3px 보라 줄만 개인 층을 표시한다(DESIGN_SYSTEM §5 액센트와 워시). 옅은 보라 배경은
+     HDR에서 채도가 눌리면 사라져 카드가 개인 층인 줄 알 수 없었다(2026-09-25). */
+  background: var(--folio-surface-clean);
   color: var(--folio-ink);
   overflow-wrap: anywhere;
 }
@@ -9305,8 +9307,6 @@ body.report-reader-open { overflow: hidden; }
   display: flex;
   flex-wrap: wrap;
   gap: 7px 16px;
-  padding-block: 8px;
-  border-block: 1px solid color-mix(in srgb, var(--folio-purple) 18%, var(--folio-border));
   color: var(--folio-ink-soft);
   font-family: var(--font-num);
   font-size: var(--fs-xs);
@@ -9317,11 +9317,9 @@ body.report-reader-open { overflow: hidden; }
 .investment-context-ledger {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
+  gap: 0 var(--sp-4);
   margin: 0;
   padding: 0;
-  border: 1px solid var(--folio-border);
-  background: var(--folio-border);
   list-style: none;
 }
 
@@ -9331,8 +9329,8 @@ body.report-reader-open { overflow: hidden; }
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  padding: 10px 11px;
-  background: var(--folio-surface-clean);
+  padding: 10px 0;
+  border-top: 1px solid var(--folio-border);
 }
 
 .investment-context-ledger li > div {
@@ -9359,22 +9357,7 @@ body.report-reader-open { overflow: hidden; }
   font-size: var(--fs-xs);
 }
 
-.investment-context-ledger a,
-.investment-context-ledger button,
-.investment-context-links a {
-  flex: 0 0 auto;
-  width: auto;
-  padding: 5px 8px;
-  border: 1px solid var(--folio-border);
-  border-radius: var(--folio-radius);
-  background: var(--folio-surface-clean);
-  color: var(--folio-purple);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-bold);
-  line-height: 1.2;
-  text-decoration: none;
-}
-
+/* 링크·버튼의 모양은 .btn 프리미티브가 갖는다 — 여기는 배치만. */
 .investment-context-links {
   display: flex;
   flex-wrap: wrap;
@@ -9383,8 +9366,6 @@ body.report-reader-open { overflow: hidden; }
 
 .investment-context-boundary {
   margin-top: 0;
-  padding-top: 8px;
-  border-top: 1px dashed color-mix(in srgb, var(--folio-purple) 20%, var(--folio-border));
   font-size: var(--fs-xs);
 }
 
@@ -9448,8 +9429,60 @@ body.report-reader-open { overflow: hidden; }
   margin: 18px auto 0;
 }
 
-.react-market-memory-route > .investment-context-card {
-  margin: 18px 0;
+.investment-context-strip {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin-top: var(--sp-4);
+  /* 한 줄 표시도 워시 없이 줄과 라벨로만 개인 층을 말한다(HDR에서도 남는다). */
+  border-left: 3px solid var(--folio-purple);
+  overflow-wrap: anywhere;
+}
+
+.investment-context-strip__kicker {
+  margin: 0;
+  color: var(--folio-purple);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-bold);
+}
+
+.investment-context-strip__list {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.investment-context-strip__list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  min-width: 0;
+}
+
+.investment-context-strip__list strong {
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+}
+
+.investment-context-strip__list li > span:not(.investment-context-strip__actions) {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-sm);
+}
+
+.investment-context-strip__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.investment-context-strip__note {
+  color: var(--folio-ink-muted);
+  font-size: var(--fs-label);
 }
 
 .topicrpt-collection-workspace > .investment-context-card,
@@ -9481,13 +9514,6 @@ body.report-reader-open { overflow: hidden; }
 
   .investment-context-row-actions > * {
     flex: 1 1 130px;
-    min-height: 40px;
-  }
-
-  .investment-context-ledger a,
-  .investment-context-ledger button {
-    width: 100%;
-    min-height: 40px;
   }
 }
 
@@ -16413,6 +16439,8 @@ main.page {
   font-size: var(--fs-body-sm);
   font-weight: var(--fw-medium);
   white-space: nowrap;
+  /* `<a className="btn">`도 버튼이다. 브라우저 기본 밑줄이 남아 링크처럼 보였다. */
+  text-decoration: none;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
@@ -16479,6 +16507,8 @@ main.page {
 .chip[data-tone="gold"] { background: var(--folio-gold-soft); color: var(--folio-gold); }
 .chip[data-tone="blue"] { background: var(--folio-blue-soft); color: var(--folio-blue); }
 .chip[data-tone="teal"] { background: var(--folio-teal-soft); color: var(--folio-teal); }
+/* 보라는 개인 층(Personal Overlay·가설) 전용이다 — 판정·상태 색으로 쓰지 않는다. */
+.chip[data-tone="purple"] { background: var(--folio-purple-soft); color: var(--folio-purple); }
 
 /* --- .segment: 상호배타 선택. 회색 트랙 + 알약. N개 항목에서 동작(0.5 시장 확장 대비) --- */
 .segment {
@@ -16714,6 +16744,13 @@ main.page {
 .react-agent-welcome-card {
   border: none;
   border-left: 3px solid var(--react-agent-accent, var(--folio-gold));
+  border-radius: var(--r-group);
+}
+/* 보라=개인 층. 위 무테 규칙이 이 줄까지 지워, 0.5부터 개인 맥락 카드는 옅은 보라 워시만
+   남았고 HDR에서 채도가 눌리면 그마저 보이지 않았다(2026-09-25). */
+.investment-context-card {
+  border: none;
+  border-left: 3px solid var(--folio-purple);
   border-radius: var(--r-group);
 }
 

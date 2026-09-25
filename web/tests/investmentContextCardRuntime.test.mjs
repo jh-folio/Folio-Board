@@ -118,3 +118,68 @@ test("controlled Agent reply renders headings and bullets without HTML injection
   assert.doesNotMatch(html, /<script>PRIVATE_CANARY<\/script>/);
   assert.match(html, /&lt;script&gt;PRIVATE_CANARY&lt;\/script&gt;/);
 });
+
+test("the market-memory strip is one quiet line that links each ticker to where it lives", async (t) => {
+  const vite = await createServer({ configFile: false, root: webRoot, server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  t.after(() => vite.close());
+  const { InvestmentContextStripView } = await vite.ssrLoadModule("/src/app/InvestmentContextCard.tsx");
+  const turning = {
+    ...summary,
+    watchContexts: summary.watchContexts.map((context, index) => ({
+      ...context,
+      marketDrivers: index === 0 ? [{ stateId: "ai-capex", label: "AI CAPEX", momentum: "turning" }] : context.marketDrivers,
+    })),
+  };
+
+  const html = renderToStaticMarkup(React.createElement(InvestmentContextStripView, { summary: turning, onExplain: () => {} }));
+  assert.match(html, /data-qa="investment-context-market-memory"/);
+  assert.match(html, /data-layer="hypothesis"/);
+  assert.match(html, /근거 아님/);
+  assert.match(html, /AI CAPEX\(전환\)/);
+  // NVDA는 워치리스트에도 있고(both), MSFT는 포트폴리오에만 있다.
+  assert.match(html, /href="#\/watchlist"[^>]*>워치리스트에서 보기/);
+  assert.match(html, /href="#\/portfolio"[^>]*>포트폴리오에서 보기/);
+  assert.doesNotMatch(html, /href="#\/market-memory"/);
+  assert.doesNotMatch(visibleText(html), /Canonical|evidence/);
+  assert.doesNotMatch(html, /quantity|costBasis|averagePrice|portfolioTotal|noteBody|PRIVATE-CHECKPOINT-CANARY/);
+
+  const empty = { ...summary, watchContexts: [] };
+  assert.equal(renderToStaticMarkup(React.createElement(InvestmentContextStripView, { summary: empty })), "");
+  assert.equal(renderToStaticMarkup(React.createElement(InvestmentContextStripView, { summary: null })), "");
+});
+
+test("owned tickers are keyed by narrative state ID, never by label", async (t) => {
+  const vite = await createServer({ configFile: false, root: webRoot, server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  t.after(() => vite.close());
+  const { ownedTickersByState } = await vite.ssrLoadModule("/src/app/InvestmentContextCard.tsx");
+  const shared = {
+    ...summary,
+    watchContexts: summary.watchContexts.map((context) => ({
+      ...context,
+      marketDrivers: [{ stateId: "ai-capex", label: "Same label", momentum: "turning" }],
+    })),
+  };
+  assert.deepEqual(ownedTickersByState(shared), { "ai-capex": ["NVDA", "MSFT"] });
+  assert.deepEqual(ownedTickersByState(null), {});
+});
+
+test("the home card hides an empty due count and keeps boundary copy in plain words", async (t) => {
+  const vite = await createServer({ configFile: false, root: webRoot, server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  t.after(() => vite.close());
+  const { InvestmentContextCardView } = await vite.ssrLoadModule("/src/app/InvestmentContextCard.tsx");
+  const noDue = { ...summary, watchContexts: summary.watchContexts.map((context) => ({ ...context, dueCheckpoints: [] })) };
+  const html = renderToStaticMarkup(React.createElement(InvestmentContextCardView, { mode: "home", summary: noDue }));
+  assert.doesNotMatch(html, /확인 예정 0/);
+  assert.match(html, /보고서 근거로는 쓰지 않아요/);
+  assert.doesNotMatch(visibleText(html), /Canonical|evidence/);
+  assert.match(html, /class="btn btn--sm btn--text" href="#\/portfolio"/);
+});
+
+test("dismissing on Home does not hide the card on screens without a close button", async () => {
+  const source = await readFile(new URL("../src/app/InvestmentContextCard.tsx", import.meta.url), "utf8");
+  assert.match(source, /if \(dismissed && props\.dismissible\) return null;/);
+});
+
+function visibleText(html) {
+  return html.replace(/<[^>]+>/g, " ");
+}

@@ -73,7 +73,7 @@ const TRANSITION_KIND_LABELS: Record<string, string> = {
   evidence_count: "근거 수",
 };
 
-function AlertRow({ state, signal }: { state: NarrativeVerificationState; signal: Signal }) {
+function AlertRow({ state, signal, ownedTickers = [] }: { state: NarrativeVerificationState; signal: Signal; ownedTickers?: readonly string[] }) {
   // 반증된 항목의 근거만 싣는다. 확인된 항목까지 담으면 반증이 그 안에 묻힌다.
   const challenged = state.checkpoints.filter((checkpoint) => checkpoint.status === "challenged");
   const timeline = state.timeline.slice(0, TIMELINE_PREVIEW);
@@ -86,6 +86,12 @@ function AlertRow({ state, signal }: { state: NarrativeVerificationState; signal
         </span>
         <strong className="verification-alert__label">{state.label}</strong>
         <span className="verification-alert__reason">{signal.detail}</span>
+        {/* 이 내러티브와 닿은 내 종목. 상태 ID로만 잇고, 보라=개인 층이라 판정과 섞이지 않는다. */}
+        {ownedTickers.length ? (
+          <span className="chip verification-owned-chip" data-tone="purple" data-layer="hypothesis">
+            내 종목 {ownedTickers.join(" · ")}
+          </span>
+        ) : null}
         <button
           className="btn btn--sm verification-alert__action"
           type="button"
@@ -154,7 +160,7 @@ function AlertRow({ state, signal }: { state: NarrativeVerificationState; signal
   );
 }
 
-export function NarrativeVerificationPanel({ refreshKey = 0 }: { refreshKey?: number }) {
+export function NarrativeVerificationPanel({ refreshKey = 0, ownedTickers = {} }: { refreshKey?: number; ownedTickers?: Readonly<Record<string, readonly string[]>> }) {
   const [payload, setPayload] = useState<NarrativeVerificationPayload | null>(null);
   const [error, setError] = useState("");
 
@@ -198,7 +204,7 @@ export function NarrativeVerificationPanel({ refreshKey = 0 }: { refreshKey?: nu
         </p>
       </div>
       <ul className="verification-alert-list">
-        {alerts.map(({ state, signal }) => <AlertRow key={state.stateId} state={state} signal={signal} />)}
+        {alerts.map(({ state, signal }) => <AlertRow key={state.stateId} state={state} signal={signal} ownedTickers={ownedTickers[state.stateId]} />)}
       </ul>
     </section>
   );
