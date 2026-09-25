@@ -77,3 +77,50 @@ def test_the_report_payload_survives_canonical_json():
 
     # 예전에는 여기서 ValueError로 저장이 통째로 실패했다.
     assert canonical_json_bytes(payload)
+
+
+# ------------------------------------------------------------------ 본문 입력 (계획 §12 E)
+def test_the_price_return_block_carries_the_chart_values_and_date():
+    charts = {"charts": [{
+        "kind": "price_return", "labels": ["1개월", "3개월"], "asOf": "2026-09-24",
+        "series": {"HWM": [-13.64, -18.86], "SPY": [1.57, None]},
+    }]}
+
+    block = service.render_price_return_context(charts)
+
+    assert "2026-09-24 종가" in block
+    assert "| HWM | -13.6% | -18.9% |" in block
+    assert "| SPY | +1.6% | 없음 |" in block  # 결측은 0%가 아니다
+    assert "매매 시점" in block
+
+
+def test_no_chart_means_no_block_and_an_unknown_date_is_said():
+    assert service.render_price_return_context({"charts": []}) == ""
+    assert service.render_price_return_context(None) == ""
+    block = service.render_price_return_context({"charts": [{
+        "kind": "price_return", "labels": ["1개월"], "series": {"HWM": [2.0]},
+    }]})
+    assert "마지막 종가일 미확인" in block
+
+
+def test_the_session_date_is_read_from_the_history_index(monkeypatch):
+    class Hist:
+        empty = False
+        index = ["2026-09-23 00:00:00-04:00", "2026-09-24 00:00:00-04:00"]
+
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, _key):
+            return type("C", (), {"iloc": [100.0, 110.0]})()
+
+    class Ticker:
+        def __init__(self, _symbol):
+            pass
+
+        def history(self, period=""):
+            return Hist()
+
+    monkeypatch.setitem(__import__("sys").modules, "yfinance", type("M", (), {"Ticker": Ticker}))
+
+    assert service._compute_price_returns("HWM")["asOf"] == "2026-09-24"
