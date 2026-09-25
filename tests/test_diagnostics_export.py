@@ -86,7 +86,18 @@ def test_export_children_are_direct_and_capped(tmp_path):
     assert envelope["runCount"] == MAX_EXPORT_RUNS
     assert all(item["relation"] in {"selected", "child"} for item in envelope["json"]["runs"])
     assert any(issue["code"] == "run_limit" for issue in envelope["json"]["issues"])
-    assert direct[0] in {item["runId"] for item in envelope["json"]["runs"]}
+    # The cap keeps the earliest children by (createdAt, runId), not whatever the
+    # filesystem lists first — NTFS lists alphabetically, macOS APFS did not, and
+    # the kept set differed per OS. Children created in the same millisecond tie
+    # on createdAt, so compare against the stored order rather than creation order.
+    runs_dir = tmp_path / "diagnostics" / "runs"
+    created = {
+        run_id: json.loads((runs_dir / f"{run_id}.json").read_text(encoding="utf-8"))["createdAt"]
+        for run_id in direct
+    }
+    earliest = sorted(direct, key=lambda run_id: (created[run_id], run_id))[: MAX_EXPORT_RUNS - 1]
+    exported = [item["runId"] for item in envelope["json"]["runs"] if item["relation"] == "child"]
+    assert exported == earliest
     assert len(json.dumps(envelope["json"], ensure_ascii=False).encode()) <= MAX_EXPORT_BYTES
     runtime.close()
 

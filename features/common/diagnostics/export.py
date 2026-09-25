@@ -244,13 +244,17 @@ class DiagnosticsExportService:
                         continue
                     raise
                 if value is not None and metadata is not None:
-                    if len(found) < max(0, limit):
-                        found.append((candidate, value, metadata))
-                    else:
-                        _append_issue(issues, "run_limit", selected)
+                    found.append((candidate, value, metadata))
         except (OSError, UnicodeError, RuntimeError):
             _append_issue(issues, "read_failed", selected)
+        # Sort before capping. Directory listing order is the filesystem's
+        # (alphabetical on NTFS, hashed or insertion order elsewhere), so capping
+        # first kept a different set of children on each OS. The scan itself is
+        # already bounded by MAX_SCAN_ENTRIES.
         found.sort(key=lambda pair: (str(pair[1].get("createdAt") or ""), pair[0]))
+        if len(found) > max(0, limit):
+            _append_issue(issues, "run_limit", selected)
+            found = found[:max(0, limit)]
         return found
 
     @staticmethod
