@@ -37,14 +37,38 @@ METRIC_CANDIDATES = {
     "Depreciation & Amortization": ["DepreciationDepletionAndAmortization", "DepreciationDepletionAndAmortizationExpense", "DepreciationAndAmortization"],
     "Pretax Income": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxes"],
     "Income Tax": ["IncomeTaxExpenseBenefit"],
-    "Interest Expense": ["InterestExpenseNonOperating", "InterestExpense"],
+    # 총이자비용 계열만 둔다. 태그 이름은 대소문자까지 같아야 잡힌다 — 예전 후보
+    # `InterestExpenseNonOperating`은 실제 태그(`…Nonoperating`)와 달라 한 번도 잡히지
+    # 않았고, HWM은 2023년 `InterestExpense`가 최신 값으로 남았다(실측 2026-09-25).
+    # `InterestAndDebtExpense`는 차입 관련 비용을 포함한 총액이다. 순이자
+    # (`InterestIncomeExpense…Net`)는 이자수익을 뺀 다른 정의라 섞지 않는다.
+    "Interest Expense": ["InterestExpenseNonoperating", "InterestExpense", "InterestAndDebtExpense"],
     "Share Repurchases": ["PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity"],
     # 자사주 매입의 **질**은 금액만으로 보이지 않는다. 주식보상이 매입을 얼마나
     # 상쇄하는지, 주식 수가 실제로 줄었는지가 함께 있어야 판단이 된다.
     "Stock-Based Compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
     "Shares Repurchased": ["TreasuryStockSharesAcquired"],
-    "Dividends Paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
+    # `PaymentsOfOrdinaryDividends`는 보통주 배당 지급의 현재 태그다. 없으면 2015년까지만
+    # 있는 옛 태그가 최신 배당으로 쓰였다(HWM 실측: $223M(2015) vs 실제 $181M(2025)).
+    "Dividends Paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock", "PaymentsOfOrdinaryDividends"],
 }
+
+# 순차입금은 **한 기준일의 잔액**이다. 후보 태그를 섞어 가장 최근 값을 각각 고르면
+# 장기부채는 연말, 단기차입은 3년 전, 현금은 분기말이 되어 어느 날의 재무 상태도 아니게
+# 된다. 같은 날짜에 모두 있는 조합만 쓰고, 위에서부터 정의가 넓은 순서로 고른다.
+# `LongTermDebt`는 유동성 장기부채를 포함한 값이라 `LongTermDebtCurrent`와 더하지 않는다.
+DEBT_POSITION_BASES = (
+    ("total_debt", ("DebtLongtermAndShorttermCombinedAmount",), True),
+    ("noncurrent_plus_current", ("LongTermDebtNoncurrent", "DebtCurrent"), True),
+    ("noncurrent_current_short", ("LongTermDebtNoncurrent", "LongTermDebtCurrent", "ShortTermBorrowings"), True),
+    ("long_term_plus_short", ("LongTermDebt", "ShortTermBorrowings"), True),
+    # 단기차입이 그 날짜에 보고되지 않았다. 0으로 채우지 않고 불완전하다고 표시한다.
+    ("noncurrent_plus_current_ltd", ("LongTermDebtNoncurrent", "LongTermDebtCurrent"), False),
+    ("long_term_only", ("LongTermDebt",), False),
+    ("long_term_and_leases_only", ("LongTermDebtAndFinanceLeaseObligations",), False),
+)
+# 현금은 제한성 현금을 뺀 값을 먼저 쓴다. 포함 값만 있으면 그 사실을 함께 남긴다.
+DEBT_POSITION_CASH = ("CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents")
 
 # IFRS concept 후보. us-gaap과 이름 체계가 달라 기존 표를 재사용할 수 없다.
 # 실측(2026-08-06, SAP·도요타 companyfacts)으로 확인한 이름만 넣는다.
@@ -300,6 +324,59 @@ def format_value(value, metric: str, currency: str = "USD") -> str:
     return f"{sign}{prefix}{num:,.0f}"
 
 
+def _instant_values(concepts: dict, concept: str, currency: str) -> dict[str, dict]:
+    """날짜 → 그 날짜의 잔액 행(가장 늦게 신고된 것). 연차·분기 보고서의 시점 값만."""
+    out: dict[str, dict] = {}
+    rows = ((concepts.get(concept) or {}).get("units") or {}).get(currency) or []
+    for row in rows:
+        if row.get("start") or row.get("val") is None or not row.get("end"):
+            continue
+        if row.get("form") not in ANNUAL_FORMS + QUARTERLY_FORMS:
+            continue
+        end = str(row["end"])
+        current = out.get(end)
+        if current is None or str(row.get("filed") or "") > str(current.get("filed") or ""):
+            out[end] = row
+    return out
+
+
+def debt_position(concepts: dict, currency: str = "USD") -> dict:
+    """가장 최근 공통 기준일의 차입금·현금·순차입금.
+
+    값과 함께 기준일·정의·태그를 돌려준다. 같은 날짜에 차입금 조합과 현금이 함께 없으면
+    계산하지 않는다(`ok=False`). us-gaap 태그만 다룬다 — IFRS·DART는 기존 경로를 쓴다.
+    """
+    cash_by_concept = {name: _instant_values(concepts, name, currency) for name in DEBT_POSITION_CASH}
+    dates = sorted({end for values in cash_by_concept.values() for end in values}, reverse=True)
+    if not dates:
+        return {"ok": False, "reason": "no_cash_balance"}
+    needed = {concept for _, names, _ in DEBT_POSITION_BASES for concept in names}
+    debt_by_concept = {name: _instant_values(concepts, name, currency) for name in needed}
+    for end in dates:
+        cash_concept = next((name for name in DEBT_POSITION_CASH if end in cash_by_concept[name]), "")
+        cash_row = cash_by_concept[cash_concept][end]
+        for basis, names, complete in DEBT_POSITION_BASES:
+            if not all(end in debt_by_concept[name] for name in names):
+                continue
+            parts = {name: float(debt_by_concept[name][end]["val"]) for name in names}
+            total = sum(parts.values())
+            cash = float(cash_row["val"])
+            return {
+                "ok": True,
+                "asOf": end,
+                "basis": basis,
+                "complete": complete,
+                "totalDebt": total,
+                "cash": cash,
+                "netDebt": total - cash,
+                "components": parts,
+                "cashConcept": cash_concept,
+                "cashIncludesRestricted": cash_concept != DEBT_POSITION_CASH[0],
+                "form": str(cash_row.get("form") or ""),
+            }
+    return {"ok": False, "reason": "no_debt_on_cash_dates"}
+
+
 def _latest_fact_end(concepts: dict) -> str:
     """The most recent period end anywhere in this taxonomy."""
     latest = ""
@@ -376,6 +453,8 @@ def build_companyfacts_summary(company: dict, cache_dir: Path) -> dict:
         "accountingStandard": "IFRS" if taxonomy == "ifrs-full" else "US-GAAP",
         "currency": currency,
     }
+    if taxonomy == "us-gaap":
+        summary["debtPosition"] = debt_position(concepts, currency)
     summary["markdown"] = companyfacts_to_markdown(summary)
     return summary
 
@@ -413,6 +492,16 @@ def companyfacts_to_markdown(summary: dict) -> str:
         lines.append(
             f"| {metric} | {_row_values(row.get('annual', []), metric, currency)} | {_row_values(row.get('quarterly', []), metric, currency)} | {row.get('concept') or 'n/a'} |"
         )
+    position = summary.get("debtPosition") or {}
+    if position.get("ok"):
+        money = lambda value: format_value(value, "Total Debt", currency or "USD")  # noqa: E731
+        note = "" if position.get("complete") else " — 그 날짜의 단기차입 보고가 없어 차입금이 불완전할 수 있음"
+        lines += [
+            "",
+            f"최신 차입금·현금 ({position['asOf']} 기준, 같은 날짜 잔액): 차입금 {money(position['totalDebt'])}"
+            f" ({' + '.join(position.get('components') or {})}), 현금 {money(position['cash'])}"
+            f" ({position.get('cashConcept')}), 순차입금 {money(position['netDebt'])}{note}",
+        ]
     return "\n".join(lines)
 
 

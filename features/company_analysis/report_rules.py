@@ -644,6 +644,26 @@ def build_financial_table(sec_summary: dict, market_data: dict | None = None) ->
         )
     return "\n".join(lines)
 
+def _dividend_phrase(value: float | None, year: str, stale_year: str, currency: str) -> str:
+    if stale_year:
+        return f"배당 지급은 최신 회계연도({year}) 값이 확인되지 않습니다(마지막 공시 값은 {stale_year}년)."
+    if value is None:
+        return "배당 지급은 확인되지 않습니다."
+    return f"배당 지급은 {_money(value, currency)}({year})로 확인됩니다."
+
+
+def _latest_net_debt_note(debt: dict, currency: str) -> str:
+    """연차 행보다 늦은 기준일의 차입 잔액이 있으면 함께 적는다. 인수로 차입이 늘어난
+    분기를 연말 비율이 가리지 않게 한다."""
+    if not debt or debt.get("basis") in {None, "", "annual_rows"} or not debt.get("asOf"):
+        return ""
+    note = "" if debt.get("complete", True) else ", 단기차입 보고 없음"
+    return (
+        f" 최신 순차입금은 {_money(debt.get('netDebt'), currency)}"
+        f"({debt['asOf']} 기준 차입금 {_money(debt.get('totalDebt'), currency)} − 현금 {_money(debt.get('cash'), currency)}{note})입니다."
+    )
+
+
 def build_financial_quality_analysis(sec_summary: dict, market_data: dict | None = None) -> str:
     currency = _reporting_currency(sec_summary)
     revenue = _latest_number(sec_summary, "Revenue")
@@ -660,7 +680,10 @@ def build_financial_quality_analysis(sec_summary: dict, market_data: dict | None
     long_term_debt = _latest_number(sec_summary, "Long-Term Debt")
     derived = financial_engine.derived_financials(sec_summary)
     buybacks = _latest_number(sec_summary, "Share Repurchases")
-    dividends = _latest_number(sec_summary, "Dividends Paid")
+    # 배당은 최신 회계연도 값만 판단에 쓴다. 오래된 태그만 남은 회사는 그 연도를 밝히고
+    # 금액을 싣지 않는다(HWM: 2015년 $223M이 2025년 주주환원처럼 표에 올랐다).
+    dividends, dividend_year, dividend_stale_year = financial_engine.current_year_value(sec_summary, "Dividends Paid")
+    debt_position = net_debt_from(sec_summary)
 
     fcf = _latest_metric_value(sec_summary, market_data, "Free Cash Flow")
     if fcf is None:
@@ -736,13 +759,15 @@ def build_financial_quality_analysis(sec_summary: dict, market_data: dict | None
         (
             "재무 안정성",
             stability_judgment,
-            f"현금성자산은 {_money(cash, currency)}, 총부채는 {_money(liabilities, currency)}, 장기부채/영업현금흐름은 {_pct(debt_to_cfo)}, 유동비율은 {_multiple(derived.get('currentRatio'))}입니다.",
+            f"현금성자산은 {_money(cash, currency)}, 총부채는 {_money(liabilities, currency)}, 장기부채/영업현금흐름은 {_pct(debt_to_cfo)}, 유동비율은 {_multiple(derived.get('currentRatio'))}입니다."
+            + _latest_net_debt_note(debt_position, currency),
             "순부채, 만기 구조",
         ),
         (
             "자본배분",
             capital_allocation,
-            f"설비투자/영업현금흐름은 {_pct(capex_to_cfo)}이며, 자사주 매입은 {_money(buybacks, currency)}, 배당 지급은 {_money(dividends, currency)}로 확인됩니다.",
+            f"설비투자/영업현금흐름은 {_pct(capex_to_cfo)}이며, 자사주 매입은 {_money(buybacks, currency)}, "
+            + _dividend_phrase(dividends, dividend_year, dividend_stale_year, currency),
             "M&A 수익률, 유지/성장 CapEx 구분",
         ),
     ]
@@ -850,7 +875,8 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
     # 민감도 표에 쓰고, 바로 아래 시나리오 표는 `dcf_model`(단기차입 포함)을 읽었다 —
     # 한 섹션 안에서 세 표가 서로 다른 레버리지를 말했다. 단기차입이 많은 회사에서는
     # 그 차이가 그대로 주당 가치로 간다. `dcf.net_debt_from()`이 단일 출처다.
-    net_debt = float(net_debt_from(sec_summary).get("netDebt") or 0.0)
+    net_debt_row = net_debt_from(sec_summary)
+    net_debt = float(net_debt_row.get("netDebt") or 0.0)
     enterprise_value = market.get("enterpriseValue") if market.get("ok") else None
     if valuation_basis.get("marketValueCurrencyStatus") != "same":
         enterprise_value = None
@@ -919,12 +945,13 @@ def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict 
         if market_cap_derived
         else "yfinance marketCap (시장가치 통화 확인 필요)"
     )
+    net_debt_as_of = f" ({net_debt_row['asOf']} 기준)" if net_debt_row.get("asOf") else ""
     table = [
         "| 지표 | 계산값 | 사용 입력/계산식 |",
         "| --- | ---: | --- |",
         f"| 현재 주가 | {_money_with_currency_status(price, market_currency)} | yfinance {market.get('ticker', company.get('ticker', ''))} |",
         f"| 시가총액 | {_money_with_currency_status(market_cap_display, reporting_currency if market_cap_derived else market_value_currency)} | {market_cap_source} |",
-        f"| 순부채 | {_money_with_currency_status(net_debt, reporting_currency)} | 장기부채 + 단기차입 - 현금 {_money_with_currency_status(cash, reporting_currency)} |",
+        f"| 순부채 | {_money_with_currency_status(net_debt, reporting_currency)} | 차입금 {_money_with_currency_status(net_debt_row.get('totalDebt'), reporting_currency)} - 현금 {_money_with_currency_status(net_debt_row.get('cash'), reporting_currency)}{net_debt_as_of} |",
         f"| PER | {_multiple(per)} | 주가 / 희석 EPS {_plain_number(eps)} |",
         f"| PSR | {_multiple(psr)} | 시가총액 / 매출 {_money_with_currency_status(revenue, reporting_currency)} |",
         f"| EV/EBITDA | {_multiple(ev_ebitda)} | 기업가치 / EBITDA {_money_with_currency_status(ebitda, reporting_currency)} |",

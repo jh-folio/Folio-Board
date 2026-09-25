@@ -385,20 +385,47 @@ def implied_growth(
     return {"status": "solved", "growth": round((low + high) / 2, 4)}
 
 
+# 장기 쪽으로 읽는 차입금 태그. `LongTermDebt`는 유동성 장기부채를 포함한다.
+_LONG_TERM_PARTS = {"LongTermDebtNoncurrent", "LongTermDebt", "LongTermDebtAndFinanceLeaseObligations"}
+
+
 def net_debt_from(sec_summary: dict) -> dict:
     """순부채. **단기차입을 빼먹지 않는다.**
 
     장기부채만 보면 유동성 차입이 많은 회사의 부채가 통째로 사라진다.
+
+    **한 기준일의 잔액이다.** companyfacts가 같은 날짜의 차입금·현금 조합을 찾았고 그 날짜가
+    연차 잔액보다 늦거나 같으면 그것을 쓴다(인수로 차입이 늘어난 분기를 연말 값이 가리지
+    않게 — HWM 실측: 2025년 말 기준 $2.31B vs 2026-06-30 기준 $3.94B). 없으면 연차 행으로
+    계산하고, 그 사실을 `basis`에 남긴다.
     """
     long_term = financial_engine.latest_value(sec_summary, "Long-Term Debt") or 0.0
     short_term = financial_engine.latest_value(sec_summary, "Short-Term Debt") or 0.0
     cash = financial_engine.latest_value(sec_summary, "Cash & Equivalents") or 0.0
+    annual_end = financial_engine.latest_end(sec_summary, "Long-Term Debt")
+    position = (sec_summary or {}).get("debtPosition") or {}
+    if position.get("ok") and str(position.get("asOf") or "") >= annual_end:
+        parts = position.get("components") or {}
+        # 합계 태그 하나로만 잡힌 날은 장·단기 구분을 모른다. 0으로 나누어 적지 않는다.
+        split = "DebtLongtermAndShorttermCombinedAmount" not in parts
+        return {
+            "netDebt": round(float(position["netDebt"]), 2),
+            "longTermDebt": round(sum(v for k, v in parts.items() if k in _LONG_TERM_PARTS), 2) if split else None,
+            "shortTermDebt": round(sum(v for k, v in parts.items() if k not in _LONG_TERM_PARTS), 2) if split else None,
+            "cash": round(float(position["cash"]), 2),
+            "totalDebt": round(float(position["totalDebt"]), 2),
+            "asOf": position.get("asOf"),
+            "basis": position.get("basis"),
+            "complete": bool(position.get("complete")),
+        }
     return {
         "netDebt": round(long_term + short_term - cash, 2),
         "longTermDebt": round(long_term, 2),
         "shortTermDebt": round(short_term, 2),
         "cash": round(cash, 2),
         "totalDebt": round(long_term + short_term, 2),
+        "asOf": annual_end,
+        "basis": "annual_rows",
     }
 
 
@@ -603,6 +630,14 @@ def render_dcf_context(dcf: dict) -> str:
         lines.append(
             f"- 할인율 {discount['rate'] * 100:.1f}% — **회사별 계산에 실패해 고정값을 썼습니다**"
             f"(없는 입력: {', '.join(discount.get('missing') or []) or '알 수 없음'})"
+        )
+    debt = dcf.get("netDebt") or {}
+    if debt.get("netDebt") is not None:
+        as_of = f"{debt['asOf']} 기준 " if debt.get("asOf") else ""
+        partial = "" if debt.get("complete", True) else " — 그 날짜의 단기차입 보고가 없어 불완전할 수 있음"
+        lines.append(
+            f"- 순차입금 {debt['netDebt']:,.0f} {unit} ({as_of}차입금 {float(debt.get('totalDebt') or 0):,.0f}"
+            f" − 현금 {float(debt.get('cash') or 0):,.0f}){partial}"
         )
     lines += [
         f"- 영구성장률 {dcf['terminalGrowth'] * 100:.1f}% · 성장률 {dcf['growth']['rate'] * 100:.1f}%"

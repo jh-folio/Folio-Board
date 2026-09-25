@@ -49,6 +49,40 @@ def latest_value(sec_summary: dict, metric: str, offset: int = 0) -> float | Non
     return rows[offset]
 
 
+def latest_end(sec_summary: dict, metric: str) -> str:
+    """그 지표의 가장 최근 연차 기준일. 없으면 빈 문자열."""
+    for metric_row in (sec_summary or {}).get("rows", []) or []:
+        if metric_row.get("metric") == metric:
+            ends = [str(item.get("end") or "") for item in metric_row.get("annual", []) or []]
+            return max(ends or [""])
+    return ""
+
+
+# 회사의 최신 회계연도는 손익·현금흐름의 핵심 지표가 말한다. 한 지표만 오래된 태그로
+# 남으면(HWM: 이자비용 2023년, 배당 2015년) 그 값은 이 연도와 어긋난다.
+_REFERENCE_FLOW_METRICS = ("Revenue", "Net Income", "Operating Cash Flow")
+
+
+def reference_year(sec_summary: dict) -> str:
+    years = [latest_year_value(sec_summary, metric)[1] for metric in _REFERENCE_FLOW_METRICS]
+    return max([year for year in years if year] or [""])
+
+
+def current_year_value(sec_summary: dict, metric: str) -> tuple[float | None, str, str]:
+    """최신 회계연도의 값만 돌려준다: (값, 그 연도, 값이 오래됐으면 마지막 연도).
+
+    오래된 값은 역사적 정보로는 남지만 **지금의** 비율·판단의 입력으로 쓰지 않는다.
+    기준 연도를 알 수 없으면 판단하지 않고 최신 값을 그대로 쓴다.
+    """
+    value, year = latest_year_value(sec_summary, metric)
+    reference = reference_year(sec_summary)
+    if value is None:
+        return None, "", ""
+    if reference and year and year < reference:
+        return None, reference, year
+    return value, year, ""
+
+
 def annual_values(sec_summary: dict, metric: str, limit: int = 5) -> list[float]:
     frame = annual_metric_frame(sec_summary)
     if pl is not None:
@@ -102,8 +136,11 @@ def derived_financials(sec_summary: dict) -> dict:
     revenue = latest_value(sec_summary, "Revenue")
     pretax = latest_value(sec_summary, "Pretax Income")
     tax = latest_value(sec_summary, "Income Tax")
-    interest = latest_value(sec_summary, "Interest Expense")
+    # 이자비용은 최신 회계연도 값만, 부채는 **같은 해** 연말 잔액으로 나눈다. 2023년 이자를
+    # 2025년 부채로 나눈 7.1%가 차입비용으로 할인율에 들어간 적이 있다(HWM 실측).
+    interest, interest_year, _stale = current_year_value(sec_summary, "Interest Expense")
     debt = latest_value(sec_summary, "Long-Term Debt")
+    debt_same_year = annual_year_values(sec_summary, "Long-Term Debt").get(interest_year) if interest_year else None
     cash = latest_value(sec_summary, "Cash & Equivalents")
     current_assets = latest_value(sec_summary, "Current Assets")
     current_liabilities = latest_value(sec_summary, "Current Liabilities")
@@ -116,7 +153,11 @@ def derived_financials(sec_summary: dict) -> dict:
         else None
     )
     tax_rate = tax / pretax if tax is not None and pretax not in {None, 0} and pretax > 0 else None
-    debt_cost = interest / debt if interest is not None and debt not in {None, 0} and debt > 0 else None
+    debt_cost = (
+        interest / debt_same_year
+        if interest is not None and debt_same_year not in {None, 0} and debt_same_year > 0
+        else None
+    )
     current_ratio = current_assets / current_liabilities if current_assets is not None and current_liabilities not in {None, 0} else None
     return {
         "revenue": revenue,
