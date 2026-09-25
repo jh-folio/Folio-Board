@@ -33,27 +33,48 @@ WebCall = Callable[[str, str], str]
 
 # 로컬 보조 자료가 이보다 적으면 웹으로 메운다. 실측 4건 중 3건이 여기 걸린다.
 THIN_DOCUMENT_COUNT = 6
-_MAX_ROWS = 8
+
+# 최근 분기의 **필수 묶음**. 대상이 "실적·가이던스·발언" 셋뿐이고 전체 8건 상한이던
+# 때는 같은 원문을 두 번 조회해도 매번 다른 묶음이 빠졌다(HWM 2026-09 실측: 한 번은
+# 사업부·가이던스, 한 번은 시장별 성장·예비부품·자사주가 왔고 배당 인상은 두 번 다
+# 빠졌다). 묶음마다 상한을 두어 한 묶음이 다른 묶음의 자리를 다 쓰지 못하게 한다.
+FACT_TOPICS = {
+    "results": "전사 실적 — 매출·영업이익·순이익·EPS, 회계 기준과 회사 조정 기준을 구분",
+    "segments": "사업부별 매출·이익",
+    "end_markets": "시장(고객 산업)별 성장률·매출 비중",
+    "guidance": "다음 분기·연간 가이던스와 이전 대비 변경 폭",
+    "capital_return": "자본배분 — 배당 변경, 자사주 매입 금액·평균가, 설비투자 계획",
+}
+_OTHER_TOPIC = "other"
+_MAX_PER_TOPIC = 3
+_MAX_FACTS = 14
+_MAX_QUOTES = 4
+_MAX_TEXT = 400
 
 
 PROMPT = """당신은 조사원이다. 아래 회사에 대해 **웹에서 사실을 찾아** 보고하라.
 글을 쓰지 말고 찾은 것만 돌려준다.
 
-무엇을 찾는가 (이 순서로):
-1. 가장 최근 분기 실적 — 매출·이익과 전년 대비, 그리고 회사가 제시한 가이던스
-2. **경영진의 실제 발언** — 실적발표·컨퍼런스콜에서 누가(이름과 직함) 무슨 취지로 말했는지
-3. 가이던스나 전망이 바뀐 것이 있으면 무엇이 어떻게 바뀌었는지
+가장 최근 분기에 대해 아래 **묶음을 하나씩 모두** 찾는다(topic 값):
+- results: 전사 실적 — 매출·영업이익·순이익·EPS와 전년 대비. 회계 기준(GAAP)과 회사 조정 기준을 구분한다
+- segments: 사업부별 매출·이익
+- end_markets: 시장(고객 산업)별 성장률·매출 비중
+- guidance: 다음 분기·연간 가이던스와 이전 가이던스 대비 변경 폭
+- capital_return: 배당 변경, 자사주 매입 금액·평균가, 설비투자 계획
+그리고 **경영진의 실제 발언** — 실적발표·컨퍼런스콜에서 누가(이름과 직함) 무슨 취지로 말했는지.
 
 규칙:
 - 허용 출처 목록 안에서만 찾는다. 목록 밖에서 본 것은 넣지 않는다.
+- 회사가 SEC에 제출한 실적발표(Exhibit 99.1)나 회사 IR 원문이 있으면 요약 기사보다 그것을 출처로 쓴다.
 - 사실마다 **출처 URL을 반드시** 붙인다. URL이 없는 사실은 넣지 마라.
 - 수치는 값과 기간을 함께 적는다(예: "2026년 2분기 매출 $8.7B, 전년 대비 +22%").
+- 같은 묶음의 여러 수치는 한 사실에 모아도 된다(예: 사업부 네 곳의 매출·이익을 한 문장에).
+- 한 묶음을 찾지 못하면 그 묶음은 비워 둔다. 지어내지 마라.
 - 발언은 **이름과 직함**을 그대로 적는다. "경영진은"으로 뭉개지 마라.
-- 찾지 못하면 빈 배열을 돌려준다. 지어내지 마라.
 - 주가 전망이나 투자 의견은 찾지 마라. 사실만 가져온다.
 
 JSON 객체 하나만 출력하라:
-{"facts": [{"statement": "사실 한 문장", "url": "https://…"}], "quotes": [{"who": "이름·직함", "when": "시점", "what": "발언 요지", "url": "https://…"}]}"""
+{"facts": [{"topic": "results|segments|end_markets|guidance|capital_return", "statement": "사실 한 문장", "url": "https://…"}], "quotes": [{"who": "이름·직함", "when": "시점", "what": "발언 요지", "url": "https://…"}]}"""
 
 
 def needs_web_lookup(*, document_count: int, data_gaps=None) -> bool:
@@ -86,20 +107,31 @@ def _extract(text: str) -> dict:
             return {}
 
 
-def _rows(values, keys: tuple[str, ...]) -> list[dict]:
+def _rows(values, keys: tuple[str, ...], *, limit: int, per_topic: int | None = None) -> list[dict]:
     out: list[dict] = []
+    per_topic_count: dict[str, int] = {}
     for row in values or []:
         if not isinstance(row, dict):
             continue
         url = str(row.get("url") or "").strip()
         if not url.startswith("http"):
             continue
-        cleaned = {key: " ".join(str(row.get(key) or "").split())[:300] for key in keys}
+        cleaned = {key: " ".join(str(row.get(key) or "").split())[:_MAX_TEXT] for key in keys}
         if not any(cleaned.values()):
             continue
+        if per_topic is not None:
+            topic = re.sub(r"[\s-]+", "_", str(row.get("topic") or "").strip().lower())
+            topic = topic if topic in FACT_TOPICS else _OTHER_TOPIC
+            # 묶음 표시가 없는 사실은 묶음 상한이 아니라 전체 상한만 받는다. 모델이 topic을
+            # 빼먹었다고 예전(8건)보다 적게 남기면 안 된다(리뷰 재현: 8건 → 3건).
+            cap = per_topic if topic != _OTHER_TOPIC else limit
+            if per_topic_count.get(topic, 0) >= cap:
+                continue
+            per_topic_count[topic] = per_topic_count.get(topic, 0) + 1
+            cleaned["topic"] = topic
         cleaned["url"] = url[:400]
         out.append(cleaned)
-        if len(out) >= _MAX_ROWS:
+        if len(out) >= limit:
             break
     return out
 
@@ -120,8 +152,8 @@ def lookup_company(company: dict, scope_text: str, run_call: WebCall) -> dict:
         payload = _extract(run_call(PROMPT, context))
     except Exception:  # noqa: BLE001 - 조회 실패가 보고서를 죽이지 않는다
         return {"status": "unavailable", "facts": [], "quotes": []}
-    facts = _rows(payload.get("facts"), ("statement",))
-    quotes = _rows(payload.get("quotes"), ("who", "when", "what"))
+    facts = _rows(payload.get("facts"), ("statement",), limit=_MAX_FACTS, per_topic=_MAX_PER_TOPIC)
+    quotes = _rows(payload.get("quotes"), ("who", "when", "what"), limit=_MAX_QUOTES)
     return {
         "status": "ok" if (facts or quotes) else "empty",
         "ticker": ticker,
@@ -202,8 +234,25 @@ def render_lookup(row: dict) -> str:
         "여기 없는 사실을 웹에서 본 것처럼 쓰지 마세요.",
         "",
     ]
-    for fact in facts:
-        lines.append(f"- [{fact.get('sourceId', '')}] {fact['statement']} — {fact['url']}")
+    for topic, label in [*FACT_TOPICS.items(), (_OTHER_TOPIC, "기타")]:
+        rows = [fact for fact in facts if (fact.get("topic") or _OTHER_TOPIC) == topic]
+        if not rows:
+            continue
+        lines.append(f"### {label.split(' — ')[0]}")
+        for fact in rows:
+            lines.append(f"- [{fact.get('sourceId', '')}] {fact['statement']} — {fact['url']}")
+    missing = [label.split(" — ")[0] for topic, label in FACT_TOPICS.items()
+               if not any(fact.get("topic") == topic for fact in facts)]
+    # 묶음 표시가 하나도 없으면 무엇이 빠졌는지 알 수 없다. 모른다는 것을 '못 찾음'으로 쓰지 않는다.
+    tagged = any((fact.get("topic") or _OTHER_TOPIC) != _OTHER_TOPIC for fact in facts)
+    if missing and tagged:
+        # 조회가 못 찾은 것과 회사가 공시하지 않은 것은 다르다.
+        lines.append(
+            f"- 이번 조회에서 찾지 못한 묶음: {', '.join(missing)}. "
+            "회사가 공시하지 않았다고 쓰지 말고 '이번 자료에서 확인하지 못했다'고 쓰세요."
+        )
+    if quotes:
+        lines.append("### 경영진 발언")
     for quote in quotes:
         who = " / ".join(part for part in (quote.get("who"), quote.get("when")) if part)
         lines.append(f"- [{quote.get('sourceId', '')}] (발언) {who}: {quote.get('what', '')} — {quote['url']}")
@@ -232,6 +281,7 @@ def _host(url: str) -> str:
 
 
 __all__ = [
+    "FACT_TOPICS",
     "PROMPT",
     "THIN_DOCUMENT_COUNT",
     "assign_source_ids",

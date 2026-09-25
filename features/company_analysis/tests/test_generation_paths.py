@@ -203,3 +203,29 @@ def test_the_cli_retry_uses_the_same_section_check():
     broken = "\n\n".join(f"## {name}\n\n본문" for name in REQUIRED_SECTION_HEADINGS[:5])
     assert bridge.company_missing_sections(broken)
     assert bridge.company_missing_sections(_draft()) == []
+
+
+def test_both_paths_carry_the_price_return_chart_values():
+    """화면 차트의 주가 수익률이 두 경로의 본문 입력에 같은 값으로 들어간다 (계획 §12 E)."""
+    charts = {"available": True, "charts": [{
+        "kind": "price_return", "labels": ["1개월", "3개월"], "asOf": "2026-09-24",
+        "series": {"HWM": [-13.64, -18.86], "SPY": [1.57, 4.17]},
+    }]}
+    seen: list[str] = []
+
+    def llm(*_args, **kwargs):
+        seen.append(str(kwargs.get("context") or ""))
+        return ({"markdown": _draft(), "usedDocs": [], "webSearch": False}, "ok")
+
+    with ExitStack() as stack:
+        for patcher in (*_stubbed(charts), patch.object(agent_service.A, "write_pack", side_effect=lambda pack: Path("pack.json"))):
+            stack.enter_context(patcher)
+        generation_service.analyze_company("HWM", runtime={
+            "generate_llm_company_analysis": llm,
+            "use_web_search_for_analysis": lambda: False,
+        })
+        pack, _path = agent_service.prepare_company_analysis_pack("HWM", analysis_style="beginner")
+
+    for context in (seen[0], pack["context"]):
+        assert "| HWM | -13.6% | -18.9% |" in context
+        assert "2026-09-24 종가" in context

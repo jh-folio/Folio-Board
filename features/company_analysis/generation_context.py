@@ -57,6 +57,7 @@ from features.company_analysis.service import (
     build_company_analysis_materials,
     company_analysis_sources,
     company_external_search_context,
+    render_price_return_context,
 )
 from features.company_analysis.style import normalize_analysis_style
 from features.company_analysis.valuation import render_valuation_contract
@@ -271,6 +272,7 @@ def _build_generation_inputs(
         # 매입 금액만 주면 본문도 금액만 쓴다. 주식 수가 줄었는지가 함께 있어야
         # 주주환원인지 희석 상쇄인지 판단할 수 있다.
         render_buyback_quality(buyback),
+        render_price_return_context(chart_payload),
         render_quality_requirements(),
         render_source_contract(source_ledger),
         company_external_search_context(materials) if web_search else "",

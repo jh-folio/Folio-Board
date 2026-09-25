@@ -1280,12 +1280,15 @@ def _compute_price_returns(ticker: str) -> dict | None:
         period_map = [("1개월", "1mo"), ("3개월", "3mo"), ("6개월", "6mo"), ("12개월", "1y")]
         labels = [label for label, _ in period_map]
         series: dict[str, list] = {}
+        as_of = ""
         for sym in [ticker] + benchmarks:
             returns = []
             for _label, period in period_map:
                 try:
                     hist = yf.Ticker(sym).history(period=period)
                     if hist is not None and not getattr(hist, "empty", True) and len(hist) >= 2:
+                        if sym == ticker and not as_of:
+                            as_of = _last_session_date(hist)
                         # yfinance는 결측 행을 NaN으로 준다. `if start_price`는 0만 걸러내고
                         # NaN은 참이라 그대로 통과해, NaN 수익률 하나가 보고서 저장 단계에서
                         # canonical JSON에 걸려 100초짜리 CLI 결과를 통째로 버리게 했다.
@@ -1305,9 +1308,56 @@ def _compute_price_returns(ticker: str) -> dict | None:
                 series[sym] = returns
         if ticker not in series:
             return None
-        return {"labels": labels, "series": series}
+        # 수익률은 마지막 종가일 기준이다. 모르면 비워 둔다 — 조회 시각을 기준일로 쓰지 않는다.
+        return {"labels": labels, "series": series, "asOf": as_of}
     except Exception:
         return None
+
+
+def _last_session_date(hist) -> str:
+    try:
+        return str(hist.index[-1])[:10]
+    except Exception:
+        return ""
+
+
+def render_price_return_context(charts: dict | None) -> str:
+    """화면의 주가 수익률 차트와 **같은 값**을 본문 입력으로 준다.
+
+    차트는 HWM 3개월 −18.9%(SPY +4.2%)를 그리는데 본문은 "시세 검증 없이 하락 추세로
+    확대하지 않는다"고 쓴 적이 있다(2026-09 실측) — 본문이 이 숫자를 받지 못해서였다.
+    용도는 가격에 담긴 기대의 변화라는 맥락이다. 매매 시점이나 가격 수준별 행동 판단이
+    아니다.
+    """
+    chart = next(
+        (row for row in (charts or {}).get("charts") or [] if row.get("kind") == "price_return"),
+        None,
+    )
+    series = (chart or {}).get("series") or {}
+    labels = (chart or {}).get("labels") or []
+    if not series or not labels:
+        return ""
+
+    def cell(value) -> str:
+        return f"{value:+.1f}%" if isinstance(value, (int, float)) else "없음"
+
+    as_of = str((chart or {}).get("asOf") or "")
+    lines = [
+        "## 주가 수익률 (화면 차트와 같은 값, 다시 계산하지 마세요)",
+        "",
+        f"- 기준: {f'{as_of} 종가' if as_of else '마지막 종가일 미확인'}, 기간별 단순 수익률",
+        "",
+        f"| 종목 | {' | '.join(labels)} |",
+        f"|---|{'---:|' * len(labels)}",
+    ]
+    for symbol, values in series.items():
+        lines.append(f"| {symbol} | {' | '.join(cell(v) for v in values)} |")
+    lines += [
+        "",
+        "- 가격에 담긴 기대가 최근 어떻게 움직였는지의 맥락으로만 쓰세요. 원인은 자료에 있는"
+        " 사건과 연결될 때만 말하고, 매매 시점·가격 수준별 행동은 쓰지 마세요.",
+    ]
+    return "\n".join(lines)
 
 
 def _present_subtitle(base: str, named: list[tuple[str, list]]) -> str:
@@ -1580,6 +1630,7 @@ def build_company_analysis_charts(materials):
             "kind": "price_return",
             "labels": price_return_data["labels"],
             "series": price_return_data["series"],
+            "asOf": price_return_data.get("asOf") or "",
         })
 
     return {

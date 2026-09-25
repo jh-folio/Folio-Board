@@ -128,3 +128,66 @@ def test_the_prompt_asks_for_names_and_forbids_opinions():
     # 찾기 과제다. 전망이나 투자 의견을 가져오면 근거가 아니라 남의 판단이 실린다.
     assert "이름과 직함" in W.PROMPT
     assert "투자 의견은 찾지 마라" in W.PROMPT
+
+
+# ------------------------------------------------------------------ 필수 묶음 (계획 §12 D)
+def test_the_prompt_names_every_required_bundle_and_prefers_the_filed_release():
+    for topic in W.FACT_TOPICS:
+        assert topic in W.PROMPT
+    assert "Exhibit 99.1" in W.PROMPT
+    assert "비워 둔다" in W.PROMPT
+
+
+def test_one_bundle_cannot_use_up_every_slot():
+    """예전 전체 8건 상한에서는 실적 문장이 자리를 다 쓰면 배당·자사주가 빠졌다."""
+    flood = [{"topic": "results", "statement": f"실적 {i}", "url": f"https://x.com/{i}"} for i in range(10)]
+    dividend = {"topic": "capital_return", "statement": "분기 배당 17% 인상", "url": "https://x.com/div"}
+    row = W.lookup_company({"name": "X"}, "", _call({"facts": [*flood, dividend], "quotes": []}))
+    topics = [fact["topic"] for fact in row["facts"]]
+    assert topics.count("results") == 3
+    assert "capital_return" in topics
+
+
+def test_unknown_topics_are_kept_as_other_not_dropped():
+    row = W.lookup_company({"name": "X"}, "", _call({"facts": [
+        {"statement": "주제 없이 온 사실", "url": "https://x.com/a"},
+        {"topic": "weather", "statement": "모르는 주제", "url": "https://x.com/b"},
+    ], "quotes": []}))
+    assert [fact["topic"] for fact in row["facts"]] == ["other", "other"]
+
+
+def test_the_block_groups_bundles_and_names_what_was_not_found():
+    row = W.assign_source_ids(W.lookup_company({"name": "X"}, "", _call({"facts": [
+        {"topic": "segments", "statement": "사업부 A 매출 $1.4B", "url": "https://x.com/q2"},
+        {"topic": "guidance", "statement": "연간 매출 가이던스 $10.05B", "url": "https://x.com/q2"},
+    ], "quotes": []})))
+    block = W.render_lookup(row)
+    assert block.index("### 사업부별 매출·이익") < block.index("### 다음 분기·연간 가이던스와 이전 대비 변경 폭")
+    missing_line = next(line for line in block.splitlines() if "찾지 못한 묶음" in line)
+    assert "전사 실적" in missing_line and "시장(고객 산업)별 성장률·매출 비중" in missing_line
+    assert "사업부별" not in missing_line
+    assert "공시하지 않았다고 쓰지 말고" in block
+
+
+def test_a_long_multi_number_fact_is_not_cut_at_the_old_300_characters():
+    statement = "사업부 " + " · ".join(f"S{i} 매출 $1,{i:03d}M 조정 EBITDA $5{i:02d}M" for i in range(12))
+    assert 300 < len(statement) <= 400
+    row = W.lookup_company({"name": "X"}, "", _call({"facts": [
+        {"topic": "segments", "statement": statement, "url": "https://x.com/q2"},
+    ], "quotes": []}))
+    assert row["facts"][0]["statement"] == statement
+
+
+def test_untagged_facts_keep_the_total_cap_and_do_not_claim_missing_bundles():
+    facts = [{"statement": f"사실 {i}", "url": f"https://x.com/{i}"} for i in range(8)]
+    row = W.assign_source_ids(W.lookup_company({"name": "X"}, "", _call({"facts": facts, "quotes": []})))
+    assert len(row["facts"]) == 8
+    assert "찾지 못한 묶음" not in W.render_lookup(row)
+
+
+def test_topic_spelling_variants_are_normalised():
+    row = W.lookup_company({"name": "X"}, "", _call({"facts": [
+        {"topic": "Capital-Return", "statement": "배당 인상", "url": "https://x.com/a"},
+        {"topic": "end markets", "statement": "시장별 성장", "url": "https://x.com/b"},
+    ], "quotes": []}))
+    assert [fact["topic"] for fact in row["facts"]] == ["capital_return", "end_markets"]

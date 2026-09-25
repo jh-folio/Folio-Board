@@ -1000,7 +1000,9 @@ def evaluate_news_semantics(
             ledger.finish(target_market, status="not_evaluated", reason="deadline_invalid")
             base["reason"] = "deadline_invalid"
             return base
-    timeout_seconds = max(0.0, local_deadline - now)
+    # `(now + MAX) - now`는 부동소수점 반올림으로 MAX보다 1ulp 클 수 있다. monotonic 값이 작은
+    # 갓 부팅한 Linux CI에서 약 6% 확률로 계약(≤ MAX)을 어겨 콜백이 거절됐다. 상한을 다시 건다.
+    timeout_seconds = min(float(MAX_TIMEOUT_SECONDS), max(0.0, local_deadline - now))
     if timeout_seconds <= 0:
         ledger.finish(target_market, status="not_evaluated", reason="deadline_expired")
         base["reason"] = "deadline_expired"

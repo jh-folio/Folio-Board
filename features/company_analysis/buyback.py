@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from features.company_analysis import financial_engine
+from features.company_analysis.sec_companyfacts import format_value
 
 # 이 비율을 넘으면 주식보상이 매입의 상당 부분을 먹는다는 뜻. 판정이 아니라 서술의
 # 방향을 잡아 주는 눈금이며, 결론은 본문이 근거를 보고 쓴다.
@@ -66,6 +67,15 @@ def build_buyback_quality(sec_summary: dict, *, price: float | None = None, curr
     return result
 
 
+def _amount(value, currency) -> str:
+    """독자용 금액. 통화를 모르면 기호를 지어내지 않고 숫자 뒤에 밝힌다."""
+    if currency:
+        return format_value(value, "Amount", currency)
+    sign = "-" if float(value) < 0 else ""
+    digits = format_value(abs(float(value)), "Amount", "USD").removeprefix("$")
+    return f"{sign}{digits} (통화 확인 필요)"
+
+
 def render_buyback_quality(quality: dict) -> str:
     """생성 컨텍스트 블록. 금액만 주면 본문도 금액만 쓴다."""
     if not quality:
@@ -74,13 +84,13 @@ def render_buyback_quality(quality: dict) -> str:
     lines = [
         "## 자사주 매입의 질",
         "",
-        f"- 최근 회계연도({quality.get('fiscalYear', '')}) 매입: {quality['amount']:,.0f} {unit}",
+        f"- 최근 회계연도({quality.get('fiscalYear', '')}) 매입: {_amount(quality['amount'], quality.get('currency'))}",
     ]
     if "buybackYieldPct" in quality:
         lines.append(f"- 매입 수익률(매입액 ÷ 시가총액): {quality['buybackYieldPct']}%")
     if "stockBasedCompensation" in quality:
         lines.append(
-            f"- 주식보상비용: {quality['stockBasedCompensation']:,.0f} {unit} "
+            f"- 주식보상비용: {_amount(quality['stockBasedCompensation'], quality.get('currency'))} "
             f"(매입액의 {quality['offsetRatio'] * 100:.0f}%)"
         )
     if "dilutedSharesChangePct" in quality:
@@ -95,7 +105,12 @@ def render_buyback_quality(quality: dict) -> str:
             f"({quality['sharesRepurchased']:,.0f}주)"
         )
     else:
-        lines.append("- 평균 매입가: 회사가 매입 주식 수를 공시하지 않아 계산할 수 없습니다.")
+        # 구조화 자료에 없다는 것과 회사가 공시하지 않았다는 것은 다르다 — 실적발표에
+        # 평균 매입가가 있었는데 본문이 "공시하지 않았다"고 옮겨 적을 뻔했다(HWM 2026-09).
+        lines.append(
+            "- 평균 매입가: 매입 주식 수가 SEC 구조화 자료에서 확인되지 않아 계산하지 않았습니다."
+            " 회사가 공시하지 않았다고 쓰지 말고, 실적발표 등 다른 자료에 있으면 그 값을 쓰세요."
+        )
     lines += [
         "",
         "- **금액만으로 주주환원을 평가하지 마세요.** 주식 수가 줄지 않았다면 그 매입은",

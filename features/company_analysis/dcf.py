@@ -385,20 +385,56 @@ def implied_growth(
     return {"status": "solved", "growth": round((low + high) / 2, 4)}
 
 
+# 장기 쪽으로 읽는 차입금 태그. `LongTermDebt`는 유동성 장기부채를 포함한다.
+_LONG_TERM_PARTS = {"LongTermDebtNoncurrent", "LongTermDebt", "LongTermDebtAndFinanceLeaseObligations"}
+
+
 def net_debt_from(sec_summary: dict) -> dict:
     """순부채. **단기차입을 빼먹지 않는다.**
 
     장기부채만 보면 유동성 차입이 많은 회사의 부채가 통째로 사라진다.
+
+    **한 기준일의 잔액이다.** companyfacts가 같은 날짜의 차입금·현금 조합을 찾았고 그 날짜가
+    연차 잔액보다 늦거나 같으면 그것을 쓴다(인수로 차입이 늘어난 분기를 연말 값이 가리지
+    않게 — HWM 실측: 2025년 말 기준 $2.31B vs 2026-06-30 기준 $3.94B). 없으면 연차 행으로
+    계산하고, 그 사실을 `basis`에 남긴다.
     """
-    long_term = financial_engine.latest_value(sec_summary, "Long-Term Debt") or 0.0
-    short_term = financial_engine.latest_value(sec_summary, "Short-Term Debt") or 0.0
-    cash = financial_engine.latest_value(sec_summary, "Cash & Equivalents") or 0.0
+    raw = {
+        "장기부채": financial_engine.latest_value(sec_summary, "Long-Term Debt"),
+        "단기차입": financial_engine.latest_value(sec_summary, "Short-Term Debt"),
+        "현금": financial_engine.latest_value(sec_summary, "Cash & Equivalents"),
+    }
+    long_term, short_term, cash = (float(value or 0.0) for value in raw.values())
+    annual_end = financial_engine.latest_end(sec_summary, "Long-Term Debt")
+    position = (sec_summary or {}).get("debtPosition") or {}
+    usable = position.get("ok") and str(position.get("asOf") or "") >= annual_end
+    # 단기차입 보고가 없는 날짜의 합계는 불완전하다. 연차 행에 단기차입이 있으면 그쪽을 쓴다.
+    if usable and not position.get("complete") and raw["단기차입"] is not None:
+        usable = False
+    if usable:
+        parts = position.get("components") or {}
+        # 합계 태그 하나로만 잡힌 날은 장·단기 구분을 모른다. 0으로 나누어 적지 않는다.
+        split = "DebtLongtermAndShorttermCombinedAmount" not in parts
+        return {
+            "netDebt": round(float(position["netDebt"]), 2),
+            "longTermDebt": round(sum(v for k, v in parts.items() if k in _LONG_TERM_PARTS), 2) if split else None,
+            "shortTermDebt": round(sum(v for k, v in parts.items() if k not in _LONG_TERM_PARTS), 2) if split else None,
+            "cash": round(float(position["cash"]), 2),
+            "totalDebt": round(float(position["totalDebt"]), 2),
+            "asOf": position.get("asOf"),
+            "basis": position.get("basis"),
+            "complete": bool(position.get("complete")),
+        }
     return {
         "netDebt": round(long_term + short_term - cash, 2),
         "longTermDebt": round(long_term, 2),
         "shortTermDebt": round(short_term, 2),
         "cash": round(cash, 2),
         "totalDebt": round(long_term + short_term, 2),
+        "asOf": annual_end,
+        "basis": "annual_rows",
+        # 계산은 예전처럼 없는 값을 0으로 두지만, 그 사실을 숨기지 않는다. 표시하는 쪽이 읽는다.
+        "missing": [name for name, value in raw.items() if value is None],
     }
 
 
@@ -566,6 +602,17 @@ def build_dcf(
     return result
 
 
+def _amount(value, unit: str) -> str:
+    """독자용 금액 표시. 계산 객체의 정밀도는 그대로 두고 **보여 줄 때만** B/M 단위로 줄인다.
+
+    `$16,083,265,018` 같은 전체 자릿수는 가정 위의 추정치에 없는 정밀함을 보이고, 본문이
+    그 숫자를 그대로 옮겨 적었다(HWM 2026-09 실측).
+    """
+    from features.company_analysis.sec_companyfacts import format_value
+
+    return format_value(float(value), "Amount", unit or "USD")
+
+
 def render_dcf_context(dcf: dict) -> str:
     """생성 컨텍스트 블록. 숫자와 **그 숫자가 선 가정**을 함께 준다."""
     if not dcf or not dcf.get("ok"):
@@ -582,7 +629,7 @@ def render_dcf_context(dcf: dict) -> str:
     lines = [
         "## DCF (이 값을 그대로 쓰세요)",
         "",
-        f"- 기준 FCF: {base['value']:,.0f} {unit} — {_BASE_METHOD_LABELS.get(base.get('method'), base.get('method'))}",
+        f"- 기준 FCF: {_amount(base['value'], unit)} — {_BASE_METHOD_LABELS.get(base.get('method'), base.get('method'))}",
     ]
     if base.get("deviationFromRecent") is not None:
         trend_note = {
@@ -590,7 +637,7 @@ def render_dcf_context(dcf: dict) -> str:
             "decreasing": " (마진이 다년간 악화 추세라 최근 연도 가중이 이 차이를 줄였습니다)",
         }.get(base.get("marginTrend"), "")
         lines.append(
-            f"  최근 연도 실제 FCF {base['recent']:,.0f} 대비 {base['deviationFromRecent'] * 100:+.1f}%"
+            f"  최근 연도 실제 FCF {_amount(base['recent'], unit)} 대비 {base['deviationFromRecent'] * 100:+.1f}%"
             f"{trend_note}"
         )
     if discount["method"] == "wacc":
@@ -603,6 +650,17 @@ def render_dcf_context(dcf: dict) -> str:
         lines.append(
             f"- 할인율 {discount['rate'] * 100:.1f}% — **회사별 계산에 실패해 고정값을 썼습니다**"
             f"(없는 입력: {', '.join(discount.get('missing') or []) or '알 수 없음'})"
+        )
+    debt = dcf.get("netDebt") or {}
+    missing = debt.get("missing") or []
+    if debt.get("netDebt") is not None and not {"장기부채", "현금"} <= set(missing):
+        as_of = f"{debt['asOf']} 기준 " if debt.get("asOf") else ""
+        partial = "" if debt.get("complete", True) else " — 그 날짜의 단기차입 보고가 없어 불완전할 수 있음"
+        if missing:
+            partial += f" — 확인되지 않은 항목({', '.join(missing)})은 0으로 두고 계산됨"
+        lines.append(
+            f"- 순차입금 {_amount(debt['netDebt'], unit)} ({as_of}차입금 {_amount(debt.get('totalDebt') or 0, unit)}"
+            f" − 현금 {_amount(debt.get('cash') or 0, unit)}){partial}"
         )
     lines += [
         f"- 영구성장률 {dcf['terminalGrowth'] * 100:.1f}% · 성장률 {dcf['growth']['rate'] * 100:.1f}%"
@@ -617,7 +675,7 @@ def render_dcf_context(dcf: dict) -> str:
     for row in dcf["scenarios"]:
         if row.get("ok"):
             lines.append(
-                f"| {row['name']} | {row['growth'] * 100:.1f}% | {row['equityValue']:,.0f} | {row['perShare']:,.2f} |"
+                f"| {row['name']} | {row['growth'] * 100:.1f}% | {_amount(row['equityValue'], unit)} | {row['perShare']:,.2f} |"
             )
         else:
             lines.append(f"| {row['name']} | {row['growth'] * 100:.1f}% | 계산 불가 | 계산 불가 |")
