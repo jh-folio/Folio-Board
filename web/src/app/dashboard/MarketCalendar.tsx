@@ -20,17 +20,19 @@ export const STATUS_KO: Record<string, string> = {
   confirmed: "확정", estimated: "추정", tentative: "미정", actual: "발표됨",
 };
 
+// ECOS는 값만 주고 발표일을 주지 않는다. 한국 지표 행은 값이 있어도 날짜가 관행일 추정이다.
 export function calendarCertainty(event: Event): string {
-  if (event.provider === 'bok') return event.actualValue ? '값 확인 · 발표일 미확인' : '추정 일정';
+  if (event.provider === "bok") return event.actualValue ? "값 확인 · 발표일 미확인" : "추정 일정";
   return STATUS_KO[event.status] || event.status;
 }
 
+// 거시 지도에 같은 지표가 있는 발표만 상세 화면으로 잇는다.
 function macroLink(event: Event): string | null {
-  const id = event.provider === 'bok' && event.title.includes('CPI') ? 'KR_CPI'
-    : event.provider === 'fred' && event.title === '미국 CPI' ? 'CPIAUCSL'
-    : event.provider === 'fred' && event.title === '미국 GDP' ? 'GDPC1'
-    : event.provider === 'fred' && event.title === '미국 산업생산' ? 'INDPRO' : null;
-  return id ? `#/market-memory/macro?market=${event.market === 'KR' ? 'KR' : 'US'}&series=${id}` : null;
+  const id = event.provider === "bok" && event.title.includes("CPI") ? "KR_CPI"
+    : event.provider === "fred" && event.title === "미국 CPI" ? "CPIAUCSL"
+    : event.provider === "fred" && event.title === "미국 GDP" ? "GDPC1"
+    : event.provider === "fred" && event.title === "미국 산업생산" ? "INDPRO" : null;
+  return id ? `#/market-memory/macro?market=${event.market === "KR" ? "KR" : "US"}&series=${id}` : null;
 }
 const KIND_FILTERS: Array<{ value: string; label: string }> = [
   { value: "earnings", label: "실적" }, { value: "macro", label: "지표" },
@@ -384,7 +386,18 @@ export function MarketCalendar({ focusSymbols }: { focusSymbols: FocusSymbol[] }
                         캘린더 등)로 내보내면 우리 화면 밖 제3자 페이지로 나가버린다. */}
                     {event.sourceUrl ? <> · <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">원문</a></> : null}
                     {macroLink(event) ? <> · <a href={macroLink(event)!}>거시 지도</a></> : null}
-                    {event.additionalSources?.length ? <details><summary>같은 값의 추가 출처 {event.additionalSources.length}개</summary>{event.additionalSources.map(source => <div key={source.id}>{source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noopener noreferrer">{source.source || source.provider}</a> : source.source || source.provider}</div>)}</details> : null}
+                    {event.additionalSources?.length ? (
+                      <details>
+                        <summary>같은 값의 추가 출처 {event.additionalSources.length}개</summary>
+                        {event.additionalSources.map((source) => (
+                          <div key={source.id}>
+                            {source.sourceUrl
+                              ? <a href={source.sourceUrl} target="_blank" rel="noopener noreferrer">{source.source || source.provider}</a>
+                              : source.source || source.provider}
+                          </div>
+                        ))}
+                      </details>
+                    ) : null}
                   </small>
                 </td>
                 <td className="cal-actual">
@@ -398,7 +411,7 @@ export function MarketCalendar({ focusSymbols }: { focusSymbols: FocusSymbol[] }
                     </>
                   ) : <span className="cal-actual__pending">—</span>}
                 </td>
-                <td><span className={`chip certainty-badge--${event.provider === 'bok' ? 'estimated' : event.status}`}>{calendarCertainty(event)}</span></td>
+                <td><span className={`chip certainty-badge--${event.provider === "bok" ? "estimated" : event.status}`}>{calendarCertainty(event)}</span></td>
               </tr>
             ))}
           </tbody>

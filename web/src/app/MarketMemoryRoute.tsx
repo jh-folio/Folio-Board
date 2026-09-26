@@ -63,20 +63,24 @@ async function submitMemoryUpdate(): Promise<MemoryResult | AgentJob> {
   });
 }
 
+// 기존 진입과 기본 보기(내러티브)는 그대로 두고, 거시 지도를 하위 보기로 붙인다(D4).
 export function MarketMemoryRoute() {
-  const [macro, setMacro] = useState(() => window.location.hash.startsWith('#/market-memory/macro'));
+  const [macro, setMacro] = useState(() => window.location.hash.startsWith("#/market-memory/macro"));
   useEffect(() => {
-    const sync = () => setMacro(window.location.hash.startsWith('#/market-memory/macro'));
-    window.addEventListener('hashchange', sync); return () => window.removeEventListener('hashchange', sync);
+    const sync = () => setMacro(window.location.hash.startsWith("#/market-memory/macro"));
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
   }, []);
-  return <div className="react-market-memory-route" data-market-memory-route>
-    <RouteHero eyebrow="Market Memory" title="시장 내러티브" description="중기 시장 흐름과 공식 거시 자료를 함께 확인합니다." />
-    <nav className="memory-tabs" aria-label="시장 내러티브 하위 보기">
-      <a className={`btn ${!macro ? 'btn--primary' : ''}`} aria-current={!macro ? 'page' : undefined} href="#/market-memory">내러티브</a>
-      <a className={`btn ${macro ? 'btn--primary' : ''}`} aria-current={macro ? 'page' : undefined} href={lastMacroView()}>거시 지도</a>
-    </nav>
-    {macro ? <MacroMap /> : <NarrativeContent />}
-  </div>;
+  return (
+    <div className="react-market-memory-route" data-market-memory-route>
+      <RouteHero eyebrow="Market Memory" title="시장 내러티브" description="중기 시장 흐름과 공식 거시 자료를 함께 확인합니다." />
+      <nav className="memory-tabs" aria-label="시장 내러티브 하위 보기">
+        <a className={`btn ${!macro ? "btn--primary" : ""}`} aria-current={!macro ? "page" : undefined} href="#/market-memory">내러티브</a>
+        <a className={`btn ${macro ? "btn--primary" : ""}`} aria-current={macro ? "page" : undefined} href={lastMacroView()}>거시 지도</a>
+      </nav>
+      {macro ? <MacroMap /> : <NarrativeContent />}
+    </div>
+  );
 }
 
 function NarrativeContent() {
