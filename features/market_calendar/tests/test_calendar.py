@@ -14,7 +14,7 @@ def test_bok_projected_dates_are_estimated_not_confirmed():
 
     rows = normalize_bok_events([{
         "title": "한국 소비자물가지수 (CPI)", "market": "KR", "kind": "macro",
-        "startsAt": "2026-09-15T08:00:00", "timezone": "Asia/Seoul", "status": "estimated",
+        "startsAt": "2026-10-02", "allDay": True, "timezone": "Asia/Seoul", "status": "estimated",
     }])
     assert rows and rows[0]["status"] == "estimated"
     assert rows[0]["provider"] == "bok"
