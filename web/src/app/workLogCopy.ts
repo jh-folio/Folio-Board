@@ -4,6 +4,7 @@ import type { WorkLogEntry } from "../api";
 // 새 코드가 추가되면 사전에 없더라도 코드 원문을 그대로 노출해 정보가 사라지지 않게 한다.
 
 const TASK_TITLES: Record<WorkLogEntry["taskType"], string> = {
+  macro_refresh: "거시 자료 갱신",
   companion: "Agent와 대화",
   briefing: "일일 브리핑 생성",
   company_analysis: "기업 분석 생성",

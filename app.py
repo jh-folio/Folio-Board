@@ -129,6 +129,7 @@ from features.common.market_data.routes import create_market_data_router
 from features.common.market_data.toss_realtime_hub import TossRealtimeHub
 from features.dashboard.routes import create_dashboard_router
 from features.market_calendar.routes import create_market_calendar_router
+from features.macro_map.routes import create_macro_router
 from features.portfolio.routes import create_portfolio_router
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
 from features.common.research_schema.data_gaps import data_gaps_from_messages
@@ -460,6 +461,7 @@ fastapi_app.include_router(
 fastapi_app.include_router(create_signal_router(DATA_DIR))
 fastapi_app.include_router(create_dashboard_router(DATA_DIR))
 fastapi_app.include_router(create_market_calendar_router(DATA_DIR))
+fastapi_app.include_router(create_macro_router(DATA_DIR))
 fastapi_app.include_router(create_market_data_router(DATA_DIR, realtime_hub=TOSS_REALTIME_HUB))
 fastapi_app.include_router(create_portfolio_router(DATA_DIR))
 

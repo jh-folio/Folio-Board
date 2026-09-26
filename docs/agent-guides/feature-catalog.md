@@ -16,6 +16,7 @@
 | Smart Collections | `smart_collections` | Deep Research 안의 결정적 저장 필터·상태·snapshot 변화/recovery | metadata |
 | 포트폴리오 | `portfolio` | 보유 종목 직접 입력·revision 저장, 평가 요약·구성 분석·투자 리뷰·목표 프리셋·백테스트. 화면은 `보유·평가 | 투자 리뷰 | 프리셋 | 백테스트` 4탭이며 기본은 보유·평가다 | — |
 | 시장 내러티브 메모리 / Regime 추적 v2 | `market_memory` | 중기 내러티브 상태·taxonomy·momentum/confidence·thesis 연결 | source-grounded |
+| 거시 지도 | `macro_map` + `common/macro_data` | 공식 16지표·수정판·미국 지원 기간 과거 조회, 별도 AI 판정 없음 | evidence |
 | 워치리스트 | `watchlist_notes` | 워치리스트·상세(기업 정보/네이티브 차트/실적/수집 뉴스)와 종목별 Thesis 생성·수정·최신 근거 검토·반대 근거·다음 확인·이력 | metadata + hypothesis |
 | Native Investment Notes | `investment_notes` | Obsidian 없이 운용되는 Folio 로컬 투자 노트와 `native_note_index` | hypothesis 입력 |
 | 자동화 | `automation` | RSS 수집·시장 메모리 갱신·브리핑 예약 스케줄러와 실행 기록(`data/automation-settings.json`, `data/automation-runs.json`). 서버가 켜져 있을 때만 돈다 | — |

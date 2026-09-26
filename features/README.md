@@ -14,6 +14,7 @@
 | `portfolio/` | 포트폴리오 탭 | `보유·평가 | 투자 리뷰 | 프리셋 | 백테스트` 4탭: 보유 포지션, 날짜별 투자 리뷰, 목표 프리셋, 리서치용 백테스트 |
 | `dashboard/` | 대시보드 탭 | Change Feed·이야기 비중·시장 일정·네이티브 차트로 구성한 Research Cockpit. Legacy 모드는 0.5에서 삭제 |
 | `market_memory/` | 시장 내러티브 탭 | 중기 내러티브, regime 추세, story family 관리 |
+| `macro_map/` | 시장 내러티브의 거시 지도 | 미국·한국 16지표, 원값·수정 이력, 미국 지원 기간의 과거 재현. [계약](macro_map/README.md) |
 | `market_calendar/` | 대시보드 내부 | 경제지표·중앙은행·휴장·실적·공시·배당 일정과 certainty badge |
 | `watchlist_notes/` | 워치리스트 탭 | 관심 종목/키워드, 상세의 기업 정보·차트·수집 뉴스와 Thesis 생성·수정·최신 근거 검토 |
 | `investment_notes/` | Native Investment Notes | Obsidian 없이 운용되는 Folio 로컬 투자 노트(hypothesis) 저장·인덱스 |
