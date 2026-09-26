@@ -303,6 +303,14 @@ class OfficialReader:
             return f'{date.year}Q{(date.month - 1) // 3 + 1}' if spec.frequency == 'Q' else date.strftime('%Y%m' if spec.frequency == 'M' else '%Y%m%d')
 
         offset = int(cursor.get('offset', 1))
+        total = cursor.get('total')
+        # 마지막 페이지 값과 전체 개수를 함께 저장한다. 완료 상태를 쓰기 직전에
+        # 중단되어도 범위 밖 페이지를 요청하지 않고 수집을 마무리할 수 있다.
+        if total is not None and offset > int(total):
+            return
+        if total is None and offset > 1:
+            # 이전 버전 cursor에는 전체 개수가 없다. 첫 페이지부터 멱등 재수집한다.
+            offset = 1
         while True:
             cancel()
             params = {
@@ -346,6 +354,6 @@ class OfficialReader:
                 }
                 points.append({'seriesId': spec.id, 'period': period, 'value': r['DATA_VALUE'], 'availabilityBasis': 'local_observed', 'fetchedAt': fetched, 'metadata': meta})
             offset += len(page)
-            yield points, {'phase': 'ecos', 'end': end, 'offset': offset}, fetched
+            yield points, {'phase': 'ecos', 'end': end, 'offset': offset, 'total': total}, fetched
             if offset > total:
                 break

@@ -121,6 +121,37 @@ def test_monthly_fred_pages_preserve_metadata_and_pagination():
     assert [p['offset'] for endpoint, p in requested if endpoint.endswith('observations')] == [0, 1, 0]
 
 
+@pytest.mark.parametrize('legacy_cursor', [False, True])
+def test_ecos_resume_after_last_page_committed(tmp_path, monkeypatch, legacy_cursor):
+    reader = OfficialReader(None, ecos_key='test-only')
+    requested = []
+
+    def fetch(provider, endpoint, params, url, required):
+        requested.append(params['offset'])
+        rows = [{'STAT_CODE': '901Y009', 'ITEM_CODE1': '0', 'UNIT_NAME': '2020=100',
+                 'TIME': '202401', 'DATA_VALUE': '100'}] if params['offset'] == 1 else []
+        return {'StatisticSearch': {'list_total_count': 1, 'row': rows}}, '2026-09-27T01:00:00Z'
+
+    monkeypatch.setattr(reader, '_fetch', fetch)
+    store = MacroStore(tmp_path / 'market-memory.sqlite3')
+
+    def cancel_after_commit():
+        if store.state('KR_CPI').get('cursor', {}).get('offset') == 2:
+            raise RuntimeError('cancelled after final page commit')
+
+    with pytest.raises(RuntimeError, match='final page'):
+        collect(tmp_path, reader=reader, selected={'KR_CPI'}, cancel=cancel_after_commit)
+    if legacy_cursor:
+        cursor = store.state('KR_CPI')['cursor']
+        cursor.pop('total', None)
+        store.set_state('KR_CPI', 'partial', cursor=cursor)
+    result = collect(tmp_path, reader=reader, selected={'KR_CPI'})
+    assert result['ok'] and result['series'][0]['inserted'] == 0
+    assert requested == ([1, 1] if legacy_cursor else [1])
+    assert store.state('KR_CPI')['cursor']['phase'] == 'complete'
+    assert len(store.revisions('KR_CPI', '2024-01-01')) == 1
+
+
 def test_scheduler_off_is_read_only_and_missed_runs_coalesce(tmp_path, monkeypatch):
     assert operations.scheduled_refresh(tmp_path) is None
     assert list(tmp_path.iterdir()) == []

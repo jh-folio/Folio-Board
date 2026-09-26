@@ -128,7 +128,14 @@ class MacroStore:
                     (series_id, p['period'], p['availableAt']),
                 ).fetchone()
                 if previous and previous[0] == p['value'] and previous[1] == meta_id:
-                    continue
+                    # 이전 보관판이 충돌 상태라면 뒤의 정상 보관판은 같은 숫자라도 남긴다.
+                    # 과거 조회의 충돌은 유지하고 새 시점부터만 값을 확정한다.
+                    prior_count = conn.execute(
+                        'SELECT COUNT(*) FROM macro_observations WHERE series_id=? AND period=? AND available_at=?',
+                        (series_id, p['period'], previous[2]),
+                    ).fetchone()[0]
+                    if previous[2] == p['availableAt'] or prior_count == 1:
+                        continue
                 # 같은 요청을 다시 받아도 identity가 같아 중복 행이 생기지 않는다.
                 identity = digest([series_id, p['period'], p['vintageDate'] or p['availableAt'], p['availabilityBasis'], p['value'], meta_id])
                 result = conn.execute(

@@ -98,6 +98,21 @@ def test_same_vintage_conflict_retains_both_and_does_not_pick_one(tmp_path):
     assert {p['value'] for p in store.revisions('CPIAUCSL', '2024-01-01')} == {100, 101}
 
 
+@pytest.mark.parametrize('resolved_value', ['100', '101'])
+def test_later_vintage_resolves_conflict_without_rewriting_past(tmp_path, resolved_value):
+    store = MacroStore(tmp_path / 'm.sqlite3')
+    write(store, point(), point(value='101'))
+    resolved = point(value=resolved_value, vintage='2024-03-01')
+    assert write(store, resolved) == 1
+    assert write(store, resolved) == 0
+    assert write(store, point(value=resolved_value, vintage='2024-04-01')) == 0
+    assert store.history('CPIAUCSL')[0]['value'] == float(resolved_value)
+    assert not store.history('CPIAUCSL')[0]['conflict']
+    past = store.history('CPIAUCSL', cutoff=day_end('2024-02-15', 'America/Chicago'))[0]
+    assert past['value'] is None and past['conflict']
+    assert len(store.revisions('CPIAUCSL', '2024-01-01')) == 3
+
+
 def test_local_observation_is_not_backdated_to_measurement_period(tmp_path):
     store = MacroStore(tmp_path / 'm.sqlite3')
     p = point(series='KR_CPI', availabilityBasis='local_observed', vintageDate=None)
