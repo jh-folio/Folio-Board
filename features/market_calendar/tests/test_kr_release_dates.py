@@ -9,7 +9,6 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
-import sqlite3
 
 import pytest
 
@@ -102,31 +101,3 @@ def test_bok_rate_decisions_come_from_the_published_schedule():
     assert all("bok.or.kr" in e["sourceUrl"] for e in events)
     assert "2026-08-15" not in {e["startsAt"] for e in events}
     assert official_central_bank_events([2030]) == []
-
-
-def test_unverified_legacy_rows_are_preserved(tmp_path):
-    from features.market_calendar.service import prune_legacy_bok_rows, upsert_events
-
-    db = tmp_path / "market-memory.sqlite3"
-    legacy = bok.normalize_bok_events([
-        {"title": "한국 소비자물가지수 (CPI)", "market": "KR", "kind": "macro", "status": "actual",
-         "startsAt": "2026-07-15T08:00:00", "timezone": "Asia/Seoul", "observedAt": "202607"},
-        {"title": "한국은행 기준금리 결정", "market": "KR", "kind": "central_bank", "status": "estimated",
-         "startsAt": "2026-10-15T08:00:00", "timezone": "Asia/Seoul"},
-    ])
-    current = bok.normalize_bok_events([
-        {"title": "한국 소비자물가지수 (CPI)", "market": "KR", "kind": "macro", "status": "actual",
-         "startsAt": "2026-08-02", "allDay": True, "timezone": "Asia/Seoul", "observedAt": "202607"},
-    ])
-    other = [{"kind": "central_bank", "provider": "ecb", "title": "ECB", "status": "confirmed",
-              "startsAt": "2026-09-10T14:15:00", "timezone": "Europe/Berlin"}]
-    upsert_events(db, [*legacy, *current, *other])
-
-    assert prune_legacy_bok_rows(db) == 0
-    with sqlite3.connect(str(db)) as conn:
-        left = conn.execute("SELECT provider, starts_at FROM market_calendar_events ORDER BY provider").fetchall()
-    assert len(left) == 4
-    assert ("bok", "2026-07-15T08:00:00+09:00") in left
-    assert ("ecb", "2026-09-10T14:15:00+02:00") in left
-    # 두 번째 수집에서는 지울 것이 없다.
-    assert prune_legacy_bok_rows(db) == 0

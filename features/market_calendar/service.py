@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
-from contextlib import nullcontext
 from pathlib import Path
 
 from features.market_calendar.adapters.dividends import estimated_dividend_events
@@ -49,10 +48,22 @@ def ensure_calendar_table(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_market_calendar_market ON market_calendar_events(market, starts_at)")
 
 
-def upsert_events(db_path: Path, events: list[dict], *, connection=None) -> int:
+# 예전 ECOS 어댑터(parser 0.4.0)는 관측월 15일 08:00 KST라는 **합성 시각**에 행을 만들었다.
+# 7월 CPI가 7월 15일 발표로, 기준금리 "결정"이 매달 15일(광복절 포함)로 보였다. 지금 어댑터는
+# 관행일 종일 행만 만들고 기준금리는 한은 공시 일정에서 오므로, 이 조건에 맞는 행은 옛 행뿐이다.
+#
+# 이 행들은 지우지 않고 **읽을 때 뺀다**. 대체 행이 없는 옛 행(기준금리, 45일 창 밖의 과거 값,
+# 옛 예정일)도 저장소에는 그대로 남아 되돌릴 수 있고, 화면·브리핑·대시보드에는 나오지 않는다.
+LEGACY_BOK_ROW_SQL = (
+    "provider = 'bok' AND all_day = 0 AND parser_version = '0.4.0' "
+    "AND substr(starts_at, 9) = '15T08:00:00+09:00'"
+)
+
+
+def upsert_events(db_path: Path, events: list[dict]) -> int:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with (nullcontext(connection) if connection is not None else sqlite3.connect(str(db_path))) as conn:
+    with sqlite3.connect(str(db_path)) as conn:
         ensure_calendar_table(conn)
         for value in events:
             try:
@@ -74,8 +85,7 @@ def upsert_events(db_path: Path, events: list[dict], *, connection=None) -> int:
                 (row["id"], row["kind"], row["title"], row["market"], row["country"], json.dumps(row["tickers"], ensure_ascii=False), row["startsAt"], row["endsAt"], row["timezone"], int(row["allDay"]), row["status"], row["importance"], row["source"], row["sourceUrl"], row["asOf"], row["fetchedAt"], row["provider"], row["parserVersion"], int(row["cancelled"]), row["updatedAt"], row["actualValue"], row["previousValue"], row["unit"], row["observedAt"], row["forecastValue"], row["companyName"]),
             )
             count += 1
-        if connection is None:
-            conn.commit()
+        conn.commit()
     return count
 
 
@@ -130,7 +140,7 @@ def list_events(db_path: Path, *, start: str = "", end: str = "", market: str = 
     gaps = macro_coverage_gaps(requested_markets)
     if not Path(db_path).exists():
         return {"events": [], "count": 0, "dataGaps": gaps}
-    clauses = ["1=1"]
+    clauses = ["1=1", f"NOT ({LEGACY_BOK_ROW_SQL})"]
     params = []
     if start:
         clauses.append("starts_at>=?")
@@ -276,18 +286,10 @@ def refresh_calendar(data_dir: Path, *, include_estimates: bool = True) -> dict:
         queried = {"earnings": earnings_queried, "dividend": dividends_queried}
         events.extend(estimates)
         providers.update({"yfinance_earnings": len(earnings), "yfinance_dividends": len(dividends)})
-    from features.market_calendar.repairs import store_calendar_refresh
-    count, legacy_bok = store_calendar_refresh(memory_db, events)
-    if legacy_bok:
-        providers["pruned_legacy_bok"] = legacy_bok
+    count = upsert_events(memory_db, events)
     if any(queried.values()):
         providers["pruned_estimates"] = prune_stale_estimates(memory_db, estimates, queried)
     return {"ok": True, "stored": count, "providers": providers, "dataGaps": macro_coverage_gaps(), "agentCalled": False}
-
-
-def prune_legacy_bok_rows(db_path: Path) -> int:
-    """Compatibility no-op: deletion without verified replacement rows is forbidden."""
-    return 0
 
 
 def prune_stale_estimates(db_path: Path, fresh: list[dict], queried: dict[str, set[str]] | set[str]) -> int:
