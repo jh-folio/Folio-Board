@@ -1,4 +1,4 @@
-"""ECB, Bank of England, and Bank of Japan rate decision dates.
+"""ECB, Bank of England, Bank of Japan, and Bank of Korea rate decision dates.
 
 Same approach as the FOMC adapter: each bank publishes its year ahead, so the
 schedule is transcribed rather than scraped. These are `confirmed` because the
@@ -11,6 +11,10 @@ Every date below was checked against the issuing bank's own publication:
   BoE  — the published 2026 MPC announcement dates, all at 12:00 London.
   BoJ  — the published 2026 Monetary Policy Meeting schedule; the decision
          lands on the second day.
+  BOK  — the 2026 통화정책방향 결정회의 list on the bank's own schedule page.
+         Before this table the base rate came from ECOS monthly observations,
+         which put a "decision" on the 15th of every month — twelve a year for a
+         committee that meets eight times, one of them on Liberation Day.
 """
 from __future__ import annotations
 
@@ -44,12 +48,25 @@ BOJ_MEETINGS = {
     ),
 }
 
+# 통화정책방향 결정회의는 연 8회다. 결정문 공표 시각이 공식 일정표에 없어 종일 일정으로 둔다.
+# https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSe=A&menuNo=200755
+BOK_DECISIONS = {
+    2026: (
+        "2026-01-15", "2026-02-26", "2026-04-10", "2026-05-28",
+        "2026-07-16", "2026-08-27", "2026-10-22", "2026-11-26",
+    ),
+}
+
 _URLS = {
     "ecb": "https://www.ecb.europa.eu/press/calendars/mgcgc/html/index.en.html",
     "bank_of_england": "https://www.bankofengland.co.uk/monetary-policy/upcoming-mpc-dates",
     "bank_of_japan": "https://www.boj.or.jp/en/mopo/mpmsche_minu/index.htm",
+    "bank_of_korea": "https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSe=A&menuNo=200755",
 }
-_SOURCES = {"ecb": "European Central Bank", "bank_of_england": "Bank of England", "bank_of_japan": "Bank of Japan"}
+_SOURCES = {
+    "ecb": "European Central Bank", "bank_of_england": "Bank of England",
+    "bank_of_japan": "Bank of Japan", "bank_of_korea": "Bank of Korea",
+}
 
 
 def normalize_central_bank_events(rows: list[dict], *, provider: str) -> list[dict]:
@@ -116,13 +133,26 @@ def _boj_rows(years: list[int]) -> list[dict]:
     return rows
 
 
+def _bok_rows(years: list[int]) -> list[dict]:
+    rows = []
+    for year in years:
+        for date in BOK_DECISIONS.get(year, ()):
+            rows.append({
+                "title": "한국은행 기준금리 결정 (통화정책방향 결정회의)",
+                "market": "KR", "country": "KR",
+                "startsAt": date, "timezone": "Asia/Seoul",
+                "allDay": True, "importance": 3,
+            })
+    return rows
+
+
 def official_central_bank_events(years: list[int]) -> list[dict]:
-    """ECB/BoE/BoJ decision dates for the requested years.
+    """ECB/BoE/BoJ/BOK decision dates for the requested years.
 
     A year with no transcribed table simply contributes nothing — the calendar
     shows a gap rather than an invented meeting.
     """
     events = []
-    for provider, builder in (("ecb", _ecb_rows), ("bank_of_england", _boe_rows), ("bank_of_japan", _boj_rows)):
+    for provider, builder in (("ecb", _ecb_rows), ("bank_of_england", _boe_rows), ("bank_of_japan", _boj_rows), ("bank_of_korea", _bok_rows)):
         events.extend(normalize_central_bank_events(builder(years), provider=provider))
     return events

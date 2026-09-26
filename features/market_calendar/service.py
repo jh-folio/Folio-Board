@@ -272,9 +272,31 @@ def refresh_calendar(data_dir: Path, *, include_estimates: bool = True) -> dict:
         events.extend(estimates)
         providers.update({"yfinance_earnings": len(earnings), "yfinance_dividends": len(dividends)})
     count = upsert_events(memory_db, events)
+    legacy_bok = prune_legacy_bok_rows(memory_db)
+    if legacy_bok:
+        providers["pruned_legacy_bok"] = legacy_bok
     if any(queried.values()):
         providers["pruned_estimates"] = prune_stale_estimates(memory_db, estimates, queried)
     return {"ok": True, "stored": count, "providers": providers, "dataGaps": macro_coverage_gaps(), "agentCalled": False}
+
+
+def prune_legacy_bok_rows(db_path: Path) -> int:
+    """관측월 15일 08:00에 박힌 옛 ECOS 행을 지운다.
+
+    예전 어댑터는 7월 CPI를 7월 15일 발표로, 기준금리 "결정"을 매달 15일에 저장했다.
+    발표일이 관측월보다 앞서고 금통위가 연 12회로 보이는 **틀린 날짜**다. 이벤트 id가
+    시작시각을 포함하므로 고친 어댑터가 같은 수치를 새 날짜로 넣어도 옛 행은 남는다.
+
+    새 어댑터의 행은 전부 종일(`all_day=1`)이라 `provider='bok'`이면서 시각이 붙은 행은
+    옛 형식뿐이다. 수치는 ECOS에 그대로 있어 다음 수집이 다시 만든다. 기준금리는
+    `bank_of_korea` provider의 공식 회의 일정으로 대체됐다.
+    """
+    with sqlite3.connect(str(db_path)) as conn:
+        ensure_calendar_table(conn)
+        cursor = conn.execute(
+            "DELETE FROM market_calendar_events WHERE provider = 'bok' AND all_day = 0"
+        )
+        return cursor.rowcount or 0
 
 
 def prune_stale_estimates(db_path: Path, fresh: list[dict], queried: dict[str, set[str]] | set[str]) -> int:
