@@ -132,3 +132,32 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.cockpit-calendar')).toBeVisible();
   });
 }
+
+test('missing API keys read as skipped sources, not as a failed collection', async ({ page }) => {
+  await prepare(page, 'light');
+  // FRED 키만 있는 사용자: 미국은 수집됐고 한국 9계열은 키가 없어 건너뛰었다.
+  await page.route('**/api/macro/refresh', route => route.fulfill({ json: {
+    job: { id: 'one-key', status: 'done' }, sources: { ok: 8, notConnected: 9, failed: 0 },
+  } }));
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByText('수집 완료 · API 키가 연결되지 않은 원천 9개는 건너뛰었습니다', { exact: true })).toBeVisible();
+
+  // 연결된 원천이 실제로 실패한 경우는 건너뜀과 다른 문구로 보인다.
+  await page.unroute('**/api/macro/refresh');
+  await page.route('**/api/macro/refresh', route => route.fulfill({ json: {
+    job: { id: 'outage', status: 'failed' }, sources: { ok: 7, notConnected: 9, failed: 1 },
+  } }));
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByText('일부 원천을 확인하지 못했습니다.', { exact: false })).toBeVisible();
+
+  // 키가 하나도 없으면 등록을 안내한다.
+  await page.unroute('**/api/macro/refresh');
+  await page.route('**/api/macro/refresh', route => route.fulfill({ json: {
+    job: { id: 'no-keys', status: 'failed' }, sources: { ok: 0, notConnected: 17, failed: 0 },
+  } }));
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByText('연결된 API 키가 없어 수집하지 않았습니다.', { exact: false })).toBeVisible();
+});
