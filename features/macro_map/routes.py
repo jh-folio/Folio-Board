@@ -3,7 +3,7 @@ import sqlite3
 
 from fastapi import APIRouter, Body, HTTPException, Query
 from .service import map_snapshot
-from .operations import current_job, save_settings, settings, submit_refresh
+from .operations import current_job, save_settings, settings, source_summary, submit_refresh
 
 
 def create_macro_router(data_root: Path):
@@ -36,6 +36,6 @@ def create_macro_router(data_root: Path):
 
     @router.get('/refresh')
     def refresh_status():
-        return {'job': call(current_job, data_root)}
+        return {'job': call(current_job, data_root), 'sources': call(source_summary, data_root)}
 
     return router

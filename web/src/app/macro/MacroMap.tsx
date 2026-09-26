@@ -31,7 +31,22 @@ const BASIS: Record<string, string> = {
   official_release: "공식 발표 근거 확인",
 };
 type Job = { id: string; status: JobStatus; message?: string };
+type SourceSummary = { ok: number; notConnected: number; failed: number };
 const ACTIVE = new Set(["queued", "running", "cancel_requested", "committing"]);
+// 키가 없는 원천은 실패가 아니라 건너뜀이다. 원천 장애와 같은 "실패"로 보이지 않게 나눠 말한다.
+function jobText(job: Job, active: boolean, sources: SourceSummary | null): string {
+  if (active) return "공식 자료 수집 중";
+  if (job.status === "cancelled") return "수집 취소됨 · 저장된 부분은 유지됩니다";
+  if (job.status === "done") {
+    return sources?.notConnected
+      ? `수집 완료 · API 키가 연결되지 않은 원천 ${sources.notConnected}개는 건너뛰었습니다`
+      : "수집 완료";
+  }
+  if (sources?.failed) return "일부 원천을 확인하지 못했습니다. 이미 받은 자료는 그대로 있으며, 지표별 상태에서 실패한 원천을 확인할 수 있습니다.";
+  if (sources && !sources.ok && sources.notConnected) return "연결된 API 키가 없어 수집하지 않았습니다. 설정에서 FRED 또는 BOK API 키를 등록해 주세요.";
+  return "수집이 완료되지 않았습니다. 지표별 상태를 확인해 주세요.";
+}
+
 const localDate = (value: string, timezone = "Asia/Seoul") =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 
@@ -143,6 +158,7 @@ export function MacroMap() {
   const completedJob = useRef("");
   const [config, setConfig] = useState<{ enabled: boolean; startYear: number } | null>(null);
   const [job, setJob] = useState<Job | null>(null);
+  const [sources, setSources] = useState<SourceSummary | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -183,9 +199,10 @@ export function MacroMap() {
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const { job: value } = await getJson<{ job: Job | null }>("/api/macro/refresh");
+        const { job: value, sources: summary } = await getJson<{ job: Job | null; sources?: SourceSummary }>("/api/macro/refresh");
         if (!current) return;
         setJob(value);
+        setSources(summary || null);
         if (value && !ACTIVE.has(value.status) && completedJob.current !== value.id) {
           completedJob.current = value.id;
           setRevision((v) => v + 1);
@@ -263,15 +280,7 @@ export function MacroMap() {
       {message && <p role="status" className="macro-notice">{message}</p>}
       {job && (
         <div className="macro-job" role="status">
-          <span>
-            {active
-              ? "공식 자료 수집 중"
-              : job.status === "done"
-                ? "수집 완료"
-                : job.status === "cancelled"
-                  ? "수집 취소됨 · 저장된 부분은 유지됩니다"
-                  : "수집이 완료되지 않았습니다. 지표별 상태를 확인해 주세요."}
-          </span>
+          <span>{jobText(job, Boolean(active), sources)}</span>
           {active && (
             <button
               className="btn btn--sm"

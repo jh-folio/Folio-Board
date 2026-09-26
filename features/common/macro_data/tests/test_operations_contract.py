@@ -241,3 +241,57 @@ def test_unreadable_cache_cleanup_does_not_fail_a_collection(tmp_path, monkeypat
 
     monkeypatch.setattr(Path, 'iterdir', denied)
     assert prune_owned_cache(tmp_path) == 0
+
+
+class _OneKeyReader:
+    """FRED 키만 있는 사용자. 한국 원천은 키가 없어 연결되지 않는다."""
+
+    def __init__(self, fred_fails=False):
+        self.fred_fails = fred_fails
+
+    def fred_pages(self, spec, start, *, cursor, cancel):
+        if self.fred_fails:
+            raise providers.ProviderError('provider_failed')
+        yield [point()], {'phase': 'fred'}, '2026-09-27T00:00:00Z'
+
+    def ecos_pages(self, spec, start, *, cursor, cancel):
+        raise providers.ProviderError('not_connected')
+        yield
+
+
+def test_missing_key_is_skipped_not_failed_when_connected_sources_succeed(tmp_path):
+    result = collect(tmp_path, reader=_OneKeyReader(), selected={'CPIAUCSL', 'KR_CPI'})
+    assert result['ok']
+    assert result['notConnected'] == ['KR_CPI']
+    assert operations.source_summary(tmp_path) == {'ok': 1, 'notConnected': 1, 'failed': 0}
+
+
+def test_connected_source_failure_is_still_incomplete(tmp_path):
+    result = collect(tmp_path, reader=_OneKeyReader(fred_fails=True), selected={'CPIAUCSL', 'KR_CPI'})
+    assert not result['ok']
+    assert operations.source_summary(tmp_path) == {'ok': 0, 'notConnected': 1, 'failed': 1}
+
+
+def test_worker_completes_with_one_key_and_names_the_no_key_failure(tmp_path, monkeypatch):
+    import features.common.jobs as jobs
+    monkeypatch.setattr(jobs, 'get_shared_job', lambda _id: SimpleNamespace(status=SimpleNamespace(value='running')))
+    monkeypatch.setattr(operations, 'collect', lambda root, **k: collect(root, reader=_OneKeyReader(), selected={'CPIAUCSL', 'KR_CPI'}, cancel=k['cancel']))
+    done = operations.run_collection(tmp_path, start='2000-01-01', job_id='x')
+    assert done['savedCount'] == 1 and done['notConnected'] == ['KR_CPI']
+
+    no_keys = {'ok': False, 'series': [{'seriesId': 'CPIAUCSL', 'status': 'not_connected', 'inserted': 0}]}
+    monkeypatch.setattr(operations, 'collect', lambda *a, **k: no_keys)
+    with pytest.raises(RuntimeError, match='macro_not_connected'):
+        operations.run_collection(tmp_path, start='2000-01-01', job_id='x')
+
+
+def test_refresh_status_reports_source_summary_without_writing(tmp_path):
+    from fastapi import FastAPI
+    from features.macro_map.routes import create_macro_router
+    from .test_collection import ASGIClient
+
+    app = FastAPI()
+    app.include_router(create_macro_router(tmp_path))
+    body = ASGIClient(app).get('/api/macro/refresh').json()
+    assert body == {'job': None, 'sources': {'ok': 0, 'notConnected': 0, 'failed': 0}}
+    assert not (tmp_path / 'market-memory.sqlite3').exists()

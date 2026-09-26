@@ -152,7 +152,7 @@ def test_active_manual_and_scheduled_collection_share_one_job(tmp_path, monkeypa
 def test_worker_failure_is_not_completed_and_cancellation_is_checked(tmp_path, monkeypatch):
     import features.common.jobs as jobs
     monkeypatch.setattr(jobs, 'get_shared_job', lambda _id: SimpleNamespace(status=SimpleNamespace(value='running')))
-    monkeypatch.setattr(operations, 'collect', lambda *a, **k: {'ok': False, 'series': []})
+    monkeypatch.setattr(operations, 'collect', lambda *a, **k: {'ok': False, 'series': [{'seriesId': 'CPIAUCSL', 'status': 'provider_failed', 'inserted': 0}]})
     with pytest.raises(RuntimeError, match='incomplete'):
         operations.run_collection(tmp_path, start='2000-01-01', job_id='x')
     monkeypatch.setattr(jobs, 'get_shared_job', lambda _id: SimpleNamespace(status=SimpleNamespace(value='cancel_requested')))

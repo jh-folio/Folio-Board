@@ -8,6 +8,7 @@ from pathlib import Path
 
 from features.common.atomic_replace import write_bytes_atomic
 from features.common.macro_data.collect import collect
+from features.common.macro_data.store import MacroStore
 
 _LOCK = threading.RLock()
 _SUBMITTED = {}
@@ -71,8 +72,25 @@ def run_collection(root: Path, *, start, job_id, progress=None):
         progress(message='공식 거시 자료를 확인하고 있습니다.')
     result = collect(root, start=start, cancel=cancel)
     if not result['ok']:
-        raise RuntimeError('macro_collection_incomplete')
+        # 이미 저장한 페이지는 남는다. 다만 부분 성공을 완료로 기록하지 않는다.
+        connected = [r for r in result['series'] if r.get('status') != 'not_connected']
+        raise RuntimeError('macro_collection_incomplete' if connected else 'macro_not_connected')
     return {**result, 'savedCount': sum(r['inserted'] for r in result['series'])}
+
+
+def source_summary(root: Path):
+    # 원천별 마지막 수집 상태를 센다. 작업 오류 코드는 공통 코드로 뭉개지므로,
+    # 화면은 이 요약으로 "키가 없어 건너뜀"과 "원천 확인 실패"를 나눠 말한다. 읽기만 한다.
+    counts = {'ok': 0, 'notConnected': 0, 'failed': 0}
+    for state in MacroStore(Path(root) / 'market-memory.sqlite3').state():
+        status = state.get('status')
+        if status == 'ok':
+            counts['ok'] += 1
+        elif status == 'not_connected':
+            counts['notConnected'] += 1
+        else:
+            counts['failed'] += 1
+    return counts
 
 
 def current_job(root: Path):

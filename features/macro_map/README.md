@@ -11,7 +11,7 @@
 
 ## 수집과 저장
 
-설정의 기존 FRED/BOK 키를 사용합니다. `공식 자료 갱신`은 `macro_refresh` SharedJob이며 AI/내러티브 생성 작업을 호출하지 않습니다. 초기 수집 목표는 2000년이고 원천의 실제 지원 범위가 우선합니다. 키 없는 원천은 미연결 상태로 남습니다.
+설정의 기존 FRED/BOK 키를 사용합니다. `공식 자료 갱신`은 `macro_refresh` SharedJob이며 AI/내러티브 생성 작업을 호출하지 않습니다. 초기 수집 목표는 2000년이고 원천의 실제 지원 범위가 우선합니다. 키 없는 원천은 실패가 아니라 **건너뜀**입니다. 예를 들어 FRED 키만 있으면 미국 8계열을 수집하고 작업은 완료로 끝나며, 한국 9계열은 미연결로 남아 `API 키가 연결되지 않은 원천 9개는 건너뛰었습니다`로 표시됩니다. 연결된 원천이 하나도 없으면 `macro_not_connected`, 연결된 원천 중 하나라도 실패하면 `macro_collection_incomplete`로 작업이 완료되지 않습니다.
 
 자동 갱신은 기본 OFF입니다. 사용자가 켜면 서버가 실행되는 동안 09:00·21:00 KST에 갱신합니다. 종료 중 놓친 회차는 재기동 후 한 번으로 모읍니다. 수동 갱신과 예약은 실행 중인 작업을 공유합니다. 취소·서버 재시작·실패 시 이미 저장한 페이지는 남기고 cursor에서 재개합니다. 일부 원천 실패를 전체 완료로 표시하지 않습니다.
 
@@ -23,7 +23,7 @@
 | --- | --- |
 | `GET /api/macro?market=US&mode=as_of&date=2020-03-31&years=5` | 당시 자료 지도. `series` 상세, `period` 수정 비교 관측기간 선택 가능 |
 | `GET/POST /api/macro/settings` | `enabled`, `startYear`와 고정 갱신 일정 |
-| `POST /api/macro/refresh` / `GET /api/macro/refresh` | 수집 요청 / 마지막 SharedJob 조회 |
+| `POST /api/macro/refresh` / `GET /api/macro/refresh` | 수집 요청 / 마지막 SharedJob과 원천별 마지막 상태 요약(`sources`: ok·notConnected·failed) 조회. 작업 오류 코드는 공통 코드라 화면은 이 요약으로 키 없음과 원천 실패를 나눕니다 |
 | `POST /api/jobs/{id}/cancel` | 기존 작업 취소 계약 |
 
 공통 registry·provider·저장·변환은 [macro_data](../common/macro_data/README.md)가 소유합니다. 라우터는 이 폴더에서 조립하고 `app.py`는 등록만 합니다. UI는 `web/src/app/macro/`와 기존 `FolioChart`를 사용합니다.

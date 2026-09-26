@@ -51,7 +51,16 @@ def collect(data_root: Path, *, start='2000-01-01', cancel=lambda: None, reader=
                 code = str(exc) if str(exc) in {'not_connected', 'vintage_metadata_missing', 'ecos_dimension_mismatch', 'empty_ecos_page'} else 'provider_failed'
                 store.set_state(spec.id, 'not_connected' if code == 'not_connected' else 'provider_failed', error=code)
                 results.append({'seriesId': spec.id, 'status': code, 'inserted': count})
-        return {'ok': all(r['status'] == 'ok' for r in results), 'series': results, 'agentCalled': False}
+        # 키가 없는 원천은 실패가 아니라 건너뜀이다. FRED 키만 있는 사용자의 수집이 한국 9계열
+        # 때문에 매번 실패로 끝나면, 원천 장애로 정말 실패한 날과 구분할 수 없다.
+        # 연결된 원천이 하나도 없거나, 연결된 원천 중 하나라도 실패하면 완료가 아니다.
+        connected = [r for r in results if r['status'] != 'not_connected']
+        return {
+            'ok': bool(connected) and all(r['status'] == 'ok' for r in connected),
+            'series': results,
+            'notConnected': [r['seriesId'] for r in results if r['status'] == 'not_connected'],
+            'agentCalled': False,
+        }
     finally:
         if runtime:
             runtime.pool.shutdown(wait=True, cancel_futures=True)
