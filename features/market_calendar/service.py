@@ -94,9 +94,10 @@ MACRO_COVERAGE_GAPS = {
     "KR": {
         "provider": "bok_ecos",
         "requires": "BOK_API_KEY",
-        # 한국도 yfinance가 일부 지표를 주지만 금통위 일정은 ECOS 경로에서만 나온다.
+        # 금통위 일정은 한국은행 공시 일정표라 키 없이 들어온다(`central_banks.py`).
+        # 키가 필요한 것은 ECOS의 CPI·PPI 결과와 다음 발표 예정일이다.
         "severity": "degraded",
-        "message": "한국 금통위 일정은 한국은행 ECOS API Key를 등록해야 수집됩니다. 일부 지표는 Yahoo Finance 추정치로 표시됩니다.",
+        "message": "한국 CPI·PPI 발표 결과는 한국은행 ECOS API Key를 등록해야 수집됩니다. 금통위 일정은 키 없이 표시되며, 일부 지표는 Yahoo Finance 추정치로 표시됩니다.",
         "settingsHint": "설정 > 외부 데이터에서 BOK API Key를 등록하세요.",
         "sourceUrl": "https://ecos.bok.or.kr/api/",
     },
