@@ -1,5 +1,7 @@
 # 시장 내러티브 메모리
 
+거시 지도는 이 화면의 하위 보기이지만 독립적인 공식 자료 소비자다. [기능 계약](../../features/macro_map/README.md)의 미국 날짜 재현/한국 로컬 관측 경계와 [공통 원장](../../features/common/macro_data/README.md)을 따르며 Regime·Thesis·Portfolio를 쓰지 않는다.
+
 > 이 기능을 변경·검토할 때 해당 기능 README와 함께 읽는다. 다른 기능의 상세 문서를 일괄 로드하지 않는다.
 > 공통 규칙과 § 번호는 [AGENTS.md](../../AGENTS.md)를 참조한다. 코드 경로 표기는 저장소 루트 기준이다.
 
@@ -30,4 +32,3 @@
 - Regime 근거는 기존 `market_memory` 엔트리를 상태별로 분류해 `market_regime_evidence`에 저장하고, 변화는 `market_regime_changes`에 남긴다.
 - Thesis/Obsidian 노트는 hypothesis다. `linked_regimes`, ticker overlap 등은 `market_regime_thesis_links` 연결 정보로만 쓰며 evidence로 승격하지 않는다.
 - 기존 active/watch/resolved 호환성과 기본 브리핑 markdown 불변을 최우선으로 유지한다.
-

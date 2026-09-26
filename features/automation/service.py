@@ -780,6 +780,13 @@ def _reconcile_submitted_briefings_locked() -> None:
 
 
 def run_due_automations(now: dt.datetime | None = None) -> dict:
+    # Independent opt-in data work. Its failure must not stop RSS or briefing jobs.
+    from features.macro_map.operations import scheduled_refresh
+    from features.common.workspace import data_dir
+    try:
+        scheduled_refresh(data_dir(), now=now)
+    except (OSError, ValueError, RuntimeError):
+        _append_run({"kind": "macro_refresh", "status": "failed", "error": "macro_schedule_failed", "finishedAt": now_iso()})
     _reconcile_submitted_briefings()
     settings = read_settings()
     runs = list_runs(100)

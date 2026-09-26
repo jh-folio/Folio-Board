@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
+from contextlib import nullcontext
 from pathlib import Path
 
 from features.market_calendar.adapters.dividends import estimated_dividend_events
@@ -15,6 +16,7 @@ from features.market_calendar.adapters.bok import fetch_bok_macro_events
 from features.market_calendar.adapters.fred import fetch_fred_macro_events
 from features.market_calendar.adapters.yf_economic import fetch_yf_economic_events
 from features.market_calendar.schema import normalize_event
+from features.market_calendar.projection import project_events
 from features.common.market_data.major_companies import major_company_symbols
 from features.portfolio.service import get_portfolio
 
@@ -47,10 +49,10 @@ def ensure_calendar_table(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_market_calendar_market ON market_calendar_events(market, starts_at)")
 
 
-def upsert_events(db_path: Path, events: list[dict]) -> int:
+def upsert_events(db_path: Path, events: list[dict], *, connection=None) -> int:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with sqlite3.connect(str(db_path)) as conn:
+    with (nullcontext(connection) if connection is not None else sqlite3.connect(str(db_path))) as conn:
         ensure_calendar_table(conn)
         for value in events:
             try:
@@ -72,7 +74,8 @@ def upsert_events(db_path: Path, events: list[dict]) -> int:
                 (row["id"], row["kind"], row["title"], row["market"], row["country"], json.dumps(row["tickers"], ensure_ascii=False), row["startsAt"], row["endsAt"], row["timezone"], int(row["allDay"]), row["status"], row["importance"], row["source"], row["sourceUrl"], row["asOf"], row["fetchedAt"], row["provider"], row["parserVersion"], int(row["cancelled"]), row["updatedAt"], row["actualValue"], row["previousValue"], row["unit"], row["observedAt"], row["forecastValue"], row["companyName"]),
             )
             count += 1
-        conn.commit()
+        if connection is None:
+            conn.commit()
     return count
 
 
@@ -173,6 +176,7 @@ def list_events(db_path: Path, *, start: str = "", end: str = "", market: str = 
             "previousValue": row["previous_value"],
             "unit": row["unit"], "observedAt": row["observed_at"], "companyName": row["company_name"],
         })
+    events = project_events(events)
     return {"events": events, "count": len(events), "dataGaps": gaps}
 
 
@@ -272,8 +276,8 @@ def refresh_calendar(data_dir: Path, *, include_estimates: bool = True) -> dict:
         queried = {"earnings": earnings_queried, "dividend": dividends_queried}
         events.extend(estimates)
         providers.update({"yfinance_earnings": len(earnings), "yfinance_dividends": len(dividends)})
-    count = upsert_events(memory_db, events)
-    legacy_bok = prune_legacy_bok_rows(memory_db)
+    from features.market_calendar.repairs import store_calendar_refresh
+    count, legacy_bok = store_calendar_refresh(memory_db, events)
     if legacy_bok:
         providers["pruned_legacy_bok"] = legacy_bok
     if any(queried.values()):
@@ -282,22 +286,8 @@ def refresh_calendar(data_dir: Path, *, include_estimates: bool = True) -> dict:
 
 
 def prune_legacy_bok_rows(db_path: Path) -> int:
-    """관측월 15일 08:00에 박힌 옛 ECOS 행을 지운다.
-
-    예전 어댑터는 7월 CPI를 7월 15일 발표로, 기준금리 "결정"을 매달 15일에 저장했다.
-    발표일이 관측월보다 앞서고 금통위가 연 12회로 보이는 **틀린 날짜**다. 이벤트 id가
-    시작시각을 포함하므로 고친 어댑터가 같은 수치를 새 날짜로 넣어도 옛 행은 남는다.
-
-    새 어댑터의 행은 전부 종일(`all_day=1`)이라 `provider='bok'`이면서 시각이 붙은 행은
-    옛 형식뿐이다. 수치는 ECOS에 그대로 있어 다음 수집이 다시 만든다. 기준금리는
-    `bank_of_korea` provider의 공식 회의 일정으로 대체됐다.
-    """
-    with sqlite3.connect(str(db_path)) as conn:
-        ensure_calendar_table(conn)
-        cursor = conn.execute(
-            "DELETE FROM market_calendar_events WHERE provider = 'bok' AND all_day = 0"
-        )
-        return cursor.rowcount or 0
+    """Compatibility no-op: deletion without verified replacement rows is forbidden."""
+    return 0
 
 
 def prune_stale_estimates(db_path: Path, fresh: list[dict], queried: dict[str, set[str]] | set[str]) -> int:

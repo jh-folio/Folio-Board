@@ -1,10 +1,12 @@
 import datetime as dt
 import json as _json
-import re
 import urllib.parse
 import urllib.request
 
 from features.market_calendar.schema import normalize_event
+from features.common.macro_data.providers import fred_vintage_pattern, parse_fred_vintages
+
+_VINTAGE_KEY = fred_vintage_pattern()  # Legacy import compatibility; shared parser owns the pattern.
 
 # FRED release id → (표시명, 중요도). 발표 시각은 BLS/BEA/Census 공식 고정 시각 08:30 ET.
 # https://fred.stlouisfed.org/docs/api/fred/release_dates.html
@@ -73,10 +75,6 @@ def fetch_fred_macro_events(api_key: str, *, start: str, end: str, timeout: floa
 
 
 _FRED_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"
-
-# `output_type=3` 응답의 열 이름. `GDPC1_20260625`처럼 시리즈와 vintage 날짜가 붙는다.
-_VINTAGE_KEY = re.compile(r".+_(\d{4})(\d{2})(\d{2})")
-
 
 def _attach_observations(rows: list[dict], api_key: str, *, timeout: float) -> None:
     """각 발표일에 **그 발표가 공표한** 수치를 붙인다.
@@ -164,16 +162,16 @@ def _first_releases(series_id: str, api_key: str, start: str, end: str, *, timeo
     except Exception:
         return {}
     published: dict[str, dict] = {}
-    for point in payload.get("observations") or []:
-        observed = str(point.get("date") or "")
-        for key, raw in point.items():
-            match = _VINTAGE_KEY.fullmatch(str(key))
-            value = str(raw or ".")
-            if not match or value == ".":
-                continue
-            day = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
-            # 같은 날 여러 관측기간이 공표되면(개정 포함) 가장 최근 기간이 헤드라인이다.
-            current = published.get(day)
-            if not current or observed > current["date"]:
-                published[day] = {"date": observed, "value": value}
+    try:
+        points = list(parse_fred_vintages(payload, series_id))
+    except (ValueError, TypeError, RuntimeError):
+        return {}
+    for point in points:
+        observed, day, value = point['period'], point['vintageDate'], point['value']
+        if value is None:
+            continue
+        # Calendar alone selects a headline; the shared parser preserves every revision.
+        current = published.get(day)
+        if not current or observed > current['date']:
+            published[day] = {'date': observed, 'value': value}
     return published

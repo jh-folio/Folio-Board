@@ -88,6 +88,7 @@ def _task(raw: Mapping[str, JsonValue], kind: JobKind) -> TaskType:
         except ValueError:
             explicit = None
     direct = {
+        JobKind.MACRO_REFRESH: TaskType.MACRO_REFRESH,
         JobKind.INDEX: TaskType.INDEX,
         JobKind.RSS: TaskType.RSS,
         JobKind.SETUP: TaskType.SETUP,

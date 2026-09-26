@@ -54,13 +54,14 @@ def test_release_date_is_always_in_the_following_month():
 
 def test_observed_values_land_after_their_month_as_all_day_rows(ecos):
     rows = bok.fetch_bok_macro_events("KEY", start="2026-07-01", end="2026-10-31")
-    actual = [r for r in rows if r["status"] == "actual"]
+    actual = [r for r in rows if r["actualValue"]]
     assert actual, "관측값이 결과로 실려야 한다"
     for row in actual:
         observed = dt.date(int(row["observedAt"][:4]), int(row["observedAt"][4:]), 1)
         assert dt.date.fromisoformat(row["startsAt"]) > bok._add_months(observed, 1) - dt.timedelta(days=1)
         # 공식 발표 시각 근거가 없으므로 시각을 지어내지 않는다.
         assert row["allDay"] is True
+        assert row["status"] == "estimated", "값이 있어도 관행일의 확실성이 높아지지 않는다"
 
     cpi = {r["observedAt"]: r for r in actual if "CPI" in r["title"]}
     assert cpi["202607"]["startsAt"] == "2026-08-02"
@@ -70,17 +71,17 @@ def test_observed_values_land_after_their_month_as_all_day_rows(ecos):
 
 def test_projected_releases_are_estimated_and_follow_the_last_observation(ecos):
     rows = bok.fetch_bok_macro_events("KEY", start="2026-07-01", end="2026-10-31")
-    projected = sorted(r["startsAt"] for r in rows if r["status"] == "estimated" and "CPI" in r["title"])
+    projected = sorted(r["startsAt"] for r in rows if not r["actualValue"] and r["status"] == "estimated" and "CPI" in r["title"])
     # 8월까지 관측됐으니 다음은 9월분(10/2)이다. 9/15 같은 관측월 중순 날짜는 없다.
     assert projected == ["2026-10-02"]
-    assert all(r["actualValue"] == "" for r in rows if r["status"] == "estimated")
+    assert all(r["status"] == "estimated" for r in rows)
 
 
 def test_ppi_uses_the_ecos_table_that_exists(ecos):
     rows = bok.fetch_bok_macro_events("KEY", start="2026-07-01", end="2026-10-31")
     assert "404Y014" in ecos
     assert "901Y014" not in ecos
-    ppi = [r for r in rows if "PPI" in r["title"] and r["status"] == "actual"]
+    ppi = [r for r in rows if "PPI" in r["title"] and r["actualValue"]]
     assert [r["startsAt"] for r in ppi] == ["2026-08-18", "2026-09-18"]
 
 
@@ -103,7 +104,7 @@ def test_bok_rate_decisions_come_from_the_published_schedule():
     assert official_central_bank_events([2030]) == []
 
 
-def test_legacy_mid_month_rows_are_pruned_but_others_stay(tmp_path):
+def test_unverified_legacy_rows_are_preserved(tmp_path):
     from features.market_calendar.service import prune_legacy_bok_rows, upsert_events
 
     db = tmp_path / "market-memory.sqlite3"
@@ -121,9 +122,11 @@ def test_legacy_mid_month_rows_are_pruned_but_others_stay(tmp_path):
               "startsAt": "2026-09-10T14:15:00", "timezone": "Europe/Berlin"}]
     upsert_events(db, [*legacy, *current, *other])
 
-    assert prune_legacy_bok_rows(db) == 2
+    assert prune_legacy_bok_rows(db) == 0
     with sqlite3.connect(str(db)) as conn:
         left = conn.execute("SELECT provider, starts_at FROM market_calendar_events ORDER BY provider").fetchall()
-    assert left == [("bok", "2026-08-02"), ("ecb", "2026-09-10T14:15:00+02:00")]
+    assert len(left) == 4
+    assert ("bok", "2026-07-15T08:00:00+09:00") in left
+    assert ("ecb", "2026-09-10T14:15:00+02:00") in left
     # 두 번째 수집에서는 지울 것이 없다.
     assert prune_legacy_bok_rows(db) == 0

@@ -1,5 +1,7 @@
 # 시장 캘린더 (Market Calendar)
 
+0.7 보존 계약: BOK ECOS 관행일은 값이 있어도 `estimated`이며 UI에 `값 확인 · 발표일 미확인`을 표시한다. 옛 행 정리는 `repairs.py`가 정확한 parser·합성 ID·관측월·값·단위와 성공한 대체 행을 대조한 경우에만 한다. SQLite backup API 백업과 old/new 연결 기록을 남기고 대체 저장·삭제를 같은 transaction으로 처리한다. 키 없음·실패·미연결 행·기준금리 행은 삭제하지 않는다. FRED의 공통 vintage parser는 모든 개정을 보존하고 Calendar가 헤드라인 하나를 고른다. 거시 원장은 Calendar의 시각을 공식 공표 근거로 쓰지 않는다.
+
 > 이 기능을 변경·검토할 때 해당 기능 README와 함께 읽는다. 다른 기능의 상세 문서를 일괄 로드하지 않는다.
 > 공통 규칙과 § 번호는 [AGENTS.md](../../AGENTS.md)를 참조한다. 코드 경로 표기는 저장소 루트 기준이다.
 

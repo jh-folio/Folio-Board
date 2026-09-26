@@ -18,6 +18,7 @@
 | `market_calendar.py` | 브리핑 날짜 계산, 시장별 세션 기술자(`marketSessions`) |
 | `exchange_holidays.py` | LSE/Xetra/Euronext/Borsa Italiana/BME/JPX 연간 휴장일 표와 거래소별 개장 판정 |
 | `market_data/providers.py` | provider 기반 시장 데이터 인터페이스와 한국장 수치 조회 |
+| `macro_data/` | 공식 거시 시계열 registry·FRED/ECOS 수집·수정판 원장·보수적 과거 조회. [계약](macro_data/README.md) |
 | `market_data/europe_core_universe.py` | FTSE 100+DAX+CAC 40+AEX 합성 유럽 히트맵 universe와 EUR 환산 |
 | `market_data/nikkei225_universe.py` | 닛케이 225 히트맵 universe |
 | `research_library/` | 자료 폴더 계약, RSS 수집, 증분 인덱싱, 하이브리드 검색 |
