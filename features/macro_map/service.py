@@ -10,6 +10,8 @@ from features.common.macro_data.schema import day_end
 from features.common.macro_data.store import MacroStore
 from features.common.macro_data.transforms import compatible, spread, transform
 from .calendar import next_releases
+from .guides import guide
+from .summary import headline, overview
 
 
 def observation_end(period, frequency):
@@ -21,8 +23,13 @@ def observation_end(period, frequency):
     return day
 
 
-def map_snapshot(data_root: Path, *, market='US', mode='latest_revised', date=None, series_id=None, period=None, years=5, now=None):
+def map_snapshot(data_root: Path, *, market='US', mode='latest_revised', date=None, series_id=None, period=None, years=5, now=None, view='full'):
     specs = indicators(market)
+    # summary는 개요 화면용이다. 지표마다 5년 전체 이력(한국 약 4.8MB)을 보내지 않고
+    # 머리 숫자·직전 비교·짧은 추이만 보낸다. 상세(series 지정)는 언제나 full이다.
+    if view not in {'full', 'summary'}:
+        raise ValueError('invalid_macro_view')
+    summary_view = view == 'summary' and not series_id
     if mode not in {'latest_revised', 'as_of'}:
         raise ValueError('invalid_macro_mode')
     # 한국은 과거 당시 값 재현을 지원하지 않는다(D2).
@@ -92,7 +99,7 @@ def map_snapshot(data_root: Path, *, market='US', mode='latest_revised', date=No
         revisions = []
         if latest and series_id and spec['id'] != 'KR_SPREAD':
             revisions = store.revisions(ids[0], period or latest['period'], cutoff=cutoff)
-        items.append({
+        item = {
             'series': spec,
             'latest': latest,
             'history': visible,
@@ -106,8 +113,20 @@ def map_snapshot(data_root: Path, *, market='US', mode='latest_revised', date=No
             'revisionPeriod': period or (latest['period'] if latest else None),
             'latestRevisedComparison': latest_compare,
             'revisions': revisions,
-        })
+        }
+        if series_id:
+            item['guide'] = guide(spec['id'])
+        # 머리 숫자는 개요와 상세가 같은 규칙으로 쓴다(상세의 큰 숫자·차트 모양).
+        if series_id or summary_view:
+            item['headline'] = headline(item)
+        if summary_view:
+            item['history'] = []
+            if latest:
+                item['latest'] = {k: v for k, v in latest.items() if k != 'inputs'}
+        items.append(item)
     return {
+        'view': 'summary' if summary_view else 'full',
+        'overview': overview(items, recent_count=3 if market == 'US' else 2) if summary_view else None,
         'market': market,
         'mode': mode,
         'date': selected.isoformat(),

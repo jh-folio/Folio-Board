@@ -19,8 +19,8 @@ def create_macro_router(data_root: Path):
             raise HTTPException(status_code=503, detail='macro_temporarily_unavailable') from None
 
     @router.get('')
-    def snapshot(market: str = 'US', mode: str = 'latest_revised', date: str | None = None, series: str | None = None, period: str | None = None, years: int = Query(5, ge=1, le=50)):
-        return call(map_snapshot, data_root, market=market, mode=mode, date=date, series_id=series, period=period, years=years)
+    def snapshot(market: str = 'US', mode: str = 'latest_revised', date: str | None = None, series: str | None = None, period: str | None = None, years: int = Query(5, ge=1, le=50), view: str = 'full'):
+        return call(map_snapshot, data_root, market=market, mode=mode, date=date, series_id=series, period=period, years=years, view=view)
 
     @router.get('/settings')
     def configuration():

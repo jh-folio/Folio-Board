@@ -141,6 +141,7 @@ def test_scheduling_deduplicates_active_job_across_slot_and_write_failure(tmp_pa
         operations.submit_refresh(tmp_path)
     assert operations.current_job(tmp_path)['id'] == 'running'
     monkeypatch.setattr(operations, '_save', save)
+    monkeypatch.setattr(operations, 'keys_connected', lambda: True)
     operations.save_settings(tmp_path, {'enabled': True})
     now = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)
     assert operations.scheduled_refresh(tmp_path, now)['id'] == 'running'

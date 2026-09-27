@@ -70,7 +70,8 @@ test("AI model settings keep global and visible task policies in one panel", asy
   const source = await readFile(new URL("../src/app/SettingsRoute.tsx", import.meta.url), "utf8");
 
   assert.match(source, /const SETTINGS_TABS:[\s\S]*id: "ai"[\s\S]*id: "admin"[\s\S]*id: "integrations"/);
-  assert.match(source, /useState<SettingsTab>\("ai"\)/);
+  // 기본 탭은 AI다. `#/settings/admin`처럼 경로에 알려진 탭이 있을 때만 그 탭으로 연다.
+  assert.match(source, /useState<SettingsTab>\(\(\) => \{[\s\S]*?: "ai";\s*\}\)/);
   assert.match(source, /const TASK_POLICY_VISIBLE_ORDER = \[[\s\S]*"daily_briefing"[\s\S]*"company_analysis"[\s\S]*"topic_report"[\s\S]*"market_memory"[\s\S]*\] as const/);
   assert.match(source, /data-qa="ai-agent-model-settings"/);
   assert.match(source, /data-qa="global-model-settings"/);
