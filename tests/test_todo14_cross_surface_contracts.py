@@ -68,6 +68,10 @@ def _running(root: Path, task_type: TaskType) -> tuple[SharedJobStore, SharedJob
 
 
 NON_ARTIFACT_CASES = {
+    TaskType.MACRO_REFRESH: (
+        {"savedCount": 7},
+        {"status": "done", "savedCount": 7},
+    ),
     TaskType.INDEX: (
         {"count": 7, "generatedAt": "2026-07-22T03:04:05Z", "incremental": True, "sqlite": "fixture.sqlite3"},
         {"status": "done", "count": 7, "generatedAt": "2026-07-22T03:04:05Z", "incremental": True, "sqlite": "fixture.sqlite3"},
