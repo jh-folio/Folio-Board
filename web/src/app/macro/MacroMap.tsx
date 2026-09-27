@@ -82,7 +82,8 @@ function Row({ item }: { item: MacroItem }) {
   const notConnected = !item.providerStates.length || item.providerStates.some((s) => !s.status || s.status === "not_connected");
   return (
     <li>
-      <a className="macro-row" href={macroHash({ series: series.id })} aria-label={`${series.label} 상세 보기`}>
+      {/* 링크 이름은 보이는 글자 그대로다(이름·값·변화). aria-label로 덮으면 값이 읽히지 않는다. */}
+      <a className="macro-row" href={macroHash({ series: series.id })}>
         <span className="macro-row__name">
           <b>{shortLabel(series)}</b>
           <small>{headline ? `${headline.measure} · ${periodLabel(headline.period, series.frequency)}` : notConnected ? "연결된 공식 자료 없음" : "이 시점의 자료 없음"}</small>
@@ -96,6 +97,7 @@ function Row({ item }: { item: MacroItem }) {
           </span>
           {headline && <Change headline={headline} />}
         </span>
+        <span className="sr-only"> 상세 보기</span>
       </a>
     </li>
   );
@@ -134,7 +136,7 @@ function Controls({ market, mode, date }: { market: string; mode: string; date: 
       )}
       {mode === "as_of" && (
         <label className="macro-date">
-          <span>기준일</span>
+          <small>기준일</small>
           <input aria-label="기준일" type="date" value={date} onChange={(e) => { if (e.target.value) navigateMacro({ date: e.target.value }); }} />
         </label>
       )}

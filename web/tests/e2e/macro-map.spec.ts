@@ -92,7 +92,10 @@ for (const theme of ['light', 'dark']) {
     await page.getByLabel('기준일', { exact: true }).fill('2024-04-02');
     await expect(page.locator('.macro-asof')).toContainText('2024년 4월 2일');
     await expect(page.locator('.macro-asof')).toContainText('과거 시점 재현');
-    await page.getByRole('link', { name: '소비자물가지수 (CPI) 상세 보기' }).click();
+    // 링크 이름은 보이는 글자(이름·값·변화)와 "상세 보기"다. 값이 함께 읽혀야 한다.
+    const cpiRow = page.getByRole('link', { name: /^소비자물가 \(CPI\).*2\.55.*상세 보기$/ });
+    await expect(cpiRow).toHaveCount(1);
+    await cpiRow.click();
     await expect(page.getByRole('heading', { name: '미국 소비자물가 (CPI)' })).toBeVisible();
     await expect(page.getByText('점선은 현재 수정치입니다. 선택 시점의 계산에는 사용하지 않습니다.')).toBeVisible();
     const chart = page.getByRole('img', { name: '미국 소비자물가 (CPI) 추이' });

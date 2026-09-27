@@ -93,6 +93,9 @@ def test_korean_schedule_comes_from_calendar_without_legacy_rows(tmp_path):
         # 날짜가 틀린 옛 행(관측월 15일 08:00). 다음 발표로 읽으면 안 된다.
         {'kind': 'macro', 'provider': 'bok', 'title': '한국 소비자물가지수 (CPI)', 'market': 'KR',
          'startsAt': '2026-09-30T08:00:00', 'timezone': 'Asia/Seoul', 'status': 'estimated'},
+        # 관행일보다 먼저 발표돼 값이 실린 행. 이미 나온 발표라 다음 발표가 아니다.
+        {'kind': 'macro', 'provider': 'bok', 'title': '한국 소비자물가지수 (CPI)', 'market': 'KR',
+         'startsAt': '2026-09-28', 'allDay': True, 'timezone': 'Asia/Seoul', 'status': 'estimated', 'actualValue': '120.4', 'observedAt': '202608'},
     ])
     items = {i['series']['id']: i for i in map_snapshot(tmp_path, market='KR', now=NOW, view='summary')['items']}
     assert items['KR_RATE']['nextRelease']['date'] == '2026-10-22'

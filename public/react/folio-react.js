@@ -21518,7 +21518,6 @@ function Ef({ item: e }) {
 	return /* @__PURE__ */ (0, Q.jsx)("li", { children: /* @__PURE__ */ (0, Q.jsxs)("a", {
 		className: "macro-row",
 		href: Cf({ series: t.id }),
-		"aria-label": `${t.label} 상세 보기`,
 		children: [
 			/* @__PURE__ */ (0, Q.jsxs)("span", {
 				className: "macro-row__name",
@@ -21541,6 +21540,10 @@ function Ef({ item: e }) {
 					className: "macro-row__value",
 					children: [r ? "—" : sf(n.value, n.digits), !r && /* @__PURE__ */ (0, Q.jsx)("small", { children: n.unit })]
 				}), n && /* @__PURE__ */ (0, Q.jsx)(wf, { headline: n })]
+			}),
+			/* @__PURE__ */ (0, Q.jsx)("span", {
+				className: "sr-only",
+				children: " 상세 보기"
 			})
 		]
 	}) });
@@ -21596,7 +21599,7 @@ function kf({ market: e, mode: t, date: n }) {
 			}),
 			t === "as_of" && /* @__PURE__ */ (0, Q.jsxs)("label", {
 				className: "macro-date",
-				children: [/* @__PURE__ */ (0, Q.jsx)("span", { children: "기준일" }), /* @__PURE__ */ (0, Q.jsx)("input", {
+				children: [/* @__PURE__ */ (0, Q.jsx)("small", { children: "기준일" }), /* @__PURE__ */ (0, Q.jsx)("input", {
 					"aria-label": "기준일",
 					type: "date",
 					value: n,
