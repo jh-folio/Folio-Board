@@ -71,4 +71,4 @@ Run kinds:
 
 ## 거시 지도 갱신 (0.7)
 
-`run_due_automations`는 별도 opt-in인 `macro_map.operations.scheduled_refresh`도 호출합니다. 기본 OFF이며 거시 지도에서 켰을 때 09:00·21:00 KST, 서버 실행 중에만 수집합니다. 종료 중 놓친 회차는 현재 회차 한 번으로 모으고 수동/예약의 실행 중 SharedJob을 공유합니다. 시작 범위는 2000년이며 원천 지원 범위가 우선합니다. 기존 RSS·Market Memory·브리핑 설정은 변경하지 않고 AI를 호출하지 않습니다. 한 원천의 실패가 다른 기존 자동화를 중단하지 않습니다.
+`run_due_automations`는 `macro_map.operations.scheduled_refresh`도 호출합니다. 기본 ON이며(2026-09-27부터, AI 비용 없음) 설정 > 관리 > 자동화의 `거시 자료 갱신`에서 끌 수 있습니다. FRED·BOK 키가 하나도 없으면 돌리지 않습니다. 09:00·21:00 KST, 서버 실행 중에만 수집합니다. 종료 중 놓친 회차는 현재 회차 한 번으로 모으고 수동/예약의 실행 중 SharedJob을 공유합니다. 시작 범위는 2000년이며 원천 지원 범위가 우선합니다. 기존 RSS·Market Memory·브리핑 설정은 변경하지 않고 AI를 호출하지 않습니다. 한 원천의 실패가 다른 기존 자동화를 중단하지 않습니다.

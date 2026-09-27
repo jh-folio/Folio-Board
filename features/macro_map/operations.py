@@ -33,13 +33,14 @@ def _save(path, value):
 
 
 def settings(root: Path):
-    # 자동 갱신은 사용자가 켜기 전까지 꺼져 있다(D5-A).
+    # 자동 갱신은 기본으로 켜져 있다. AI를 쓰지 않는 공식 API 조회라 비용이 없고,
+    # 사용자가 설정 > 자동화에서 끌 수 있다(2026-09-27 D5 변경, 이전: 기본 꺼짐).
     raw = _read(Path(root) / 'macro-settings.json')
     year = raw.get('startYear', 2000)
     if type(year) is not int or not 2000 <= year <= dt.date.today().year:
         raise ValueError('invalid_macro_start_year')
     return {
-        'enabled': raw.get('enabled') is True,
+        'enabled': raw.get('enabled', True) is True,
         'startYear': raw.get('startYear', 2000),
         'scheduleTimezone': 'Asia/Seoul',
         'scheduleTimes': ['09:00', '21:00'],
@@ -129,9 +130,17 @@ def submit_refresh(root: Path, *, slot=None):
         return job
 
 
+def keys_connected():
+    from features.llm_settings.client import bok_api_key, fred_api_key
+    return bool(fred_api_key() or bok_api_key())
+
+
 def scheduled_refresh(root: Path, now=None):
     root = Path(root)
     if not settings(root)['enabled']:
+        return None
+    # 키가 하나도 없으면 예약 수집을 돌리지 않는다. 돌리면 하루 두 번 "키 없음" 실패만 쌓인다.
+    if not keys_connected():
         return None
     clock = now or dt.datetime.now(dt.timezone.utc)
     # UTC 00:00/12:00 == KST 09:00/21:00. Missed slots coalesce into this one.

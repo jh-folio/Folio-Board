@@ -29,14 +29,15 @@ class Series:
 
     def public(self):
         return {**asdict(self), 'sourceUrl': self.source_url, 'timezone': self.timezone,
-                'methodVersion': 'macro-1', 'replaySupported': self.market == 'US'}
+                'methodVersion': 'macro-2', 'replaySupported': self.market == 'US'}
 
 
 # 순서: id, 표시명, 시장, 축, 주기, 원단위, 계절조정, 원천, 원천 코드 (+ ECOS 항목 코드).
 # max_age_days는 관측기간 끝에서 이 일수를 넘기면 `관측기간 오래됨`으로 표시하는 기준이다.
 SERIES = (
     Series('GDPC1', '실질 GDP', 'US', 'growth', 'Q', 'Billions of Chained 2017 Dollars', 'SAAR', 'fred', 'GDPC1', transform='qoq', max_age_days=150),
-    Series('INDPRO', '산업생산', 'US', 'growth', 'M', 'Index 2017=100', 'SA', 'fred', 'INDPRO', transform='mom'),
+    # 산업생산은 전년비로 읽는다(macro-2). 전월비는 달마다 크게 출렁여 흐름이 보이지 않았다.
+    Series('INDPRO', '산업생산', 'US', 'growth', 'M', 'Index 2017=100', 'SA', 'fred', 'INDPRO', transform='yoy'),
     Series('UNRATE', '실업률', 'US', 'growth', 'M', 'Percent', 'SA', 'fred', 'UNRATE', stage='lagging', transform='difference'),
     Series('CPIAUCSL', '소비자물가지수 (CPI)', 'US', 'inflation', 'M', 'Index 1982-1984=100', 'SA', 'fred', 'CPIAUCSL', transform='yoy'),
     Series('PCEPILFE', '근원 PCE 물가지수', 'US', 'inflation', 'M', 'Index 2017=100', 'SA', 'fred', 'PCEPILFE', transform='yoy'),
@@ -44,7 +45,7 @@ SERIES = (
     Series('NFCI', 'Chicago Fed 금융여건', 'US', 'financial_conditions', 'W', 'Index', 'NSA', 'fred', 'NFCI', max_age_days=21),
     Series('STLFSI4', 'St. Louis Fed 금융스트레스', 'US', 'stress_vulnerability', 'W', 'Index', 'NSA', 'fred', 'STLFSI4', max_age_days=21),
     Series('KR_GDP', '실질 GDP', 'KR', 'growth', 'Q', '십억원', 'SA', 'ecos', '200Y104', ('1400',), transform='qoq', max_age_days=150),
-    Series('KR_IP', '전산업생산 (농림어업 제외)', 'KR', 'growth', 'M', '2020=100', 'SA', 'ecos', '901Y033', ('A00', '2'), transform='mom'),
+    Series('KR_IP', '전산업생산 (농림어업 제외)', 'KR', 'growth', 'M', '2020=100', 'SA', 'ecos', '901Y033', ('A00', '2'), transform='yoy'),
     Series('KR_UNRATE', '실업률', 'KR', 'growth', 'M', '%', 'SA', 'ecos', '901Y027', ('I61BC', 'I28B'), stage='lagging', transform='difference'),
     Series('KR_CPI', '소비자물가지수 (CPI)', 'KR', 'inflation', 'M', '2020=100', 'unknown', 'ecos', '901Y009', ('0',), transform='yoy'),
     Series('KR_RATE', '한국은행 기준금리', 'KR', 'financial_conditions', 'D', '연%', 'NSA', 'ecos', '722Y001', ('0101000',), transform='difference', max_age_days=7),

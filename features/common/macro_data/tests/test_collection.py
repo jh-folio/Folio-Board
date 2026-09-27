@@ -152,10 +152,13 @@ def test_ecos_resume_after_last_page_committed(tmp_path, monkeypatch, legacy_cur
     assert len(store.revisions('KR_CPI', '2024-01-01')) == 1
 
 
-def test_scheduler_off_is_read_only_and_missed_runs_coalesce(tmp_path, monkeypatch):
+def test_scheduler_is_on_by_default_needs_a_key_and_coalesces_missed_runs(tmp_path, monkeypatch):
+    # 기본값은 켜짐이지만 키가 하나도 없으면 아무것도 만들지 않는다(읽기 전용).
+    monkeypatch.setattr(operations, 'keys_connected', lambda: False)
+    assert operations.settings(tmp_path)['enabled'] is True
     assert operations.scheduled_refresh(tmp_path) is None
     assert list(tmp_path.iterdir()) == []
-    operations.save_settings(tmp_path, {'enabled': True})
+    monkeypatch.setattr(operations, 'keys_connected', lambda: True)
     import features.common.jobs as jobs
     submissions = []
     monkeypatch.setattr(jobs, 'get_job', lambda _id: {'id': _id, 'status': 'done'})
@@ -169,6 +172,10 @@ def test_scheduler_off_is_read_only_and_missed_runs_coalesce(tmp_path, monkeypat
     assert operations.scheduled_refresh(tmp_path, now)
     assert operations.scheduled_refresh(tmp_path, now) is None
     assert operations.scheduled_refresh(tmp_path, now + dt.timedelta(days=7))
+    assert len(submissions) == 2
+    # 사용자가 끄면 새 회차가 와도 제출하지 않는다.
+    operations.save_settings(tmp_path, {'enabled': False})
+    assert operations.scheduled_refresh(tmp_path, now + dt.timedelta(days=14)) is None
     assert len(submissions) == 2
 
 

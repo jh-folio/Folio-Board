@@ -74,10 +74,11 @@ export function MarketMemoryRoute() {
   return (
     <div className="react-market-memory-route" data-market-memory-route>
       <RouteHero eyebrow="Market Memory" title="시장 내러티브" description="중기 시장 흐름과 공식 거시 자료를 함께 확인합니다." />
-      <nav className="memory-tabs" aria-label="시장 내러티브 하위 보기">
-        <a className={`btn ${!macro ? "btn--primary" : ""}`} aria-current={!macro ? "page" : undefined} href="#/market-memory">내러티브</a>
-        <a className={`btn ${macro ? "btn--primary" : ""}`} aria-current={macro ? "page" : undefined} href={lastMacroView()}>거시 지도</a>
-      </nav>
+      {/* 포트폴리오·설정의 하위 탭과 같은 가로 바다. 선택 상태는 `aria-pressed`가 소유한다. */}
+      <div className="segment memory-tabs" role="group" aria-label="시장 내러티브 하위 보기">
+        <button type="button" aria-pressed={!macro} onClick={() => { window.location.hash = "#/market-memory"; }}>내러티브</button>
+        <button type="button" aria-pressed={macro} onClick={() => { window.location.hash = lastMacroView(); }}>거시 지도</button>
+      </div>
       {macro ? <MacroMap /> : <NarrativeContent />}
     </div>
   );

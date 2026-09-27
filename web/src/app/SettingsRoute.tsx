@@ -1488,7 +1488,11 @@ export function SettingsRoute() {
   const theme = useThemePreference();
   const uiPreferences = useUiPreferences();
   // AI 설정은 이 화면에서 가장 자주 확인하는 실행 경로이므로 첫 화면으로 연다.
-  const [tab, setTab] = useState<SettingsTab>("ai");
+  // `#/settings/admin`처럼 경로 뒤에 탭을 붙이면 그 탭으로 연다(거시 지도의 "설정에서 변경").
+  const [tab, setTab] = useState<SettingsTab>(() => {
+    const requested = window.location.hash.replace(/^#\/?/, "").split("/")[1] || "";
+    return SETTINGS_TABS.some((item) => item.id === requested) ? (requested as SettingsTab) : "ai";
+  });
   const [settings, setSettings] = useState<SettingsPayload | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings | null>(null);
   const [taskPolicies, setTaskPolicies] = useState<TaskPoliciesPayload>(() => emptyTaskPolicies());
@@ -1496,6 +1500,10 @@ export function SettingsRoute() {
   const [automation, setAutomation] = useState<AutomationSettings>({});
   // 자동화 폼은 서버 응답을 그대로 편집하므로, dirty 판정용 기준선을 따로 든다.
   const [automationSaved, setAutomationSaved] = useState<AutomationSettings>({});
+  // 거시 자료 자동 갱신(0.7). 저장소가 자동화 설정과 달라(macro-settings.json) 따로 들지만,
+  // 화면에서는 같은 "자동화 저장" 버튼으로 함께 저장한다. null은 아직 읽지 못한 상태다.
+  const [macroAuto, setMacroAuto] = useState<boolean | null>(null);
+  const [macroAutoSaved, setMacroAutoSaved] = useState<boolean | null>(null);
   const [automationRuns, setAutomationRuns] = useState<AutomationRun[]>([]);
   const [retentionPreview, setRetentionPreview] = useState<RetentionPreview | null>(null);
   const [retentionPreviewDiagnostic, setRetentionPreviewDiagnostic] = useState<CapturedReportError | null>(null);
@@ -1578,6 +1586,8 @@ export function SettingsRoute() {
     vaultPath: string;
     automationDirty: boolean;
     automation: AutomationSettings;
+    macroAutoDirty: boolean;
+    macroAuto: boolean | null;
   } | null>(null);
 
   const agentAdapters = agentSettings?.adapters || [];
@@ -1626,8 +1636,10 @@ export function SettingsRoute() {
   const notionDirty =
     Boolean(notionDraft.token.trim()) || notionDraft.dbId.trim() !== String(settings?.notion?.dbId || "").trim();
   const obsidianDirty = vaultPath.trim() !== String(obsidian.vaultPath || "").trim();
-  const automationDirty =
+  const automationPayloadDirty =
     JSON.stringify(buildAutomationPayload(automation)) !== JSON.stringify(buildAutomationPayload(automationSaved));
+  const macroAutoDirty = macroAuto !== null && macroAuto !== macroAutoSaved;
+  const automationDirty = automationPayloadDirty || macroAutoDirty;
   refreshDraftRef.current = {
     agentDirty,
     agentEnabled,
@@ -1647,6 +1659,8 @@ export function SettingsRoute() {
     vaultPath,
     automationDirty,
     automation,
+    macroAutoDirty,
+    macroAuto,
   };
   // 기록은 최신순으로 오므로 종류별 첫 행이 마지막 실행이다.
   const lastRunByKind = useMemo(() => {
@@ -1680,7 +1694,7 @@ export function SettingsRoute() {
     setMarketScopeReadIssue(null);
     setBusy("load");
     try {
-      const [settingsPayload, agentPayload, automationPayload, obsidianPayload, runsResult, scopeResult] = await Promise.all([
+      const [settingsPayload, agentPayload, automationPayload, obsidianPayload, runsResult, scopeResult, macroResult] = await Promise.all([
         getJson<SettingsPayload>(`/api/settings${refreshAgent ? "?refresh=true" : ""}`, { signal: controller.signal }),
         getJson<AgentSettings>(`/api/agent-bridge/settings${refreshAgent ? "?refresh=true" : ""}`, { signal: controller.signal }),
         getJson<AutomationSettings>("/api/automation/settings", { signal: controller.signal }),
@@ -1689,6 +1703,7 @@ export function SettingsRoute() {
         // 볼 방법이 없으면 켜 둔 채로 몇 주가 지나도 모른다.
         settleRead(getJson<{ items?: AutomationRun[] }>("/api/automation/runs?limit=50", { signal: controller.signal })),
         settleRead(getJson<MarketScopeState>("/api/market-scope", { signal: controller.signal })),
+        settleRead(getJson<{ enabled?: boolean }>("/api/macro/settings", { signal: controller.signal })),
       ]);
       if (controller.signal.aborted || sequence !== loadAllSequence.current) return;
 
@@ -1739,6 +1754,10 @@ export function SettingsRoute() {
 
       setAutomation(buildAutomationPayload(automationPayload));
       setAutomationSaved(buildAutomationPayload(automationPayload));
+      // 읽지 못하면 스위치를 켜짐으로 추정하지 않는다. 모름(null)으로 두고 저장하지 않는다.
+      const macroEnabled = macroResult.error ? null : macroResult.value?.enabled !== false;
+      setMacroAuto(macroEnabled);
+      setMacroAutoSaved(macroEnabled);
       setObsidian(obsidianPayload);
       setVaultPath(obsidianPayload.vaultPath || "");
       // A forced model/status refresh is also the single settings refresh
@@ -1761,6 +1780,7 @@ export function SettingsRoute() {
       if (draft?.notionDirty) setNotionDraft(draft.notionDraft);
       if (draft?.obsidianDirty) setVaultPath(draft.vaultPath);
       if (draft?.automationDirty) setAutomation(draft.automation);
+      if (draft?.macroAutoDirty) setMacroAuto(draft.macroAuto);
       setReactAgentContextScope("settings", { surface: "settings", viewId: "settings", reportKind: "", reportId: "" });
     } catch (err) {
       if (isAbortError(err, controller.signal) || sequence !== loadAllSequence.current) return;
@@ -2094,10 +2114,18 @@ export function SettingsRoute() {
     }
     const operation = beginPanelOperation("automation", "자동화 설정을 저장하는 중입니다.");
     try {
-      const payload = await postJson<AutomationSettings>("/api/automation/settings", buildAutomationPayload(automation), { signal: operation.controller.signal });
-      if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
-      setAutomation(buildAutomationPayload(payload));
-      setAutomationSaved(buildAutomationPayload(payload));
+      if (automationPayloadDirty) {
+        const payload = await postJson<AutomationSettings>("/api/automation/settings", buildAutomationPayload(automation), { signal: operation.controller.signal });
+        if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
+        setAutomation(buildAutomationPayload(payload));
+        setAutomationSaved(buildAutomationPayload(payload));
+      }
+      if (macroAutoDirty && macroAuto !== null) {
+        const macro = await postJson<{ enabled?: boolean }>("/api/macro/settings", { enabled: macroAuto }, { signal: operation.controller.signal });
+        if (!isCurrentPanelOperation(operation.operationId, operation.controller)) return;
+        setMacroAuto(macro.enabled !== false);
+        setMacroAutoSaved(macro.enabled !== false);
+      }
       completePanelOperation("automation", operation.operationId, operation.controller, "자동화 설정을 저장했습니다.", "ok");
     } catch (err) {
       if (!isCurrentPanelOperation(operation.operationId, operation.controller) || isAbortError(err, operation.controller.signal)) return;
@@ -2450,6 +2478,28 @@ export function SettingsRoute() {
                     ))}
                   </select>
                 </label>
+              </section>
+
+              <section className="automation-card">
+                <div className="automation-card-head">
+                  <div>
+                    <span>Macro Data</span>
+                    <strong>거시 자료 갱신</strong>
+                    <p>미국 FRED·한국 ECOS의 공식 거시 자료를 서버가 켜져 있는 동안 하루 2회(09:00·21:00) 받아 거시 지도에 반영합니다. AI를 쓰지 않아 비용이 들지 않습니다.</p>
+                  </div>
+                  <ToggleSwitch
+                    ariaLabel="거시 자료 자동 갱신"
+                    checked={macroAuto === true}
+                    onChange={(checked) => setMacroAuto(checked)}
+                    disabled={macroAuto === null}
+                    compact
+                  />
+                </div>
+                <p className="settings-hint">
+                  {macroAuto === null
+                    ? "거시 자료 갱신 설정을 확인할 수 없습니다. 현재 선택을 바꾸지 않았습니다."
+                    : "FRED 또는 BOK API 키가 있을 때만 동작합니다. PC가 꺼져 있던 동안의 갱신은 다시 켜진 뒤 한 번으로 모읍니다."}
+                </p>
               </section>
             </div>
             <div className="filter-actions settings-actions">
