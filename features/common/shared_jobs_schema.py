@@ -20,6 +20,7 @@ class StrictModel(BaseModel):
 
 
 class JobKind(StrEnum):
+    MACRO_REFRESH = "macro_refresh"
     INDEX = "index"
     RSS = "rss"
     SETUP = "setup"
@@ -32,6 +33,7 @@ class JobKind(StrEnum):
 
 
 class TaskType(StrEnum):
+    MACRO_REFRESH = "macro_refresh"
     INDEX = "index"
     RSS = "rss"
     SETUP = "setup"
@@ -126,6 +128,7 @@ class PhaseCode(StrEnum):
 
 
 class LabelCode(StrEnum):
+    MACRO_REFRESH = "macro_refresh"
     INDEX_REBUILD = "index_rebuild"
     RSS_IMPORT = "rss_import"
     SETUP = "setup"
@@ -202,6 +205,11 @@ class RssProjection(StrictModel):
     skipped: Annotated[str, Field(max_length=40)] | None = None
 
 
+class MacroProjection(StrictModel):
+    status: Annotated[str, Field(pattern="^done$")] = "done"
+    savedCount: Annotated[int, Field(ge=0)]
+
+
 class SetupProjection(StrictModel):
     status: Annotated[str, Field(pattern="^done$")] = "done"
     ok: Annotated[bool, Field(pattern=None)] = True
@@ -247,6 +255,7 @@ type ResultProjection = (
     | FailedProjection
     | IndexProjection
     | RssProjection
+    | MacroProjection
     | SetupProjection
     | CompanionProjection
     | ArtifactProjection

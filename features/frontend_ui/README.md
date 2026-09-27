@@ -365,6 +365,8 @@ desktop/mobile × Light/Dark 및 접근성을 검증했다. 운영 서버/실제
 
 ## 네이티브 차트와 테마 (0.5.4)
 
+거시 지도(0.7)는 `#/market-memory/macro`에서 같은 route hero와 프리미티브를 사용합니다. `web/src/app/macro/MacroChart.tsx`는 `FolioChart`의 테마·키보드·데이터 표를 재사용하며, 현재 수정치 overlay도 같은 관측기간에만 연결합니다. 시장·기준일·기간·상세·수정 관측일은 hash query에 저장합니다. 기능 계약은 [거시 지도](../macro_map/README.md)를 봅니다.
+
 **TradingView 임베드는 0.5.4에 전부 걷어냈다.** 마지막 소비자였던 워치리스트 상세 모달이
 `MarketChartFigure`로 바뀌면서 `public/tradingview-widgets.js`, `index.html`의 로드,
 `.tv-widget-*`/`.tradingview-widget-*` CSS에 남은 소비자가 없어졌다. iframe은 생성 시점

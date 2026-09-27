@@ -164,6 +164,8 @@ Market Memory summarizes the medium-term market state as one current situation w
 
 When the evidence supports a separate reading for a single market, tabs appear for the overall view and for each market that has one.
 
+The **Macro Map** subview shows eight US and eight Korean indicators with their sources, units, trends, and revision history. US historical replay uses the FRED vintages available by the selected local date; coverage starts at different dates for different indicators. Korea provides current revised history and changes observed since local collection began, rather than a reconstruction of what was known in the past. Use your existing FRED/BOK keys to refresh the data. Twice-daily automatic refresh is optional and off by default.
+
 ### Company Analysis
 
 Generate company analysis reports from official data and local research material. Folio Board prioritizes SEC ticker/CIK lookup, companyfacts, and 10-K/20-F filing text where available.

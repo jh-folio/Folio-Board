@@ -2,6 +2,8 @@
 
 시장 내러티브 메모리는 일일 브리핑에서 반복적으로 등장하는 테마를 단기 기사와 분리해 누적하고, 현재 유효한 투자 내러티브 상태를 관리하는 기능입니다.
 
+`내러티브 / 거시 지도` 하위 보기를 제공합니다. 기본 진입과 기존 내러티브 생성 경로는 유지합니다. [거시 지도](../macro_map/README.md)는 별도의 공식 데이터 조회·수집 기능이며 내러티브/Regime 판정이나 사용자 가설을 자동 변경하지 않습니다.
+
 0.2 Deep Research는 현재 Market State를 `current|stale|fallback|empty`의 별도 source-grounded context로 참조할 수 있습니다. 이 참조는 보고서의 `evidenceItems`, `sourceLedger`, 인용, evidence coverage, 사용자 hypothesis를 바꾸지 않습니다.
 
 ## 담당 기능

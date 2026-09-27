@@ -540,9 +540,9 @@ export type WorkLogEntry = {
   readonly id: string;
   readonly jobId: string;
   readonly category: "companion" | "task";
-  readonly kind: "index" | "rss" | "setup" | "agent_bridge" | "agent_cli_install" | "briefing" | "company_analysis" | "topic_report" | "market_state_snapshot";
-  readonly taskType: "index" | "rss" | "setup" | "companion" | "briefing" | "company_analysis" | "topic_report" | "personal_overlay" | "thesis_delta" | "market_memory_llm" | "market_state_snapshot" | "market_memory_update" | "quality_repair" | "investment_review";
-  readonly labelCode: "index_rebuild" | "rss_import" | "setup" | "agent_chat" | "agent_cli_install" | "agent_task" | "briefing" | "company_analysis" | "topic_report" | "market_state";
+  readonly kind: "macro_refresh" | "index" | "rss" | "setup" | "agent_bridge" | "agent_cli_install" | "briefing" | "company_analysis" | "topic_report" | "market_state_snapshot";
+  readonly taskType: "macro_refresh" | "index" | "rss" | "setup" | "companion" | "briefing" | "company_analysis" | "topic_report" | "personal_overlay" | "thesis_delta" | "market_memory_llm" | "market_state_snapshot" | "market_memory_update" | "quality_repair" | "investment_review";
+  readonly labelCode: "macro_refresh" | "index_rebuild" | "rss_import" | "setup" | "agent_chat" | "agent_cli_install" | "agent_task" | "briefing" | "company_analysis" | "topic_report" | "market_state";
   readonly status: JobStatus;
   readonly progress: number;
   readonly messageCode: JobStatus;
@@ -601,9 +601,9 @@ export const WORK_LOG_ENTRY_KEYS = ["id", "jobId", "category", "kind", "taskType
 const WORK_LOG_LIST_KEYS = ["schemaVersion", "storeRevision", "jobsStoreRevision", "retention", "total", "entries"] as const;
 const RETENTION_KEYS = ["maxEntries", "maxDays"] as const;
 const WORK_LOG_CATEGORIES = new Set(["companion", "task"]);
-const WORK_LOG_KINDS = new Set(["index", "rss", "setup", "agent_bridge", "agent_cli_install", "briefing", "company_analysis", "topic_report", "market_state_snapshot"]);
-const WORK_LOG_TASK_TYPES = new Set(["index", "rss", "setup", "companion", "briefing", "company_analysis", "topic_report", "personal_overlay", "thesis_delta", "market_memory_llm", "market_state_snapshot", "market_memory_update", "quality_repair", "investment_review"]);
-const WORK_LOG_LABEL_CODES = new Set(["index_rebuild", "rss_import", "setup", "agent_chat", "agent_cli_install", "agent_task", "briefing", "company_analysis", "topic_report", "market_state"]);
+const WORK_LOG_KINDS = new Set(["macro_refresh", "index", "rss", "setup", "agent_bridge", "agent_cli_install", "briefing", "company_analysis", "topic_report", "market_state_snapshot"]);
+const WORK_LOG_TASK_TYPES = new Set(["macro_refresh", "index", "rss", "setup", "companion", "briefing", "company_analysis", "topic_report", "personal_overlay", "thesis_delta", "market_memory_llm", "market_state_snapshot", "market_memory_update", "quality_repair", "investment_review"]);
+const WORK_LOG_LABEL_CODES = new Set(["macro_refresh", "index_rebuild", "rss_import", "setup", "agent_chat", "agent_cli_install", "agent_task", "briefing", "company_analysis", "topic_report", "market_state"]);
 const WORK_LOG_STATUSES = new Set(["queued", "running", "cancel_requested", "committing", "done", "cancelled", "failed", "failed_cancel", "failed_commit", "failed_restart", "failed_commit_recovery"]);
 const WORK_LOG_GENERATION_MODES = new Set(["llm_api", "llm_cli", "rules", "none"]);
 const WORK_LOG_ADAPTERS = new Set(["auto", "codex", "claude", "antigravity", "openai_api", "gemini_api", "claude_api", "rules", "none"]);

@@ -53,12 +53,15 @@ def _calendar_refs(db_path: Path, limit: int = 12) -> list[dict]:
         return []
     import sqlite3
 
+    from features.market_calendar.service import LEGACY_BOK_ROW_SQL
+
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         try:
+            # 캘린더 화면과 같은 기준으로 날짜가 틀린 옛 한국 지표 행을 뺀다.
             rows = conn.execute(
                 "SELECT id,kind,title,market,starts_at,status,importance,provider FROM market_calendar_events "
-                "WHERE starts_at>=datetime('now','-1 day') ORDER BY starts_at LIMIT ?", (limit,),
+                f"WHERE starts_at>=datetime('now','-1 day') AND NOT ({LEGACY_BOK_ROW_SQL}) ORDER BY starts_at LIMIT ?", (limit,),
             ).fetchall()
         except sqlite3.Error:
             return []

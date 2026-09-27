@@ -16,6 +16,7 @@ from features.common.shared_jobs_schema import (
 
 
 LABELS = {
+    "macro_refresh": "거시 자료 갱신",
     "index_rebuild": "자료 폴더 다시 읽기",
     "rss_import": "RSS 수집/가져오기",
     "setup": "설정 작업",
@@ -166,6 +167,7 @@ def job_identity(kind: str, fn_name: str, args, adapter_value: str | None):
             Engine.API,
         )
     task_map = {
+        JobKind.MACRO_REFRESH: (TaskType.MACRO_REFRESH, JobMode.COLLECT),
         JobKind.INDEX: (TaskType.INDEX, JobMode.INDEX),
         JobKind.RSS: (TaskType.RSS, JobMode.COLLECT),
         JobKind.SETUP: (TaskType.SETUP, JobMode.INSTALL),

@@ -15,6 +15,7 @@ from features.market_calendar.adapters.bok import fetch_bok_macro_events
 from features.market_calendar.adapters.fred import fetch_fred_macro_events
 from features.market_calendar.adapters.yf_economic import fetch_yf_economic_events
 from features.market_calendar.schema import normalize_event
+from features.market_calendar.projection import project_events
 from features.common.market_data.major_companies import major_company_symbols
 from features.portfolio.service import get_portfolio
 
@@ -45,6 +46,18 @@ def ensure_calendar_table(connection: sqlite3.Connection) -> None:
             connection.execute(f"ALTER TABLE market_calendar_events ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_market_calendar_time ON market_calendar_events(starts_at, kind)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_market_calendar_market ON market_calendar_events(market, starts_at)")
+
+
+# 예전 ECOS 어댑터(parser 0.4.0)는 관측월 15일 08:00 KST라는 **합성 시각**에 행을 만들었다.
+# 7월 CPI가 7월 15일 발표로, 기준금리 "결정"이 매달 15일(광복절 포함)로 보였다. 지금 어댑터는
+# 관행일 종일 행만 만들고 기준금리는 한은 공시 일정에서 오므로, 이 조건에 맞는 행은 옛 행뿐이다.
+#
+# 이 행들은 지우지 않고 **읽을 때 뺀다**. 대체 행이 없는 옛 행(기준금리, 45일 창 밖의 과거 값,
+# 옛 예정일)도 저장소에는 그대로 남아 되돌릴 수 있고, 화면·브리핑·대시보드에는 나오지 않는다.
+LEGACY_BOK_ROW_SQL = (
+    "provider = 'bok' AND all_day = 0 AND parser_version = '0.4.0' "
+    "AND substr(starts_at, 9) = '15T08:00:00+09:00'"
+)
 
 
 def upsert_events(db_path: Path, events: list[dict]) -> int:
@@ -127,7 +140,7 @@ def list_events(db_path: Path, *, start: str = "", end: str = "", market: str = 
     gaps = macro_coverage_gaps(requested_markets)
     if not Path(db_path).exists():
         return {"events": [], "count": 0, "dataGaps": gaps}
-    clauses = ["1=1"]
+    clauses = ["1=1", f"NOT ({LEGACY_BOK_ROW_SQL})"]
     params = []
     if start:
         clauses.append("starts_at>=?")
@@ -173,6 +186,7 @@ def list_events(db_path: Path, *, start: str = "", end: str = "", market: str = 
             "previousValue": row["previous_value"],
             "unit": row["unit"], "observedAt": row["observed_at"], "companyName": row["company_name"],
         })
+    events = project_events(events)
     return {"events": events, "count": len(events), "dataGaps": gaps}
 
 
@@ -273,31 +287,9 @@ def refresh_calendar(data_dir: Path, *, include_estimates: bool = True) -> dict:
         events.extend(estimates)
         providers.update({"yfinance_earnings": len(earnings), "yfinance_dividends": len(dividends)})
     count = upsert_events(memory_db, events)
-    legacy_bok = prune_legacy_bok_rows(memory_db)
-    if legacy_bok:
-        providers["pruned_legacy_bok"] = legacy_bok
     if any(queried.values()):
         providers["pruned_estimates"] = prune_stale_estimates(memory_db, estimates, queried)
     return {"ok": True, "stored": count, "providers": providers, "dataGaps": macro_coverage_gaps(), "agentCalled": False}
-
-
-def prune_legacy_bok_rows(db_path: Path) -> int:
-    """관측월 15일 08:00에 박힌 옛 ECOS 행을 지운다.
-
-    예전 어댑터는 7월 CPI를 7월 15일 발표로, 기준금리 "결정"을 매달 15일에 저장했다.
-    발표일이 관측월보다 앞서고 금통위가 연 12회로 보이는 **틀린 날짜**다. 이벤트 id가
-    시작시각을 포함하므로 고친 어댑터가 같은 수치를 새 날짜로 넣어도 옛 행은 남는다.
-
-    새 어댑터의 행은 전부 종일(`all_day=1`)이라 `provider='bok'`이면서 시각이 붙은 행은
-    옛 형식뿐이다. 수치는 ECOS에 그대로 있어 다음 수집이 다시 만든다. 기준금리는
-    `bank_of_korea` provider의 공식 회의 일정으로 대체됐다.
-    """
-    with sqlite3.connect(str(db_path)) as conn:
-        ensure_calendar_table(conn)
-        cursor = conn.execute(
-            "DELETE FROM market_calendar_events WHERE provider = 'bok' AND all_day = 0"
-        )
-        return cursor.rowcount or 0
 
 
 def prune_stale_estimates(db_path: Path, fresh: list[dict], queried: dict[str, set[str]] | set[str]) -> int:

@@ -126,8 +126,7 @@ def fetch_bok_macro_events(api_key: str, *, start: str, end: str, timeout: float
                 **extra,
             }
 
-        # 이미 관측된 달은 발표가 끝난 것이다. ECOS가 값을 함께 주므로 예정이 아니라
-        # 결과로 싣는다 — 예정만 남기면 발표 뒤에 캘린더를 다시 열 이유가 없다.
+        # 값이 존재해도 이 행의 날짜는 관행일 추정이다. 값과 날짜의 확실성을 섞지 않는다.
         for index, month in enumerate(months):
             if not (start_date <= release_date(month, release_day) <= end_date):
                 continue
@@ -135,7 +134,7 @@ def fetch_bok_macro_events(api_key: str, *, start: str, end: str, timeout: float
             previous = by_month.get(months[index - 1]) if index else None
             rows.append(_row(
                 month,
-                status="actual",
+                status="estimated",
                 actualValue=observation.get("DATA_VALUE"),
                 previousValue=(previous or {}).get("DATA_VALUE"),
                 unit=observation.get("UNIT_NAME"),
