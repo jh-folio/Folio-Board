@@ -16264,6 +16264,45 @@ main.page {
 .thesis-workspace__more > summary:focus-visible { outline: 2px solid var(--folio-focus); outline-offset: 2px; }
 .thesis-workspace__more { border-top: 1px solid var(--folio-border); }
 .thesis-workspace__more-content { display: grid; gap: var(--sp-2); }
+.thesis-workspace__review-guide p,
+.thesis-workspace__review-next > p:not(.thesis-workspace__note) {
+  margin: 0;
+  color: var(--folio-ink-soft);
+  font-size: var(--fs-body-sm);
+  line-height: 1.6;
+}
+.thesis-workspace__review-guide strong { color: var(--folio-ink); }
+.thesis-workspace__review-uncertainty { font-weight: var(--fw-medium); }
+.thesis-workspace__source-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.thesis-workspace__source-list li {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-1);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--folio-border);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.thesis-workspace__source-list strong { font-size: var(--fs-body-sm); }
+.thesis-workspace__source-list a { color: var(--folio-accent); font-size: var(--fs-body-sm); font-weight: var(--fw-medium); }
+.thesis-workspace__source-gap { color: var(--folio-ink-muted); font-size: var(--fs-body-sm); }
+.thesis-workspace__optional { min-width: 0; border-top: 1px solid var(--folio-border); }
+.thesis-workspace__optional > summary {
+  min-height: 44px;
+  padding: var(--sp-2) 0;
+  color: var(--folio-ink-soft);
+  font-size: var(--fs-body-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+.thesis-workspace__optional > summary:focus-visible { outline: 2px solid var(--folio-focus); outline-offset: 2px; }
+.thesis-workspace__optional-content { display: grid; gap: var(--sp-2); }
 @media (max-width: 600px) { .thesis-workspace__editor-grid { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .thesis-workspace .btn { min-height: 44px; } }
 .thesis-workspace__alerts {

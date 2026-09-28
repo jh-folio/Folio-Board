@@ -88,6 +88,45 @@ function EvidenceList({ items, empty }: { items: Array<{ title: string; source: 
   );
 }
 
+type ReviewSource = { title: string; date: string; source: string; url: string; seenIn: string[] };
+
+function sourceUrl(value: string | undefined): string {
+  return value && /^https?:\/\//i.test(value) ? value : "";
+}
+
+function reviewSources(payload: ThesisWorkspacePayload): ReviewSource[] {
+  const rows = new Map<string, ReviewSource>();
+  const add = (title: string, date: string, source: string, url: string | undefined, seenIn: string) => {
+    if (!title.trim()) return;
+    const cleanUrl = sourceUrl(url);
+    const base = `${date.trim()}|${title.trim().toLocaleLowerCase()}`;
+    const first = rows.get(base);
+    const key = first?.url && cleanUrl && first.url !== cleanUrl ? `${base}|${cleanUrl}` : base;
+    const existing = rows.get(key);
+    if (existing) {
+      if (source && !existing.source) existing.source = source;
+      if (!existing.url) existing.url = cleanUrl;
+      if (!existing.seenIn.includes(seenIn)) existing.seenIn.push(seenIn);
+      return;
+    }
+    rows.set(key, { title: title.trim(), date, source, url: cleanUrl, seenIn: [seenIn] });
+  };
+  const linkedCheckpoints = new Set(payload.reasonConnections.filter((item) => item.kind === "checkpoint" && item.relationship === "exact_condition").map((item) => item.identity));
+  for (const checkpoint of payload.checkpoints.structured) {
+    if (!linkedCheckpoints.has(checkpoint.id)) continue;
+    for (const evidence of checkpoint.lastVerdict?.evidence || []) add(evidence.title, evidence.date, "", evidence.url, "조건 신호에 나온 제목");
+  }
+  const linkedDelta = payload.reasonConnections.some((item) => item.kind === "delta" && item.relationship === "exact_revision" && item.identity === payload.latestDelta?.deltaId);
+  if (linkedDelta && payload.latestDelta) {
+    for (const item of payload.latestDelta.supportingEvidence) add(item.title, item.date, item.source, item.url, "저장된 검토의 강화 근거");
+    for (const item of payload.latestDelta.counterEvidence) add(item.title, item.date, item.source, item.url, "저장된 검토의 반대 근거");
+  }
+  for (const item of payload.reasonConnections) {
+    if (item.kind === "user_ref" && item.relationship === "user_linked") add(item.label, "", "사용자 연결", item.url, "이유 작성 때 연결한 자료");
+  }
+  return [...rows.values()];
+}
+
 function emptyDraft() {
   return { coreThesis: "", keyAssumptions: "", falsificationTriggers: "", reviewCycle: "", conviction: "",
     conditionResponse: "unanswered" as "unanswered" | "unknown" | "skipped" | "written", changeReason: "" };
@@ -161,6 +200,12 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
   const verdict = thesisVerdictDisplay(delta?.verdict);
   const checkpoints = payload?.checkpoints;
   const reasonLabel = payload?.reasonKind === "investment" ? "투자 이유" : "관심 이유";
+  const connectedDelta = payload?.reasonConnections.some((item) => item.kind === "delta" && item.relationship === "exact_revision" && item.identity === delta?.deltaId) || false;
+  const conditionSignals = payload?.reasonConnections.filter((item) => item.kind === "checkpoint" && item.relationship === "exact_condition") || [];
+  const sources = payload ? reviewSources(payload) : [];
+  const linkedSources = sources.filter((item) => item.url);
+  const unlinkedSources = sources.filter((item) => !item.url);
+  const openableSources = linkedSources.length;
 
   function updateDraft(next: ReturnType<typeof emptyDraft>) {
     setDraft(next);
@@ -507,45 +552,66 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
           </div>
 
           <details className="thesis-workspace__more" data-qa="reason-review-details">
-            <summary>자료·검토·이전 기록 보기 (선택)</summary>
+            <summary>이 이유를 다시 볼 단서와 자료 (선택)</summary>
             <div className="thesis-workspace__more-content">
-              <p className="thesis-workspace__meta">이유 상태: {reasonStatusLabel(payload.reasonStatus)}{payload.reasonRevision ? ` · 개정 ${payload.reasonRevision.revision}` : ""}</p>
-              {(payload.reasonRevision?.fieldPresence.conviction === true || payload.reasonRevision?.fieldPresence.review_cycle === true) && <p className="thesis-workspace__meta">
-                {payload.reasonRevision?.fieldPresence.conviction === true ? `확신도 ${displayConviction(thesis.conviction)}` : ""}
-                {payload.reasonRevision?.fieldPresence.conviction === true && payload.reasonRevision?.fieldPresence.review_cycle === true ? " · " : ""}
-                {payload.reasonRevision?.fieldPresence.review_cycle === true ? `검토 주기 ${displayReviewCycle(thesis.reviewCycle)}` : ""}
-              </p>}
-          <div className="thesis-workspace__block" data-qa="reason-connections">
-            <h4>이 이유와 함께 볼 변화</h4>
-            <p className="thesis-workspace__note">연결된 자료는 판단을 대신하지 않습니다. 관계를 확인하지 못한 변화는 따로 표시합니다.</p>
-            {payload.reasonConnections.length ? <ul className="thesis-workspace__list">
-              {payload.reasonConnections.map((item) => <li key={`${item.kind}:${item.identity}`}>
-                <strong>{item.kind === "checkpoint" ? "확인 항목" : item.kind === "delta" ? "종합 검토" : "연결 자료"}</strong> · {item.label}
-                {item.at ? ` · ${verificationDate(item.at)}` : ""} · {item.source}
-                {item.kind === "checkpoint" && <small> · {item.status === "no_signal" ? "신호 없음" : item.status === "confirmed" ? "확인됨" : item.status === "challenged" ? "반증" : item.status === "expired" ? "기한 경과" : "상태 미확인"}</small>}
-                {item.kind === "delta" && item.status && <small> · {thesisVerdictDisplay(item.status).label}</small>}
-                <small> · {item.relationship === "exact_condition" || item.relationship === "exact_revision" || item.relationship === "user_linked" ? `이유 개정 ${payload.reasonRevision?.revision}에 연결` : "이 이유에 미치는 영향 미확인"}</small>
-                {item.gap && <small> · {item.gap}</small>}
-                {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer"> 원문 열기</a>}
-              </li>)}
-            </ul> : <p className="thesis-workspace__empty">아직 이 이유에 연결된 변화가 없습니다. 새 자료를 확인하지 않았다는 뜻과는 다릅니다.</p>}
-            {earningsEvent?.startsAt && <p className="thesis-workspace__note">다음 실적 예정 {verificationDate(earningsEvent.startsAt)} · 이 이유에 미치는 영향은 아직 확인하지 못했습니다. <button className="btn btn--text" type="button" onClick={() => document.getElementById("watchlist-earnings")?.scrollIntoView({ block: "start", behavior: "smooth" })}>실적 보기</button></p>}
-            {!earningsEvent?.startsAt && <p className="thesis-workspace__note">실적 일정은 아래 실적 패널에서 확인하세요. 이 이유와의 관계는 자동 판정하지 않습니다.</p>}
+          <div className="thesis-workspace__block thesis-workspace__review-guide" data-qa="reason-connections">
+            <h4>지금 다시 볼 점</h4>
+            <p>내가 적은 조건: <strong>{thesis.falsificationTriggers.join(" · ") || "아직 적지 않았습니다"}</strong></p>
+            {connectedDelta && delta ? (
+              <p>이전에 저장된 검토: <strong>{verdict.label}</strong>. {delta.summary || "구체적인 설명은 저장되지 않았습니다."} 이 판정만으로 원문 확인이 끝난 것은 아닙니다.</p>
+            ) : <p>이유 문장에 직접 연결된 종합 검토는 아직 없습니다.</p>}
+            {conditionSignals.slice(0, 3).map((item) => <p key={item.identity}>
+              <strong>{item.label}</strong>: {item.status === "challenged" ? "제목에서 반대 방향 신호가 잡혔습니다" : item.status === "confirmed" ? "제목에서 확인 방향 신호가 잡혔습니다" : item.status === "no_signal" ? "일치하는 신호가 없습니다" : "확인 상태를 단정할 수 없습니다"}. 제목 일치만으로 실제 발생이나 영향을 확인할 수는 없습니다.
+            </p>)}
+            {connectedDelta && delta?.uncertainties?.length ? <p className="thesis-workspace__review-uncertainty">아직 모르는 점: {delta.uncertainties.join(" · ")}</p> : null}
+            {!connectedDelta && conditionSignals.length === 0 && <p>현재 이유와 직접 맞물린 변화가 기록되지 않았습니다. 자료 수집이나 검토가 끝났다는 뜻은 아닙니다.</p>}
           </div>
 
-          <div className="thesis-workspace__block">
-            <h4>이번 검토 마치기</h4>
-            <p className="thesis-workspace__note">읽기만 하거나 화면을 닫아도 검토 완료로 기록되지 않습니다. 실제로 확인한 범위만 남겨 주세요.</p>
-            <label className="field">확인 결과<select value={reviewOutcome} onChange={(event) => setReviewOutcome(event.target.value)}>
-              <option value="">선택해 주세요</option><option value="no_material_change">확인한 범위에서 중요한 변화 없음</option>
-              <option value="no_new_material">새 자료를 확보하지 못함</option><option value="evidence_gap">자료가 부족하거나 상충함</option>
-              <option value="collection_failed">수집 또는 조회 실패</option><option value="unsupported">이 자료는 현재 지원하지 않음</option>
-              <option value="deferred">판단을 보류하고 마침</option><option value="reviewed">자료를 확인함</option>
-            </select></label>
-            <label className="field">실제로 확인한 자료·범위<input value={reviewScope} onChange={(event) => setReviewScope(event.target.value)} placeholder="예: 최근 실적 발표, 저장된 Delta" /></label>
-            <button className="btn" type="button" disabled={reviewBusy || !reviewOutcome || !reviewScope.trim()} onClick={() => void completeReview()}>{reviewBusy ? "기록 중…" : "이번 검토 마치기"}</button>
-            {payload.reviewEvents.filter((event) => event.source === "manual_review" || event.source === "explicit_delta").slice(0, 1).map((event) => <p key={event.eventId} className="thesis-workspace__meta">최근 검토 {verificationDate(event.reviewedAt)} · {reviewOutcomeLabel(event.outcome)} · 범위 {event.checkedScope.join(", ") || "기록 없음"}</p>)}
+          <div className="thesis-workspace__block" data-qa="reason-source-list">
+            <h4>자료는 어디 있나요?</h4>
+            {openableSources ? <>
+              <p className="thesis-workspace__note">이 이유에 연결된 원문 {openableSources}건을 열 수 있습니다.</p>
+              <ul className="thesis-workspace__source-list">
+                {linkedSources.map((item) => <li key={`${item.date}|${item.title}|${item.url}`}>
+                  <strong>{item.title}</strong>
+                  <span className="thesis-workspace__meta">{[item.date ? verificationDate(item.date) : "", item.source, item.seenIn.join("·")].filter(Boolean).join(" · ")}</span>
+                  <a href={item.url} target="_blank" rel="noopener noreferrer">원문 열기</a>
+                </li>)}
+              </ul>
+            </> : <p className="thesis-workspace__empty">확인 가능한 원문이 없습니다. 제목이나 판정만으로 실제 변화를 확인할 수 없습니다.</p>}
+            {unlinkedSources.length > 0 && <details className="thesis-workspace__optional">
+              <summary>원문 링크 없음 · 제목 기록 보기 ({unlinkedSources.length}건)</summary>
+              <ul className="thesis-workspace__source-list">
+                {unlinkedSources.map((item) => <li key={`${item.date}|${item.title}|${item.source}`}>
+                  <strong>{item.title}</strong>
+                  <span className="thesis-workspace__meta">{[item.date ? verificationDate(item.date) : "", item.source, item.seenIn.join("·")].filter(Boolean).join(" · ")}</span>
+                  <span className="thesis-workspace__source-gap">이 화면에서는 본문을 확인할 수 없습니다</span>
+                </li>)}
+              </ul>
+            </details>}
           </div>
+
+          <div className="thesis-workspace__block thesis-workspace__review-next">
+            <h4>다음에 무엇을 확인하나요?</h4>
+            <p>{openableSources ? "원문을 열어 내가 적은 조건이 실제로 일어났는지, 어느 범위까지 확인되는지 살펴보세요." : "원문 링크가 없어 이 화면만으로는 실제 발생 여부를 확인할 수 없습니다. 자료를 찾은 뒤 다시 보거나, 이번에는 자료를 확보하지 못했다고 기록할 수 있습니다."} 저장된 이유는 자동으로 바뀌지 않습니다.</p>
+            {earningsEvent?.startsAt && <p className="thesis-workspace__note">실적 발표 예정 {verificationDate(earningsEvent.startsAt)}. 이 이유와의 관계는 확인되지 않았습니다. <button className="btn btn--text" type="button" onClick={() => document.getElementById("watchlist-earnings")?.scrollIntoView({ block: "start", behavior: "smooth" })}>실적 보기</button></p>}
+          </div>
+
+          {payload.reviewEvents.filter((event) => event.source === "manual_review" || event.source === "explicit_delta").slice(0, 1).map((event) => <p key={event.eventId} className="thesis-workspace__meta">최근 검토 기록: {verificationDate(event.reviewedAt)} · {reviewOutcomeLabel(event.outcome)} · 확인 범위 {event.checkedScope.join(", ") || "기록 없음"}</p>)}
+
+          <details className="thesis-workspace__optional">
+            <summary>이번 검토 결과 기록하기 (선택)</summary>
+            <div className="thesis-workspace__optional-content">
+              <p className="thesis-workspace__note">실제로 확인한 범위만 남겨 주세요. 읽기만 하거나 닫아도 저장된 이유는 그대로입니다.</p>
+              <label className="field">확인 결과<select value={reviewOutcome} onChange={(event) => setReviewOutcome(event.target.value)}>
+                <option value="">선택해 주세요</option>
+                <optgroup label="자료 상태"><option value="no_new_material">원문 자료를 확보하지 못함</option><option value="evidence_gap">자료가 부족하거나 상충함</option><option value="collection_failed">수집 또는 조회 실패</option><option value="unsupported">이 자료는 현재 지원하지 않음</option></optgroup>
+                <optgroup label="확인한 결과"><option value="reviewed">자료를 확인함</option><option value="no_material_change">확인한 범위에서 중요한 변화 없음</option><option value="deferred">판단을 보류하고 마침</option></optgroup>
+              </select></label>
+              <label className="field">무엇을 확인했나요?<input value={reviewScope} onChange={(event) => setReviewScope(event.target.value)} placeholder="예: 제목만 봄, 원문 링크 없음" /></label>
+              <button className="btn" type="button" disabled={reviewBusy || !reviewOutcome || !reviewScope.trim()} onClick={() => void completeReview()}>{reviewBusy ? "기록 중…" : "이번 검토 마치기"}</button>
+            </div>
+          </details>
 
           <details className="thesis-workspace__block">
             <summary>이전 이유와 조건 보기 ({Math.max(0, payload.reasonHistory.length - 1)}건)</summary>
@@ -562,6 +628,15 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
             </ol>
           </details>
 
+          <details className="thesis-workspace__optional">
+            <summary>판정과 검토 기록 자세히 보기</summary>
+            <div className="thesis-workspace__optional-content">
+              <p className="thesis-workspace__meta">이유 상태: {reasonStatusLabel(payload.reasonStatus)}{payload.reasonRevision ? ` · 개정 ${payload.reasonRevision.revision}` : ""}</p>
+              {(payload.reasonRevision?.fieldPresence.conviction === true || payload.reasonRevision?.fieldPresence.review_cycle === true) && <p className="thesis-workspace__meta">
+                {payload.reasonRevision?.fieldPresence.conviction === true ? `확신도 ${displayConviction(thesis.conviction)}` : ""}
+                {payload.reasonRevision?.fieldPresence.conviction === true && payload.reasonRevision?.fieldPresence.review_cycle === true ? " · " : ""}
+                {payload.reasonRevision?.fieldPresence.review_cycle === true ? `검토 주기 ${displayReviewCycle(thesis.reviewCycle)}` : ""}
+              </p>}
           <div className="thesis-workspace__block">
             <h4>최신 검증</h4>
             {delta ? (
@@ -688,6 +763,8 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
               <p className="thesis-workspace__empty">아직 기록된 검토 이력이 없습니다.</p>
             )}
           </div>
+            </div>
+          </details>
             </div>
           </details>
         </>

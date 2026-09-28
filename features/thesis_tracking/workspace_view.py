@@ -58,6 +58,15 @@ def _date(value) -> dt.date | None:
 def _checkpoint_projection(checkpoint: dict) -> dict:
     last = checkpoint.get("lastVerdict") or {}
     status = str(checkpoint.get("status") or "open")
+    evidence = []
+    for item in (last.get("evidence") or [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        copy = {"date": str(item.get("date") or ""), "title": str(item.get("title") or "")}
+        url = _public_source_url(item.get("docId") or item.get("url"))
+        if url:
+            copy["url"] = url
+        evidence.append(copy)
     return {
         "id": checkpoint.get("id", ""),
         "item": checkpoint.get("item", ""),
@@ -70,11 +79,7 @@ def _checkpoint_projection(checkpoint: dict) -> dict:
             "verdictLabel": VERDICT_LABELS.get(str(last.get("verdict") or ""), ""),
             "at": last.get("at", ""),
             # thesis 근거 풀은 연구 인덱스 문서라 사본 키가 docId이고 role이 없다.
-            "evidence": [
-                {"date": str(item.get("date") or ""), "title": str(item.get("title") or "")}
-                for item in (last.get("evidence") or [])[:3]
-                if isinstance(item, dict)
-            ],
+            "evidence": evidence,
         } if last else None,
         "history": [
             {
@@ -148,15 +153,24 @@ def _evidence_list(values) -> list:
     out = []
     for item in (values or [])[:5]:
         if isinstance(item, dict):
-            out.append({
+            copy = {
                 "title": str(item.get("title") or "")[:220],
                 "source": str(item.get("source") or "")[:80],
                 "date": str(item.get("date") or "")[:10],
                 "reason": str(item.get("reason") or "")[:400],
-            })
+            }
+            url = _public_source_url(item.get("url") or item.get("docId"))
+            if url:
+                copy["url"] = url
+            out.append(copy)
         elif str(item).strip():
             out.append({"title": str(item)[:220], "source": "", "date": "", "reason": ""})
     return out
+
+
+def _public_source_url(value) -> str:
+    url = str(value or "").strip()
+    return url[:2048] if url.lower().startswith(("https://", "http://")) else ""
 
 
 def _linked_state_ids(conn, thesis: dict, ticker: str) -> set:

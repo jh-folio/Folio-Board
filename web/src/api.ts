@@ -1110,6 +1110,7 @@ export async function updateHypothesisCheckpoint(
 export type CheckpointEvidenceCopy = {
   date: string;
   title: string;
+  url?: string;
   /** 내러티브 근거 풀에만 있다. thesis 풀(문서)에는 role 분류가 없다. */
   role?: string;
 };
@@ -1204,8 +1205,8 @@ export type ThesisWorkspacePayload = {
     generatedAt: string;
     period: string;
     summary: string;
-    supportingEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
-    counterEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
+    supportingEvidence: Array<{ title: string; source: string; date: string; reason: string; url?: string }>;
+    counterEvidence: Array<{ title: string; source: string; date: string; reason: string; url?: string }>;
     contradictions: string[];
     uncertainties: string[];
   } | null;
