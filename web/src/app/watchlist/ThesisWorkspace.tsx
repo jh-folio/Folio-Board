@@ -103,7 +103,6 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [assistantQuestion, setAssistantQuestion] = useState("");
@@ -132,7 +131,6 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
     setEditing(draftCache.has(ticker));
     setSaving(false);
     setReviewBusy(false);
-    setAssistantOpen(false);
     setAssistantBusy(false);
     setAssistantError("");
     setAssistantQuestion("");
@@ -228,7 +226,6 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
       if (controller.signal.aborted || activeTicker.current !== ticker) return;
       setPayload(refreshed);
       setEditing(false);
-      setAssistantOpen(false);
       setAssistantPreview(null);
       draftCache.delete(ticker);
     } catch (err) {
@@ -368,11 +365,13 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
         <form className="thesis-workspace__editor" onSubmit={(event) => { event.preventDefault(); void saveDraft(); }}>
           <h4>{payload.hasThesis ? `${reasonLabel} 수정` : `${reasonLabel} 남기기`}</h4>
           <label className="field">{reasonLabel}<textarea required value={draft.coreThesis} onChange={(event) => updateDraft({ ...draft, coreThesis: event.target.value })} rows={3} placeholder="예: 돈을 잘 벌어서" /></label>
-          <label className="field">어떤 일이 생기면 이 이유를 더는 믿기 어려울까요?<textarea value={draft.falsificationTriggers} onChange={(event) => updateDraft({ ...draft, falsificationTriggers: event.target.value, conditionResponse: event.target.value.trim() ? "written" : "unanswered" })} rows={3} placeholder="예: 고객이 경쟁 제품으로 떠나면" /></label>
+          <p className="thesis-workspace__note">어떤 일이 생기면 이 이유를 더는 믿기 어려울까요?</p>
+          <label className="field">생각을 바꿀 상황 (선택)<textarea value={draft.falsificationTriggers} onChange={(event) => updateDraft({ ...draft, falsificationTriggers: event.target.value, conditionResponse: event.target.value.trim() ? "written" : "unanswered" })} rows={3} placeholder="예: 고객이 경쟁 제품으로 떠나면" /></label>
+          <details><summary>상세 입력 (선택)</summary>
+          <p className="thesis-workspace__note">아직 떠오르지 않으면 빈칸으로 저장해도 됩니다.</p>
           <div className="segment" role="group" aria-label="판단 변경 조건 답변">
             {([ ["unanswered", "나중에 답하기"], ["unknown", "아직 모르겠어요"], ["skipped", "건너뛰기"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={draft.conditionResponse === value && !draft.falsificationTriggers.trim()} onClick={() => updateDraft({ ...draft, falsificationTriggers: "", conditionResponse: value })}>{label}</button>)}
           </div>
-          <details><summary>가정과 상세 입력 (선택)</summary>
           <label className="field">핵심 가정 (한 줄에 하나)<textarea value={draft.keyAssumptions} onChange={(event) => updateDraft({ ...draft, keyAssumptions: event.target.value })} rows={3} /></label>
           <div className="thesis-workspace__editor-grid">
             <label className="field">확신도<select value={draft.conviction} onChange={(event) => updateDraft({ ...draft, conviction: event.target.value })}><option value="">입력하지 않음</option><option value="low">낮음</option><option value="medium">보통</option><option value="medium_high">중상</option><option value="high">높음</option></select></label>
@@ -381,9 +380,8 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
           <label className="field">수정 이유 (선택)<input value={draft.changeReason} onChange={(event) => updateDraft({ ...draft, changeReason: event.target.value })} /></label>
           </details>
           <div className="thesis-workspace__editor-actions"><button className="btn btn--primary" type="submit" disabled={saving || !draft.coreThesis.trim()}>{saving ? "저장 중…" : `${reasonLabel} 저장`}</button><button className="btn" type="button" onClick={() => setEditing(false)} disabled={saving}>닫기</button></div>
-          <div className="thesis-workspace__assistant">
-            <button className="btn" type="button" aria-expanded={assistantOpen} onClick={() => setAssistantOpen((value) => !value)}>AI와 함께 정리하기</button>
-            {assistantOpen && <div className="surface surface--inset">
+          <details className="thesis-workspace__assistant"><summary>AI와 함께 정리하기 (선택)</summary>
+            <div className="surface surface--inset">
               <p>AI 제안은 저장 전까지 초안입니다. 한 번에 한 질문씩 답하거나 언제든 건너뛸 수 있습니다.</p>
               {assistantError && <p role="alert">{assistantError}</p>}
               {!assistantQuestion && !assistantPreview && <button className="btn" type="button" disabled={assistantBusy} onClick={() => void runAssistant("question")}>{assistantBusy ? "질문 준비 중…" : "질문 받기"}</button>}
@@ -407,8 +405,8 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
                 <label className="field">저장할 판단 변경 조건<textarea value={assistantFinalCondition} onChange={(event) => setAssistantFinalCondition(event.target.value)} rows={2} /></label>
                 <button className="btn btn--primary" type="button" disabled={assistantBusy || !assistantFinalReason.trim()} onClick={() => void approveAssistant()}>{assistantBusy ? "저장 중…" : "확인하고 저장"}</button>
               </div>}
-            </div>}
-          </div>
+            </div>
+          </details>
         </form>
       )}
 
@@ -462,14 +460,10 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
           <div className="thesis-workspace__block">
             <h4>{reasonLabel}</h4>
             <p className="thesis-workspace__core">{thesis.coreThesis || "핵심 논지가 비어 있습니다."}</p>
-            <p className="thesis-workspace__meta">{payload.reasonRevision ? `기록 ${verificationDate(payload.reasonRevision.recordedAt)} · 개정 ${payload.reasonRevision.revision}` : "기록 시각 확인 불가"} · {reasonStatusLabel(payload.reasonStatus)}</p>
-            <p className="thesis-workspace__meta">
-              확신도 {payload.reasonRevision?.fieldPresence.conviction === true ? displayConviction(thesis.conviction) : "입력하지 않음"} · 검토 주기 {payload.reasonRevision?.fieldPresence.review_cycle === true ? displayReviewCycle(thesis.reviewCycle) : "입력하지 않음"} · 최근 검토{" "}
-              {verificationDate(payload.reviewEvents.find((event) => event.source === "manual_review" || event.source === "explicit_delta")?.reviewedAt || thesis.lastReviewedAt)}
-            </p>
+            <p className="thesis-workspace__meta">{payload.reasonRevision ? `저장됨 · ${verificationDate(payload.reasonRevision.recordedAt)}` : "저장됨"}</p>
             {thesis.falsificationTriggers.length > 0 && (
               <>
-                <h5>이탈 조건</h5>
+                <h5>생각을 바꿀 상황</h5>
                 <ul className="thesis-workspace__list">
                   {thesis.falsificationTriggers.map((text, index) => <li key={`${text}-${index}`}>{text}</li>)}
                 </ul>
@@ -480,6 +474,15 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
             <button className="btn" type="button" onClick={beginEdit}>{reasonLabel} 수정</button>
           </div>
 
+          <details className="thesis-workspace__more" data-qa="reason-review-details">
+            <summary>자료·검토·이전 기록 보기 (선택)</summary>
+            <div className="thesis-workspace__more-content">
+              <p className="thesis-workspace__meta">이유 상태: {reasonStatusLabel(payload.reasonStatus)}{payload.reasonRevision ? ` · 개정 ${payload.reasonRevision.revision}` : ""}</p>
+              {(payload.reasonRevision?.fieldPresence.conviction === true || payload.reasonRevision?.fieldPresence.review_cycle === true) && <p className="thesis-workspace__meta">
+                {payload.reasonRevision?.fieldPresence.conviction === true ? `확신도 ${displayConviction(thesis.conviction)}` : ""}
+                {payload.reasonRevision?.fieldPresence.conviction === true && payload.reasonRevision?.fieldPresence.review_cycle === true ? " · " : ""}
+                {payload.reasonRevision?.fieldPresence.review_cycle === true ? `검토 주기 ${displayReviewCycle(thesis.reviewCycle)}` : ""}
+              </p>}
           <div className="thesis-workspace__block" data-qa="reason-connections">
             <h4>이 이유와 함께 볼 변화</h4>
             <p className="thesis-workspace__note">연결된 자료는 판단을 대신하지 않습니다. 관계를 확인하지 못한 변화는 따로 표시합니다.</p>
@@ -653,6 +656,8 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
               <p className="thesis-workspace__empty">아직 기록된 검토 이력이 없습니다.</p>
             )}
           </div>
+            </div>
+          </details>
         </>
       )}
     </section>

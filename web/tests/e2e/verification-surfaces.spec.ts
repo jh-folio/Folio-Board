@@ -356,6 +356,7 @@ test.describe("0.6 verification surfaces", () => {
       // 개인 영역 경계
       await expect(workspace).toHaveAttribute("data-layer", "hypothesis");
       await expect(workspace.getByText("내 생각·가설 · 근거 아님")).toBeVisible();
+      await workspace.locator('[data-qa="reason-review-details"] > summary').click();
       // 두 층의 판정이 각자 이름으로 보인다(§3.2).
       await expect(workspace.getByText("약화").first()).toBeVisible();
       await expect(workspace.getByText("이유 종합 판정", { exact: false }).first()).toBeVisible();
@@ -397,6 +398,12 @@ test.describe("0.6 verification surfaces", () => {
     test.skip(!testInfo.project.name.includes("mobile"), "Mobile target runs on the mobile project.");
     await prepare(page, "light");
     await open(page, "watchlist/NVDA");
+    const disclosure = page.locator('[data-qa="reason-review-details"] > summary');
+    await expect(disclosure).toBeVisible();
+    expect(await disclosure.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await disclosure.focus();
+    await expect(disclosure).toBeFocused();
+    await disclosure.click();
     const thesisAction = page.getByRole("button", { name: "이 관심 이유를 반박해줘" });
     await expect(thesisAction).toBeVisible();
     expect(await thesisAction.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
@@ -513,6 +520,46 @@ test.describe("0.6 verification surfaces", () => {
     await expect(page.getByText("새 관심 이유")).toBeVisible();
   });
 
+  test("a saved investment reason needs no review action in the basic view", async ({ page }) => {
+    let workspace = { ...WORKSPACE_FIXTURE, hasThesis: false, reasonKind: "investment", thesis: null };
+    const posts: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      workspace: () => workspace,
+      onThesisPost: (body) => {
+        posts.push(body);
+        workspace = {
+          ...WORKSPACE_FIXTURE,
+          reasonKind: "investment",
+          thesis: {
+            ...WORKSPACE_FIXTURE.thesis,
+            coreThesis: String(body.coreThesis || ""),
+            falsificationTriggers: body.falsificationTriggers as string[] || [],
+          },
+        };
+        return { ok: true, thesis: workspace.thesis };
+      },
+    });
+    await open(page, "watchlist/NVDA");
+    await page.getByRole("button", { name: "투자 이유 남기기" }).click();
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByLabel("투자 이유").fill("제품 생태계가 오래 유지된다");
+    await editor.getByLabel("생각을 바꿀 상황 (선택)").fill("고객이 경쟁 제품으로 이동한다");
+    await expect(editor.getByRole("button", { name: "이번 검토 마치기" })).toHaveCount(0);
+    await editor.getByRole("button", { name: "투자 이유 저장" }).click();
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0]).toMatchObject({ coreThesis: "제품 생태계가 오래 유지된다", falsificationTriggers: ["고객이 경쟁 제품으로 이동한다"] });
+    await expect(editor).toHaveCount(0);
+    const reason = page.locator(".thesis-workspace");
+    await expect(reason.getByText("제품 생태계가 오래 유지된다")).toBeVisible();
+    await expect(reason.getByText("고객이 경쟁 제품으로 이동한다")).toBeVisible();
+    await expect(reason.getByText("저장됨", { exact: false })).toBeVisible();
+    await expect(reason.getByRole("button", { name: "이번 검토 마치기" })).toBeHidden();
+    await expect(reason.getByRole("button", { name: "최신 근거로 검토" })).toBeHidden();
+    await expect(reason.getByRole("button", { name: "이 투자 이유를 반박해줘" })).toBeHidden();
+    await reason.locator('[data-qa="reason-review-details"] > summary').click();
+    await expect(reason.getByRole("button", { name: "최신 근거로 검토" })).toBeVisible();
+  });
+
   test("ticker change makes an in-flight old Thesis save unable to overwrite the new detail", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the stale-save ownership contract.");
     let nvdaReads = 0;
@@ -604,6 +651,7 @@ test.describe("0.6 verification surfaces", () => {
     const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
     await prepare(page, "dark", { agent });
     await open(page, "watchlist/NVDA");
+    await page.locator('[data-qa="reason-review-details"] > summary').click();
     await page.getByRole("button", { name: "이 관심 이유를 반박해줘" }).click();
     await expect.poll(() => agent.threads.length).toBe(1);
     await expect.poll(() => agent.messages.length).toBe(1);

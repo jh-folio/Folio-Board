@@ -16249,6 +16249,21 @@ main.page {
 .thesis-workspace__editor h4 { margin: 0; font-size: var(--fs-body-sm); }
 .thesis-workspace__editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
 .thesis-workspace__editor-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.thesis-workspace__editor details,
+.thesis-workspace__more { min-width: 0; }
+.thesis-workspace__editor details > summary,
+.thesis-workspace__more > summary {
+  min-height: 44px;
+  padding: var(--sp-2) 0;
+  color: var(--folio-ink-soft);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+.thesis-workspace__editor details > summary:focus-visible,
+.thesis-workspace__more > summary:focus-visible { outline: 2px solid var(--folio-focus); outline-offset: 2px; }
+.thesis-workspace__more { border-top: 1px solid var(--folio-border); }
+.thesis-workspace__more-content { display: grid; gap: var(--sp-2); }
 @media (max-width: 600px) { .thesis-workspace__editor-grid { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .thesis-workspace .btn { min-height: 44px; } }
 .thesis-workspace__alerts {
