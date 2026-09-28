@@ -179,7 +179,8 @@ def _manual_field(data: dict, field: str, existing: dict):
     return existing.get(field), False
 
 
-def upsert_manual_thesis(data: dict, db_path=None, *, edit_source: str = "manual") -> dict:
+def upsert_manual_thesis(data: dict, db_path=None, *, edit_source: str = "manual",
+                         approved_condition_keywords: list | None = None) -> dict:
     """UI 직접 입력 thesis 저장(Obsidian 의존 없음).
 
     `source="manual"`로 기록되며, 이후 Vault 동기화는 이 행을 덮지 않는다
@@ -256,11 +257,21 @@ def upsert_manual_thesis(data: dict, db_path=None, *, edit_source: str = "manual
             change_reason=str(data.get("changeReason") or ""),
             user_stated_at=str(data.get("userStatedAt") or "") if "userStatedAt" in data else None,
             basis_refs=data.get("basisRefs") if isinstance(data.get("basisRefs"), list) else None,
+            commit=False,
         )
+        if approved_condition_keywords:
+            from features.thesis_tracking.reason_assist import _register_condition_checkpoint
+            first_condition = next((line.strip() for line in thesis.falsification_triggers if line.strip()), "")
+            if first_condition:
+                _register_condition_checkpoint(conn, thesis.ticker, first_condition, approved_condition_keywords)
+        conn.commit()
         stored = ST.get_thesis(conn, thesis.ticker)
         if stored is not None:
             stored["reasonRevision"] = RH.latest(conn, stored["ticker"])
         return stored
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

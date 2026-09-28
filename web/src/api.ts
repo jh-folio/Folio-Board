@@ -1175,6 +1175,8 @@ export type ThesisWorkspacePayload = {
   reasonStatus: "unwritten" | "unreviewed" | "reviewed" | "evidence_gap";
   reviewEvents: Array<{ eventId: string; reasonRevisionId: string; source: string; outcome: string; checkedScope: string[]; basisRefs: unknown[]; deltaId: string; reviewedAt: string }>;
   reasonConnections: Array<{ kind: "checkpoint" | "delta" | "user_ref"; identity: string; label: string; relationship: string; reasonRevisionId: string | null; status: string; at: string; source: string; gap: string; url?: string }>;
+  /** 이유의 판단 조건과 연결된 새 소식(사실). 판정이 아니다. */
+  news: ReasonNews;
   thesis: {
     ticker: string;
     company: string;
@@ -1229,6 +1231,17 @@ export type ThesisWorkspacePayload = {
   reuseAsEvidence: boolean;
 };
 
+export type ReasonNewsItem = { key: string; title: string; date: string; url: string; condition: string };
+export type ReasonNews = {
+  items: ReasonNewsItem[];
+  count: number;
+  since: string;
+  /** 대조할 단어가 있어 실제로 찾고 있는지. false면 "새 소식 없음"이 아니라 "찾지 않음"이다. */
+  searchReady: boolean;
+  keywords: string[];
+  lastDecisionAt: string;
+};
+
 export type ReasonRevision = {
   revisionId: string;
   ticker: string;
@@ -1275,6 +1288,7 @@ export type ReasonAssistRequest = {
 export type ReasonAssistResult = {
   phase: "question" | "draft"; revisionId: string; question?: string;
   suggestedReason?: string; suggestedCondition?: string; uncertainties?: string[];
+  reasonBasis?: string; conditionBasis?: string; conditionKeywords?: string[];
   originalReason?: string; originalCondition?: string; previewToken?: string;
 };
 export async function assistReason(ticker: string, request: ReasonAssistRequest, options: JsonRequestOptions = {}) {
@@ -1283,7 +1297,7 @@ export async function assistReason(ticker: string, request: ReasonAssistRequest,
 export async function approveAssistedReason(ticker: string, request: Record<string, unknown>, options: JsonRequestOptions = {}) {
   return postJson<{ ok: boolean }>(`/api/theses/${encodeURIComponent(ticker)}/reason-assist/approve`, request, options);
 }
-export async function completeReasonReview(ticker: string, request: { expectedRevisionId: string; outcome: string; checkedScope: string[] }, options: JsonRequestOptions = {}) {
+export async function completeReasonReview(ticker: string, request: { expectedRevisionId: string; outcome: string; checkedScope: string[]; basisRefs?: Array<{ key: string; title: string; date: string; url: string }> }, options: JsonRequestOptions = {}) {
   return postJson<{ eventId: string }>(`/api/theses/${encodeURIComponent(ticker)}/reason-review`, request, options);
 }
 

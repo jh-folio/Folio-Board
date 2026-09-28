@@ -10,7 +10,7 @@ from pathlib import Path
 from features.common.workspace import data_dir
 from features.portfolio.service import get_portfolio
 from features.thesis_tracking import model, reason_history, store
-from features.thesis_tracking import reason_review
+from features.thesis_tracking import reason_news, reason_review
 from features.watchlist_notes.service import watchlist_overview
 
 
@@ -45,11 +45,14 @@ def reason_watchlist_overview(*, db_path=None, data_path: Path | None = None) ->
             card["reasonKind"] = "investment" if ticker in held else "interest"
             card["reasonRevisionId"] = revision["revisionId"] if revision else ""
             card["reasonPreview"] = str(current.get("core_thesis") or "")[:120] if current else ""
-            card["reasonStatus"] = reason_review.status_for_reason(
+            status, events = reason_review.status_for_reason(
                 conn, current["ticker"] if current else ticker,
                 revision["revisionId"] if revision else None,
                 bool(current and current.get("core_thesis")),
-            )[0]
+            )
+            card["reasonStatus"] = status
+            # 목록은 절차 상태 대신 "이유와 연결된 새 소식" 수를 보여 준다.
+            card["reasonNewsCount"] = reason_news.reason_news(current, revision, events)["count"]
     finally:
         conn.close()
     return {**base, "items": cards}

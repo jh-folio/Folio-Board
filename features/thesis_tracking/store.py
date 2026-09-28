@@ -155,6 +155,7 @@ def upsert_thesis(
     expected_revision_id: str | None = None, condition_state: str | None = None,
     field_presence: dict | None = None, change_reason: str = "",
     user_stated_at: str | None = None, basis_refs: list | None = None,
+    commit: bool = True,
 ) -> str:
     """Thesis를 ticker 기준으로 upsert. ticker 반환.
 
@@ -220,7 +221,8 @@ def upsert_thesis(
             change_reason=change_reason, user_stated_at=user_stated_at,
             basis_refs=basis_refs,
         )
-        conn.commit()
+        if commit:
+            conn.commit()
         return ticker
     cols = list(values.keys())
     placeholders = ",".join("?" for _ in cols)
@@ -237,11 +239,12 @@ def upsert_thesis(
         change_reason=change_reason,
         user_stated_at=user_stated_at, basis_refs=basis_refs,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return ticker
 
 
-def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
+def save_thesis_checkpoints(conn, ticker: str, checkpoints: list, *, commit: bool = True) -> None:
     """`next_checkpoints_json`만 제자리 교체한다(판정 pass 전용).
 
     `upsert_thesis`를 쓰지 않는 것은 그쪽이 문자열 목록을 받는 노트 동기화 경로라서다.
@@ -255,7 +258,8 @@ def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
         "UPDATE thesis SET next_checkpoints_json=? WHERE ticker=?",
         (json.dumps(checkpoints, ensure_ascii=False), _storage_ticker(conn, ticker)),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def _row_to_dict(row) -> dict:

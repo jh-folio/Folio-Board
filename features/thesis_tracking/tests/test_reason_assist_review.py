@@ -14,6 +14,8 @@ def _fake_cli(monkeypatch, output):
     monkeypatch.setattr(assist, "selected_cli_config", lambda: {"provider": "codex", "model": "gpt-6-sol", "reasoningEffort": "high"})
     monkeypatch.setattr(assist.bridge, "bridge_status", lambda: {"available": True})
     monkeypatch.setattr(assist.bridge, "run_agent_prompt", lambda prompt, **kwargs: {"output": output})
+    # 실적 참고 자료는 네트워크 조회라 테스트에서 막는다.
+    monkeypatch.setattr(assist, "_fundamentals_context", lambda ticker: {})
 
 
 def test_ai_question_is_one_at_a_time_and_does_not_write(tmp_path, monkeypatch):

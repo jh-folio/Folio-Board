@@ -23,6 +23,7 @@ from pathlib import Path
 from features.common.research_schema.tracked_checkpoints import partition_checkpoints, squash
 from features.thesis_tracking import model as M
 from features.thesis_tracking import reason_history as RH
+from features.thesis_tracking import reason_news as RN
 from features.thesis_tracking import reason_review as RR
 from features.thesis_tracking import store as ST
 
@@ -296,6 +297,7 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
         "reasonStatus": "unwritten",
         "reviewEvents": [],
         "reasonConnections": [],
+        "news": RN.reason_news(None, None, []),
         "thesis": None,
         "ownership": None,
         "latestDelta": None,
@@ -377,6 +379,8 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
             "reasonStatus": reason_status,
             "reviewEvents": review_events,
             "reasonConnections": connections,
+            # 이유와 연결된 새 소식(사실). 판정이 아니며 사용자의 "그대로 두기"가 세는 기준이다.
+            "news": RN.reason_news(thesis, reason, review_events),
             "thesis": {
                 "ticker": thesis["ticker"],
                 "company": str(thesis.get("company") or ""),

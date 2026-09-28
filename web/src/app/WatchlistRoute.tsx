@@ -26,6 +26,8 @@ type WatchlistOverviewItem = {
   reasonKind?: "interest" | "investment";
   reasonStatus?: "unwritten" | "unreviewed" | "reviewed" | "evidence_gap";
   reasonPreview?: string;
+  /** 이유의 판단 조건과 연결된 새 소식 수. 절차 상태 대신 목록이 보여 준다. */
+  reasonNewsCount?: number;
   portfolioOnly?: boolean;
 };
 
@@ -358,6 +360,17 @@ export function WatchlistRoute() {
     return !needle || `${cardTicker(card)} ${cardCompanyName(card)}`.toLocaleLowerCase().includes(needle);
   });
   const fundamentals = useFundamentals(detailTicker);
+  // 상세는 "기업 정보 | 내 이유" 두 탭이다(2026-09-29). 처음엔 기업 정보를 연다.
+  const [detailTab, setDetailTab] = useState<"company" | "reason">("company");
+  const [reasonNewsCount, setReasonNewsCount] = useState(0);
+  useEffect(() => {
+    setDetailTab("company");
+    setReasonNewsCount(detailCard?.reasonNewsCount || 0);
+    // 종목이 바뀔 때만 초기화한다. 목록 재조회로 카드 객체가 바뀌어도 선택한 탭은 유지한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailItem]);
+  const onReasonNewsCount = useCallback((count: number) => setReasonNewsCount(count), []);
+  const reasonTabLabel = detailCard?.reasonKind === "investment" ? "내 투자 이유" : "내 관심 이유";
 
   function earningsFor(card: WatchlistOverviewItem | null): EarningsEvent | undefined {
     const ticker = String(card?.ticker || "").toUpperCase();
@@ -395,10 +408,27 @@ export function WatchlistRoute() {
                 아니라 구분선과 여백이 맡고, 면은 실적의 "다음 발표" 강조 상자 하나만 남긴다.
                 간격은 grid gap 하나가 소유한다 — 자식 margin-top이 겹치면 리듬이 깨진다. */}
             {detailTicker ? (
+              <>
+              <div className="segment watchlist-detail-tabs" role="group" aria-label="상세 보기">
+                <button type="button" aria-pressed={detailTab === "company"} onClick={() => setDetailTab("company")}>기업 정보</button>
+                <button type="button" aria-pressed={detailTab === "reason"} onClick={() => setDetailTab("reason")}>
+                  {reasonTabLabel}
+                  {reasonNewsCount > 0 && <span className="watchlist-detail-tabs__dot" aria-hidden="true" />}
+                  {reasonNewsCount > 0 && <span className="sr-only"> (새 소식 {reasonNewsCount}건)</span>}
+                </button>
+              </div>
+              {/* 내 이유 탭은 숨겨도 마운트해 둔다 — 새 소식 수(탭 점)와 입력 중인 초안을 유지한다. */}
+              <div className="watchlist-detail-reason" hidden={detailTab !== "reason"}>
+                <ThesisWorkspace
+                  ticker={detailTicker}
+                  companyName={detailCompanyName}
+                  quarters={fundamentals.payload?.quarters}
+                  currency={fundamentals.payload?.currency}
+                  onNewsCountChange={onReasonNewsCount}
+                />
+              </div>
+              {detailTab === "company" && (
               <div className="watchlist-detail-grid">
-                <section className="watchlist-detail-section watchlist-detail-section--thesis">
-                  <ThesisWorkspace ticker={detailTicker} companyName={detailCompanyName} earningsEvent={earningsFor(detailCard)} />
-                </section>
                 <section className="watchlist-detail-section watchlist-detail-section--metrics">
                   <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
                   <FundamentalsPanel ticker={detailTicker} payload={fundamentals.payload} error={fundamentals.error} />
@@ -424,6 +454,8 @@ export function WatchlistRoute() {
                   {newsSection}
                 </section>
               </div>
+              )}
+              </>
             ) : (
               <>
                 {/* 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다. */}
@@ -556,7 +588,8 @@ export function WatchlistRoute() {
               <div className="watchlist-card-meta">
                 <span className="chip" data-tone={card.reasonKind === "investment" ? "purple" : "muted"}>{card.reasonKind === "investment" ? "보유" : "관심"}</span>
                 <span className="watchlist-reason-row__summary">{card.reasonPreview || "이유 미작성"}</span>
-                <span className="chip" data-tone="muted">{card.reasonStatus === "reviewed" ? "검토함" : card.reasonStatus === "evidence_gap" ? "근거 부족" : card.reasonStatus === "unreviewed" ? "미검토" : "미작성"}</span>
+                {/* 절차 상태(미검토·근거 부족) 대신, 이유와 연결된 새 소식이 있을 때만 알린다(2026-09-29). */}
+                {(card.reasonNewsCount || 0) > 0 && <span className="chip watchlist-reason-news-chip" data-tone="gold">새 소식 {card.reasonNewsCount}</span>}
                 {/* 카드에는 **잘 안 변하는 것**만 둔다. 뉴스에서 뽑은 주제 태그는 상세의
                     `수집한 뉴스`로 옮겼다(2026-09-01 사용자 결정) — 그 태그는 매일 바뀌고
                     카드끼리 겹쳐서(여러 종목이 나란히 `매출 성장`·`마진`) 훑는 데 도움이

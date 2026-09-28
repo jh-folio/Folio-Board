@@ -102,6 +102,15 @@ const WORKSPACE_FIXTURE = {
   reasonStatus: "reviewed",
   reviewEvents: [],
   reasonConnections: [],
+  news: {
+    items: [{ key: "https://example.com/nvda-custom-chip", title: "대형 고객, 자체 AI 칩 비중 확대", date: "2026-08-26",
+      url: "https://example.com/nvda-custom-chip", condition: "대형 고객이 자체 칩으로 이동" }],
+    count: 1,
+    since: "2026-08-20T00:00:00Z",
+    searchReady: true,
+    keywords: ["자체 칩", "custom chip"],
+    lastDecisionAt: "",
+  },
   thesis: {
     ticker: "NVDA",
     company: "NVIDIA",
@@ -219,6 +228,10 @@ type FixtureOptions = {
   overview?: Record<string, unknown>;
   workspace?: (ticker: string) => unknown | Promise<unknown>;
   onThesisPost?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onReviewPost?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onAssist?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onApprove?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  fundamentals?: Record<string, unknown>;
   agent?: { threads: Array<Record<string, unknown>>; messages: Array<Record<string, unknown>>; beforeCreate?: () => Promise<void> | void };
   // Agent Dock Stage C: lets one test keep the job "running" (with a
   // phaseCode) for a few poll ticks before "done", to prove the live phase
@@ -289,6 +302,16 @@ async function prepare(page: Page, theme: "light" | "dark", options: FixtureOpti
       const ticker = decodeURIComponent(url.pathname.split("/")[3] || "");
       return json(await (options.workspace?.(ticker) ?? WORKSPACE_FIXTURE));
     }
+    if (/^\/api\/theses\/[^/]+\/reason-review$/.test(url.pathname) && route.request().method() === "POST") {
+      return json(await (options.onReviewPost?.(route.request().postDataJSON() as Record<string, unknown>) ?? { eventId: "event-1" }));
+    }
+    if (/^\/api\/theses\/[^/]+\/reason-assist$/.test(url.pathname) && route.request().method() === "POST") {
+      return json(await (options.onAssist?.(route.request().postDataJSON() as Record<string, unknown>) ?? { phase: "question", question: "질문", revisionId: "" }));
+    }
+    if (/^\/api\/theses\/[^/]+\/reason-assist\/approve$/.test(url.pathname) && route.request().method() === "POST") {
+      return json(await (options.onApprove?.(route.request().postDataJSON() as Record<string, unknown>) ?? { ok: true }));
+    }
+    if (url.pathname === "/api/market/fundamentals" && options.fundamentals) return json(options.fundamentals);
     if (url.pathname === "/api/theses" && route.request().method() === "POST") {
       return json(await (options.onThesisPost?.(route.request().postDataJSON() as Record<string, unknown>) ?? { ok: true, thesis: null }));
     }
@@ -306,6 +329,13 @@ async function prepare(page: Page, theme: "light" | "dark", options: FixtureOpti
     localStorage.setItem("folio.themePreference.v1", selectedTheme);
     localStorage.setItem("folio.react.agentClosed", "1");
   }, theme);
+}
+
+/** 상세는 "기업 정보 | 내 이유" 두 탭이다(2026-09-29). 이유 화면은 두 번째 탭에 있다. */
+async function openReasonTab(page: Page) {
+  const tab = page.getByRole("group", { name: "상세 보기" }).getByRole("button", { name: /^내 (관심|투자) 이유/ });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-pressed", "true");
 }
 
 async function open(page: Page, hash: string) {
@@ -351,23 +381,22 @@ test.describe("0.6 verification surfaces", () => {
       await prepare(page, theme);
       await open(page, "watchlist/NVDA");
 
-      const workspace = page.getByRole("region", { name: "내 관심 이유와 확인" });
+      await openReasonTab(page);
+      const workspace = page.getByRole("region", { name: "내 관심 이유" });
       await expect(workspace).toBeVisible();
-      // 개인 영역 경계
+      // 개인 영역 경계 — 보라 칩은 내가 쓴 것에만 붙는다.
       await expect(workspace).toHaveAttribute("data-layer", "hypothesis");
-      await expect(workspace.getByText("내 생각·가설 · 근거 아님")).toBeVisible();
-      await workspace.locator('[data-qa="reason-review-details"] > summary').click();
-      await expect(workspace.getByRole("heading", { name: "지금 다시 볼 점" })).toBeVisible();
-      await expect(workspace.getByRole("heading", { name: "자료는 어디 있나요?" })).toBeVisible();
-      await workspace.getByText("판정과 검토 기록 자세히 보기").click();
-      // 두 층의 판정이 각자 이름으로 보인다(§3.2).
-      await expect(workspace.getByText("약화").first()).toBeVisible();
-      await expect(workspace.getByText("이유 종합 판정", { exact: false }).first()).toBeVisible();
-      await expect(workspace.getByText("확인됨").first()).toBeVisible();
+      await expect(workspace.getByText("내 생각 · 근거 아님")).toBeVisible();
+      // 헤드라인 단어 세기 판정은 보여 주지 않는다(2026-09-29).
+      await expect(workspace.getByText("약화")).toHaveCount(0);
+      await expect(workspace.getByText("이유 종합 판정")).toHaveCount(0);
+      // 관련 새 소식은 사실로, 줄 전체가 원문 링크다.
+      await expect(workspace.getByRole("heading", { name: "관련 새 소식" })).toBeVisible();
+      await expect(workspace.getByRole("link", { name: /대형 고객, 자체 AI 칩 비중 확대/ })).toHaveAttribute("href", "https://example.com/nvda-custom-chip");
       // 소유권과 A.3 전파
       await expect(workspace.getByText("Vault 동기화 멈춤")).toBeVisible();
       await expect(workspace.getByText("연결 내러티브 경고")).toBeVisible();
-      await expect(workspace.getByText(/표시일 뿐 이유나 종합 판정을 바꾸지 않습니다/)).toBeVisible();
+      await expect(workspace.getByText(/표시일 뿐 이유를 바꾸지 않습니다/)).toBeVisible();
 
       const results = await new AxeBuilder({ page })
         .include(".thesis-workspace")
@@ -389,6 +418,7 @@ test.describe("0.6 verification surfaces", () => {
     ];
     for (const [hash, route, selector] of surfaces) {
       await open(page, hash);
+      if (route === "watchlist") await openReasonTab(page);
       await expect(page.locator(`.react-route-host[data-route="${route}"] ${selector}`)).toBeVisible();
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -401,18 +431,18 @@ test.describe("0.6 verification surfaces", () => {
     test.skip(!testInfo.project.name.includes("mobile"), "Mobile target runs on the mobile project.");
     await prepare(page, "light");
     await open(page, "watchlist/NVDA");
-    const disclosure = page.locator('[data-qa="reason-review-details"] > summary');
-    await expect(disclosure).toBeVisible();
-    expect(await disclosure.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
-    await disclosure.focus();
-    await expect(disclosure).toBeFocused();
-    await disclosure.click();
-    await page.getByText("판정과 검토 기록 자세히 보기").click();
-    const thesisAction = page.getByRole("button", { name: "이 관심 이유를 반박해줘" });
-    await expect(thesisAction).toBeVisible();
-    expect(await thesisAction.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
-    await thesisAction.focus();
-    await expect(thesisAction).toBeFocused();
+    const tab = page.getByRole("group", { name: "상세 보기" }).getByRole("button", { name: /^내 관심 이유/ });
+    expect(await tab.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    await openReasonTab(page);
+    const edit = page.getByRole("button", { name: "수정하기", exact: true });
+    const newsRow = page.getByRole("link", { name: /대형 고객, 자체 AI 칩 비중 확대/ });
+    const debate = page.getByRole("button", { name: "AI와 따져보기" });
+    for (const target of [edit, newsRow, debate]) {
+      await expect(target).toBeVisible();
+      expect(await target.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    }
+    await debate.focus();
+    await expect(debate).toBeFocused();
     await open(page, "market-memory");
     // 알림 줄의 버튼 라벨은 짧지만, 접근성 이름은 어느 내러티브인지 말한다.
     const narrativeAction = page.getByRole("button", { name: /전제를 반박해줘/ }).first();
@@ -451,11 +481,16 @@ test.describe("0.6 verification surfaces", () => {
       item: `T${String(index).padStart(2, "0")}`, ticker: `T${String(index).padStart(2, "0")}`,
       companyName: `Company ${index}`, count: index, reasonKind: index < 2 ? "investment" : "interest",
       reasonPreview: index === 19 ? "마지막 종목의 짧은 이유" : "", reasonStatus: index === 19 ? "unreviewed" : "unwritten",
+      reasonNewsCount: index === 19 ? 2 : 0,
     }));
     await prepare(page, "light", { overview: { items, news: [] } });
     await open(page, "watchlist");
     await expect(page.locator(".watchlist-reason-row")).toHaveCount(20);
     await expect(page.getByText("마지막 종목의 짧은 이유")).toBeVisible();
+    // 목록은 절차 상태 대신 이유와 연결된 새 소식만 알린다(2026-09-29).
+    await expect(page.locator(".watchlist-reason-news-chip")).toHaveCount(1);
+    await expect(page.locator(".watchlist-reason-news-chip")).toHaveText("새 소식 2");
+    await expect(page.locator(".watchlist-reason-list")).not.toContainText("미검토");
     await page.getByRole("button", { name: "보유", exact: true }).click();
     await expect(page.locator(".watchlist-reason-row")).toHaveCount(2);
     await page.getByRole("button", { name: "전체", exact: true }).click();
@@ -483,14 +518,21 @@ test.describe("0.6 verification surfaces", () => {
     });
     await open(page, "watchlist/NVDA");
     const before = await page.evaluate(() => window.location.hash);
-    await page.getByRole("button", { name: "관심 이유 수정" }).click();
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "수정하기", exact: true }).click();
     expect(await page.evaluate(() => window.location.hash)).toBe(before);
     expect(posts).toHaveLength(0);
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("관심 이유").fill("편집한 관심 이유");
-    await editor.getByRole("button", { name: "관심 이유 저장" }).click();
+    // 편집을 열면 보기 화면을 대체한다 — 같은 문장이 두 번 보이지 않는다.
+    await expect(page.locator(".reason-view")).toHaveCount(0);
+    await editor.getByLabel("이 종목에 관심이 있는 이유가 무엇인가요?").fill("편집한 관심 이유");
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
     await expect.poll(() => posts.length).toBe(1);
     expect(posts[0]).toMatchObject({ ticker: "NVDA", coreThesis: "편집한 관심 이유" });
+    // 확신도·검토 주기·핵심 가정은 보내지 않아 부분 갱신으로 보존된다.
+    expect(posts[0]).not.toHaveProperty("conviction");
+    expect(posts[0]).not.toHaveProperty("reviewCycle");
+    expect(posts[0]).not.toHaveProperty("keyAssumptions");
     await expect(editor).toHaveCount(0);
     await expect(page.getByText("편집한 관심 이유")).toBeVisible();
   });
@@ -512,12 +554,17 @@ test.describe("0.6 verification surfaces", () => {
     });
     await open(page, "watchlist/NVDA");
     const before = await page.evaluate(() => window.location.hash);
+    await openReasonTab(page);
     await page.getByRole("button", { name: "관심 이유 남기기" }).click();
     expect(await page.evaluate(() => window.location.hash)).toBe(before);
     expect(posts).toHaveLength(0);
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("관심 이유").fill("새 관심 이유");
-    await editor.getByRole("button", { name: "관심 이유 저장" }).click();
+    // 비운 채 저장하면 막지 않고 그 자리에서 말한다(버튼은 비활성으로 두지 않는다).
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(editor.getByText("한 줄만 적어 주세요. 짧아도 괜찮아요.")).toBeVisible();
+    expect(posts).toHaveLength(0);
+    await editor.getByLabel("이 종목에 관심이 있는 이유가 무엇인가요?").fill("새 관심 이유");
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
     await expect.poll(() => posts.length).toBe(1);
     expect(posts[0]).toMatchObject({ ticker: "NVDA", company: "NVIDIA", coreThesis: "새 관심 이유" });
     await expect(editor).toHaveCount(0);
@@ -528,12 +575,14 @@ test.describe("0.6 verification surfaces", () => {
     let workspace = { ...WORKSPACE_FIXTURE, hasThesis: false, reasonKind: "investment", thesis: null };
     const posts: Array<Record<string, unknown>> = [];
     await prepare(page, "light", {
+      overview: { items: [{ item: "NVDA", ticker: "NVDA", companyName: "NVIDIA", reasonKind: "investment" }] },
       workspace: () => workspace,
       onThesisPost: (body) => {
         posts.push(body);
         workspace = {
           ...WORKSPACE_FIXTURE,
           reasonKind: "investment",
+          news: { ...WORKSPACE_FIXTURE.news, items: [], count: 0 },
           thesis: {
             ...WORKSPACE_FIXTURE.thesis,
             coreThesis: String(body.coreThesis || ""),
@@ -544,28 +593,47 @@ test.describe("0.6 verification surfaces", () => {
       },
     });
     await open(page, "watchlist/NVDA");
+    await openReasonTab(page);
     await page.getByRole("button", { name: "투자 이유 남기기" }).click();
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("투자 이유").fill("제품 생태계가 오래 유지된다");
-    await editor.getByLabel("생각을 바꿀 상황 (선택)").fill("고객이 경쟁 제품으로 이동한다");
-    await expect(editor.getByRole("button", { name: "이번 검토 마치기" })).toHaveCount(0);
-    await editor.getByRole("button", { name: "투자 이유 저장" }).click();
+    await editor.getByLabel("이 종목에 투자한 이유가 무엇인가요?").fill("제품 생태계가 오래 유지된다");
+    await editor.getByLabel("어떤 일이 확인되면 이 이유가 틀렸다고 판단하시겠어요?").fill("고객이 경쟁 제품으로 이동한다");
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
     await expect.poll(() => posts.length).toBe(1);
-    expect(posts[0]).toMatchObject({ coreThesis: "제품 생태계가 오래 유지된다", falsificationTriggers: ["고객이 경쟁 제품으로 이동한다"] });
+    expect(posts[0]).toMatchObject({ coreThesis: "제품 생태계가 오래 유지된다", falsificationTriggers: ["고객이 경쟁 제품으로 이동한다"], conditionResponse: "written" });
     await expect(editor).toHaveCount(0);
     const reason = page.locator(".thesis-workspace");
     await expect(reason.getByText("제품 생태계가 오래 유지된다")).toBeVisible();
-    await expect(reason.locator(".thesis-workspace__list li:visible").filter({ hasText: "고객이 경쟁 제품으로 이동한다" })).toBeVisible();
-    await expect(reason.getByText("저장됨", { exact: false })).toBeVisible();
-    await expect(reason.getByRole("button", { name: "이번 검토 마치기" })).toBeHidden();
-    await expect(reason.getByRole("button", { name: "최신 근거로 검토" })).toBeHidden();
-    await expect(reason.getByRole("button", { name: "이 투자 이유를 반박해줘" })).toBeHidden();
-    await reason.locator('[data-qa="reason-review-details"] > summary').click();
-    await reason.getByText("판정과 검토 기록 자세히 보기").click();
-    await expect(reason.getByRole("button", { name: "최신 근거로 검토" })).toBeVisible();
+    await expect(reason.locator(".reason-view__cond").filter({ hasText: "고객이 경쟁 제품으로 이동한다" })).toBeVisible();
+    await expect(reason.getByText("저장 8월 20일")).toBeVisible();
+    // 기본 보기에는 수정하기 하나뿐이다. 판정 생성·검토 마치기·반박 버튼은 없다.
+    await expect(reason.getByRole("button", { name: "수정하기", exact: true })).toBeVisible();
+    await expect(reason.getByRole("button", { name: /최신 근거로 검토|이번 검토 마치기|반박해줘/ })).toHaveCount(0);
+    await expect(reason.getByText("이 투자 이유와 연결된 새 소식은 아직 없습니다.", { exact: false })).toHaveCount(0);
+    await expect(reason.getByText("이 이유와 연결된 새 소식은 아직 없습니다.")).toBeVisible();
   });
 
-  test("ticker change makes an in-flight old Thesis save unable to overwrite the new detail", async ({ page }, testInfo) => {
+  test("unknown condition is a text action under the field and saves as an explicit answer", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the request lifecycle contract.");
+    const posts: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      workspace: () => ({ ...WORKSPACE_FIXTURE, hasThesis: false, thesis: null }),
+      onThesisPost: (body) => { posts.push(body); return { ok: true, thesis: null }; },
+    });
+    await open(page, "watchlist/NVDA");
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "관심 이유 남기기" }).click();
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByLabel("이 종목에 관심이 있는 이유가 무엇인가요?").fill("돈을 잘 벌어서");
+    await editor.getByRole("button", { name: "아직 모르겠어요" }).click();
+    await expect(editor.getByText("“아직 모르겠어요”로 남깁니다.")).toBeVisible();
+    await expect(editor.getByRole("checkbox")).toHaveCount(0);
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0]).toMatchObject({ coreThesis: "돈을 잘 벌어서", falsificationTriggers: [], conditionResponse: "unknown" });
+  });
+
+    test("ticker change makes an in-flight old Thesis save unable to overwrite the new detail", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the stale-save ownership contract.");
     let nvdaReads = 0;
     let releaseOldReload: (() => void) | undefined;
@@ -585,14 +653,16 @@ test.describe("0.6 verification surfaces", () => {
       onThesisPost: () => ({ ok: true, thesis: WORKSPACE_FIXTURE.thesis }),
     });
     await open(page, "watchlist/NVDA");
-    await page.getByRole("button", { name: "관심 이유 수정" }).click();
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "수정하기", exact: true }).click();
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("관심 이유").fill("이전 종목의 임시 초안");
-    await editor.getByRole("button", { name: "관심 이유 저장" }).click();
+    await editor.getByLabel("이 종목에 관심이 있는 이유가 무엇인가요?").fill("이전 종목의 임시 초안");
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
     await expect.poll(() => oldReloadStarted).toBe(true);
 
     await page.evaluate(() => { window.location.hash = "#/watchlist/AMD"; });
-    const workspace = page.getByRole("region", { name: "내 관심 이유와 확인" });
+    await openReasonTab(page);
+    const workspace = page.getByRole("region", { name: "내 관심 이유" });
     await expect(workspace.getByText("AMD 새 화면 Thesis")).toBeVisible();
     await expect(workspace.locator(".thesis-workspace__editor")).toHaveCount(0);
     await expect(workspace).not.toContainText("이전 종목의 임시 초안");
@@ -605,67 +675,174 @@ test.describe("0.6 verification surfaces", () => {
     await expect(workspace).not.toContainText("이전 종목의 늦은 저장");
   });
 
-  test("reason review explains a connected signal, opens its source, and keeps recording optional", async ({ page }) => {
-    const source = "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000021/nvda-20260125.htm";
-    const title = "NVIDIA 2026 Form 10-K 경쟁 위험 설명";
-    const workspace = {
-      ...WORKSPACE_FIXTURE,
-      reasonConnections: [
-        { kind: "checkpoint", identity: "cp_t", relationship: "exact_condition", label: "대형 고객이 자체 칩으로 이동", status: "challenged" },
-        { kind: "delta", identity: "d1", relationship: "exact_revision", label: "고객 자체 솔루션 위험", status: "weakened" },
-      ],
-      checkpoints: { ...WORKSPACE_FIXTURE.checkpoints, structured: [{
-        ...WORKSPACE_FIXTURE.checkpoints.structured[0], id: "cp_t", item: "대형 고객이 자체 칩으로 이동", status: "challenged",
-        lastVerdict: { ...WORKSPACE_FIXTURE.checkpoints.structured[0].lastVerdict,
-          evidence: [{ title, date: "2026-03-01", url: source }] },
-      }] },
-      latestDelta: { ...WORKSPACE_FIXTURE.latestDelta,
-        summary: "공시에서 고객의 자체 솔루션 개발 가능성을 위험으로 설명합니다. 실제 전환 규모는 확인되지 않았습니다.",
-        supportingEvidence: [], counterEvidence: [{ title, date: "2026-03-01", source: "SEC", url: source, reason: "위험 설명" }],
-        uncertainties: ["실제 고객 전환 여부와 규모"],
+  test("related news shows one line per item, opens sources, and keeping the reason records what was seen", async ({ page }) => {
+    const items = [
+      { key: "https://example.com/a", title: "대형 고객, 자체 AI 칩 비중 확대", date: "2026-09-02", url: "https://example.com/a", condition: "대형 고객이 자체 칩으로 이동" },
+      { key: "2026-09-01|제목만 수집된 소식", title: "제목만 수집된 소식", date: "2026-09-01", url: "", condition: "대형 고객이 자체 칩으로 이동" },
+      { key: "https://example.com/c", title: "세 번째 소식", date: "2026-08-31", url: "https://example.com/c", condition: "대형 고객이 자체 칩으로 이동" },
+      { key: "https://example.com/d", title: "네 번째 소식", date: "2026-08-30", url: "https://example.com/d", condition: "대형 고객이 자체 칩으로 이동" },
+    ];
+    let workspace = { ...WORKSPACE_FIXTURE, news: { ...WORKSPACE_FIXTURE.news, items, count: items.length } };
+    const reviews: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      workspace: () => workspace,
+      onReviewPost: (body) => {
+        reviews.push(body);
+        workspace = { ...workspace, news: { ...workspace.news, items: [], count: 0, lastDecisionAt: "2026-09-03T00:00:00Z" } };
+        return { eventId: "event-1" };
       },
-    };
-    await prepare(page, "light", { workspace: () => workspace });
+    });
     await open(page, "watchlist/NVDA");
-    const reason = page.locator(".thesis-workspace");
-    await reason.locator('[data-qa="reason-review-details"] > summary').click();
-    await expect(reason.getByRole("heading", { name: "지금 다시 볼 점" })).toBeVisible();
-    await expect(reason.locator(".thesis-workspace__review-uncertainty")).toContainText("실제 고객 전환 여부와 규모");
-    await expect(reason.locator('[data-qa="reason-source-list"] li')).toHaveCount(1);
-    await expect(reason.getByRole("link", { name: "원문 열기" })).toHaveAttribute("href", source);
-    await expect(reason.getByRole("button", { name: "이번 검토 마치기" })).toBeHidden();
-    await expect(reason.getByText("판정과 검토 기록 자세히 보기")).toBeVisible();
+    // 새 소식이 있으면 두 번째 탭 이름 옆에 표시가 붙는다(스크린 리더는 건수를 읽는다).
+    await expect(page.getByRole("button", { name: /내 관심 이유 \(새 소식 4건\)/ })).toBeVisible();
+    await openReasonTab(page);
+    const news = page.locator('[data-qa="reason-news"]');
+    await expect(news.locator(".reason-news__count")).toHaveText("4");
+    await expect(news.getByRole("link", { name: /대형 고객, 자체 AI 칩 비중 확대/ })).toHaveAttribute("href", "https://example.com/a");
+    await expect(news.getByText("9월 1일 · 원문 없음")).toBeVisible();
+    await expect(news.getByRole("link", { name: /제목만 수집된 소식/ })).toHaveCount(0);
+    await expect(news.getByText("네 번째 소식")).toHaveCount(0);
+    await news.getByRole("button", { name: "1건 더 보기" }).click();
+    await expect(news.getByText("네 번째 소식")).toBeVisible();
+    await news.getByRole("button", { name: "그대로 두기" }).click();
+    await expect.poll(() => reviews.length).toBe(1);
+    expect(reviews[0]).toMatchObject({ expectedRevisionId: "nvda-reason-1", outcome: "no_material_change" });
+    expect((reviews[0].basisRefs as Array<{ key: string }>).map((ref) => ref.key)).toEqual(items.map((item) => item.key));
+    await expect(news.getByText("9월 3일에 이유를 그대로 두었어요. 그 뒤로 연결된 새 소식은 없습니다.")).toBeVisible();
+    await expect(news.getByText("찾는 단어: 자체 칩, custom chip")).toBeVisible();
+    await expect(page.getByRole("button", { name: /새 소식 \d+건/ })).toHaveCount(0);
   });
 
-  test("reason review identifies a source gap without claiming no change", async ({ page }) => {
-    const workspace = { ...WORKSPACE_FIXTURE, reasonConnections: [{
-      kind: "user_ref", identity: "missing-1", relationship: "user_linked", label: "제목만 기록한 자료", status: "availability_unverified", at: "2026-08-28", url: "",
-    }] };
+  test("no search words is reported as not searching, not as no news", async ({ page }) => {
+    const workspace = { ...WORKSPACE_FIXTURE, news: { ...WORKSPACE_FIXTURE.news, items: [], count: 0, searchReady: false, keywords: [] } };
     await prepare(page, "dark", { workspace: () => workspace });
     await open(page, "watchlist/NVDA");
-    const reason = page.locator(".thesis-workspace");
-    await reason.locator('[data-qa="reason-review-details"] > summary').click();
-    await expect(reason.getByText(/원문 링크 없음/).first()).toBeVisible();
-    await expect(reason.getByText(/실제 발생 여부를 확인할 수 없습니다/)).toBeVisible();
-    await expect(reason.getByRole("link", { name: "원문 열기" })).toHaveCount(0);
+    await openReasonTab(page);
+    const news = page.locator('[data-qa="reason-news"]');
+    await expect(news.getByText("판단 조건과 대조할 단어가 없어 새 소식을 찾지 않고 있어요.")).toBeVisible();
+    await expect(news.getByText(/새 소식은 아직 없습니다/)).toHaveCount(0);
   });
 
-  test("reason review preserves different source URLs that share a title", async ({ page }) => {
+  test("related news keeps different source URLs that share a title", async ({ page }) => {
     const urls = ["https://example.com/filing-a", "https://example.com/filing-b"];
-    const workspace = { ...WORKSPACE_FIXTURE, reasonConnections: urls.map((url) => ({
-      kind: "user_ref", identity: url, relationship: "user_linked", label: "연결한 자료", status: "availability_unverified", at: "2026-08-28", url,
-    })) };
-    await prepare(page, "light", { workspace: () => workspace });
+    const items = urls.map((url) => ({ key: url, title: "같은 제목의 공시", date: "2026-09-01", url, condition: "대형 고객이 자체 칩으로 이동" }));
+    await prepare(page, "light", { workspace: () => ({ ...WORKSPACE_FIXTURE, news: { ...WORKSPACE_FIXTURE.news, items, count: 2 } }) });
     await open(page, "watchlist/NVDA");
-    const reason = page.locator(".thesis-workspace");
-    await reason.locator('[data-qa="reason-review-details"] > summary').click();
-    const links = reason.getByRole("link", { name: "원문 열기" });
+    await openReasonTab(page);
+    const links = page.locator('[data-qa="reason-news"]').getByRole("link", { name: /같은 제목의 공시/ });
     await expect(links).toHaveCount(2);
     await expect(links.nth(0)).toHaveAttribute("href", urls[0]);
     await expect(links.nth(1)).toHaveAttribute("href", urls[1]);
   });
 
-  test("restored reason draft keeps its original revision and cleared fields; list refreshes", async ({ page }, testInfo) => {
+  test("a condition read as an earnings metric shows the current numbers as facts", async ({ page }) => {
+    const condition = "분기 영업이익률이 두 분기 연속 낮아질 때";
+    await prepare(page, "light", {
+      workspace: () => ({ ...WORKSPACE_FIXTURE, thesis: { ...WORKSPACE_FIXTURE.thesis, falsificationTriggers: [condition] } }),
+      fundamentals: { symbol: "NVDA", currency: "USD", quarters: [
+        { quarter: "2026-01-31", revenue: 100, operatingIncome: 62 },
+        { quarter: "2026-04-30", revenue: 100, operatingIncome: 64.1 },
+        { quarter: "2026-07-31", revenue: 100, operatingIncome: 66.2 },
+      ] },
+    });
+    await open(page, "watchlist/NVDA");
+    await openReasonTab(page);
+    const check = page.locator('[data-qa="reason-metric-check"]');
+    await expect(check).toContainText("최근 3분기 영업이익률");
+    await expect(check).toContainText("62.0% → 64.1% →");
+    await expect(check.locator("b")).toHaveText("66.2%");
+    await expect(check).toContainText("(26년 1월 → 26년 4월 → 26년 7월)");
+    await expect(check).toContainText("조건에 해당하지 않음");
+  });
+
+  test("AI refinement compares per field and saves once through the approval path", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the request lifecycle contract.");
+    const assists: Array<Record<string, unknown>> = [];
+    const approvals: Array<Record<string, unknown>> = [];
+    const directSaves: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      onAssist: (body) => {
+        assists.push(body);
+        return body.phase === "question"
+          ? { phase: "question", question: "“돈을 잘 번다”는 어떤 모습을 보고 느끼셨나요?", revisionId: "nvda-reason-1" }
+          : { phase: "draft", revisionId: "nvda-reason-1", previewToken: "123.token",
+            suggestedReason: "매출이 크게 늘면서 남는 이익도 함께 커지고 있어서", reasonBasis: "최근 분기 영업이익률 66.2%",
+            suggestedCondition: "분기 영업이익률이 두 분기 연속 낮아질 때", conditionBasis: "Folio가 매 분기 실적으로 확인할 수 있어요. “두 분기”는 제안입니다.",
+            conditionKeywords: ["margin", "이익률 하락"], uncertainties: [] };
+      },
+      onApprove: (body) => { approvals.push(body); return { ok: true }; },
+      onThesisPost: (body) => { directSaves.push(body); return { ok: true, thesis: null }; },
+    });
+    await open(page, "watchlist/NVDA");
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "수정하기", exact: true }).click();
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByRole("button", { name: "AI와 함께 다듬기" }).click();
+    const ai = editor.getByRole("region", { name: "AI 질문" });
+    await expect(ai.getByText("“돈을 잘 번다”는 어떤 모습을 보고 느끼셨나요?")).toBeVisible();
+    await ai.getByRole("button", { name: "답하기" }).click();
+    await expect(ai.getByText("답을 적거나 ‘모르겠어요’를 눌러 주세요.")).toBeVisible();
+    await ai.getByRole("button", { name: "여기까지 하고 정리" }).click();
+    await expect(editor.getByText("본 자료: 최근 분기 영업이익률 66.2%")).toBeVisible();
+    await expect(editor.locator("del")).toHaveCount(0);
+    const [reasonPick, conditionPick] = [editor.locator(".reason-q").nth(0), editor.locator(".reason-q").nth(1)];
+    await reasonPick.getByRole("button", { name: "이 제안 쓰기" }).click();
+    await expect(editor.getByLabel("이 종목에 관심이 있는 이유가 무엇인가요?")).toHaveValue("매출이 크게 늘면서 남는 이익도 함께 커지고 있어서");
+    await conditionPick.getByRole("button", { name: "이 제안 쓰기" }).click();
+    await expect(editor.getByRole("button", { name: "저장", exact: true })).toHaveCount(1);
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await expect.poll(() => approvals.length).toBe(1);
+    expect(directSaves).toHaveLength(0);
+    expect(approvals[0]).toMatchObject({
+      previewToken: "123.token",
+      coreThesis: "매출이 크게 늘면서 남는 이익도 함께 커지고 있어서",
+      conditionText: "분기 영업이익률이 두 분기 연속 낮아질 때",
+      conditionKeywords: ["margin", "이익률 하락"],
+      conditionResponse: "written",
+    });
+    expect(assists.map((row) => row.phase)).toEqual(["question", "draft"]);
+  });
+
+  test("AI approval conflict discards the old signed preview after explicit rebase", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop covers the signed preview conflict.");
+    let workspace = { ...WORKSPACE_FIXTURE,
+      reasonRevision: { ...WORKSPACE_FIXTURE.reasonRevision, revisionId: "a".repeat(32) },
+      thesis: { ...WORKSPACE_FIXTURE.thesis, coreThesis: "이전 이유 A" } };
+    const approvals: Array<Record<string, unknown>> = [];
+    const directSaves: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      workspace: () => workspace,
+      onAssist: (body) => body.phase === "question"
+        ? { phase: "question", question: "어떤 점을 보셨나요?", revisionId: "a".repeat(32) }
+        : { phase: "draft", revisionId: "a".repeat(32), previewToken: "123.token",
+          suggestedReason: "AI가 다듬은 이유", suggestedCondition: "분기 매출이 두 분기 연속 줄어들 때",
+          conditionKeywords: ["revenue"], uncertainties: [] },
+      onThesisPost: (body) => { directSaves.push(body); return { ok: true, thesis: null }; },
+    });
+    await page.route("**/api/theses/NVDA/reason-assist/approve", async (route) => {
+      approvals.push(route.request().postDataJSON() as Record<string, unknown>);
+      workspace = { ...workspace, reasonRevision: { ...workspace.reasonRevision, revisionId: "b".repeat(32) },
+        thesis: { ...workspace.thesis, coreThesis: "다른 화면의 이유 B" } };
+      return route.fulfill({ status: 409, contentType: "application/json", body: '{"detail":"revision_conflict"}' });
+    });
+    await open(page, "watchlist/NVDA");
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "수정하기", exact: true }).click();
+    const editor = page.locator(".thesis-workspace__editor");
+    await editor.getByRole("button", { name: "AI와 함께 다듬기" }).click();
+    await editor.getByRole("button", { name: "여기까지 하고 정리" }).click();
+    await editor.locator(".reason-q").nth(0).getByRole("button", { name: "이 제안 쓰기" }).click();
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByText("지금 저장된 이유: 다른 화면의 이유 B")).toBeVisible();
+    await expect(page.getByText(/기존 AI 제안 승인은 이전 기록에 묶여 있습니다/)).toBeVisible();
+    await page.getByRole("button", { name: "최신 기록을 확인하고 이 초안을 다시 저장하기" }).click();
+    await editor.getByRole("button", { name: "저장", exact: true }).click();
+    await expect.poll(() => directSaves.length).toBe(1);
+    expect(approvals).toHaveLength(1);
+    expect(directSaves[0]).toMatchObject({ expectedRevisionId: "b".repeat(32), coreThesis: "AI가 다듬은 이유" });
+  });
+
+    test("restored reason draft keeps its original revision; list refreshes", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop covers the cross-screen revision contract.");
     const overview = { items: [{ item: "NVDA", ticker: "NVDA", companyName: "NVIDIA",
       reasonPreview: "원문 A", reasonStatus: "unreviewed" }] };
@@ -685,20 +862,20 @@ test.describe("0.6 verification surfaces", () => {
       },
     });
     await open(page, "watchlist/NVDA");
-    await page.getByRole("button", { name: "관심 이유 수정" }).click();
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "수정하기", exact: true }).click();
     await page.getByPlaceholder("예: 돈을 잘 벌어서").fill("복원한 A 초안");
     await page.evaluate(() => { window.location.hash = "#/watchlist"; });
     await page.locator('[data-watchlist-detail-item="NVDA"]').waitFor();
     workspace = { ...workspace, reasonRevision: { ...workspace.reasonRevision, revisionId: "b".repeat(32) },
       thesis: { ...workspace.thesis, coreThesis: "다른 화면의 B" } };
     await page.locator('[data-watchlist-detail-item="NVDA"]').click();
+    await openReasonTab(page);
     await expect(page.getByPlaceholder("예: 돈을 잘 벌어서")).toHaveValue("복원한 A 초안");
-    await page.getByText("상세 입력 (선택)", { exact: true }).click();
-    await page.locator(".thesis-workspace__editor select").nth(0).selectOption("");
-    await page.locator(".thesis-workspace__editor select").nth(1).selectOption("");
-    await page.getByRole("button", { name: "관심 이유 저장" }).click();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
     await expect.poll(() => posts.length).toBe(1);
-    expect(posts[0]).toMatchObject({ expectedRevisionId: "a".repeat(32), conviction: "", reviewCycle: "" });
+    expect(posts[0]).toMatchObject({ expectedRevisionId: "a".repeat(32), coreThesis: "복원한 A 초안" });
+    expect(posts[0]).not.toHaveProperty("conviction");
     await page.evaluate(() => { window.location.hash = "#/watchlist"; });
     await expect(page.locator(".watchlist-reason-row__summary")).toHaveText("복원한 A 초안");
   });
@@ -722,14 +899,15 @@ test.describe("0.6 verification surfaces", () => {
       return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
     });
     await open(page, "watchlist/NVDA");
-    await page.getByRole("button", { name: "관심 이유 수정" }).click();
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "수정하기", exact: true }).click();
     await page.getByPlaceholder("예: 돈을 잘 벌어서").fill("내 초안 A");
-    await page.getByRole("button", { name: "관심 이유 저장" }).click();
-    await expect(page.getByText("현재 저장된 이유: 다른 화면의 이유 B")).toBeVisible();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByText("지금 저장된 이유: 다른 화면의 이유 B")).toBeVisible();
     await expect(page.getByPlaceholder("예: 돈을 잘 벌어서")).toHaveValue("내 초안 A");
     expect(posts[0].expectedRevisionId).toBe("a".repeat(32));
     await page.getByRole("button", { name: "최신 기록을 확인하고 이 초안을 다시 저장하기" }).click();
-    await page.getByRole("button", { name: "관심 이유 저장" }).click();
+    await page.getByRole("button", { name: "저장", exact: true }).click();
     await expect.poll(() => posts.length).toBe(2);
     expect(posts[1].expectedRevisionId).toBe("b".repeat(32));
   });
@@ -780,24 +958,24 @@ test.describe("0.6 verification surfaces", () => {
     await expect(page.getByText("반박 검토를 시작했습니다.")).toHaveCount(0);
   });
 
-  test("Thesis challenge keeps the selected ticker scope and opens the dock", async ({ page }, testInfo) => {
+  test("debating related news keeps the selected ticker scope and opens the dock", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
     const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
     await prepare(page, "dark", { agent });
     await open(page, "watchlist/NVDA");
-    await page.locator('[data-qa="reason-review-details"] > summary').click();
-    await page.getByText("판정과 검토 기록 자세히 보기").click();
-    await page.getByRole("button", { name: "이 관심 이유를 반박해줘" }).click();
+    await openReasonTab(page);
+    await page.getByRole("button", { name: "AI와 따져보기" }).click();
     await expect.poll(() => agent.threads.length).toBe(1);
     await expect.poll(() => agent.messages.length).toBe(1);
-    expect(agent.threads[0]).toMatchObject({ scope: { kind: "watchlist", id: "NVDA", tickers: ["NVDA"], intent: "challenge" } });
-    expect(agent.messages[0]).toMatchObject({ message: "이 관심 이유를 반박해줘" });
+    expect(agent.threads[0]).toMatchObject({ scope: { kind: "watchlist", id: "NVDA", tickers: ["NVDA"], intent: "challenge", reasonRevisionId: "nvda-reason-1" } });
+    const message = String(agent.messages[0].message || "");
+    expect(message).toContain("일시적인 일인지 이유 자체를 흔드는 일인지");
+    expect(message).toContain("대형 고객, 자체 AI 칩 비중 확대");
     await expect(page.getByRole("complementary", { name: "AI Agent" })).toBeVisible();
     await expect(page.locator(".react-agent-scope")).toContainText("NVDA");
-    await expect(page.getByText("이 관심 이유를 반박해줘").last()).toBeVisible();
   });
 
-  test("a second challenge click during creation cannot leave an empty thread", async ({ page }, testInfo) => {
+    test("a second challenge click during creation cannot leave an empty thread", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
     let releaseCreate: (() => void) | undefined;
     let firstCreateStarted = false;

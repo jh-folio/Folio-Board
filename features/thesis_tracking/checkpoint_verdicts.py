@@ -30,6 +30,7 @@ from __future__ import annotations
 import datetime as dt
 
 from features.common.research_schema.tracked_checkpoints import (
+    MAX_EVIDENCE_COPIES,
     partition_checkpoints,
     rewrite_checkpoints,
 )
@@ -179,6 +180,23 @@ def _judge_one_thesis(conn, store, index, thesis: dict, ticker: str, structured:
     updated: dict = {}
     for checkpoint in structured:
         outcome = evaluate_checkpoint(checkpoint, evidence_rows, as_of=as_of, role_pool=False)
+        previous_evidence = list((checkpoint.get("lastVerdict") or {}).get("evidence") or [])
+        evidence_changed = False
+        if outcome["verdict"] in {"confirmed", "challenged"}:
+            # Verdict가 같아도 새 문서는 새 소식이다. 이미 찾은 문서도 작은 사본 창에
+            # 남겨, 다음 날 들어온 기사 때문에 아직 읽지 않은 기사가 사라지지 않게 한다.
+            merged: list = []
+            seen: set = set()
+            for row in [*(outcome.get("evidence") or []), *previous_evidence]:
+                key = (str(row.get("docId") or ""), str(row.get("date") or ""), str(row.get("title") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(row)
+                if len(merged) >= MAX_EVIDENCE_COPIES:
+                    break
+            evidence_changed = merged != previous_evidence
+            outcome["evidence"] = merged
         result = apply_verdict(checkpoint, outcome, as_of=as_of)
         verdicts.append({
             "checkpointId": checkpoint["id"],
@@ -186,8 +204,9 @@ def _judge_one_thesis(conn, store, index, thesis: dict, ticker: str, structured:
             "verdict": outcome["verdict"],
             "status": checkpoint["status"],
         })
-        if result["changed"]:
+        if result["changed"] or evidence_changed:
             updated[checkpoint["id"]] = checkpoint
+        if result["changed"]:
             changes.append({"checkpointId": checkpoint["id"], **result})
     if updated:
         store.save_thesis_checkpoints(
