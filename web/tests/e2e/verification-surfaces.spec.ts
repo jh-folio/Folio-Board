@@ -96,6 +96,12 @@ const VERIFICATION_FIXTURE = {
 const WORKSPACE_FIXTURE = {
   ticker: "NVDA",
   hasThesis: true,
+  reasonKind: "interest",
+  reasonRevision: { revisionId: "nvda-reason-1", revision: 1, recordedAt: "2026-08-20T00:00:00Z", content: { core_thesis: "AI 가속기 수요가 최소 2년은 이어진다.", falsification_triggers: ["대형 고객이 자체 칩으로 이동"] }, basisRefs: [], conditionResponse: "written", fieldPresence: { conviction: true, review_cycle: true } },
+  reasonHistory: [],
+  reasonStatus: "reviewed",
+  reviewEvents: [],
+  reasonConnections: [],
   thesis: {
     ticker: "NVDA",
     company: "NVIDIA",
@@ -117,7 +123,7 @@ const WORKSPACE_FIXTURE = {
     appOwned: true,
     vaultNote: { title: "NVDA thesis", relPath: "Thesis/NVDA.md" },
     syncPaused: true,
-    message: "이 Thesis는 Vault에서 더 이상 갱신되지 않습니다. 앱에서 만든 내용이 우선이며, Vault 노트를 반영하려면 그 노트를 Thesis로 다시 등록하세요.",
+    message: "이 관심 이유는 Vault에서 더 이상 갱신되지 않습니다. 앱에서 만든 내용이 우선이며, Vault 노트를 반영하려면 그 노트를 이유로 다시 등록하세요.",
   },
   latestDelta: {
     deltaId: "d1",
@@ -172,8 +178,8 @@ const WORKSPACE_FIXTURE = {
 
 const WATCHLIST_OVERVIEW = {
   items: [
-    { item: "NVDA", ticker: "NVDA", label: "NVIDIA", newsCount: 3, kind: "company" },
-    { item: "AMD", ticker: "AMD", label: "AMD", newsCount: 1, kind: "company" },
+    { item: "NVDA", ticker: "NVDA", companyName: "NVIDIA", newsCount: 3, kind: "company" },
+    { item: "AMD", ticker: "AMD", companyName: "AMD", newsCount: 1, kind: "company" },
   ],
 };
 
@@ -210,6 +216,7 @@ const AGENT_BRIDGE_SETTINGS_NO_SEARCH = {
 const AGENT_BRIDGE_PREFLIGHT_OK = { ok: true, adapter: "codex", checks: [] };
 
 type FixtureOptions = {
+  overview?: Record<string, unknown>;
   workspace?: (ticker: string) => unknown | Promise<unknown>;
   onThesisPost?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   agent?: { threads: Array<Record<string, unknown>>; messages: Array<Record<string, unknown>>; beforeCreate?: () => Promise<void> | void };
@@ -285,7 +292,9 @@ async function prepare(page: Page, theme: "light" | "dark", options: FixtureOpti
     if (url.pathname === "/api/theses" && route.request().method() === "POST") {
       return json(await (options.onThesisPost?.(route.request().postDataJSON() as Record<string, unknown>) ?? { ok: true, thesis: null }));
     }
-    if (url.pathname === "/api/watchlist/overview") return json(WATCHLIST_OVERVIEW);
+    if (url.pathname === "/api/watchlist" && route.request().method() === "GET")
+      return json((options.overview?.items as Array<{ item: string }> | undefined)?.map((item) => item.item) ?? ["NVDA", "AMD"]);
+    if (url.pathname === "/api/watchlist/overview") return json(options.overview ?? WATCHLIST_OVERVIEW);
     if (url.pathname === "/api/watchlist/detail") {
       return json(url.searchParams.get("item") === "AMD"
         ? { ...WATCHLIST_DETAIL, item: "AMD", company: { name: "AMD", ticker: "AMD" } }
@@ -342,19 +351,19 @@ test.describe("0.6 verification surfaces", () => {
       await prepare(page, theme);
       await open(page, "watchlist/NVDA");
 
-      const workspace = page.getByRole("region", { name: "내 Thesis 검증" });
+      const workspace = page.getByRole("region", { name: "내 관심 이유와 확인" });
       await expect(workspace).toBeVisible();
       // 개인 영역 경계
       await expect(workspace).toHaveAttribute("data-layer", "hypothesis");
       await expect(workspace.getByText("내 생각·가설 · 근거 아님")).toBeVisible();
       // 두 층의 판정이 각자 이름으로 보인다(§3.2).
       await expect(workspace.getByText("약화").first()).toBeVisible();
-      await expect(workspace.getByText("Thesis 종합 판정", { exact: false }).first()).toBeVisible();
+      await expect(workspace.getByText("이유 종합 판정", { exact: false }).first()).toBeVisible();
       await expect(workspace.getByText("확인됨").first()).toBeVisible();
       // 소유권과 A.3 전파
       await expect(workspace.getByText("Vault 동기화 멈춤")).toBeVisible();
       await expect(workspace.getByText("연결 내러티브 경고")).toBeVisible();
-      await expect(workspace.getByText(/표시일 뿐 Thesis 판정을 바꾸지 않습니다/)).toBeVisible();
+      await expect(workspace.getByText(/표시일 뿐 이유나 종합 판정을 바꾸지 않습니다/)).toBeVisible();
 
       const results = await new AxeBuilder({ page })
         .include(".thesis-workspace")
@@ -388,7 +397,7 @@ test.describe("0.6 verification surfaces", () => {
     test.skip(!testInfo.project.name.includes("mobile"), "Mobile target runs on the mobile project.");
     await prepare(page, "light");
     await open(page, "watchlist/NVDA");
-    const thesisAction = page.getByRole("button", { name: "이 Thesis를 반박해줘" });
+    const thesisAction = page.getByRole("button", { name: "이 관심 이유를 반박해줘" });
     await expect(thesisAction).toBeVisible();
     expect(await thesisAction.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
     await thesisAction.focus();
@@ -425,6 +434,27 @@ test.describe("0.6 verification surfaces", () => {
     await expect(timeline).not.toContainText("overridden");
   });
 
+  test("twenty companies stay scannable with view, search and holdings filter", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop checks the dense list interaction.");
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      item: `T${String(index).padStart(2, "0")}`, ticker: `T${String(index).padStart(2, "0")}`,
+      companyName: `Company ${index}`, count: index, reasonKind: index < 2 ? "investment" : "interest",
+      reasonPreview: index === 19 ? "마지막 종목의 짧은 이유" : "", reasonStatus: index === 19 ? "unreviewed" : "unwritten",
+    }));
+    await prepare(page, "light", { overview: { items, news: [] } });
+    await open(page, "watchlist");
+    await expect(page.locator(".watchlist-reason-row")).toHaveCount(20);
+    await expect(page.getByText("마지막 종목의 짧은 이유")).toBeVisible();
+    await page.getByRole("button", { name: "보유", exact: true }).click();
+    await expect(page.locator(".watchlist-reason-row")).toHaveCount(2);
+    await page.getByRole("button", { name: "전체", exact: true }).click();
+    await page.getByRole("textbox", { name: "종목 찾기" }).fill("T19");
+    await expect(page.locator(".watchlist-reason-row")).toHaveCount(1);
+    await page.getByRole("textbox", { name: "종목 찾기" }).fill("");
+    await page.getByRole("button", { name: "카드", exact: true }).click();
+    await expect(page.locator(".watchlist-card")).toHaveCount(20);
+  });
+
   test("Watchlist Thesis edit writes only on explicit save without leaving the detail", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the request lifecycle contract.");
     let workspace = WORKSPACE_FIXTURE;
@@ -442,16 +472,16 @@ test.describe("0.6 verification surfaces", () => {
     });
     await open(page, "watchlist/NVDA");
     const before = await page.evaluate(() => window.location.hash);
-    await page.getByRole("button", { name: "Thesis 만들기/수정" }).click();
+    await page.getByRole("button", { name: "관심 이유 수정" }).click();
     expect(await page.evaluate(() => window.location.hash)).toBe(before);
     expect(posts).toHaveLength(0);
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("핵심 Thesis").fill("편집한 핵심 Thesis");
-    await editor.getByRole("button", { name: "Thesis 저장" }).click();
+    await editor.getByLabel("관심 이유").fill("편집한 관심 이유");
+    await editor.getByRole("button", { name: "관심 이유 저장" }).click();
     await expect.poll(() => posts.length).toBe(1);
-    expect(posts[0]).toMatchObject({ ticker: "NVDA", coreThesis: "편집한 핵심 Thesis" });
+    expect(posts[0]).toMatchObject({ ticker: "NVDA", coreThesis: "편집한 관심 이유" });
     await expect(editor).toHaveCount(0);
-    await expect(page.getByText("편집한 핵심 Thesis")).toBeVisible();
+    await expect(page.getByText("편집한 관심 이유")).toBeVisible();
   });
 
   test("Watchlist Thesis create retains the detail ticker and company context", async ({ page }, testInfo) => {
@@ -471,16 +501,16 @@ test.describe("0.6 verification surfaces", () => {
     });
     await open(page, "watchlist/NVDA");
     const before = await page.evaluate(() => window.location.hash);
-    await page.getByRole("button", { name: "Thesis 만들기" }).click();
+    await page.getByRole("button", { name: "관심 이유 남기기" }).click();
     expect(await page.evaluate(() => window.location.hash)).toBe(before);
     expect(posts).toHaveLength(0);
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("핵심 Thesis").fill("새 핵심 Thesis");
-    await editor.getByRole("button", { name: "Thesis 저장" }).click();
+    await editor.getByLabel("관심 이유").fill("새 관심 이유");
+    await editor.getByRole("button", { name: "관심 이유 저장" }).click();
     await expect.poll(() => posts.length).toBe(1);
-    expect(posts[0]).toMatchObject({ ticker: "NVDA", company: "NVIDIA", coreThesis: "새 핵심 Thesis" });
+    expect(posts[0]).toMatchObject({ ticker: "NVDA", company: "NVIDIA", coreThesis: "새 관심 이유" });
     await expect(editor).toHaveCount(0);
-    await expect(page.getByText("새 핵심 Thesis")).toBeVisible();
+    await expect(page.getByText("새 관심 이유")).toBeVisible();
   });
 
   test("ticker change makes an in-flight old Thesis save unable to overwrite the new detail", async ({ page }, testInfo) => {
@@ -503,14 +533,14 @@ test.describe("0.6 verification surfaces", () => {
       onThesisPost: () => ({ ok: true, thesis: WORKSPACE_FIXTURE.thesis }),
     });
     await open(page, "watchlist/NVDA");
-    await page.getByRole("button", { name: "Thesis 만들기/수정" }).click();
+    await page.getByRole("button", { name: "관심 이유 수정" }).click();
     const editor = page.locator(".thesis-workspace__editor");
-    await editor.getByLabel("핵심 Thesis").fill("이전 종목의 임시 초안");
-    await editor.getByRole("button", { name: "Thesis 저장" }).click();
+    await editor.getByLabel("관심 이유").fill("이전 종목의 임시 초안");
+    await editor.getByRole("button", { name: "관심 이유 저장" }).click();
     await expect.poll(() => oldReloadStarted).toBe(true);
 
     await page.evaluate(() => { window.location.hash = "#/watchlist/AMD"; });
-    const workspace = page.getByRole("region", { name: "내 Thesis 검증" });
+    const workspace = page.getByRole("region", { name: "내 관심 이유와 확인" });
     await expect(workspace.getByText("AMD 새 화면 Thesis")).toBeVisible();
     await expect(workspace.locator(".thesis-workspace__editor")).toHaveCount(0);
     await expect(workspace).not.toContainText("이전 종목의 임시 초안");
@@ -574,14 +604,14 @@ test.describe("0.6 verification surfaces", () => {
     const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };
     await prepare(page, "dark", { agent });
     await open(page, "watchlist/NVDA");
-    await page.getByRole("button", { name: "이 Thesis를 반박해줘" }).click();
+    await page.getByRole("button", { name: "이 관심 이유를 반박해줘" }).click();
     await expect.poll(() => agent.threads.length).toBe(1);
     await expect.poll(() => agent.messages.length).toBe(1);
     expect(agent.threads[0]).toMatchObject({ scope: { kind: "watchlist", id: "NVDA", tickers: ["NVDA"], intent: "challenge" } });
-    expect(agent.messages[0]).toMatchObject({ message: "이 Thesis를 반박해줘" });
+    expect(agent.messages[0]).toMatchObject({ message: "이 관심 이유를 반박해줘" });
     await expect(page.getByRole("complementary", { name: "AI Agent" })).toBeVisible();
     await expect(page.locator(".react-agent-scope")).toContainText("NVDA");
-    await expect(page.getByText("이 Thesis를 반박해줘").last()).toBeVisible();
+    await expect(page.getByText("이 관심 이유를 반박해줘").last()).toBeVisible();
   });
 
   test("a second challenge click during creation cannot leave an empty thread", async ({ page }, testInfo) => {

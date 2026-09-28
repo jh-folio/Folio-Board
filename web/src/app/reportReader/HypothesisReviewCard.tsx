@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getJson,
   getHypothesisIntelligence,
+  getThesisWorkspace,
+  ApiRequestError,
   isActiveJobStatus,
   promoteNoteToThesis,
   runThesisReview,
@@ -111,24 +113,30 @@ export function HypothesisReviewCard({
     // 쪽은 한 번 묻는다. 만들기(빈자리)는 잃을 것이 없으므로 바로 진행한다.
     // 덮겠다는 의사는 요청이 싣는다(overwrite) — 서버 기본이 덮기면, 이 카드가 마지막으로
     // 읽은 캐시가 "thesis 없음"인 사이 다른 탭이 만든 thesis를 확인 없이 덮는다.
-    if (hasThesis && !window.confirm(`${identity.ticker} Thesis를 이 노트 내용으로 덮어쓸까요?`)) return;
     setBusy(true);
-    setStatus(hasThesis ? "Thesis를 갱신하는 중..." : "Thesis를 만드는 중...");
+    setStatus(hasThesis ? "현재 이유를 확인하는 중..." : "이유를 만드는 중...");
     try {
-      const result = await promoteNoteToThesis(identity.id, hasThesis);
+      const current = await getThesisWorkspace(identity.ticker);
+      if (current.hasThesis && !hasThesis) {
+        setIntelligence(await getHypothesisIntelligence(identity.id));
+        setStatus("그 사이 이 종목의 이유가 생겼습니다. 내용을 확인한 뒤 갱신으로 진행하세요.");
+        return;
+      }
+      if (hasThesis && !window.confirm(`${identity.ticker}의 현재 이유: ${current.thesis?.coreThesis || "(비어 있음)"}\n\n이 노트 내용으로 갱신할까요?`)) return;
+      const result = await promoteNoteToThesis(identity.id, hasThesis, {}, current.reasonRevision?.revisionId || "");
       if (result.status === "skipped_existing") {
         // 카드가 비어 있다고 알던 사이 다른 경로가 thesis를 만들었다 — 남의 내용을
         // 확인 없이 덮지 않고, 최신 상태를 보여 준 뒤 사용자가 갱신으로 다시 누르게 한다.
         const refreshedNow = await getHypothesisIntelligence(identity.id);
         setIntelligence(refreshedNow);
-        setStatus("그 사이 이 종목의 Thesis가 생겼습니다. 내용을 확인한 뒤 갱신으로 진행하세요.");
+        setStatus("그 사이 이 종목의 이유가 생겼습니다. 내용을 확인한 뒤 갱신으로 진행하세요.");
         return;
       }
       const refreshed = await getHypothesisIntelligence(identity.id);
       setIntelligence(refreshed);
-      setStatus(result.status === "updated" ? "이 노트로 Thesis를 갱신했습니다." : "이 노트로 Thesis를 만들었습니다.");
+      setStatus(result.status === "updated" ? "이 노트로 투자 이유를 갱신했습니다." : "이 노트로 관심 이유를 만들었습니다.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Thesis 등록에 실패했습니다.");
+      setStatus(error instanceof ApiRequestError && error.status === 409 ? "다른 화면에서 이유가 바뀌었습니다. 최신 이유를 확인해 주세요." : error instanceof Error ? error.message : "이유 등록에 실패했습니다.");
     } finally {
       setBusy(false);
     }
@@ -154,7 +162,7 @@ export function HypothesisReviewCard({
   let emptyState = "";
   if (noteExists === null) emptyState = "노트 상태를 확인하는 중...";
   else if (!noteExists) emptyState = "아직 저장된 노트가 없습니다.";
-  else if (!identity.ticker) emptyState = "티커가 없어 Thesis와 연결할 수 없습니다.";
+  else if (!identity.ticker) emptyState = "티커가 없어 관심·투자 이유와 연결할 수 없습니다.";
 
   return (
     <section className="hypothesis-review-card" aria-label="가설 검토 상태">
@@ -177,11 +185,11 @@ export function HypothesisReviewCard({
           {!intelligence.thesis && (
             <>
               <p className="hypothesis-review-empty">
-                연결된 Thesis가 없습니다. 이 노트를 Thesis로 등록하면 최신 근거로 검토할 수 있습니다.
+                연결된 관심·투자 이유가 없습니다. 이 노트를 이유로 등록하면 최신 근거로 검토할 수 있습니다.
               </p>
               <div className="hypothesis-review-actions">
                 <button type="button" onClick={() => promoteThesis(false)} disabled={busy}>
-                  {busy ? "등록 중..." : "이 노트로 Thesis 만들기"}
+                  {busy ? "등록 중..." : "이 노트로 이유 만들기"}
                 </button>
               </div>
             </>
@@ -210,7 +218,7 @@ export function HypothesisReviewCard({
                 두면 할 수 있는 일이 두 개로 보인다. */}
             {intelligence.thesis && (
               <button type="button" onClick={() => promoteThesis(true)} disabled={busy}>
-                이 노트로 Thesis 갱신
+                이 노트로 이유 갱신
               </button>
             )}
             <button type="button" onClick={onRequestAgent} disabled={!agentAvailable}>

@@ -268,7 +268,7 @@ const TASK_POLICY_LABELS: Record<string, string> = {
   company_analysis: "기업분석",
   topic_report: "딥 리서치",
   market_memory: "시장 내러티브",
-  thesis_review: "Thesis 검토",
+  thesis_review: "관심·투자 이유 검토",
   investment_review: "투자 리뷰",
   personal_overlay: "Personal Overlay",
 };

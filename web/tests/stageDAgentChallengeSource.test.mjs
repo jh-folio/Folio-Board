@@ -17,8 +17,8 @@ test("Stage D challenge actions carry IDs only and auto-submit only after an exp
 
   assert.match(panel, /이 전제를 반박해줘/);
   assert.match(panel, /scope: \{ kind: "market_memory", id: state\.stateId, intent: "challenge" \}/);
-  assert.match(workspace, /이 Thesis를 반박해줘/);
-  assert.match(workspace, /scope: \{ kind: "watchlist", id: ticker, tickers: \[ticker\], intent: "challenge" \}/);
+  assert.match(workspace, /이 \{reasonLabel\}를 반박해줘/);
+  assert.match(workspace, /scope: \{ kind: "watchlist", id: ticker, tickers: \[ticker\], intent: "challenge", reasonRevisionId: payload\.reasonRevision\?\.revisionId \|\| "" \}/);
   assert.match(panel, /autoSubmit: true/);
   assert.match(workspace, /autoSubmit: true/);
   assert.match(scoped, /autoSubmit\?: boolean/);

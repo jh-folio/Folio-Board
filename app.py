@@ -245,10 +245,12 @@ from features.personal_overlay.service import (
     strip_overlay,
 )
 from features.thesis_tracking.workspace_view import thesis_workspace_payload
+from features.thesis_tracking.reason_history import ReasonRevisionConflictError
 from features.thesis_tracking.service import (
     list_thesis_payload,
     promote_note_to_thesis,
     run_thesis_delta,
+    reason_revision_payload,
     thesis_detail_payload,
     upsert_manual_thesis,
 )
@@ -1016,6 +1018,8 @@ def api_upsert_thesis(body: dict | None = Body(default=None)):
     """Obsidian 없이 앱 안에서 Thesis를 만들고 고친다. 보낸 키만 덮는다(부분 갱신)."""
     try:
         return {"ok": True, "thesis": upsert_manual_thesis(body or {})}
+    except ReasonRevisionConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "reason_revision_conflict", "current": e.current}) from e
     except (ValueError, TypeError) as e:
         # 리스트 필드에 스칼라가 오는 것 같은 형식 오류도 400이다 — 500은 호출자에게
         # 고칠 단서를 주지 않는다.
@@ -1027,6 +1031,51 @@ def api_get_thesis(ticker: str):
     return thesis_detail_payload(ticker)
 
 
+@fastapi_app.get("/api/theses/{ticker}/revisions/{revision_id}")
+def api_get_reason_revision(ticker: str, revision_id: str):
+    revision = reason_revision_payload(ticker, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail="이유 개정 기록을 찾을 수 없습니다.")
+    return revision
+
+
+@fastapi_app.post("/api/theses/{ticker}/reason-assist")
+def api_reason_assist(ticker: str, body: dict | None = Body(default=None)):
+    from features.thesis_tracking.reason_assist import reason_assist
+    try:
+        return reason_assist(ticker, body)
+    except ReasonRevisionConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "reason_revision_conflict", "current": e.current}) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@fastapi_app.post("/api/theses/{ticker}/reason-assist/approve")
+def api_approve_reason_assist(ticker: str, body: dict | None = Body(default=None)):
+    from features.thesis_tracking.reason_assist import approve_reason_draft
+    try:
+        return approve_reason_draft(ticker, body)
+    except ReasonRevisionConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "reason_revision_conflict", "current": e.current}) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@fastapi_app.post("/api/theses/{ticker}/reason-review")
+def api_complete_reason_review(ticker: str, body: dict | None = Body(default=None)):
+    from features.thesis_tracking.reason_review import complete_manual_review
+    try:
+        return complete_manual_review(ticker, body)
+    except ReasonRevisionConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "reason_revision_conflict", "current": e.current}) from e
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @fastapi_app.post("/api/investment-notes/{note_id}/thesis")
 def api_promote_note_to_thesis(note_id: str, body: dict | None = Body(default=None)):
     """이 노트로 Thesis 만들기/갱신 — 명시적 action만 기존 Thesis를 덮는다(§8.2).
@@ -1035,7 +1084,12 @@ def api_promote_note_to_thesis(note_id: str, body: dict | None = Body(default=No
     낡았을 때 남의 thesis가 확인 없이 덮인다.
     """
     try:
-        return promote_note_to_thesis(note_id, overwrite=bool((body or {}).get("overwrite")))
+        return promote_note_to_thesis(
+            note_id, overwrite=bool((body or {}).get("overwrite")),
+            expected_revision_id=(body or {}).get("expectedRevisionId"),
+        )
+    except ReasonRevisionConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "reason_revision_conflict", "current": e.current}) from e
     except LookupError as e:
         raise HTTPException(status_code=404, detail="Note not found") from e
     except ValueError as e:
@@ -1063,7 +1117,7 @@ def api_run_thesis_delta(ticker: str, body: dict | None = Body(default=None)):
             ),
         )
     except LookupError as e:
-        raise HTTPException(status_code=404, detail="Thesis not found") from e
+        raise HTTPException(status_code=404, detail="관심·투자 이유를 찾을 수 없습니다.") from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid thesis request") from e
 
@@ -1260,7 +1314,8 @@ def api_resolve_watchlist_keyword(request: Request):
 
 @fastapi_app.get("/api/watchlist/overview")
 def api_watchlist_overview():
-    return watchlist_overview()
+    from features.thesis_tracking.overview import reason_watchlist_overview
+    return reason_watchlist_overview()
 
 
 @fastapi_app.get("/api/watchlist/detail")

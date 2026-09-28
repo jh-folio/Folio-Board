@@ -120,7 +120,7 @@ Below that sits the market calendar — economic releases, central bank meetings
 
 Track companies, sectors, and themes in a local Watchlist, then inspect the related news cards and market response. Type a company by name and it is stored under that company's full name, so the same company does not end up as two entries; a subject that is not a company stays exactly as you typed it. Watchlist data stays in the local workspace.
 
-In a company detail, `My Thesis` lets you create or edit your thesis and use `Review with latest evidence`. Read current facts, your Thesis, the latest review, supporting and counter evidence, what to check next, and review history separately. Loading the screen does not run AI. `Challenge this Thesis` starts only when you explicitly select it, and its conversation does not automatically change a saved verdict.
+The list combines watched and currently held companies, with compact or card views, search, and filters. In company detail, `Reason for interest` or `Reason for investment` follows current holdings. A single sentence is enough; you can write a condition that would change your mind, say you do not know yet, or skip it. Earlier reasons and conditions stay in revision history. Reviewing new evidence and challenging a reason require explicit actions and never silently rewrite it. Optional AI assistance asks one question at a time and saves a suggested revision only after you review and approve it.
 
 Cards and detail views show the next earnings date with a countdown. When the date is a third-party estimate rather than something the company announced, it says so — check the company's own IR notice in that case.
 
@@ -130,11 +130,11 @@ Enter your holdings and see their value in a single currency, along with the wei
 
 Start with the saved holdings overview, then choose `Edit holdings` to make changes and save or cancel them. Unsaved edits do not change the basis used for valuation or conversation.
 
-`Investment review` is a saved, date-by-date check of the inputs used, changes since the previous review, priority positions, shared risks, sources, and history. Rule refresh, `Mark reviewed`, and `Challenge the weakest assumption` are separate actions: marking a review complete does not automatically change holdings, your Thesis, or saved check items. It helps you inspect your own reasoning; it does not provide buy, sell, hold, target-price, recommended-allocation or position-size instructions, entry, exit, or order instructions.
+`Investment review` is a saved, date-by-date check of the inputs used, changes since the previous review, priority positions, shared risks, sources, and history. Rule refresh, `Mark reviewed`, and `Challenge the weakest assumption` are separate actions: marking a review complete does not automatically change holdings, your investment reason, or saved check items. It helps you inspect your own reasoning; it does not provide buy, sell, hold, target-price, recommended-allocation or position-size instructions, entry, exit, or order instructions.
 
 Presets hold target weights. You can turn today's weights into a preset, then see how far each holding has drifted from the target and what you would need to buy or sell to close the gap. The backtest tab runs a preset over past prices against a benchmark, and can place several presets side by side. Backtests are for research: they have limits around taxes, fees, slippage, and dividends, and a result is kept only when you press save.
 
-Investment review distinguishes a missing Thesis, an unreviewed Thesis, and insufficient evidence after a review. Linked sources open their saved reports; history opens the selected date. Overdue counts describe the saved snapshot, not every currently unresolved item.
+Investment review distinguishes a missing investment reason, an unreviewed reason, and insufficient evidence after a review. Linked sources open their saved reports; history opens the selected date. Overdue counts describe the saved snapshot, not every currently unresolved item.
 
 ### Optional Toss Securities holdings import
 

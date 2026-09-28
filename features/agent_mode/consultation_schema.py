@@ -47,6 +47,9 @@ def normalize_scope(value: dict | None) -> dict:
     except (TypeError, ValueError):
         revision = 0
     identifier = clean_text(value.get("id") or value.get("reportId"), 160)
+    reason_revision_id = clean_text(value.get("reasonRevisionId"), 40)
+    if not re.fullmatch(r"[0-9a-f]{32}", reason_revision_id):
+        reason_revision_id = ""
     if kind == "investment_review" and _REVIEW_DATE_RE.fullmatch(identifier) is None:
         identifier = ""
     return {
@@ -58,6 +61,7 @@ def normalize_scope(value: dict | None) -> dict:
         # Used only by the immutable-at-open investment review challenge.  It
         # is a public revision number, not an internal input fingerprint.
         "revision": revision if kind == "investment_review" else 0,
+        "reasonRevisionId": reason_revision_id if kind == "watchlist" and intent == "challenge" else "",
     }
 
 

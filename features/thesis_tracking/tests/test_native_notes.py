@@ -22,6 +22,10 @@ from features.thesis_tracking import store as ST
 
 TICKER = "NVDA"
 
+
+def _revision_id(db_path, ticker=TICKER):
+    return TS.thesis_detail_payload(ticker, db_path=db_path, sync=False)["reasonRevision"]["revisionId"]
+
 TEMPLATE_BODY = """## 핵심 Thesis
 
 AI 가속기 수요가 2년은 이어진다.
@@ -80,7 +84,8 @@ def test_explicit_promote_keeps_fields_the_note_cannot_express():
         conn.close()
         # 핵심 Thesis 한 섹션만 있는 노트로 명시 갱신
         out = NN.register_thesis_from_note(
-            _note(body="## 핵심 Thesis\n\n새 논지다.\n"), db_path=db_path, overwrite=True
+            _note(body="## 핵심 Thesis\n\n새 논지다.\n"), db_path=db_path, overwrite=True,
+            expected_revision_id=_revision_id(db_path),
         )
         assert out["status"] == "updated"
         assert out["thesis"]["core_thesis"] == "새 논지다."
@@ -97,7 +102,7 @@ def test_partial_manual_update_does_not_transfer_ownership():
         from features.thesis_tracking import model as M
         ST.upsert_thesis(conn, M.Thesis(ticker=TICKER, core_thesis="Vault 논지", source="obsidian"))
         conn.close()
-        updated = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "high"}, db_path=db_path)
+        updated = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "high", "expectedRevisionId": _revision_id(db_path)}, db_path=db_path)
         assert updated["source"] == "obsidian"          # 소유권 유지
         assert updated["conviction"] == "high"
         created = TS.upsert_manual_thesis({"ticker": "AMD", "coreThesis": "새 논지"}, db_path=db_path)
@@ -215,10 +220,11 @@ def test_explicit_overwrite_updates_and_keeps_operating_fields():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         NN.register_thesis_from_note(_note(), db_path=db_path)
-        TS.upsert_manual_thesis({"ticker": TICKER, "review_cycle": "monthly", "conviction": "high"}, db_path=db_path)
+        TS.upsert_manual_thesis({"ticker": TICKER, "review_cycle": "monthly", "conviction": "high", "expectedRevisionId": _revision_id(db_path)}, db_path=db_path)
 
         result = NN.register_thesis_from_note(
-            _note(body="## 핵심 Thesis\n\n새 논리로 바꿨다."), db_path=db_path, overwrite=True
+            _note(body="## 핵심 Thesis\n\n새 논리로 바꿨다."), db_path=db_path, overwrite=True,
+            expected_revision_id=_revision_id(db_path),
         )
         assert result["status"] == "updated"
         conn = ST.connect(db_path)
@@ -243,7 +249,8 @@ def test_structured_checkpoints_survive_note_promotion():
         }])
         conn.close()
 
-        NN.register_thesis_from_note(_note(body=TEMPLATE_BODY), db_path=db_path, overwrite=True)
+        NN.register_thesis_from_note(_note(body=TEMPLATE_BODY), db_path=db_path, overwrite=True,
+                                     expected_revision_id=_revision_id(db_path))
         conn = ST.connect(db_path)
         stored = ST.get_thesis(conn, TICKER)
         conn.close()
@@ -305,11 +312,11 @@ def test_manual_thesis_only_overrides_supplied_keys():
     """한 칸만 고치는 호출이 나머지를 지우면 안 된다."""
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
-        TS.upsert_manual_thesis({
+        first = TS.upsert_manual_thesis({
             "ticker": TICKER, "company": "NVIDIA", "core_thesis": "AI 수요가 이어진다",
             "key_assumptions": ["자본지출 유지"], "conviction": "high",
         }, db_path=db_path)
-        out = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "medium"}, db_path=db_path)
+        out = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "medium", "expectedRevisionId": first["reasonRevision"]["revisionId"]}, db_path=db_path)
         assert out["conviction"] == "medium"
         assert out["core_thesis"] == "AI 수요가 이어진다"
         assert out["key_assumptions"] == ["자본지출 유지"]
@@ -332,7 +339,8 @@ def test_manual_edit_keeps_the_source_note_reference():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")
         NN.register_thesis_from_note(_note(), db_path=db_path)
-        out = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "high"}, db_path=db_path)
+        token = TS.thesis_detail_payload(TICKER, db_path=db_path, sync=False)["reasonRevision"]["revisionId"]
+        out = TS.upsert_manual_thesis({"ticker": TICKER, "conviction": "high", "expectedRevisionId": token}, db_path=db_path)
         assert out["note_path"] == "native_note:note-1"
 
 

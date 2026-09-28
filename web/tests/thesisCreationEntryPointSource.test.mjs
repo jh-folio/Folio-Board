@@ -12,10 +12,10 @@ async function cardSource() {
 
 test("empty state offers a way to create the thesis", async () => {
   const source = await cardSource();
-  assert.match(source, /이 노트로 Thesis 만들기/, "빈 상태에 Thesis 만들기 진입점이 없습니다");
+  assert.match(source, /이 노트로 이유 만들기/, "빈 상태에 이유 만들기 진입점이 없습니다");
   assert.match(
     source,
-    /연결된 Thesis가 없습니다\. 이 노트를 Thesis로 등록하면/,
+    /연결된 관심·투자 이유가 없습니다\. 이 노트를 이유로 등록하면/,
     "빈 상태 문구가 만드는 경로를 안내하지 않습니다",
   );
 });
@@ -23,7 +23,7 @@ test("empty state offers a way to create the thesis", async () => {
 test("both create and update go through the promote endpoint client", async () => {
   const source = await cardSource();
   assert.match(source, /promoteNoteToThesis\(/, "승격 API 클라이언트를 호출하지 않습니다");
-  assert.match(source, /이 노트로 Thesis 갱신/, "명시적 갱신 action이 없습니다");
+  assert.match(source, /이 노트로 이유 갱신/, "명시적 갱신 action이 없습니다");
 });
 
 test("overwriting an existing thesis asks first", async () => {

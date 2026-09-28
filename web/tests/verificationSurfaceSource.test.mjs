@@ -54,7 +54,7 @@ test("the two verdict enums never merge into one badge", async () => {
   }
 
   const workspace = await read(WORKSPACE);
-  assert.match(workspace, /Thesis 종합 판정/, "Thesis verdict 배지가 어느 층인지 말하지 않습니다");
+  assert.match(workspace, /이유 종합 판정/, "Thesis verdict 배지가 어느 층인지 말하지 않습니다");
   assert.match(workspace, /thesisVerdictDisplay\(delta\?\.verdict\)/, "Delta verdict가 6값 표를 쓰지 않습니다");
 });
 
@@ -109,7 +109,7 @@ test("Watchlist keeps Thesis creation in place and exposes both actions", async 
   assert.match(workspace, /saveThesis\(\{[\s\S]*ticker,/, "명시적 저장이 선택 ticker를 보내지 않습니다");
   assert.match(workspace, /onSubmit=\{\(event\) => \{ event\.preventDefault\(\); void saveDraft\(\); \}\}/, "Thesis 저장이 form action에 묶이지 않았습니다");
   assert.ok(!workspace.includes("window.location.hash"), "Thesis 편집이 Watchlist 밖으로 이동합니다");
-  assert.match(workspace, />Thesis 만들기\/수정</, "만들기·수정 action이 없습니다");
+  assert.match(workspace, /\$\{reasonLabel\} 남기기|\$\{reasonLabel\} 수정/, "만들기·수정 action이 없습니다");
   assert.match(workspace, />최신 근거로 검토</, "최신 근거 검토 action이 없습니다");
 });
 
@@ -166,7 +166,7 @@ test("linked-regime propagation says it changes nothing", async () => {
   // A.3 — 전파는 표시일 뿐 verdict를 바꾸지 않는다.
   const workspace = await read(WORKSPACE);
   assert.match(workspace, /regimeAlerts/, "연결 내러티브 경고를 읽지 않습니다");
-  assert.match(workspace, /표시일 뿐 Thesis 판정을 바꾸지 않습니다/, "전파 경계 문구가 없습니다");
+  assert.match(workspace, /표시일 뿐 이유나 종합 판정을 바꾸지 않습니다/, "전파 경계 문구가 없습니다");
 });
 
 test("new screen CSS uses tokens, not raw radius or weight numbers", async () => {

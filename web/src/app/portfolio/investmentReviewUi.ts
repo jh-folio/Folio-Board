@@ -100,7 +100,7 @@ export function sortReviewPositions<T extends ReviewPosition>(positions: readonl
 
 export function reviewReasonLabel(code: string | undefined): string {
   return {
-    thesis_review_needed: "Thesis 재검토",
+    thesis_review_needed: "투자 이유 재검토",
     checkpoint_due: "체크포인트 도래",
     checkpoint_pending: "체크포인트 확인",
     thesis_missing: "투자 논리 미작성",

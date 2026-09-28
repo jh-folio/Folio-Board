@@ -143,19 +143,33 @@ def _narrative_challenge_context(data_dir: Path, scope: dict) -> dict:
 def _thesis_challenge_context(data_dir: Path, scope: dict) -> dict:
     ticker = str(scope.get("id") or "").strip().upper()
     if not re.fullmatch(r"[A-Z0-9._-]{1,24}", ticker):
-        return _gap("watchlist", ticker, "선택한 Thesis 티커가 없거나 형식이 맞지 않습니다.")
+        return _gap("watchlist", ticker, "선택한 관심·투자 이유의 티커가 없거나 형식이 맞지 않습니다.")
+    revision_id = str(scope.get("reasonRevisionId") or "")
+    if not re.fullmatch(r"[0-9a-f]{32}", revision_id):
+        return _gap("watchlist", ticker, "선택한 이유의 개정 ID가 없어 정확한 반박 대상을 확인할 수 없습니다.")
+    from features.thesis_tracking.service import reason_revision_payload
+    reason = reason_revision_payload(ticker, revision_id, db_path=Path(data_dir) / "market-memory.sqlite3")
+    if reason is None:
+        return _gap("watchlist", ticker, "선택한 이유의 개정을 찾지 못했습니다. 현재 이유로 대체하지 않습니다.")
     payload = thesis_workspace_payload(ticker, Path(data_dir) / "market-memory.sqlite3")
     thesis = payload.get("thesis") if isinstance(payload, dict) else None
     if not payload.get("hasThesis") or not isinstance(thesis, dict):
-        return _gap("watchlist", ticker, "선택한 종목에 저장된 Thesis가 없습니다.")
-    latest = payload.get("latestDelta") if isinstance(payload.get("latestDelta"), dict) else None
+        return _gap("watchlist", ticker, "선택한 종목에 저장된 관심·투자 이유가 없습니다.")
+    current_delta = payload.get("latestDelta") if isinstance(payload.get("latestDelta"), dict) else None
+    delta_link = next((item for item in payload.get("reasonConnections") or []
+                       if item.get("kind") == "delta" and item.get("reasonRevisionId") == revision_id), None)
+    latest = current_delta if delta_link else None
     anchor = _evidence_anchor((latest or {}).get("generatedAt"))
     supporting, excluded_supporting = _challenge_evidence((latest or {}).get("supportingEvidence"), anchor=anchor)
     counter, excluded_counter = _challenge_evidence((latest or {}).get("counterEvidence"), anchor=anchor)
     checkpoints = []
     excluded_checkpoints = 0
+    old_conditions = set(reason["content"].get("falsification_triggers") or [])
+    old_conditions.update(reason["content"].get("next_checkpoints") or [])
     for row in ((payload.get("checkpoints") or {}).get("structured") or [])[:CHALLENGE_MAX_CHECKPOINTS]:
         if not isinstance(row, dict):
+            continue
+        if row.get("item") not in old_conditions:
             continue
         checkpoint, excluded = _challenge_checkpoint(row, anchor=anchor)
         checkpoints.append(checkpoint)
@@ -173,7 +187,7 @@ def _thesis_challenge_context(data_dir: Path, scope: dict) -> dict:
         "checkpoints": checkpoints,
         "linkedAlerts": _challenge_alerts(payload.get("regimeAlerts")),
     }
-    gaps = [] if latest else [{"scope": "watchlist", "id": ticker, "reason": "최신 Thesis 검증 결과가 아직 없습니다."}]
+    gaps = [] if latest else [{"scope": "watchlist", "id": ticker, "reason": "선택한 이유 개정에 연결된 Delta 검증 결과가 없습니다."}]
     excluded_evidence = excluded_supporting + excluded_counter + excluded_checkpoints
     if excluded_evidence:
         gaps.append({"scope": "watchlist", "id": ticker,
@@ -183,9 +197,10 @@ def _thesis_challenge_context(data_dir: Path, scope: dict) -> dict:
             "ticker": ticker,
             "hypothesis": {
                 "layer": "hypothesis", "reuseAsEvidence": False,
-                "coreThesis": _clip(thesis.get("coreThesis"), 1200),
-                "keyAssumptions": [_clip(row) for row in (thesis.get("keyAssumptions") or [])[:CHALLENGE_MAX_CHECKPOINTS]],
-                "falsificationTriggers": [_clip(row) for row in (thesis.get("falsificationTriggers") or [])[:CHALLENGE_MAX_CHECKPOINTS]],
+                "reasonRevisionId": revision_id,
+                "coreThesis": _clip(reason["content"].get("core_thesis"), 1200),
+                "keyAssumptions": [_clip(row) for row in (reason["content"].get("key_assumptions") or [])[:CHALLENGE_MAX_CHECKPOINTS]],
+                "falsificationTriggers": [_clip(row) for row in (reason["content"].get("falsification_triggers") or [])[:CHALLENGE_MAX_CHECKPOINTS]],
             },
             "verification": verification,
         },

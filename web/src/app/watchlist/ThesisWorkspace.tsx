@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiRequestError,
+  assistReason,
+  approveAssistedReason,
+  completeReasonReview,
   getThesisWorkspace,
   runThesisReview,
   saveThesis,
   type ThesisReviewJob,
   type ThesisReviewResult,
+  type ReasonAssistAnswer,
+  type ReasonAssistResult,
   type ThesisWorkspacePayload,
   type TrackedCheckpointView,
 } from "../../api";
 import { pollAgentJobBounded } from "../agentPolling";
 import { openScopedThread } from "../agentWorkspace/openScopedThread";
+import type { EarningsEvent } from "../watchlistEarnings";
 import {
   checkpointDisplay,
   thesisVerdictDisplay,
@@ -82,18 +89,34 @@ function EvidenceList({ items, empty }: { items: Array<{ title: string; source: 
 }
 
 function emptyDraft() {
-  return { coreThesis: "", keyAssumptions: "", falsificationTriggers: "", reviewCycle: "quarterly", conviction: "medium" };
+  return { coreThesis: "", keyAssumptions: "", falsificationTriggers: "", reviewCycle: "", conviction: "",
+    conditionResponse: "unanswered" as "unanswered" | "unknown" | "skipped" | "written", changeReason: "" };
 }
 
-export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; companyName?: string }) {
+// Route changes unmount the detail. Keep unsaved words for this browser session.
+const draftCache = new Map<string, ReturnType<typeof emptyDraft>>();
+
+export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { ticker: string; companyName?: string; earningsEvent?: EarningsEvent }) {
   const [payload, setPayload] = useState<ThesisWorkspacePayload | null>(null);
   const [error, setError] = useState("");
   const [reviewBusy, setReviewBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantError, setAssistantError] = useState("");
+  const [assistantQuestion, setAssistantQuestion] = useState("");
+  const [assistantAnswer, setAssistantAnswer] = useState("");
+  const [assistantAnswers, setAssistantAnswers] = useState<ReasonAssistAnswer[]>([]);
+  const [assistantPreview, setAssistantPreview] = useState<ReasonAssistResult | null>(null);
+  const [assistantFinalReason, setAssistantFinalReason] = useState("");
+  const [assistantFinalCondition, setAssistantFinalCondition] = useState("");
+  const [reviewOutcome, setReviewOutcome] = useState("");
+  const [reviewScope, setReviewScope] = useState("");
   const reviewController = useRef<AbortController | null>(null);
   const saveController = useRef<AbortController | null>(null);
+  const assistantController = useRef<AbortController | null>(null);
   // effect 정리보다 먼저 최신 prop을 보관해, ticker 전환 렌더와 effect 사이에
   // 도착한 이전 종목 저장 응답도 새 화면을 덮지 못하게 한다.
   const activeTicker = useRef(ticker);
@@ -101,37 +124,133 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
 
   useEffect(() => {
     reviewController.current?.abort();
+    assistantController.current?.abort();
     saveController.current?.abort();
     saveController.current = null;
     setPayload(null);
     setError("");
-    setEditing(false);
+    setEditing(draftCache.has(ticker));
     setSaving(false);
-    setDraft(emptyDraft());
+    setReviewBusy(false);
+    setAssistantOpen(false);
+    setAssistantBusy(false);
+    setAssistantError("");
+    setAssistantQuestion("");
+    setAssistantAnswers([]);
+    setAssistantPreview(null);
+    setReviewOutcome("");
+    setReviewScope("");
+    setDraft(draftCache.get(ticker) || emptyDraft());
     if (!ticker) return;
     const controller = new AbortController();
     getThesisWorkspace(ticker, { signal: controller.signal })
       .then(setPayload)
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "Thesis 상태를 불러오지 못했습니다.");
+        setError(err instanceof Error ? err.message : "관심·투자 이유를 불러오지 못했습니다.");
       });
-    return () => { controller.abort(); reviewController.current?.abort(); saveController.current?.abort(); };
+    return () => { controller.abort(); reviewController.current?.abort(); saveController.current?.abort(); assistantController.current?.abort(); };
   }, [ticker]);
 
   const thesis = payload?.thesis || null;
   const delta = payload?.latestDelta || null;
   const verdict = thesisVerdictDisplay(delta?.verdict);
   const checkpoints = payload?.checkpoints;
+  const reasonLabel = payload?.reasonKind === "investment" ? "투자 이유" : "관심 이유";
+
+  function updateDraft(next: ReturnType<typeof emptyDraft>) {
+    setDraft(next);
+    draftCache.set(ticker, next);
+  }
+
+  async function runAssistant(phase: "question" | "draft", answers = assistantAnswers) {
+    if (!ticker || assistantBusy) return;
+    const controller = new AbortController();
+    assistantController.current?.abort();
+    assistantController.current = controller;
+    setAssistantBusy(true);
+    setAssistantError("");
+    try {
+      const result = await assistReason(ticker, {
+        expectedRevisionId: payload?.reasonRevision?.revisionId || "",
+        draftReason: draft.coreThesis, draftCondition: draft.falsificationTriggers,
+        answers, phase,
+      }, { signal: controller.signal });
+      if (controller.signal.aborted || activeTicker.current !== ticker) return;
+      if (result.phase === "question") {
+        setAssistantQuestion(result.question || "");
+        setAssistantAnswer("");
+      } else {
+        setAssistantQuestion("");
+        setAssistantPreview(result);
+        setAssistantFinalReason(result.suggestedReason || "");
+        setAssistantFinalCondition(result.suggestedCondition || "");
+      }
+    } catch (err) {
+      if (controller.signal.aborted || activeTicker.current !== ticker) return;
+      setAssistantError(err instanceof ApiRequestError && err.status === 409
+        ? "이유가 다른 화면에서 바뀌었습니다. 초안은 남아 있습니다. 최신 이유를 확인해 주세요."
+        : "AI 정리를 마치지 못했습니다. 직접 입력과 저장은 계속 사용할 수 있습니다.");
+    } finally {
+      if (assistantController.current === controller) setAssistantBusy(false);
+    }
+  }
+
+  function answerAssistant(response: ReasonAssistAnswer["response"]) {
+    if (!assistantQuestion) return;
+    const next = [...assistantAnswers, { question: assistantQuestion,
+      answer: response === "written" ? assistantAnswer.trim() : "", response }];
+    setAssistantAnswers(next);
+    setAssistantQuestion("");
+    setAssistantAnswer("");
+    if (next.length < 3) void runAssistant("question", next);
+    else void runAssistant("draft", next);
+  }
+
+  async function approveAssistant() {
+    if (!assistantPreview?.previewToken || assistantBusy) return;
+    const controller = new AbortController();
+    assistantController.current = controller;
+    setAssistantBusy(true);
+    setAssistantError("");
+    try {
+      await approveAssistedReason(ticker, {
+        expectedRevisionId: assistantPreview.revisionId,
+        previewToken: assistantPreview.previewToken,
+        suggestedReason: assistantPreview.suggestedReason,
+        suggestedCondition: assistantPreview.suggestedCondition,
+        coreThesis: assistantFinalReason,
+        conditionText: assistantFinalCondition,
+        conditionResponse: draft.conditionResponse,
+        changeReason: draft.changeReason,
+      }, { signal: controller.signal });
+      const refreshed = await getThesisWorkspace(ticker, { signal: controller.signal });
+      if (controller.signal.aborted || activeTicker.current !== ticker) return;
+      setPayload(refreshed);
+      setEditing(false);
+      setAssistantOpen(false);
+      setAssistantPreview(null);
+      draftCache.delete(ticker);
+    } catch (err) {
+      if (controller.signal.aborted || activeTicker.current !== ticker) return;
+      setAssistantError(err instanceof ApiRequestError && err.status === 409
+        ? "현재 이유가 바뀌어 제안을 저장하지 않았습니다. 원문과 최신 기록을 비교해 주세요."
+        : "제안을 저장하지 못했습니다. 원문과 직접 저장은 그대로 사용할 수 있습니다.");
+    } finally {
+      if (assistantController.current === controller) setAssistantBusy(false);
+    }
+  }
 
   function beginEdit() {
     const current = payload?.thesis;
-    setDraft({
+    updateDraft(draftCache.get(ticker) || {
       coreThesis: current?.coreThesis || "",
       keyAssumptions: (current?.keyAssumptions || []).join("\n"),
       falsificationTriggers: (current?.falsificationTriggers || []).join("\n"),
-      reviewCycle: current?.reviewCycle || "quarterly",
-      conviction: current?.conviction || "medium",
+      reviewCycle: payload?.reasonRevision?.fieldPresence.review_cycle === true ? current?.reviewCycle || "" : "",
+      conviction: payload?.reasonRevision?.fieldPresence.conviction === true ? current?.conviction || "" : "",
+      conditionResponse: (payload?.reasonRevision?.conditionResponse === "legacy_unknown" ? "unanswered" : payload?.reasonRevision?.conditionResponse) || "unanswered",
+      changeReason: "",
     });
     setError("");
     setEditing(true);
@@ -151,16 +270,25 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
         coreThesis: draft.coreThesis.trim(),
         keyAssumptions: draft.keyAssumptions.split("\n").map((value) => value.trim()).filter(Boolean),
         falsificationTriggers: draft.falsificationTriggers.split("\n").map((value) => value.trim()).filter(Boolean),
-        reviewCycle: draft.reviewCycle,
-        conviction: draft.conviction,
+        expectedRevisionId: payload?.reasonRevision?.revisionId || "",
+        conditionResponse: draft.falsificationTriggers.trim() ? "written" : draft.conditionResponse,
+        changeReason: draft.changeReason,
+        ...(draft.reviewCycle ? { reviewCycle: draft.reviewCycle } : {}),
+        ...(draft.conviction ? { conviction: draft.conviction } : {}),
       }, { signal: controller.signal });
       const refreshed = await getThesisWorkspace(ticker, { signal: controller.signal });
       if (controller.signal.aborted || saveController.current !== controller || activeTicker.current !== ticker) return;
       setPayload(refreshed);
       setEditing(false);
+      draftCache.delete(ticker);
     } catch (err) {
       if (controller.signal.aborted || saveController.current !== controller || activeTicker.current !== ticker) return;
-      setError(err instanceof Error ? err.message : "Thesis를 저장하지 못했습니다.");
+      setError(err instanceof ApiRequestError && err.status === 409
+        ? "다른 화면에서 이유가 먼저 바뀌었습니다. 입력한 문장은 남아 있습니다. 최신 기록을 확인한 뒤 다시 저장해 주세요."
+        : err instanceof Error ? err.message : "이유를 저장하지 못했습니다.");
+      if (err instanceof ApiRequestError && err.status === 409) {
+        getThesisWorkspace(ticker).then((current) => { if (activeTicker.current === ticker) setPayload(current); });
+      }
     } finally {
       if (saveController.current === controller && activeTicker.current === ticker) {
         saveController.current = null;
@@ -181,13 +309,42 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
       reviewController.current = controller;
       const result = await runThesisReview(ticker, { signal: controller.signal });
       if (isReviewJob(result)) await pollAgentJobBounded(result, { signal: controller.signal });
-      setPayload(await getThesisWorkspace(ticker, { signal: controller.signal }));
+      const refreshed = await getThesisWorkspace(ticker, { signal: controller.signal });
+      if (!controller.signal.aborted && activeTicker.current === ticker) setPayload(refreshed);
     } catch (err) {
       if (controller?.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
-      setError(err instanceof Error ? err.message : "최신 근거 검토를 완료하지 못했습니다.");
-      } finally {
+      if (activeTicker.current === ticker) setError(err instanceof Error ? err.message : "최신 근거 검토를 완료하지 못했습니다.");
+    } finally {
       if (reviewController.current?.signal === controller?.signal) reviewController.current = null;
-      setReviewBusy(false);
+      if (activeTicker.current === ticker) setReviewBusy(false);
+    }
+  }
+
+  async function completeReview() {
+    if (!ticker || !payload?.reasonRevision || !reviewOutcome || reviewBusy) return;
+    const controller = new AbortController();
+    reviewController.current?.abort();
+    reviewController.current = controller;
+    setReviewBusy(true);
+    setError("");
+    try {
+      await completeReasonReview(ticker, {
+        expectedRevisionId: payload.reasonRevision.revisionId,
+        outcome: reviewOutcome,
+        checkedScope: reviewScope.split(/[\n,]/).map((text) => text.trim()).filter(Boolean),
+      }, { signal: controller.signal });
+      const refreshed = await getThesisWorkspace(ticker, { signal: controller.signal });
+      if (controller.signal.aborted || activeTicker.current !== ticker) return;
+      setPayload(refreshed);
+      setReviewOutcome("");
+      setReviewScope("");
+    } catch (err) {
+      if (controller.signal.aborted || activeTicker.current !== ticker) return;
+      setError(err instanceof ApiRequestError && err.status === 409
+        ? "검토 중 이유가 바뀌었습니다. 새 이유를 확인한 뒤 다시 검토해 주세요."
+        : "검토 종료를 저장하지 못했습니다. 선택과 확인 범위를 다시 살펴봐 주세요.");
+    } finally {
+      if (reviewController.current === controller) setReviewBusy(false);
     }
   }
 
@@ -196,35 +353,69 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
       className="thesis-workspace"
       data-layer="hypothesis"
       data-qa="thesis-workspace"
-      aria-label="내 Thesis 검증"
+      aria-label={`내 ${reasonLabel}와 확인`}
     >
       <div className="watchlist-detail-section__head">
-        <h3>내 Thesis</h3>
+        <h3>내 {reasonLabel}</h3>
         {/* 사실 영역과 개인 영역의 경계를 화면이 직접 말한다. */}
         <span className="chip verification-chip" data-tone="muted">내 생각·가설 · 근거 아님</span>
       </div>
 
       {error && <p className="react-dashboard-error" role="alert">{error}</p>}
-      {!payload && !error && <div className="verification-skeleton" aria-label="Thesis 상태를 불러오는 중"><span className="verification-skeleton__line verification-skeleton__line--title" /><span className="verification-skeleton__line" /><span className="verification-skeleton__line verification-skeleton__line--short" /></div>}
+      {!payload && !error && <div className="verification-skeleton" aria-label="관심·투자 이유를 불러오는 중"><span className="verification-skeleton__line verification-skeleton__line--title" /><span className="verification-skeleton__line" /><span className="verification-skeleton__line verification-skeleton__line--short" /></div>}
 
       {payload && editing && (
         <form className="thesis-workspace__editor" onSubmit={(event) => { event.preventDefault(); void saveDraft(); }}>
-          <h4>{payload.hasThesis ? "Thesis 수정" : "Thesis 만들기"}</h4>
-          <label className="field">핵심 Thesis<textarea required value={draft.coreThesis} onChange={(event) => setDraft({ ...draft, coreThesis: event.target.value })} rows={4} /></label>
-          <label className="field">핵심 가정 (한 줄에 하나)<textarea value={draft.keyAssumptions} onChange={(event) => setDraft({ ...draft, keyAssumptions: event.target.value })} rows={3} /></label>
-          <label className="field">이탈 조건 (한 줄에 하나)<textarea value={draft.falsificationTriggers} onChange={(event) => setDraft({ ...draft, falsificationTriggers: event.target.value })} rows={3} /></label>
-          <div className="thesis-workspace__editor-grid">
-            <label className="field">확신도<select value={draft.conviction} onChange={(event) => setDraft({ ...draft, conviction: event.target.value })}><option value="low">낮음</option><option value="medium">보통</option><option value="medium_high">중상</option><option value="high">높음</option></select></label>
-            <label className="field">검토 주기<select value={draft.reviewCycle} onChange={(event) => setDraft({ ...draft, reviewCycle: event.target.value })}><option value="weekly">매주</option><option value="monthly">매월</option><option value="quarterly">분기별</option><option value="event_driven">이벤트 발생 시</option></select></label>
+          <h4>{payload.hasThesis ? `${reasonLabel} 수정` : `${reasonLabel} 남기기`}</h4>
+          <label className="field">{reasonLabel}<textarea required value={draft.coreThesis} onChange={(event) => updateDraft({ ...draft, coreThesis: event.target.value })} rows={3} placeholder="예: 돈을 잘 벌어서" /></label>
+          <label className="field">어떤 일이 생기면 이 이유를 더는 믿기 어려울까요?<textarea value={draft.falsificationTriggers} onChange={(event) => updateDraft({ ...draft, falsificationTriggers: event.target.value, conditionResponse: event.target.value.trim() ? "written" : "unanswered" })} rows={3} placeholder="예: 고객이 경쟁 제품으로 떠나면" /></label>
+          <div className="segment" role="group" aria-label="판단 변경 조건 답변">
+            {([ ["unanswered", "나중에 답하기"], ["unknown", "아직 모르겠어요"], ["skipped", "건너뛰기"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={draft.conditionResponse === value && !draft.falsificationTriggers.trim()} onClick={() => updateDraft({ ...draft, falsificationTriggers: "", conditionResponse: value })}>{label}</button>)}
           </div>
-          <div className="thesis-workspace__editor-actions"><button className="btn btn--primary" type="submit" disabled={saving || !draft.coreThesis.trim()}>{saving ? "저장 중…" : "Thesis 저장"}</button><button className="btn" type="button" onClick={() => setEditing(false)} disabled={saving}>취소</button></div>
+          <details><summary>가정과 상세 입력 (선택)</summary>
+          <label className="field">핵심 가정 (한 줄에 하나)<textarea value={draft.keyAssumptions} onChange={(event) => updateDraft({ ...draft, keyAssumptions: event.target.value })} rows={3} /></label>
+          <div className="thesis-workspace__editor-grid">
+            <label className="field">확신도<select value={draft.conviction} onChange={(event) => updateDraft({ ...draft, conviction: event.target.value })}><option value="">입력하지 않음</option><option value="low">낮음</option><option value="medium">보통</option><option value="medium_high">중상</option><option value="high">높음</option></select></label>
+            <label className="field">검토 주기<select value={draft.reviewCycle} onChange={(event) => updateDraft({ ...draft, reviewCycle: event.target.value })}><option value="">입력하지 않음</option><option value="weekly">매주</option><option value="monthly">매월</option><option value="quarterly">분기별</option><option value="event_driven">이벤트 발생 시</option></select></label>
+          </div>
+          <label className="field">수정 이유 (선택)<input value={draft.changeReason} onChange={(event) => updateDraft({ ...draft, changeReason: event.target.value })} /></label>
+          </details>
+          <div className="thesis-workspace__editor-actions"><button className="btn btn--primary" type="submit" disabled={saving || !draft.coreThesis.trim()}>{saving ? "저장 중…" : `${reasonLabel} 저장`}</button><button className="btn" type="button" onClick={() => setEditing(false)} disabled={saving}>닫기</button></div>
+          <div className="thesis-workspace__assistant">
+            <button className="btn" type="button" aria-expanded={assistantOpen} onClick={() => setAssistantOpen((value) => !value)}>AI와 함께 정리하기</button>
+            {assistantOpen && <div className="surface surface--inset">
+              <p>AI 제안은 저장 전까지 초안입니다. 한 번에 한 질문씩 답하거나 언제든 건너뛸 수 있습니다.</p>
+              {assistantError && <p role="alert">{assistantError}</p>}
+              {!assistantQuestion && !assistantPreview && <button className="btn" type="button" disabled={assistantBusy} onClick={() => void runAssistant("question")}>{assistantBusy ? "질문 준비 중…" : "질문 받기"}</button>}
+              {assistantQuestion && <div>
+                <p><strong>{assistantQuestion}</strong></p>
+                <label className="field">내 답변<textarea value={assistantAnswer} onChange={(event) => setAssistantAnswer(event.target.value)} rows={2} /></label>
+                <div className="thesis-workspace__editor-actions">
+                  <button className="btn" type="button" disabled={assistantBusy || !assistantAnswer.trim()} onClick={() => answerAssistant("written")}>답하고 계속</button>
+                  <button className="btn" type="button" disabled={assistantBusy} onClick={() => answerAssistant("unknown")}>모르겠어요</button>
+                  <button className="btn" type="button" disabled={assistantBusy} onClick={() => answerAssistant("skipped")}>건너뛰기</button>
+                  <button className="btn" type="button" disabled={assistantBusy} onClick={() => void runAssistant("draft")}>질문 마치고 초안 보기</button>
+                </div>
+              </div>}
+              {assistantPreview && <div>
+                <h5>원문과 AI 제안 비교</h5>
+                <p>원문: <del>{assistantPreview.originalReason || "(비어 있음)"}</del></p>
+                <p>제안: <ins>{assistantPreview.suggestedReason}</ins></p>
+                <p>조건 원문: {assistantPreview.originalCondition || "(비어 있음)"} · 제안: {assistantPreview.suggestedCondition || "(비어 있음)"}</p>
+                {(assistantPreview.uncertainties || []).length > 0 && <p>아직 모르는 점: {assistantPreview.uncertainties?.join(" · ")}</p>}
+                <label className="field">저장할 내 문장<textarea value={assistantFinalReason} onChange={(event) => setAssistantFinalReason(event.target.value)} rows={3} /></label>
+                <label className="field">저장할 판단 변경 조건<textarea value={assistantFinalCondition} onChange={(event) => setAssistantFinalCondition(event.target.value)} rows={2} /></label>
+                <button className="btn btn--primary" type="button" disabled={assistantBusy || !assistantFinalReason.trim()} onClick={() => void approveAssistant()}>{assistantBusy ? "저장 중…" : "확인하고 저장"}</button>
+              </div>}
+            </div>}
+          </div>
         </form>
       )}
 
-      {payload && !payload.hasThesis && (
+      {payload && !payload.hasThesis && !editing && (
         <div className="thesis-workspace__intro">
           <p className="thesis-workspace__empty">
-            이 종목에 등록된 Thesis가 없습니다. Thesis를 만들면 저장해 둔 확인 항목을 새 근거와 매일 대조합니다.
+            이 종목에 남긴 {reasonLabel}가 없습니다. 한 줄만 적어도 됩니다. 작성하지 않아도 기업 자료를 볼 수 있습니다.
           </p>
           {payload.ownership?.vaultNote ? (
             <p className="thesis-workspace__note">
@@ -233,10 +424,10 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
             </p>
           ) : (
             <p className="thesis-workspace__note">
-              기업 분석 보고서의 <strong>투자 생각 정리</strong>에서 노트를 쓰면 Thesis로 등록됩니다.
+              기업 분석 보고서의 <strong>투자 생각 정리</strong>에서 노트를 쓰면 같은 이유 기록으로 연결됩니다.
             </p>
           )}
-          <button className="btn" type="button" onClick={beginEdit}>Thesis 만들기</button>
+          <button className="btn btn--primary" type="button" onClick={beginEdit}>{reasonLabel} 남기기</button>
         </div>
       )}
 
@@ -262,18 +453,19 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
                   </span>{" "}
                   <strong>{alert.label}</strong>에 반증 신호가 있습니다
                   {alert.reasons[0]?.detail ? ` — ${alert.reasons[0].detail}` : ""}.
-                  <small> 이 경고는 표시일 뿐 Thesis 판정을 바꾸지 않습니다.</small>
+                  <small> 이 경고는 표시일 뿐 이유나 종합 판정을 바꾸지 않습니다.</small>
                 </p>
               ))}
             </div>
           )}
 
           <div className="thesis-workspace__block">
-            <h4>핵심 Thesis</h4>
+            <h4>{reasonLabel}</h4>
             <p className="thesis-workspace__core">{thesis.coreThesis || "핵심 논지가 비어 있습니다."}</p>
+            <p className="thesis-workspace__meta">{payload.reasonRevision ? `기록 ${verificationDate(payload.reasonRevision.recordedAt)} · 개정 ${payload.reasonRevision.revision}` : "기록 시각 확인 불가"} · {reasonStatusLabel(payload.reasonStatus)}</p>
             <p className="thesis-workspace__meta">
-              확신도 {displayConviction(thesis.conviction)} · 검토 주기 {displayReviewCycle(thesis.reviewCycle)} · 최근 검토{" "}
-              {verificationDate(thesis.lastReviewedAt)}
+              확신도 {payload.reasonRevision?.fieldPresence.conviction === true ? displayConviction(thesis.conviction) : "입력하지 않음"} · 검토 주기 {payload.reasonRevision?.fieldPresence.review_cycle === true ? displayReviewCycle(thesis.reviewCycle) : "입력하지 않음"} · 최근 검토{" "}
+              {verificationDate(payload.reviewEvents.find((event) => event.source === "manual_review" || event.source === "explicit_delta")?.reviewedAt || thesis.lastReviewedAt)}
             </p>
             {thesis.falsificationTriggers.length > 0 && (
               <>
@@ -283,7 +475,57 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
                 </ul>
               </>
             )}
+            {payload.reasonRevision?.conditionResponse === "unknown" && <p className="thesis-workspace__note">판단을 바꿀 상황: 아직 모르겠어요</p>}
+            {payload.reasonRevision?.conditionResponse === "skipped" && <p className="thesis-workspace__note">판단을 바꿀 상황: 이번에는 건너뜀</p>}
+            <button className="btn" type="button" onClick={beginEdit}>{reasonLabel} 수정</button>
           </div>
+
+          <div className="thesis-workspace__block" data-qa="reason-connections">
+            <h4>이 이유와 함께 볼 변화</h4>
+            <p className="thesis-workspace__note">연결된 자료는 판단을 대신하지 않습니다. 관계를 확인하지 못한 변화는 따로 표시합니다.</p>
+            {payload.reasonConnections.length ? <ul className="thesis-workspace__list">
+              {payload.reasonConnections.map((item) => <li key={`${item.kind}:${item.identity}`}>
+                <strong>{item.kind === "checkpoint" ? "확인 항목" : item.kind === "delta" ? "종합 검토" : "연결 자료"}</strong> · {item.label}
+                {item.at ? ` · ${verificationDate(item.at)}` : ""} · {item.source}
+                {item.kind === "checkpoint" && <small> · {item.status === "no_signal" ? "신호 없음" : item.status === "confirmed" ? "확인됨" : item.status === "challenged" ? "반증" : item.status === "expired" ? "기한 경과" : "상태 미확인"}</small>}
+                {item.kind === "delta" && item.status && <small> · {thesisVerdictDisplay(item.status).label}</small>}
+                <small> · {item.relationship === "exact_condition" || item.relationship === "exact_revision" || item.relationship === "user_linked" ? `이유 개정 ${payload.reasonRevision?.revision}에 연결` : "이 이유에 미치는 영향 미확인"}</small>
+                {item.gap && <small> · {item.gap}</small>}
+                {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer"> 원문 열기</a>}
+              </li>)}
+            </ul> : <p className="thesis-workspace__empty">아직 이 이유에 연결된 변화가 없습니다. 새 자료를 확인하지 않았다는 뜻과는 다릅니다.</p>}
+            {earningsEvent?.startsAt && <p className="thesis-workspace__note">다음 실적 예정 {verificationDate(earningsEvent.startsAt)} · 이 이유에 미치는 영향은 아직 확인하지 못했습니다. <button className="btn btn--text" type="button" onClick={() => document.getElementById("watchlist-earnings")?.scrollIntoView({ block: "start", behavior: "smooth" })}>실적 보기</button></p>}
+            {!earningsEvent?.startsAt && <p className="thesis-workspace__note">실적 일정은 아래 실적 패널에서 확인하세요. 이 이유와의 관계는 자동 판정하지 않습니다.</p>}
+          </div>
+
+          <div className="thesis-workspace__block">
+            <h4>이번 검토 마치기</h4>
+            <p className="thesis-workspace__note">읽기만 하거나 화면을 닫아도 검토 완료로 기록되지 않습니다. 실제로 확인한 범위만 남겨 주세요.</p>
+            <label className="field">확인 결과<select value={reviewOutcome} onChange={(event) => setReviewOutcome(event.target.value)}>
+              <option value="">선택해 주세요</option><option value="no_material_change">확인한 범위에서 중요한 변화 없음</option>
+              <option value="no_new_material">새 자료를 확보하지 못함</option><option value="evidence_gap">자료가 부족하거나 상충함</option>
+              <option value="collection_failed">수집 또는 조회 실패</option><option value="unsupported">이 자료는 현재 지원하지 않음</option>
+              <option value="deferred">판단을 보류하고 마침</option><option value="reviewed">자료를 확인함</option>
+            </select></label>
+            <label className="field">실제로 확인한 자료·범위<input value={reviewScope} onChange={(event) => setReviewScope(event.target.value)} placeholder="예: 최근 실적 발표, 저장된 Delta" /></label>
+            <button className="btn" type="button" disabled={reviewBusy || !reviewOutcome || !reviewScope.trim()} onClick={() => void completeReview()}>{reviewBusy ? "기록 중…" : "이번 검토 마치기"}</button>
+            {payload.reviewEvents.filter((event) => event.source === "manual_review" || event.source === "explicit_delta").slice(0, 1).map((event) => <p key={event.eventId} className="thesis-workspace__meta">최근 검토 {verificationDate(event.reviewedAt)} · {reviewOutcomeLabel(event.outcome)} · 범위 {event.checkedScope.join(", ") || "기록 없음"}</p>)}
+          </div>
+
+          <details className="thesis-workspace__block">
+            <summary>이전 이유와 조건 보기 ({Math.max(0, payload.reasonHistory.length - 1)}건)</summary>
+            <ol className="verification-timeline__list">
+              {payload.reasonHistory.map((revision) => <li key={revision.revisionId}>
+                <span className="verification-timeline__date">개정 {revision.revision} · 앱 기록 {verificationDate(revision.recordedAt)}</span>
+                <span className="verification-timeline__body">{String(revision.content.core_thesis || "(비어 있음)")}
+                  {(revision.content.falsification_triggers as string[] || []).length > 0 && ` · 조건: ${(revision.content.falsification_triggers as string[]).join(" / ")}`}
+                  {revision.changeReason ? ` · 수정 이유: ${revision.changeReason}` : " · 수정 이유 미입력"}
+                  {revision.userStatedAt ? ` · 사용자 진술 시각: ${revision.userStatedAt}` : ""}
+                  {revision.basisRefs.length ? ` · 자료 참조 ${revision.basisRefs.map((ref) => `${ref.id || ref.title || "자료"}@${ref.revision || "시점 미상"}`).join(", ")}` : ""}
+                </span>
+              </li>)}
+            </ol>
+          </details>
 
           <div className="thesis-workspace__block">
             <h4>최신 검증</h4>
@@ -295,7 +537,7 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
                     <span aria-hidden="true">{verdict.icon}</span> {verdict.label}
                   </span>
                   <span className="thesis-workspace__meta">
-                    Thesis 종합 판정 · {verificationDate(delta.generatedAt)}
+                    이유 종합 판정 · {verificationDate(delta.generatedAt)}
                     {delta.period ? ` · ${displayPeriod(delta.period)} 창` : ""}
                   </span>
                 </p>
@@ -359,8 +601,7 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
           </div>
 
           <div className="thesis-workspace__block thesis-workspace__actions">
-            <h4>Thesis 작업</h4>
-            <button className="btn" type="button" onClick={beginEdit}>Thesis 만들기/수정</button>
+            <h4>{reasonLabel} 작업</h4>
             <button className="btn" type="button" onClick={() => void reviewLatestEvidence()} disabled={reviewBusy}>
               {reviewBusy ? "최신 근거를 검토하는 중…" : "최신 근거로 검토"}
             </button>
@@ -368,13 +609,13 @@ export function ThesisWorkspace({ ticker, companyName = "" }: { ticker: string; 
               className="btn"
               type="button"
               onClick={() => openScopedThread({
-                title: `${ticker} Thesis 반박 대화`,
-            scope: { kind: "watchlist", id: ticker, tickers: [ticker], intent: "challenge" },
-                initialMessage: "이 Thesis를 반박해줘",
+                title: `${ticker} ${reasonLabel} 반박 대화`,
+            scope: { kind: "watchlist", id: ticker, tickers: [ticker], intent: "challenge", reasonRevisionId: payload.reasonRevision?.revisionId || "" },
+                initialMessage: `이 ${reasonLabel}를 반박해줘`,
                 autoSubmit: true,
               })}
             >
-              이 Thesis를 반박해줘
+              이 {reasonLabel}를 반박해줘
             </button>
           </div>
 
@@ -424,6 +665,12 @@ function isReviewJob(result: ThesisReviewResult): result is ThesisReviewJob {
 
 function displayConviction(value: string) {
   return ({ low: "낮음", medium: "보통", medium_high: "중상", high: "높음" } as Record<string, string>)[value] || "판단 보류";
+}
+function reasonStatusLabel(value: string) {
+  return ({ unwritten: "미작성", unreviewed: "작성 후 미검토", reviewed: "이번 이유를 검토함", evidence_gap: "검토했으나 근거 공백 있음" } as Record<string, string>)[value] || "상태 확인 필요";
+}
+function reviewOutcomeLabel(value: string) {
+  return ({ reviewed: "자료 확인", no_material_change: "확인 범위에 중요한 변화 없음", no_new_material: "새 자료 미확보", evidence_gap: "근거 부족·상충", collection_failed: "수집·조회 실패", unsupported: "자료 미지원", deferred: "판단 보류" } as Record<string, string>)[value] || "검토 기록";
 }
 function displayReviewCycle(value: string) {
   return ({ weekly: "매주", monthly: "매월", quarterly: "분기별", event_driven: "이벤트 발생 시" } as Record<string, string>)[value] || "정기 검토 없음";

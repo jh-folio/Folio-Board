@@ -118,6 +118,17 @@ def commit_thesis_delta(
             commit=False,
             created_at=prepared.created_at,
         )
+        # A generated Delta belongs to the exact reason revision that existed
+        # when it was committed. A background job is not a completed user review.
+        from features.thesis_tracking import reason_history as RH
+        from features.thesis_tracking import reason_review as RR
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reason_revision'").fetchone():
+            revision = RH.latest(connection, prepared.ticker)
+            if revision:
+                RR.record(connection, prepared.ticker, revision["revisionId"],
+                          source="delta_generation", outcome="evidence_gap" if prepared.delta.get("verdict") == "insufficient_evidence" else "reviewed",
+                          checked_scope=["저장된 Delta의 자료 범위"], delta_id=prepared.delta_id,
+                          event_id=f"delta:{prepared.delta_id}")
         if _row_hash(connection, prepared.delta_id) != prepared.target_hash:
             raise ReceiptVerificationError(code="thesis_target_hash_mismatch")
         write_receipt(

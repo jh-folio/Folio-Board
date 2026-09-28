@@ -168,6 +168,7 @@ def record_completed_review(
     connection: sqlite3.Connection,
     thesis: dict,
     delta: dict,
+    *, commit: bool = True,
 ) -> ReviewState:
     """Persist bounded review metadata after a normalized Delta was saved."""
     ticker = _ticker(thesis.get("ticker") or delta.get("ticker"))
@@ -190,7 +191,7 @@ def record_completed_review(
         revision=current.revision,
         updatedAt=reviewed_at,
     )
-    return save_review_state(connection, state, expected_revision=current.revision)
+    return save_review_state(connection, state, expected_revision=current.revision, commit=commit)
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:
@@ -256,6 +257,7 @@ def save_review_state(
     state: ReviewState,
     *,
     expected_revision: int,
+    commit: bool = True,
 ) -> ReviewState:
     ensure_schema(connection)
     current = load_review_state(connection, state.ticker)
@@ -293,7 +295,8 @@ def save_review_state(
             state.updatedAt,
         ),
     )
-    connection.commit()
+    if commit:
+        connection.commit()
     return load_review_state(connection, state.ticker)
 
 

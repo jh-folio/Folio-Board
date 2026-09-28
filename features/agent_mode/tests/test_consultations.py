@@ -17,6 +17,8 @@ from features.investment_notes.service import normalize_note
 from features.market_memory import memory as MM
 from features.thesis_tracking import model as thesis_model
 from features.thesis_tracking import store as thesis_store
+from features.thesis_tracking import reason_history as reason_history
+from features.thesis_tracking import reason_review as reason_review
 
 
 CANARY = "CONSULTATION_CANARY_MUST_NEVER_BECOME_EVIDENCE"
@@ -53,7 +55,7 @@ def _seed_stage_d_context(db_path):
         ticker="NVDA", company="NVIDIA", core_thesis="선택한 NVDA 가설", key_assumptions=["자본지출 유지"],
         falsification_triggers=["고객 자체칩 전환"], linked_regimes=["ai_power"], source="manual",
     ))
-    thesis_store.save_delta(conn, "NVDA", {
+    saved_delta = thesis_store.save_delta(conn, "NVDA", {
         "verdict": "weakened", "generatedAt": "2026-08-30T00:00:00+00:00", "summary": "집중도 위험",
         "supportingEvidence": [
             {"title": "90일 밖 근거 CANARY", "source": "Old source", "date": "2026-05-01", "reason": "오래됨"},
@@ -62,7 +64,19 @@ def _seed_stage_d_context(db_path):
         "counterEvidence": [{"title": "자체칩 확대", "source": "Reuters", "date": "2026-08-30", "reason": "가정과 충돌"}],
         "contradictions": ["수요 전망과 고객 집중도가 충돌"], "uncertainties": ["다음 실적 전"],
     })
+    reason_review.record(conn, "NVDA", reason_history.latest(conn, "NVDA")["revisionId"],
+                         source="delta_generation", outcome="reviewed", checked_scope=["테스트 근거"],
+                         delta_id=saved_delta["deltaId"], event_id=f"delta:{saved_delta['deltaId']}")
+    conn.commit()
     conn.close()
+
+
+def _reason_id(db_path):
+    conn = thesis_store.connect(db_path)
+    try:
+        return reason_history.latest(conn, "NVDA")["revisionId"]
+    finally:
+        conn.close()
 
 
 def _challenge_session(tmp_path, scope, message):
@@ -182,7 +196,7 @@ def test_thesis_challenge_keeps_hypothesis_and_verification_in_separate_layers_w
     db_path = tmp_path / "market-memory.sqlite3"
     _seed_stage_d_context(db_path)
     before = db_path.read_bytes()
-    session = _challenge_session(tmp_path, {"kind": "watchlist", "id": "NVDA", "tickers": ["NVDA"]}, "이 Thesis를 반박해줘")
+    session = _challenge_session(tmp_path, {"kind": "watchlist", "id": "NVDA", "tickers": ["NVDA"], "reasonRevisionId": _reason_id(db_path)}, "이 Thesis를 반박해줘")
     context = assemble_consultation_context(tmp_path, session["id"])
     selected = context["pack"]["sourceContext"]["selectedThesis"]
     assert selected["ticker"] == "NVDA"
@@ -213,6 +227,8 @@ def test_missing_challenge_identifier_returns_data_gap_without_broad_watchlist_o
 )
 def test_challenge_scope_persists_selected_context_on_follow_up(tmp_path, scope, message, expected_key):
     _seed_stage_d_context(tmp_path / "market-memory.sqlite3")
+    if scope["kind"] == "watchlist":
+        scope = {**scope, "reasonRevisionId": _reason_id(tmp_path / "market-memory.sqlite3")}
     session = _challenge_session(tmp_path, scope, "이 전제를 반박해줘" if scope["kind"] == "market_memory" else "이 Thesis를 반박해줘")
     first = store.get_session(tmp_path, session["id"])["messages"][-1]
     store.append_assistant_message(tmp_path, session["id"], first["id"], "첫 반박 답변")
@@ -224,7 +240,7 @@ def test_challenge_scope_persists_selected_context_on_follow_up(tmp_path, scope,
 
 def test_challenge_intent_survives_store_continuation_without_first_turn(tmp_path):
     _seed_stage_d_context(tmp_path / "market-memory.sqlite3")
-    session = store.create_session(tmp_path, {"scope": {"kind": "watchlist", "id": "NVDA", "tickers": ["NVDA"], "intent": "challenge"}})
+    session = store.create_session(tmp_path, {"scope": {"kind": "watchlist", "id": "NVDA", "tickers": ["NVDA"], "intent": "challenge", "reasonRevisionId": _reason_id(tmp_path / "market-memory.sqlite3")}})
     path = store.sessions_dir(tmp_path) / f"{session['id']}.json"
     private = json.loads(path.read_text(encoding="utf-8"))
     private["messages"] = [{"id": f"msg-{index}", "role": "user", "content": "x", "createdAt": "2026-08-01T00:00:00Z", "status": "answered"} for index in range(500)]

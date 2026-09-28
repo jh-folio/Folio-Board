@@ -18,6 +18,8 @@ from features.common.self_reference import GENERATED_BY_MARKER
 from features.thesis_tracking import delta as D
 from features.thesis_tracking import model as M
 from features.thesis_tracking import review_state as RS
+from features.thesis_tracking import reason_history as RH
+from features.thesis_tracking import reason_review as RR
 from features.thesis_tracking import store as ST
 from features.common.jobs import (
     diagnostic_execution,
@@ -128,7 +130,23 @@ def thesis_detail_payload(ticker: str, db_path=None, *, sync: bool = True, histo
             return {"ticker": str(ticker or "").upper(), "thesis": None, "latestDelta": None, "history": []}
         history = ST.list_deltas(conn, thesis["ticker"], limit=history_limit)
         latest = history[0] if history else None
-        return {"ticker": thesis["ticker"], "thesis": thesis, "latestDelta": latest, "history": history}
+        reason = RH.latest(conn, thesis["ticker"])
+        return {"ticker": thesis["ticker"], "thesis": thesis, "latestDelta": latest,
+                "history": history, "reasonRevision": reason,
+                "reasonHistory": RH.list_for_ticker(conn, thesis["ticker"], limit=history_limit)}
+    finally:
+        conn.close()
+
+
+def reason_revision_payload(ticker: str, revision_id: str, db_path=None) -> dict | None:
+    """Return one immutable reason revision, never a current-row substitute."""
+    conn = ST.connect(db_path)
+    try:
+        thesis = ST.get_thesis(conn, ticker)
+        if thesis is None:
+            return None
+        revision = RH.get(conn, revision_id)
+        return revision if revision and revision["ticker"] == thesis["ticker"] else None
     finally:
         conn.close()
 
@@ -161,7 +179,7 @@ def _manual_field(data: dict, field: str, existing: dict):
     return existing.get(field), False
 
 
-def upsert_manual_thesis(data: dict, db_path=None) -> dict:
+def upsert_manual_thesis(data: dict, db_path=None, *, edit_source: str = "manual") -> dict:
     """UI 직접 입력 thesis 저장(Obsidian 의존 없음).
 
     `source="manual"`로 기록되며, 이후 Vault 동기화는 이 행을 덮지 않는다
@@ -173,7 +191,33 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
         raise ValueError("ticker는 필수이며 형식이 올바라야 합니다.")
     conn = ST.connect(db_path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
         existing = ST.get_thesis(conn, data.get("ticker")) or {}
+        current_reason = RH.latest(conn, existing.get("ticker") or ticker)
+        expected = data.get("expectedRevisionId")
+        if existing and not isinstance(expected, str):
+            raise ValueError("expectedRevisionId is required for an existing reason")
+        if not existing and expected not in (None, ""):
+            raise RH.ReasonRevisionConflictError(None)
+        if existing and expected != (current_reason or {}).get("revisionId", ""):
+            raise RH.ReasonRevisionConflictError(current_reason)
+        condition_state = data.get("conditionResponse")
+        if condition_state is not None and condition_state not in RH.CONDITION_STATES - {"legacy_unknown"}:
+            raise ValueError("invalid_condition_response")
+        if condition_state in {"unknown", "skipped", "unanswered"} and not any(
+            alias in data for alias in _MANUAL_FIELD_ALIASES["falsification_triggers"]
+        ):
+            data = {**data, "falsification_triggers": []}
+        if condition_state == "written" and not _manual_field(data, "falsification_triggers", existing)[0]:
+            raise ValueError("written_condition_requires_text")
+        previous_presence = (current_reason or {}).get("fieldPresence") or {}
+        field_presence = dict(previous_presence)
+        for field in ("conviction", "review_cycle"):
+            if any(alias in data for alias in _MANUAL_FIELD_ALIASES[field]):
+                value = _manual_field(data, field, existing)[0]
+                field_presence[field] = bool(str(value or "").strip())
+            elif not existing:
+                field_presence[field] = False
         raw_checkpoints, _ = _manual_field(data, "next_checkpoints", existing)
         thesis = M.Thesis(
             ticker=existing.get("ticker") or ticker,
@@ -206,13 +250,25 @@ def upsert_manual_thesis(data: dict, db_path=None) -> dict:
             created_at=str(existing.get("created_at") or ""),
             last_reviewed_at=str(existing.get("last_reviewed_at") or ""),
         )
-        ST.upsert_thesis(conn, thesis)
-        return ST.get_thesis(conn, thesis.ticker)
+        ST.upsert_thesis(
+            conn, thesis, edit_source=edit_source, expected_revision_id=expected,
+            condition_state=condition_state, field_presence=field_presence,
+            change_reason=str(data.get("changeReason") or ""),
+            user_stated_at=str(data.get("userStatedAt") or "") if "userStatedAt" in data else None,
+            basis_refs=data.get("basisRefs") if isinstance(data.get("basisRefs"), list) else None,
+        )
+        stored = ST.get_thesis(conn, thesis.ticker)
+        if stored is not None:
+            stored["reasonRevision"] = RH.latest(conn, stored["ticker"])
+        return stored
     finally:
         conn.close()
 
 
-def promote_note_to_thesis(note_id: str, *, overwrite: bool = False, db_path=None) -> dict:
+def promote_note_to_thesis(
+    note_id: str, *, overwrite: bool = False,
+    expected_revision_id: str | None = None, db_path=None,
+) -> dict:
     """네이티브 노트를 Thesis로 등록하거나 갱신한다(명시적 action, §8.2).
 
     노트 저장 훅은 빈자리만 채운다. 이미 있는 thesis를 노트 내용으로 덮는 것은
@@ -229,10 +285,13 @@ def promote_note_to_thesis(note_id: str, *, overwrite: bool = False, db_path=Non
     if not note:
         raise LookupError(f"Note not found: {note_id}")
     if str(note.get("noteType") or "") != NN.NOTE_TYPE:
-        raise ValueError("company_thesis 노트만 Thesis로 등록할 수 있습니다.")
+        raise ValueError("company_thesis 노트만 이유로 등록할 수 있습니다.")
     if not str(note.get("ticker") or "").strip():
-        raise ValueError("노트에 종목 코드가 없어 Thesis로 등록할 수 없습니다.")
-    result = NN.register_thesis_from_note(note, db_path=db_path, overwrite=overwrite)
+        raise ValueError("노트에 종목 코드가 없어 이유로 등록할 수 없습니다.")
+    result = NN.register_thesis_from_note(
+        note, db_path=db_path, overwrite=overwrite,
+        expected_revision_id=expected_revision_id,
+    )
     return {"ok": True, "noteId": note.get("id", ""), **result}
 
 
@@ -257,12 +316,12 @@ def run_thesis_delta(ticker: str, body: dict | None = None, db_path=None) -> dic
             conn = ST.connect(db_path)
             thesis = ST.get_thesis(conn, ticker)
             if not thesis:
-                raise LookupError(f"Thesis not found: {ticker}")
+                raise LookupError(f"관심·투자 이유를 찾을 수 없습니다: {ticker}")
             ticker = thesis["ticker"]
             if reuse_latest:
                 latest = ST.latest_delta(conn, ticker)
                 if not latest:
-                    raise LookupError(f"Thesis Delta not found: {ticker}")
+                    raise LookupError(f"저장된 이유 검토 결과를 찾을 수 없습니다: {ticker}")
             else:
                 period = D.normalize_period(body.get("period"))
                 evidence, evidence_meta = D.gather_local_evidence(
@@ -310,8 +369,16 @@ def run_thesis_delta(ticker: str, body: dict | None = None, db_path=None) -> dic
         delta["company"] = thesis.get("company", "")
         commit_recorder, commit_stage = diagnostic_stage_start("commit")
         try:
-            saved = ST.save_delta(conn, ticker, delta)
-            RS.record_completed_review(conn, thesis, saved)
+            conn.execute("BEGIN IMMEDIATE")
+            saved = ST.save_delta(conn, ticker, delta, commit=False)
+            RS.record_completed_review(conn, thesis, saved, commit=False)
+            revision = RH.latest(conn, ticker)
+            if revision:
+                RR.record(conn, ticker, revision["revisionId"], source="explicit_delta",
+                          outcome="evidence_gap" if saved.get("verdict") == "insufficient_evidence" else "reviewed",
+                          checked_scope=["저장된 Delta의 자료 범위"], delta_id=saved["deltaId"],
+                          event_id=f"delta:{saved['deltaId']}")
+            conn.commit()
             exported = None
             if export_obsidian:
                 exported = export_thesis_delta_to_obsidian(thesis, saved)
