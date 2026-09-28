@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from features.thesis_tracking import reason_history as history
-from features.thesis_tracking import service, store, workspace_view
+from features.thesis_tracking import service, store, workspace_view, model, overview
 
 
 def _save(path, text, token=None, **extra):
@@ -56,6 +56,52 @@ def test_stale_edit_is_rejected_without_partial_write(tmp_path):
         _save(path, "lost", first["revisionId"])
     assert caught.value.current["revisionId"] == second["revisionId"]
     assert service.get_thesis("AMD", db_path=path)["core_thesis"] == "B"
+
+
+def test_delta_generated_for_old_reason_does_not_review_new_reason(tmp_path, monkeypatch):
+    from features.thesis_tracking import delta
+    path = tmp_path / "market-memory.sqlite3"
+    first = _save(path, "A")
+    second = {}
+
+    def generate(thesis, **_kwargs):
+        second.update(_save(path, "B", first["revisionId"]))
+        return {"deltaId": "delta-for-A", "summary": "A의 검토", "verdict": "maintained",
+                "generatedAt": "2026-09-28T00:00:00Z"}, "rules"
+
+    monkeypatch.setattr(delta, "gather_local_evidence", lambda *_args, **_kwargs: ([], {}))
+    monkeypatch.setattr(delta, "generate_delta", generate)
+    service.run_thesis_delta("AMD", {"useLlm": False}, db_path=path)
+    current = workspace_view.thesis_workspace_payload("AMD", db_path=path)
+    assert current["reasonRevision"]["revisionId"] == second["revisionId"]
+    assert current["reasonStatus"] == "unreviewed"
+    assert next(row for row in current["reasonConnections"] if row["kind"] == "delta")["relationship"] == "company_change_only"
+
+
+def test_vault_removing_condition_creates_new_unanswered_revision(tmp_path):
+    path = tmp_path / "market-memory.sqlite3"
+    conn = store.connect(path)
+    try:
+        store.upsert_thesis(conn, model.Thesis(ticker="AMD", core_thesis="A",
+                                               falsification_triggers=["조건"], source="obsidian"))
+        first = history.latest(conn, "AMD")
+        store.upsert_thesis(conn, model.Thesis(ticker="AMD", core_thesis="B",
+                                               falsification_triggers=[], source="obsidian"))
+        second = history.latest(conn, "AMD")
+        assert second["revisionId"] != first["revisionId"]
+        assert second["conditionResponse"] == "unanswered"
+        assert store.get_thesis(conn, "AMD")["core_thesis"] == "B"
+    finally:
+        conn.close()
+
+
+def test_portfolio_only_foreign_symbol_retains_market_suffix(tmp_path, monkeypatch):
+    monkeypatch.setattr(overview, "watchlist_overview", lambda: {"items": []})
+    monkeypatch.setattr(overview, "get_portfolio", lambda _path: {
+        "positions": [{"ticker": "7203.T", "quantity": 1, "name": "Toyota"}]})
+    card = overview.reason_watchlist_overview(db_path=tmp_path / "market-memory.sqlite3",
+                                               data_path=tmp_path)["items"][0]
+    assert card["ticker"] == card["item"] == "7203.T"
 
 
 def test_condition_response_and_unprovided_fields_are_distinct(tmp_path):

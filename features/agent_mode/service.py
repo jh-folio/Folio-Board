@@ -1553,7 +1553,14 @@ def write_personal_overlay_from_json(pack: dict, overlay_payload: dict, *, persi
 
 
 def prepare_thesis_delta_pack(ticker: str, *, period="90d", evidence_limit=12, owner_job_id: str | None = None) -> tuple[dict, Path]:
-    thesis = get_thesis(ticker)
+    connection = thesis_store.connect(MARKET_MEMORY_DB_PATH)
+    try:
+        thesis = thesis_store.get_thesis(connection, ticker)
+        from features.thesis_tracking import reason_history
+        reason = reason_history.latest(connection, thesis["ticker"]) if thesis else None
+        reason_revision_id = reason["revisionId"] if reason else ""
+    finally:
+        connection.close()
     if not thesis:
         raise FileNotFoundError(f"Thesis not found: {ticker}")
     period = thesis_delta.normalize_period(period)
@@ -1601,7 +1608,8 @@ def prepare_thesis_delta_pack(ticker: str, *, period="90d", evidence_limit=12, o
         save_target=str(MARKET_MEMORY_DB_PATH),
         draft_artifact={"thesis": thesis, "meta": meta},
         sources=evidence,
-        internal={"thesis": thesis, "meta": meta, "evidence": evidence},
+        internal={"thesis": thesis, "meta": meta, "evidence": evidence,
+                  "reasonRevisionId": reason_revision_id},
     )
     return pack, _write_pack(pack, owner_job_id)
 
@@ -1617,6 +1625,7 @@ def prepare_thesis_delta_writeback(pack: dict, delta_payload: dict) -> tuple[str
     delta = thesis_delta.normalize_delta(delta_payload, thesis=thesis, evidence=evidence, meta=meta)
     delta["generation"] = A.agent_generation(len(evidence), model=str(pack.get("executedAdapter") or ""))
     delta["company"] = thesis.get("company", "")
+    delta["reasonRevisionId"] = str((pack.get("internal") or {}).get("reasonRevisionId") or "")
     return str(thesis.get("ticker") or ""), delta
 
 

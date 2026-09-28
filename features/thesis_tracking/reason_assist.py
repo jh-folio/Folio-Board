@@ -157,5 +157,8 @@ def approve_reason_draft(ticker: str, body: dict | None = None, *, db_path=None)
         "falsificationTriggers": [line.strip() for line in final_condition.splitlines() if line.strip()],
         "conditionResponse": "written" if final_condition else request.get("conditionResponse", "skipped"),
         "changeReason": _bounded(request.get("changeReason"), 500),
+        **({"keyAssumptions": request["keyAssumptions"]} if "keyAssumptions" in request else {}),
+        **({"reviewCycle": request["reviewCycle"]} if "reviewCycle" in request else {}),
+        **({"conviction": request["conviction"]} if "conviction" in request else {}),
     }, db_path=db_path, edit_source="agent_approved")
     return {"ok": True, "thesis": result}

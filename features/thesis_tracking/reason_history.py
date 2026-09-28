@@ -241,7 +241,12 @@ def record_revision(
         raise ValueError("invalid_reason_edit_source")
     ticker = content["ticker"]
     previous = latest(connection, ticker)
-    state = condition_state or (previous["conditionResponse"] if previous else ("written" if content["falsification_triggers"] else "unanswered"))
+    # Vault edits have no explicit response enum. A removed condition is an
+    # unanswered condition, not the previous revision's written answer.
+    previous_triggers = (previous or {}).get("content", {}).get("falsification_triggers") or []
+    inferred_state = (previous["conditionResponse"] if previous and previous_triggers == content["falsification_triggers"]
+                      else "written" if content["falsification_triggers"] else "unanswered")
+    state = condition_state or inferred_state
     if state not in CONDITION_STATES:
         raise ValueError("invalid_condition_response")
     if state == "written" and not content["falsification_triggers"]:

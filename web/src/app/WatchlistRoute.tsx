@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCompanyResolution } from "./companyAnalysis/useCompanyResolution";
 import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
@@ -150,6 +150,7 @@ export function WatchlistRoute() {
   const [reasonFilter, setReasonFilter] = useState<"all" | "interest" | "investment">("all");
   const [listMode, setListMode] = useState<"compact" | "cards">("compact");
   const [detailItem, setDetailItem] = useState(() => readWatchlistDetailItem());
+  const previousDetailItem = useRef(readWatchlistDetailItem());
   const [detail, setDetail] = useState<WatchlistDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -195,13 +196,19 @@ export function WatchlistRoute() {
   useEffect(() => {
     const handleHashChange = () => {
       if (!isWatchlistHash()) return;
-      setDetailItem(readWatchlistDetailItem());
-      if (!readWatchlistDetailItem()) requestAnimationFrame(() => window.scrollTo(0, watchlistScrollY));
+      const nextDetailItem = readWatchlistDetailItem();
+      const returningToList = Boolean(previousDetailItem.current) && !nextDetailItem;
+      previousDetailItem.current = nextDetailItem;
+      setDetailItem(nextDetailItem);
+      if (!nextDetailItem) {
+        if (returningToList) void loadOverview().catch(() => {});
+        requestAnimationFrame(() => window.scrollTo(0, watchlistScrollY));
+      }
     };
     window.addEventListener("hashchange", handleHashChange);
     handleHashChange();
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [loadOverview]);
 
   useEffect(() => {
     let alive = true;

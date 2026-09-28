@@ -318,6 +318,8 @@ def run_thesis_delta(ticker: str, body: dict | None = None, db_path=None) -> dic
             if not thesis:
                 raise LookupError(f"관심·투자 이유를 찾을 수 없습니다: {ticker}")
             ticker = thesis["ticker"]
+            reason_revision = RH.latest(conn, ticker)
+            reason_revision_id = reason_revision["revisionId"] if reason_revision else ""
             if reuse_latest:
                 latest = ST.latest_delta(conn, ticker)
                 if not latest:
@@ -367,14 +369,15 @@ def run_thesis_delta(ticker: str, body: dict | None = None, db_path=None) -> dic
             raise
         diagnostic_stage_end(generate_recorder, generate_stage, "generate")
         delta["company"] = thesis.get("company", "")
+        delta["reasonRevisionId"] = reason_revision_id
         commit_recorder, commit_stage = diagnostic_stage_start("commit")
         try:
             conn.execute("BEGIN IMMEDIATE")
             saved = ST.save_delta(conn, ticker, delta, commit=False)
-            RS.record_completed_review(conn, thesis, saved, commit=False)
-            revision = RH.latest(conn, ticker)
-            if revision:
-                RR.record(conn, ticker, revision["revisionId"], source="explicit_delta",
+            if reason_revision_id and RH.latest(conn, ticker)["revisionId"] == reason_revision_id:
+                RS.record_completed_review(conn, thesis, saved, commit=False)
+            if reason_revision_id:
+                RR.record(conn, ticker, reason_revision_id, source="explicit_delta",
                           outcome="evidence_gap" if saved.get("verdict") == "insufficient_evidence" else "reviewed",
                           checked_scope=["저장된 Delta의 자료 범위"], delta_id=saved["deltaId"],
                           event_id=f"delta:{saved['deltaId']}")

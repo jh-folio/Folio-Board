@@ -94,7 +94,7 @@ function emptyDraft() {
 }
 
 // Route changes unmount the detail. Keep unsaved words for this browser session.
-const draftCache = new Map<string, ReturnType<typeof emptyDraft>>();
+const draftCache = new Map<string, { draft: ReturnType<typeof emptyDraft>; baseRevisionId: string }>();
 
 export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { ticker: string; companyName?: string; earningsEvent?: EarningsEvent }) {
   const [payload, setPayload] = useState<ThesisWorkspacePayload | null>(null);
@@ -103,6 +103,9 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+  const [baseRevisionId, setBaseRevisionId] = useState("");
+  const [draftConflict, setDraftConflict] = useState(false);
+  const [conflictLatestReady, setConflictLatestReady] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [assistantQuestion, setAssistantQuestion] = useState("");
@@ -138,7 +141,10 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
     setAssistantPreview(null);
     setReviewOutcome("");
     setReviewScope("");
-    setDraft(draftCache.get(ticker) || emptyDraft());
+    setDraft(draftCache.get(ticker)?.draft || emptyDraft());
+    setBaseRevisionId(draftCache.get(ticker)?.baseRevisionId || "");
+    setDraftConflict(false);
+    setConflictLatestReady(false);
     if (!ticker) return;
     const controller = new AbortController();
     getThesisWorkspace(ticker, { signal: controller.signal })
@@ -158,7 +164,7 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
 
   function updateDraft(next: ReturnType<typeof emptyDraft>) {
     setDraft(next);
-    draftCache.set(ticker, next);
+    draftCache.set(ticker, { draft: next, baseRevisionId });
   }
 
   async function runAssistant(phase: "question" | "draft", answers = assistantAnswers) {
@@ -221,6 +227,9 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
         conditionText: assistantFinalCondition,
         conditionResponse: draft.conditionResponse,
         changeReason: draft.changeReason,
+        keyAssumptions: draft.keyAssumptions.split("\n").map((value) => value.trim()).filter(Boolean),
+        reviewCycle: draft.reviewCycle,
+        conviction: draft.conviction,
       }, { signal: controller.signal });
       const refreshed = await getThesisWorkspace(ticker, { signal: controller.signal });
       if (controller.signal.aborted || activeTicker.current !== ticker) return;
@@ -240,7 +249,11 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
 
   function beginEdit() {
     const current = payload?.thesis;
-    updateDraft(draftCache.get(ticker) || {
+    const revisionId = payload?.reasonRevision?.revisionId || "";
+    setBaseRevisionId(draftCache.get(ticker)?.baseRevisionId ?? revisionId);
+    setDraftConflict(false);
+    setConflictLatestReady(false);
+    const nextDraft = draftCache.get(ticker)?.draft || {
       coreThesis: current?.coreThesis || "",
       keyAssumptions: (current?.keyAssumptions || []).join("\n"),
       falsificationTriggers: (current?.falsificationTriggers || []).join("\n"),
@@ -248,7 +261,9 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
       conviction: payload?.reasonRevision?.fieldPresence.conviction === true ? current?.conviction || "" : "",
       conditionResponse: (payload?.reasonRevision?.conditionResponse === "legacy_unknown" ? "unanswered" : payload?.reasonRevision?.conditionResponse) || "unanswered",
       changeReason: "",
-    });
+    };
+    setDraft(nextDraft);
+    draftCache.set(ticker, { draft: nextDraft, baseRevisionId: draftCache.get(ticker)?.baseRevisionId ?? revisionId });
     setError("");
     setEditing(true);
   }
@@ -267,16 +282,17 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
         coreThesis: draft.coreThesis.trim(),
         keyAssumptions: draft.keyAssumptions.split("\n").map((value) => value.trim()).filter(Boolean),
         falsificationTriggers: draft.falsificationTriggers.split("\n").map((value) => value.trim()).filter(Boolean),
-        expectedRevisionId: payload?.reasonRevision?.revisionId || "",
+        expectedRevisionId: baseRevisionId,
         conditionResponse: draft.falsificationTriggers.trim() ? "written" : draft.conditionResponse,
         changeReason: draft.changeReason,
-        ...(draft.reviewCycle ? { reviewCycle: draft.reviewCycle } : {}),
-        ...(draft.conviction ? { conviction: draft.conviction } : {}),
+        reviewCycle: draft.reviewCycle,
+        conviction: draft.conviction,
       }, { signal: controller.signal });
       const refreshed = await getThesisWorkspace(ticker, { signal: controller.signal });
       if (controller.signal.aborted || saveController.current !== controller || activeTicker.current !== ticker) return;
       setPayload(refreshed);
       setEditing(false);
+      setDraftConflict(false);
       draftCache.delete(ticker);
     } catch (err) {
       if (controller.signal.aborted || saveController.current !== controller || activeTicker.current !== ticker) return;
@@ -284,7 +300,11 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
         ? "다른 화면에서 이유가 먼저 바뀌었습니다. 입력한 문장은 남아 있습니다. 최신 기록을 확인한 뒤 다시 저장해 주세요."
         : err instanceof Error ? err.message : "이유를 저장하지 못했습니다.");
       if (err instanceof ApiRequestError && err.status === 409) {
-        getThesisWorkspace(ticker).then((current) => { if (activeTicker.current === ticker) setPayload(current); });
+        setDraftConflict(true);
+        setConflictLatestReady(false);
+        getThesisWorkspace(ticker).then((current) => {
+          if (activeTicker.current === ticker) { setPayload(current); setConflictLatestReady(true); }
+        }).catch(() => { if (activeTicker.current === ticker) setError("최신 기록을 불러오지 못했습니다. 입력한 문장은 남아 있습니다."); });
       }
     } finally {
       if (saveController.current === controller && activeTicker.current === ticker) {
@@ -359,6 +379,18 @@ export function ThesisWorkspace({ ticker, companyName = "", earningsEvent }: { t
       </div>
 
       {error && <p className="react-dashboard-error" role="alert">{error}</p>}
+      {draftConflict && editing && !conflictLatestReady && <p>최신 기록을 불러오는 중입니다.</p>}
+      {draftConflict && conflictLatestReady && payload?.reasonRevision && editing && <div className="surface surface--inset">
+        <p>현재 저장된 이유: {payload.thesis?.coreThesis || "이유 없음"}</p>
+        <p>현재 생각을 바꿀 상황: {(payload.thesis?.falsificationTriggers || []).join(" · ") || "입력 없음"}</p>
+        <button className="btn" type="button" onClick={() => {
+        const revisionId = payload.reasonRevision?.revisionId || "";
+        setBaseRevisionId(revisionId);
+        draftCache.set(ticker, { draft, baseRevisionId: revisionId });
+        setDraftConflict(false);
+        setConflictLatestReady(false);
+        setError("");
+      }}>최신 기록을 확인하고 이 초안을 다시 저장하기</button></div>}
       {!payload && !error && <div className="verification-skeleton" aria-label="관심·투자 이유를 불러오는 중"><span className="verification-skeleton__line verification-skeleton__line--title" /><span className="verification-skeleton__line" /><span className="verification-skeleton__line verification-skeleton__line--short" /></div>}
 
       {payload && editing && (

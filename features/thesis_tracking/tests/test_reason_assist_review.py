@@ -63,6 +63,24 @@ def test_ai_preview_approval_is_explicit_and_cas_protected(tmp_path, monkeypatch
         assist.approve_reason_draft("AMD", body, db_path=path)
 
 
+def test_ai_approval_saves_user_edited_advanced_fields(tmp_path, monkeypatch):
+    path = tmp_path / "market-memory.sqlite3"
+    first = service.upsert_manual_thesis({"ticker": "AMD", "coreThesis": "원문"}, db_path=path)
+    token = first["reasonRevision"]["revisionId"]
+    _fake_cli(monkeypatch, '{"suggestedReason":"원문 정리","suggestedCondition":""}')
+    preview = assist.reason_assist("AMD", {"phase": "draft", "expectedRevisionId": token,
+                                          "draftReason": "원문", "draftCondition": ""}, db_path=path)
+    approved = assist.approve_reason_draft("AMD", {
+        "expectedRevisionId": token, "previewToken": preview["previewToken"],
+        "suggestedReason": preview["suggestedReason"], "suggestedCondition": preview["suggestedCondition"],
+        "coreThesis": "원문 정리", "conditionText": "", "keyAssumptions": ["새 가정"],
+        "conviction": "high", "reviewCycle": "monthly",
+    }, db_path=path)["thesis"]
+    assert approved["key_assumptions"] == ["새 가정"]
+    assert approved["conviction"] == "high"
+    assert approved["review_cycle"] == "monthly"
+
+
 def test_manual_review_attaches_exact_revision_and_read_does_not_complete(tmp_path):
     path = tmp_path / "market-memory.sqlite3"
     first = service.upsert_manual_thesis({"ticker": "AMD", "coreThesis": "A"}, db_path=path)

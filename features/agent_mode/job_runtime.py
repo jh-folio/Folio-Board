@@ -562,7 +562,11 @@ def commit_thesis_output(job_id: str, pack: dict, payload: dict) -> dict[str, st
         )
         thesis = thesis_store.get_thesis(connection, ticker)
         saved_delta = thesis_store.get_delta(connection, result.delta_id)
-        if thesis and saved_delta:
+        if thesis and saved_delta and delta.get("reasonRevisionId"):
+            from features.thesis_tracking import reason_history
+            current_revision = reason_history.latest(connection, ticker)
+            if current_revision and current_revision["revisionId"] != delta["reasonRevisionId"]:
+                return {"artifactId": result.delta_id, "reportId": result.delta_id}
             thesis_review_state.record_completed_review(connection, thesis, saved_delta)
     finally:
         connection.close()

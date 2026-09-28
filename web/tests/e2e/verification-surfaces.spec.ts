@@ -600,6 +600,75 @@ test.describe("0.6 verification surfaces", () => {
     await expect(workspace).not.toContainText("이전 종목의 늦은 저장");
   });
 
+  test("restored reason draft keeps its original revision and cleared fields; list refreshes", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop covers the cross-screen revision contract.");
+    const overview = { items: [{ item: "NVDA", ticker: "NVDA", companyName: "NVIDIA",
+      reasonPreview: "원문 A", reasonStatus: "unreviewed" }] };
+    let workspace = { ...WORKSPACE_FIXTURE,
+      reasonRevision: { ...WORKSPACE_FIXTURE.reasonRevision, revisionId: "a".repeat(32) },
+      thesis: { ...WORKSPACE_FIXTURE.thesis, coreThesis: "원문 A" } };
+    const posts: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", {
+      overview,
+      workspace: () => workspace,
+      onThesisPost: (body) => {
+        posts.push(body);
+        workspace = { ...workspace, thesis: { ...workspace.thesis, coreThesis: String(body.coreThesis || "") },
+          reasonRevision: { ...workspace.reasonRevision, revisionId: "c".repeat(32) } };
+        overview.items[0].reasonPreview = String(body.coreThesis || "");
+        return { ok: true, thesis: workspace.thesis };
+      },
+    });
+    await open(page, "watchlist/NVDA");
+    await page.getByRole("button", { name: "관심 이유 수정" }).click();
+    await page.getByPlaceholder("예: 돈을 잘 벌어서").fill("복원한 A 초안");
+    await page.evaluate(() => { window.location.hash = "#/watchlist"; });
+    await page.locator('[data-watchlist-detail-item="NVDA"]').waitFor();
+    workspace = { ...workspace, reasonRevision: { ...workspace.reasonRevision, revisionId: "b".repeat(32) },
+      thesis: { ...workspace.thesis, coreThesis: "다른 화면의 B" } };
+    await page.locator('[data-watchlist-detail-item="NVDA"]').click();
+    await expect(page.getByPlaceholder("예: 돈을 잘 벌어서")).toHaveValue("복원한 A 초안");
+    await page.getByText("상세 입력 (선택)", { exact: true }).click();
+    await page.locator(".thesis-workspace__editor select").nth(0).selectOption("");
+    await page.locator(".thesis-workspace__editor select").nth(1).selectOption("");
+    await page.getByRole("button", { name: "관심 이유 저장" }).click();
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0]).toMatchObject({ expectedRevisionId: "a".repeat(32), conviction: "", reviewCycle: "" });
+    await page.evaluate(() => { window.location.hash = "#/watchlist"; });
+    await expect(page.locator(".watchlist-reason-row__summary")).toHaveText("복원한 A 초안");
+  });
+
+  test("a reason conflict shows the latest words before explicit rebase", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name.includes("mobile"), "Desktop covers the conflict comparison.");
+    let workspace = { ...WORKSPACE_FIXTURE,
+      reasonRevision: { ...WORKSPACE_FIXTURE.reasonRevision, revisionId: "a".repeat(32) },
+      thesis: { ...WORKSPACE_FIXTURE.thesis, coreThesis: "이전 이유 A" } };
+    const posts: Array<Record<string, unknown>> = [];
+    await prepare(page, "light", { workspace: () => workspace });
+    await page.route("**/api/theses", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      posts.push(route.request().postDataJSON() as Record<string, unknown>);
+      if (posts.length === 1) {
+        workspace = { ...workspace,
+          reasonRevision: { ...workspace.reasonRevision, revisionId: "b".repeat(32) },
+          thesis: { ...workspace.thesis, coreThesis: "다른 화면의 이유 B" } };
+        return route.fulfill({ status: 409, contentType: "application/json", body: '{"detail":"revision_conflict"}' });
+      }
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+    });
+    await open(page, "watchlist/NVDA");
+    await page.getByRole("button", { name: "관심 이유 수정" }).click();
+    await page.getByPlaceholder("예: 돈을 잘 벌어서").fill("내 초안 A");
+    await page.getByRole("button", { name: "관심 이유 저장" }).click();
+    await expect(page.getByText("현재 저장된 이유: 다른 화면의 이유 B")).toBeVisible();
+    await expect(page.getByPlaceholder("예: 돈을 잘 벌어서")).toHaveValue("내 초안 A");
+    expect(posts[0].expectedRevisionId).toBe("a".repeat(32));
+    await page.getByRole("button", { name: "최신 기록을 확인하고 이 초안을 다시 저장하기" }).click();
+    await page.getByRole("button", { name: "관심 이유 저장" }).click();
+    await expect.poll(() => posts.length).toBe(2);
+    expect(posts[1].expectedRevisionId).toBe("b".repeat(32));
+  });
+
   test("narrative challenge creates one scoped thread and auto-submits exactly once", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name.includes("mobile"), "Desktop runs the scoped Agent request contract.");
     const agent = { threads: [] as Array<Record<string, unknown>>, messages: [] as Array<Record<string, unknown>> };

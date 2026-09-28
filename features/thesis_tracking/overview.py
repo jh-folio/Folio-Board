@@ -31,7 +31,8 @@ def reason_watchlist_overview(*, db_path=None, data_path: Path | None = None) ->
     known = {model.normalize_ticker(row.get("ticker")): row for row in cards if row.get("ticker")}
     for ticker, position in held.items():
         if ticker not in known:
-            cards.append({"item": ticker, "ticker": ticker,
+            market_symbol = str(position.get("ticker") or position.get("symbol") or ticker).strip().upper()
+            cards.append({"item": market_symbol, "ticker": market_symbol,
                           "companyName": position.get("name") or ticker,
                           "sector": "", "count": 0, "latestDate": "",
                           "portfolioOnly": True})
