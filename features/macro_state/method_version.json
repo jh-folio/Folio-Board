@@ -1,0 +1,12 @@
+{
+  "frozenAt": "2026-09-29T07:51:28.276024+00:00",
+  "methodVersion": "macro-state-1",
+  "parameters": {
+    "thetaC": "0.20",
+    "thetaR": "0.1"
+  },
+  "promotion": "shadow",
+  "ruleCodeHash": "a96f22c79e0238365ae81379713aadcb159ad287243fb0b86fd32943b1c34afd",
+  "specHash": "a02c3aefa0e5465cdfe3b797c2c451ab4a2296ab690c2e57d43d062e3390f738",
+  "specVersion": "macro-state-spec-3"
+}
