@@ -1201,6 +1201,8 @@ def portfolio_analytics(preset_id: str = ""):
         "calculationUnavailable": sorted(base_reasons),
         "comments": comments,
     }
+    from features.company_exposure.portfolio import aggregate
+    base["macroExposure"] = aggregate(DATA_DIR, rows)
     return base
 
 

@@ -141,7 +141,7 @@ def _keyword_score(text: str, keywords: list[str]) -> int:
     return sum(1 for kw in keywords if kw.lower() in lower)
 
 
-def select_filing_keyword_excerpts(text: str, max_excerpts: int = 5) -> list[dict]:
+def select_filing_keyword_excerpts(text: str, max_excerpts: int = 5, *, themes=None) -> list[dict]:
     """Select useful excerpts from local filings that do not expose 10-K/10-Q Item headings.
 
     S-1/F-1/prospectus/proxy HTML often arrives as saved SEC HTML where Item
@@ -155,7 +155,7 @@ def select_filing_keyword_excerpts(text: str, max_excerpts: int = 5) -> list[dic
     selected = []
     used_spans: list[tuple[int, int]] = []
     lower = body.lower()
-    for theme in FILING_EXCERPT_THEMES:
+    for theme in FILING_EXCERPT_THEMES if themes is None else themes:
         best_idx = -1
         best_kw = ""
         for keyword in theme["keywords"]:
@@ -163,6 +163,8 @@ def select_filing_keyword_excerpts(text: str, max_excerpts: int = 5) -> list[dic
             if idx >= 0 and (best_idx < 0 or idx < best_idx):
                 best_idx = idx
                 best_kw = keyword
+                if theme.get("preferKeywordOrder"):
+                    break
         if best_idx < 0:
             continue
         limit = int(theme.get("limit", 2000))

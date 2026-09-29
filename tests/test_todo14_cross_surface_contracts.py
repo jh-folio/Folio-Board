@@ -68,7 +68,7 @@ def _running(root: Path, task_type: TaskType) -> tuple[SharedJobStore, SharedJob
 
 
 NON_ARTIFACT_CASES = {
-    TaskType.MACRO_REFRESH: (
+    TaskType.MACRO_EVALUATE: (
         {"savedCount": 7},
         {"status": "done", "savedCount": 7},
     ),
@@ -106,6 +106,14 @@ NON_ARTIFACT_CASES = {
 
 
 ARTIFACT_CASES = {
+    TaskType.MACRO_REFRESH: (
+        {"artifactId": "macro-receipt", "savedCount": 7},
+        {"savedCount": 7},
+    ),
+    TaskType.MACRO_EXPOSURE: (
+        {"artifactId": "exposure-profile", "savedCount": 1},
+        {"savedCount": 1},
+    ),
     TaskType.BRIEFING: (
         {"artifactId": "2026-07-22", "reportId": "2026-07-22", "date": "2026-07-22", "title": "Briefing"},
         {"reportId": "2026-07-22", "date": "2026-07-22", "title": "Briefing"},
@@ -233,6 +241,10 @@ def test_todo14_artifact_terminal_projection_and_refs_are_exact_after_reread(
         **task_fields,
     }
     assert durable.resultProjection is not None
+    if task_type in {TaskType.MACRO_REFRESH, TaskType.MACRO_EXPOSURE}:
+        # Macro receipts are durable artifacts, while their public projection
+        # intentionally exposes only a count, never private receipt identifiers.
+        expected_projection = {"status": "done", "savedCount": task_fields["savedCount"]}
     assert durable.resultProjection.model_dump(mode="json") == expected_projection
     raw = (tmp_path / "jobs-v2.json").read_text(encoding="utf-8")
     assert PRIVATE_CANARY not in raw

@@ -168,6 +168,11 @@ def test_10k_item_numbering_is_untouched():
     assert item_for_paragraph("ITEM 1A. RISK FACTORS", "", "10-K") == "1A"
 
 
+def test_prose_cross_reference_does_not_relabel_current_section():
+    assert item_for_paragraph('Refer to Item 1A for our risk factors.', '7', '10-K') == '7'
+    assert item_for_paragraph('Further details are in Item 8 of our annual report.', '1A', '10-K') == '1A'
+
+
 def test_a_heading_on_its_own_line_still_labels_the_paragraphs_under_it():
     """ASML's 20-F puts each heading on a short line the paragraph filter drops."""
     body = "This section discusses revenue growth and operating margin at length. " * 3
@@ -347,3 +352,47 @@ def test_a_single_currency_company_labels_everything_the_same():
 def test_a_report_without_a_currency_falls_back_to_dollars():
     charts = _charts("", "")
     assert charts["performance"]["currency"] == "USD"
+def test_linked_contents_does_not_assign_section_to_unlabeled_body():
+    from features.company_analysis.sec_filings import paragraphs_with_items
+    text = '<table><tr><td>Item 2.</td><td><a href="#m">Discussion</a></td></tr><tr><td>Item 4.</td><td><a href="#c">Controls</a></td></tr></table>'
+    text += '<p>Our interest rate sensitivity and market risk discussion is long enough to form a narrative paragraph without a numbered heading.</p>'
+    assert list(paragraphs_with_items(text, '10-Q'))[0][0] == ''
+
+
+def test_inline_item_link_and_appended_financial_report_sections():
+    paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
+    markup = '<div>Item 7. Management Discussion</div><p>Refer to <a href="#risk">Item 1A. Risk Factors</a> for more information.</p>'
+    markup += f'<p>{paragraph}</p><div>Notes to the Consolidated Financial Statements</div><p>{paragraph}</p>'
+    assert [item for item, text in paragraphs_with_items(markup) if text == paragraph] == ['7', '8']
+
+
+def test_actual_heading_is_not_suppressed_by_same_text_link():
+    paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
+    markup = f'<div>Item 1A. Risk Factors</div><p>{paragraph}</p><a href="#risk">Item 1A. Risk Factors</a>'
+    assert list(paragraphs_with_items(markup))[0][0] == '1A'
+
+
+def test_linked_real_heading_still_owns_following_section():
+    paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
+    markup = f'<div>Item 7. Discussion</div><h2 id="risk"><a href="#top">Item 1A. Risk Factors</a></h2><p>{paragraph}</p>'
+    assert list(paragraphs_with_items(markup))[0][0] == '1A'
+
+
+def test_financial_title_links_and_contents_do_not_override_business():
+    title = 'Management’s Discussion and Analysis of Financial Condition and Results of Operations'
+    paragraph = 'Our backlog represents future sales and depends on customer demand and conditions in the wider economy.'
+    markup = f'<table><tr><td>{title}</td></tr></table><div>Item 1. Business</div><p>See <a href="#m">{title}</a> for more information.</p><p>{paragraph}</p>'
+    assert [item for item, text in paragraphs_with_items(markup) if text == paragraph] == ['1']
+
+
+def test_linked_item_number_inside_semantic_heading():
+    paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
+    markup = f'<div>Item 7. Discussion</div><h2><a href="#top">Item 1A.</a> Risk Factors</h2><p>{paragraph}</p>'
+    assert list(paragraphs_with_items(markup))[0][0] == '1A'
+
+
+def test_financial_running_header_layout_table_is_not_contents():
+    paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
+    markup = '<div>Item 14. Fees</div><table><tr><td>Notes to the Consolidated Financial Statements</td><td><a href="#toc">Financial Table of Contents</a></td></tr></table>'
+    markup += f'<p>{paragraph}</p>'
+    assert [item for item, text in paragraphs_with_items(markup) if text == paragraph] == ['8']

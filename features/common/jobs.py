@@ -458,6 +458,10 @@ def get_shared_job(job_id: str) -> SharedJob | None:
 
 
 def _recover_sql_jobs_startup(store: SharedJobStore, lifecycle: JobPrivateLifecycle) -> None:
+    from features.common.macro_job_commit import TASKS as macro_tasks, recover as recover_macro
+    for job in store.load().jobs:
+        if job.status is JobStatus.COMMITTING and job.taskType in macro_tasks:
+            recover_macro(JOBS_PATH.parent, job.id, store=store, lifecycle=lifecycle)
     committing = [
         job
         for job in store.load().jobs

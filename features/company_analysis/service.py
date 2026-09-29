@@ -427,6 +427,9 @@ def _filing_paragraph_from_item(doc, form_type: str, item: dict) -> dict:
         "keywords": _excerpt_keywords(item),
         "score": item.get("score", 70 if form_type in {"10-K", "10-Q", "20-F"} else 55),
         "source": doc.get("path") or doc.get("url") or doc.get("title", ""),
+        "url": doc.get("url") or "",
+        "path": doc.get("path") or "",
+        "date": doc.get("date") or "",
         "form": form_type,
     }
 
@@ -472,7 +475,7 @@ def _doc_context_text(doc, min_content_chars: int = 1000, max_file_chars: int = 
         return content or str(doc.get("summary") or "")
 
 
-def build_filing_item_context(filing_docs, max_filings=2):
+def build_filing_item_context(filing_docs, max_filings=2, *, financial_risk_only=False):
     lines = []
     used = []
     paragraphs = []
@@ -482,12 +485,17 @@ def build_filing_item_context(filing_docs, max_filings=2):
     by_recent = sorted(filing_docs, key=lambda d: str(d.get("date", "")), reverse=True)
     for doc in sorted(by_recent, key=_filing_sort_rank)[:max_filings]:
         form_type = filing_form_type(doc)
+        if financial_risk_only:
+            form_type = "공식 재무위험 공시"
         wanted = ["1", "1A", "7", "7A", "8"] if form_type in {"10-K", "20-F", "S-1", "F-1", "Securities Registration"} else ["1A", "7", "8"]
         context_text = _doc_context_text(doc)
-        items = select_analysis_items(context_text, wanted=wanted)
+        items = select_analysis_items(context_text, wanted=wanted) if not financial_risk_only else []
         item_source = "item"
         if not items:
-            items = select_filing_keyword_excerpts(context_text)
+            themes = [{"label": "Financial risk management excerpt", "item": "financial_risk_excerpt",
+                       "keywords": ["재무위험관리", "금융위험관리", "위험관리", "시장위험", "financial risk management", "market risk"],
+                       "limit": 12000, "preferKeywordOrder": True}] if financial_risk_only else None
+            items = select_filing_keyword_excerpts(context_text, themes=themes)
             item_source = "keyword_excerpt"
         if not items:
             continue

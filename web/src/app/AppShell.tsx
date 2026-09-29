@@ -8,6 +8,7 @@ import { CommandPalette } from "./CommandPalette";
 import { CompanyAnalysisRoute } from "./CompanyAnalysisRoute";
 import { Dashboard } from "./Dashboard";
 import { DeepResearchRoute } from "./DeepResearchRoute";
+import { MacroRoute } from "./macro/MacroRoute";
 import { MarketMemoryRoute } from "./MarketMemoryRoute";
 import { PortfolioRoute } from "./PortfolioRoute";
 import { ReactAgentDock } from "./ReactAgentDock";
@@ -288,7 +289,7 @@ function AgentProviderMenu() {
 // 설정은 제목 없이 맨 아래다. 항목 하나를 위해 제목 한 줄을 쓰지 않는다.
 const NAV_GROUPS: Array<{ id: string; title: string; routes: RouteId[] }> = [
   { id: "home", title: "홈", routes: ["home", "dashboard"] },
-  { id: "news", title: "뉴스", routes: ["briefing", "market-memory", "rss"] },
+  { id: "news", title: "뉴스", routes: ["briefing", "market-memory", "macro", "rss"] },
   { id: "portfolio", title: "투자", routes: ["watchlist", "portfolio"] },
   { id: "research", title: "리서치", routes: ["analysis", "deep-research"] },
   { id: "system", title: "", routes: ["settings"] },
@@ -331,6 +332,7 @@ const ROUTE_ICONS: Record<RouteId, JSX.Element> = {
       <path fill="currentColor" stroke="none" d="M4 12H2v7c0 1.1.9 2 2 2h9v-2H4v-7z" />
     </svg>
   ),
+  macro: (<svg className="react-left-nav-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 3v18h18M7 15l4-6 4 3 6-7" /></svg>),
   "market-memory": (
     <svg className="react-left-nav-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M22 12h-4l-3 8-6-16-3 8H2" />
@@ -562,6 +564,7 @@ export function AppShell() {
     if (route.id === "dashboard") return <Dashboard />;
     if (route.id === "briefing") return <BriefingRoute />;
     if (route.id === "rss") return <RssRoute />;
+    if (route.id === "macro") return <MacroRoute />;
     if (route.id === "market-memory") return <MarketMemoryRoute />;
     if (route.id === "analysis") return <CompanyAnalysisRoute />;
     if (route.id === "deep-research") return <DeepResearchRoute />;

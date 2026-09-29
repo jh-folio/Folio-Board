@@ -9,8 +9,6 @@ import { setReactAgentContextScope } from "./agentContext";
 import type { MarketStateContextProjection } from "./marketStateContext";
 import { AgentJobTerminalError, pollAgentJobUntilTerminal } from "./agentPolling";
 import { clearMarketMemoryJobId, discoverActiveMarketMemoryJob, persistMarketMemoryJobId, readMarketMemoryJobId, recoverMarketMemoryJob } from "./marketMemoryJobResume";
-import { MacroMap } from "./macro/MacroMap";
-import { lastMacroView } from "./macro/types";
 
 type AgentJob = {
   id: string;
@@ -63,25 +61,11 @@ async function submitMemoryUpdate(): Promise<MemoryResult | AgentJob> {
   });
 }
 
-// 기존 진입과 기본 보기(내러티브)는 그대로 두고, 거시 지도를 하위 보기로 붙인다(D4).
 export function MarketMemoryRoute() {
-  const [macro, setMacro] = useState(() => window.location.hash.startsWith("#/market-memory/macro"));
-  useEffect(() => {
-    const sync = () => setMacro(window.location.hash.startsWith("#/market-memory/macro"));
-    window.addEventListener("hashchange", sync);
-    return () => window.removeEventListener("hashchange", sync);
-  }, []);
-  return (
-    <div className="react-market-memory-route" data-market-memory-route>
-      <RouteHero eyebrow="Market Memory" title="시장 내러티브" description="중기 시장 흐름과 공식 거시 자료를 함께 확인합니다." />
-      {/* 포트폴리오·설정의 하위 탭과 같은 가로 바다. 선택 상태는 `aria-pressed`가 소유한다. */}
-      <div className="segment memory-tabs" role="group" aria-label="시장 내러티브 하위 보기">
-        <button type="button" aria-pressed={!macro} onClick={() => { window.location.hash = "#/market-memory"; }}>내러티브</button>
-        <button type="button" aria-pressed={macro} onClick={() => { window.location.hash = lastMacroView(); }}>거시 지도</button>
-      </div>
-      {macro ? <MacroMap /> : <NarrativeContent />}
-    </div>
-  );
+  return <div className="react-market-memory-route" data-market-memory-route>
+    <RouteHero eyebrow="Market Memory" title="시장 내러티브" description="자료에서 이어지는 중기 시장 흐름과 반대 근거를 확인합니다." />
+    <NarrativeContent />
+  </div>;
 }
 
 function NarrativeContent() {

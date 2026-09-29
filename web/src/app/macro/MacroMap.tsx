@@ -54,7 +54,7 @@ function macroHash(patch: Record<string, string>): string {
   const current = { ...readMacroLocation(), period: "", ...patch };
   if (current.market === "KR") current.mode = "latest_revised";
   const params = new URLSearchParams(Object.entries(current).filter(([, value]) => Boolean(value)));
-  return `#/market-memory/macro?${params}`;
+  return `#/macro/map?${params}`;
 }
 
 /** 변화 표시. 색은 방향만 말한다(상승 버건디·하락 파랑) — 좋고 나쁨이 아니다. */
@@ -403,7 +403,7 @@ export function MacroMap() {
   // URL hash가 바뀌면 보기 상태를 다시 읽고, 탭 전환 뒤 돌아올 위치로 기억한다.
   useEffect(() => {
     const sync = () => {
-      if (!window.location.hash.startsWith("#/market-memory/macro")) return;
+      if (!window.location.hash.startsWith("#/macro/map")) return;
       setLocation(readMacroLocation());
       sessionStorage.setItem("folio.macro.lastView.v1", window.location.hash);
     };

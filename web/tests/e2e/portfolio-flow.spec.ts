@@ -16,7 +16,7 @@ const initialReview: any = {
   counterEvidence: [{ title: "공통 반대 근거를 확인해야 합니다" }], uncertainties: [{ code: "market_data_partial" }], staleReasons: [],
 };
 
-async function fixture(page: Page, theme = "light", options: { empty?: boolean; partial?: boolean; portfolioError?: boolean; conflict?: boolean; failSave?: boolean; failAnalytics?: boolean; presetCount?: number } = {}) {
+async function fixture(page: Page, theme = "light", options: { empty?: boolean; partial?: boolean; portfolioError?: boolean; conflict?: boolean; failSave?: boolean; failAnalytics?: boolean; presetCount?: number; exposureFixture?: any } = {}) {
   const calls: { path: string; method: string; body: any }[] = [];
   let portfolio: any = { schemaVersion: 3, revision: 4, positions: options.empty ? [] : structuredClone(initialPositions), cash: [{ currency: "USD", amount: 50 }], updatedAt: "2026-09-04T06:00:00Z" };
   let review = options.empty ? { ...initialReview, reviewRevision: 0, positionReviews: [] } : structuredClone(initialReview);
@@ -42,7 +42,7 @@ async function fixture(page: Page, theme = "light", options: { empty?: boolean; 
       if (options.failAnalytics) return send({ detail: "시세 조회 실패" }, 503);
       const rows = portfolio.positions.map((row: any, index: number) => ({ ...row, currentPrice: options.partial && index === 0 ? null : index === 0 ? 200 : 500, marketValueUsd: options.partial && index === 0 ? null : index === 0 ? 20 : 750, costUsd: index === 0 ? 12 : 600, pnlUsd: options.partial && index === 0 ? null : index === 0 ? 8 : 150, pnlPct: index === 0 ? 2 / 3 : .25, weight: index === 0 ? 20 / 770 : 750 / 770, quoteOk: !(options.partial && index === 0), quoteError: options.partial && index === 0 ? "quote_unavailable" : undefined }));
       const slices = rows.length ? [{ label: "미국", marketValue: 770, cost: 612, pnl: 158, pnlPct: 158 / 612, weight: 1, positions: 2 }] : [];
-      return send({ positions: rows, cash: portfolio.cash, summary: [{ currency: "USD", marketValue: rows.length ? 770 : 0, cost: 612, pnl: 158, pnlPct: 158 / 612, positions: rows.length }], baseCurrency: "USD", fxRates: { USD: { rateToUsd: 1, source: "identity" } }, updatedAt: portfolio.updatedAt,
+      return send({ macroExposure: options.exposureFixture || { groups: [{ factor: "interest_rate", direction: "hurt_by_rise", combinedWeight: .5, positions: [{ ticker: "AAPL" }], evidence: [{ ticker: "AAPL", quote: "Higher interest rates increase borrowing costs.", sourceRef: { url: "https://www.sec.gov/example" } }] }], dataGaps: [{ ticker: "SPY" }], notice: "기업 전체의 순효과가 아닙니다.", weightBasis: "현재 보유 평가 비중" }, positions: rows, cash: portfolio.cash, summary: [{ currency: "USD", marketValue: rows.length ? 770 : 0, cost: 612, pnl: 158, pnlPct: 158 / 612, positions: rows.length }], baseCurrency: "USD", fxRates: { USD: { rateToUsd: 1, source: "identity" } }, updatedAt: portfolio.updatedAt,
         analytics: { baseCurrency: "USD", totalMarketValue: rows.length ? 770 : 0, totalCost: rows.length ? 612 : 0, totalPnl: rows.length ? 158 : 0, totalPnlPct: rows.length ? 158 / 612 : 0, positionWeights: rows, pnlContributors: rows, marketWeights: slices, sectorWeights: slices, currencyWeights: slices, assetClassWeights: slices, concentration: { holdings: rows.length, top1: rows.length ? 750 / 770 : 0, top3: rows.length ? 1 : 0, top5: rows.length ? 1 : 0 }, comments: rows.length ? [{ level: "warn", title: "한 종목 집중", body: "SPY 비중이 높습니다. 분산 상태를 확인하세요." }] : [], targetWeights: { hasTargets: false, targetTotal: 0, targetGap: 0, items: [] } } });
     }
     if (url.pathname === "/api/portfolio/presets") return send((options.empty ? [] : presets).slice(0, options.presetCount ?? 1));
@@ -387,3 +387,35 @@ for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: `../.planning/portfolio-u4-flow/adjacent-watchlist-${suffix}.png` });
   });
 }
+
+for (const theme of ["light", "dark"]) {
+  test(`0.8 portfolio exposure sources ${theme}`, async ({ page }, info) => {
+    const calls = await fixture(page, theme);
+    const panel = page.getByRole("region", { name: "보유 종목의 금리·환율 영향" });
+    await expect(panel).toBeVisible();
+    await expect(panel.locator(".macro-exposure__answer")).toHaveText("보유 비중 50.0%(1종목)가 공시에서 금리가 오르면 불리하다고 밝혔습니다.");
+    await expect(panel.getByRole("row", { name: /^금리/ })).toContainText("50.0%");
+    await panel.locator("summary").focus(); await page.keyboard.press("Enter");
+    await expect(panel.getByRole("link", { name: "공시 원문" })).toHaveAttribute("href", "https://www.sec.gov/example");
+    await expect(panel).toContainText("공시를 아직 확인하지 않은 종목: SPY");
+    await expect(panel).toContainText("비중 조정 제안이 아닙니다");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    expect((await new AxeBuilder({ page }).include(".macro-exposure").withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations).toEqual([]);
+    await panel.screenshot({ path: info.outputPath(`portfolio-exposure-${theme}.png`) });
+    expect(writes(calls)).toEqual([]);
+  });
+}
+
+
+test("0.8 portfolio mixed FX basis and merged sources", async ({ page }) => {
+  await fixture(page, "light", { exposureFixture: {
+    groups: [{ factor: "fx", direction: "hurt_by_rise", combinedWeight: .5,
+      positions: [{ ticker: "AAPL", market: "US" }, { ticker: "005930", market: "KR" }],
+      evidence: [{ ticker: "AAPL", quote: "Dollar strengthening affects our sales.", sourceRef: { url: "https://www.sec.gov/annual" }, sourceRefs: [{ url: "https://www.sec.gov/annual" }, { url: "https://www.sec.gov/quarter" }] }] }],
+    dataGaps: [], weightBasis: "현재 보유 평가 비중", notice: "조건부 영향"
+  } });
+  const panel = page.getByRole("region", { name: "보유 종목의 금리·환율 영향" });
+  await expect(panel.getByRole("row", { name: /^환율/ })).toContainText("미국은 달러 강세, 한국은 원/달러 상승 시 불리");
+  await panel.locator("summary").click();
+  await expect(panel.getByRole("link", { name: "공시 원문" })).toHaveCount(2);
+});

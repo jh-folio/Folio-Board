@@ -25,6 +25,9 @@ DDL = (
     '''CREATE TABLE IF NOT EXISTS macro_collection_state(
         series_id TEXT PRIMARY KEY, status TEXT NOT NULL, cursor TEXT NOT NULL, updated_at TEXT NOT NULL,
         last_success TEXT NOT NULL DEFAULT '',error_code TEXT NOT NULL DEFAULT '')''',
+    '''CREATE TABLE IF NOT EXISTS macro_publication_facts(
+        identity TEXT PRIMARY KEY,series_id TEXT NOT NULL,period TEXT NOT NULL,
+        available_at TEXT NOT NULL,body TEXT NOT NULL)''',
 )
 
 
@@ -60,23 +63,23 @@ class MacroStore:
                 yield conn
 
     def ensure(self):
-        # v1 테이블은 기존 DB를 일관되게 백업한 뒤 한 번만 만든다.
+        # v2는 사실 행 테이블만 추가한다. 기존 관측 행은 변경하지 않는다.
         with _SCHEMA_LOCK:
             with self.read() as conn:
                 if conn is not None:
                     version = conn.execute('SELECT MAX(version) FROM macro_schema').fetchone()[0]
                     # 더 새로운 앱이 만든 스키마에는 쓰지 않는다.
-                    if version is not None and version > 1:
+                    if version is not None and version > 2:
                         raise RuntimeError('macro_schema_newer_than_runtime')
-                    if version == 1:
+                    if version == 2:
                         return
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            backup_database(self.path, 'before-macro-v1')
+            backup_database(self.path, 'before-macro-v2')
             with sqlite3.connect(self.path, timeout=30) as conn:
                 conn.execute('BEGIN IMMEDIATE')
                 for statement in DDL:
                     conn.execute(statement)
-                conn.execute('INSERT OR IGNORE INTO macro_schema VALUES(1)')
+                conn.execute('INSERT OR IGNORE INTO macro_schema VALUES(2)')
 
     def state(self, series_id=None):
         with self.read() as conn:

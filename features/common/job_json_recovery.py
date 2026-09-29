@@ -204,10 +204,13 @@ def _validate_investment_review_recovery_authority(data_root: Path, bundle: Stag
         # basis. Versionless v2 stages must retain the original legacy
         # fingerprint shape during recovery rather than being reselected.
         selection_version = basis.get("reportSelectionVersion") if isinstance(basis, dict) else ""
-        actual = build_input_basis(gather_inputs(
+        current_inputs = gather_inputs(
             data_root, analytics_authority=analytics_authority,
             report_selection_version=str(selection_version or ""),
-        )).get("fingerprint")
+        )
+        from features.investment_review.review_v2 import attach_macro_lineage
+        attach_macro_lineage(current_inputs, data_root, basis or {})
+        actual = build_input_basis(current_inputs).get("fingerprint")
         # Generic historic test/producer artifacts labelled investment_review
         # may predate v2 inputBasis.  Only a real v2 staged candidate gets the
         # external-authority guard; otherwise recovery retains its lifecycle.

@@ -172,3 +172,7 @@ py -3 features\investment_review\tests\test_review_summary.py
 py -3 features\investment_review\tests\test_portfolio_links.py
 py -3 features\investment_review\tests\test_checkpoint_aggregation.py
 ```
+
+## 0.8 입력 계보
+
+새 리뷰는 `inputBasis.macroBasisVersion=macro-lineage-1`과 저장 시점의 거시 snapshot ID·inputFingerprint·시장·축·기준일·방법 버전을 보존합니다. 저장/검토 완료 때 현재 입력과 다시 비교하며 CLI staged 저장·재시작 복구도 같은 계보를 검사합니다. 과거 리뷰에는 이 필드를 자동 추가하지 않습니다.

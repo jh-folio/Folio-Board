@@ -6,6 +6,7 @@ import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
 import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
+import { ExposurePanel } from "./macro/ExposurePanel";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
@@ -450,6 +451,8 @@ export function WatchlistRoute() {
                 <section id="watchlist-earnings" className="watchlist-detail-section watchlist-detail-section--earnings">
                   <EarningsPanel ticker={detailTicker} />
                 </section>
+                {/* 공시에 적힌 금리·환율 영향은 가격·실적 다음에 둔다(0.8_PLAN M8). */}
+                <ExposurePanel ticker={detailTicker} />
                 <section className="watchlist-detail-section watchlist-detail-section--news">
                   {newsSection}
                 </section>

@@ -522,6 +522,12 @@ def normalize_review(review: dict | None, *, date: str = "") -> dict:
     basis["portfolio"] = {"revision": revision if isinstance(revision, (int, float, str)) else 0, "updatedAt": _text(portfolio.get("updatedAt"), 64)}
     basis["theses"] = _basis_theses(raw_basis.get("theses"))
     basis["marketStates"] = _basis_states(raw_basis.get("marketStates"))
+    if raw_basis.get("macroBasisVersion") == "macro-lineage-1":
+        basis["macroBasisVersion"] = "macro-lineage-1"
+        basis["macroSnapshots"] = [
+            {key: _text(row.get(key), 128) for key in ("snapshotId", "inputFingerprint", "market", "axis", "asOf", "methodVersion")}
+            for row in raw_basis.get("macroSnapshots", []) if isinstance(row, Mapping)
+        ][:8]
     basis["checkpointWatermark"] = _text(raw_basis.get("checkpointWatermark"), 128)
     basis["canonicalReports"] = _basis_reports(raw_basis.get("canonicalReports"))
     # Omission is intentional for previous v2 snapshots: adding this field at

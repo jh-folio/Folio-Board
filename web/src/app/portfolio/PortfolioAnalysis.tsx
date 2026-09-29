@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getJson } from "../../api";
+import { PortfolioExposurePanel } from "../macro/ExposurePanel";
 import {
   money,
   percent,
@@ -147,6 +148,7 @@ export function PortfolioAnalysis({ revision, children }: { revision: number; ch
       </div>
 
       {children?.(payload)}
+      <PortfolioExposurePanel value={payload?.macroExposure} />
 
       {(perCurrency.length > 1 || payload.cash.length > 0) && (
         <div className="portfolio-block">

@@ -626,6 +626,15 @@ def gather_inputs(data_dir: Path, *, include_portfolio: bool = True, include_wat
             "reportSelection": report_selection, "detailTickers": detail_tickers}
 
 
+def attach_macro_lineage(inputs: dict, data_dir: Path, saved_basis: Mapping) -> dict:
+    # Old reviews keep their historical fingerprint shape. Only newly generated
+    # reviews opt into this additional exact-snapshot authority.
+    if saved_basis.get("macroBasisVersion") == "macro-lineage-1":
+        from features.macro_state.service import lineage
+        inputs["macroSnapshots"] = lineage(data_dir)
+    return inputs
+
+
 def build_input_basis(inputs: Mapping, *, previous: Mapping | None = None) -> dict:
     portfolio = inputs.get("portfolio") if isinstance(inputs.get("portfolio"), Mapping) else {}
     states = []
@@ -696,6 +705,9 @@ def build_input_basis(inputs: Mapping, *, previous: Mapping | None = None) -> di
     if selection_version == _REPORT_SELECTION_U5:
         basis["reportSelectionVersion"] = _REPORT_SELECTION_U5
         basis["thesisAuthorityStatus"] = "available" if inputs.get("thesisAuthorityAvailable") is True else "unavailable"
+    if "macroSnapshots" in inputs:
+        basis["macroSnapshots"] = inputs["macroSnapshots"]
+        basis["macroBasisVersion"] = "macro-lineage-1"
     required = bool(basis["portfolio"]["revision"] is not None and basis["marketStates"] is not None and basis["theses"] is not None)
     # Quote/FX observation time is unknown; an input basis containing it is
     # necessarily partial, even when every local authority was readable.
@@ -1076,6 +1088,8 @@ def build_candidate(data_dir: Path, review_dir: Path, date: str, *, include_port
     existing_view = normalize_review(existing, date=date) if existing else None
     previous = find_previous(review_dir, date)
     inputs = gather_inputs(data_dir, include_portfolio=include_portfolio, include_watchlist=include_watchlist, include_obsidian=include_obsidian, include_analytics=True)
+    from features.macro_state.service import lineage
+    inputs["macroSnapshots"] = lineage(data_dir)
     basis = build_input_basis(inputs, previous=previous)
     structured = build_structured_review(inputs, basis)
     changes, compare_uncertainties = compare_previous(structured, previous, current_basis=basis)
@@ -1113,6 +1127,7 @@ def prepare_commit_candidate(data_dir: Path, review_dir: Path, candidate: Mappin
     selection_version = _clean((candidate.get("inputBasis") or {}).get("reportSelectionVersion"), 16)
     latest_inputs = gather_inputs(data_dir, analytics_authority=(candidate.get("inputBasis") or {}).get("analytics"),
                                   report_selection_version=selection_version)
+    attach_macro_lineage(latest_inputs, data_dir, candidate.get("inputBasis") or {})
     latest_basis = build_input_basis(latest_inputs, previous=find_previous(review_dir, date))
     out = normalize_review(dict(candidate), date=date)
     out.pop("baseReviewRevision", None)
@@ -1143,8 +1158,10 @@ def mark_reviewed(data_dir: Path, review_dir: Path, date: str, expected_revision
         if not raw or review.get("sourceSchemaVersion") == 1 or review.get("reviewRevision") != expected:
             raise ReviewRevisionConflict(review)
         selection_version = _clean((review.get("inputBasis") or {}).get("reportSelectionVersion"), 16)
-        basis = build_input_basis(gather_inputs(data_dir, analytics_authority=(review.get("inputBasis") or {}).get("analytics"),
-                                                report_selection_version=selection_version), previous=find_previous(review_dir, date))
+        current_inputs = gather_inputs(data_dir, analytics_authority=(review.get("inputBasis") or {}).get("analytics"),
+                                       report_selection_version=selection_version)
+        attach_macro_lineage(current_inputs, data_dir, review.get("inputBasis") or {})
+        basis = build_input_basis(current_inputs, previous=find_previous(review_dir, date))
         effective, _freshness, _reasons = effective_freshness(review, basis)
         if effective == "stale": raise ReviewRevisionConflict(review, "investment_review_stale")
         review["reviewState"] = "reviewed"; review["reviewedAt"] = _now(); review["reviewRevision"] += 1; review["stale"] = False

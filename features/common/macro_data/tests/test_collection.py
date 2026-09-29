@@ -16,6 +16,44 @@ from features.macro_map.routes import create_macro_router
 from .test_ledger import point
 
 
+def test_warmup_resets_old_cursor_adds_history_without_rewriting(tmp_path):
+    store = MacroStore(tmp_path / 'market-memory.sqlite3')
+    old = point(series='UNRATE')
+    store.ingest('UNRATE', [old], cursor={'phase': 'fred', 'start': '2000-01-01', 'offset': 42})
+    before = store.history('UNRATE')
+
+    class Reader:
+        calls = []
+
+        def fred_pages(self, spec, start, *, cursor, cancel):
+            self.calls.append((start, cursor))
+            yield [point('1998-05-01', series='UNRATE'), old], {'phase': 'fred'}, '2026-09-29T00:00:00Z'
+
+    reader = Reader()
+    assert collect(tmp_path, reader=reader, selected={'UNRATE'})['series'][0]['inserted'] == 1
+    assert reader.calls[0] == ('1998-05-01', {})
+    assert collect(tmp_path, reader=reader, selected={'UNRATE'})['series'][0]['inserted'] == 0
+    assert 'since' in reader.calls[1][1]
+    assert store.history('UNRATE')[1:] == before
+
+
+def test_cycle_inputs_and_missing_credentials(tmp_path):
+    from features.common.macro_data.registry import WARMUP_START, indicators
+    expected = {'ICSA': ('W', 14), 'CFNAIMA3': ('M', 60),
+                'KR_LEADING': ('M', 70), 'KR_COINCIDENT': ('M', 70)}
+    for key, (frequency, age) in expected.items():
+        assert BY_ID[key].frequency == frequency
+        assert BY_ID[key].max_age_days == age
+        assert not BY_ID[key].visible
+    assert BY_ID['KR_LEADING'].items == ('I16E',)
+    assert BY_ID['KR_COINCIDENT'].items == ('I16D',)
+    assert len(indicators('US')) + len(indicators('KR')) == 16
+    assert WARMUP_START == {'UNRATE': '1998-05-01', 'INDPRO': '1998-07-01', 'GDPC1': '1999-01-01', 'ICSA': '1999-04-01'}
+    result = collect(tmp_path, reader=OfficialReader(None), selected=set(expected))
+    assert set(result['notConnected']) == set(expected)
+    assert not result['ok']
+
+
 class ASGIClient:
     """Exercise HTTP routing without adding a test-only HTTP client dependency."""
 

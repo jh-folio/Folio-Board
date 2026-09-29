@@ -233,10 +233,13 @@ class JobJsonProducers:
             # the read path lose that shape and turns unchanged jobs stale.
             analytics_authority = basis.get("analytics") if isinstance(basis, dict) else None
             selection_version = basis.get("reportSelectionVersion") if isinstance(basis, dict) else ""
-            actual = build_input_basis(gather_inputs(
+            current_inputs = gather_inputs(
                 self.data_root, analytics_authority=analytics_authority,
                 report_selection_version=str(selection_version or ""),
-            )).get("fingerprint")
+            )
+            from features.investment_review.review_v2 import attach_macro_lineage
+            attach_macro_lineage(current_inputs, self.data_root, basis or {})
+            actual = build_input_basis(current_inputs).get("fingerprint")
             if expected != actual:
                 raise JobArtifactConflictError("investment_review_external_input_changed_reopen_generation")
 

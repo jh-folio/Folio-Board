@@ -92,8 +92,8 @@ export function readMacroLocation() {
 }
 
 export function lastMacroView() {
-  const saved = sessionStorage.getItem("folio.macro.lastView.v1");
-  return saved?.startsWith("#/market-memory/macro") ? saved : "#/market-memory/macro";
+  const saved = sessionStorage.getItem("folio.macro.lastView.v1")?.replace("#/market-memory/macro", "#/macro/map");
+  return saved?.startsWith("#/macro/map") ? saved : "#/macro/map";
 }
 
 export function navigateMacro(patch: Partial<ReturnType<typeof readMacroLocation>>) {
@@ -101,7 +101,7 @@ export function navigateMacro(patch: Partial<ReturnType<typeof readMacroLocation
   if ("series" in patch || "market" in patch) current.period = "";
   if (current.market === "KR") current.mode = "latest_revised";
   const params = new URLSearchParams(Object.entries(current).filter(([, value]) => Boolean(value)));
-  window.location.hash = `/market-memory/macro?${params}`;
+  window.location.hash = `/macro/map?${params}`;
 }
 
 // 화면에 보이는 짧은 이름. 발표 기관은 괄호에 한국어로 남긴다.
@@ -117,6 +117,7 @@ const SHORT_LABEL: Record<string, string> = {
 const TINY_LABEL: Record<string, string> = {
   GDPC1: "GDP", INDPRO: "산업생산", UNRATE: "실업률", CPIAUCSL: "CPI", PCEPILFE: "근원 PCE", DFF: "연방기금금리",
   KR_GDP: "GDP", KR_IP: "생산", KR_UNRATE: "실업률", KR_CPI: "CPI", KR_RATE: "금통위", KR_CREDIT: "가계신용",
+  NFCI: "금융여건지수", STLFSI4: "금융스트레스지수", KR_USDKRW: "원/달러", KR_SPREAD: "신용 스프레드", CFNAIMA3: "CFNAI", ICSA: "신규 실업수당 청구",
 };
 
 export function shortLabel(series: { id: string; label: string }): string {

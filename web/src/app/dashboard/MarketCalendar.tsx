@@ -32,7 +32,7 @@ function macroLink(event: Event): string | null {
     : event.provider === "fred" && event.title === "미국 CPI" ? "CPIAUCSL"
     : event.provider === "fred" && event.title === "미국 GDP" ? "GDPC1"
     : event.provider === "fred" && event.title === "미국 산업생산" ? "INDPRO" : null;
-  return id ? `#/market-memory/macro?market=${event.market === "KR" ? "KR" : "US"}&series=${id}` : null;
+  return id ? `#/macro/map?market=${event.market === "KR" ? "KR" : "US"}&series=${id}` : null;
 }
 const KIND_FILTERS: Array<{ value: string; label: string }> = [
   { value: "earnings", label: "실적" }, { value: "macro", label: "지표" },

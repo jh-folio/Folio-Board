@@ -76,7 +76,11 @@ def run_collection(root: Path, *, start, job_id, progress=None):
         # 이미 저장한 페이지는 남는다. 다만 부분 성공을 완료로 기록하지 않는다.
         connected = [r for r in result['series'] if r.get('status') != 'not_connected']
         raise RuntimeError('macro_collection_incomplete' if connected else 'macro_not_connected')
-    return {**result, 'savedCount': sum(r['inserted'] for r in result['series'])}
+    cancel()
+    from features.macro_state.service import refresh_snapshots
+    snapshots = refresh_snapshots(root, job_id=job_id, saved_count=sum(r['inserted'] for r in result['series']))
+    return {**result, 'savedCount': sum(r['inserted'] for r in result['series']),
+            'macroSnapshotIds': [row['snapshotId'] for row in snapshots]}
 
 
 def source_summary(root: Path):

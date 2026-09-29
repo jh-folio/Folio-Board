@@ -287,3 +287,9 @@ If AI features do not work, check that:
 Folio Board should still run with local rule-based behavior when LLM features are unavailable.
 
 AI generation uses the configured CLI. If Settings asks you to update an older configuration, select and save a CLI connection or turn AI off. Saved reports, historical logs, and external data integrations remain available.
+
+### Market & Macro and disclosed company exposures
+
+**Market & Macro** has three views: current state, the macro map, and validation history. The current state shows where growth, inflation, liquidity, and credit risk sit against their own reference (the ten-year trend, 2%, the long-run average) and which way each has moved recently, summed up in one sentence at the top. It summarises released data and is not a forecast. Items that passed criteria fixed in advance on past data are marked **Validated**; the rest stay **Under validation**, and missing data is shown as on hold. You can also compare today with the record saved before a date you choose.
+
+In the Watchlist **company** tab, **Rate & currency exposure** → `Find in filings` shows the direction the company itself wrote in its filings (for example, higher rates hurt), the recent move of the linked data, and the original filing text. It is not the company's net effect, and it does not claim every exposure was found. Portfolio groups holdings that disclosed the same factor and direction and shows their current weight; the weight is neither a loss estimate nor a recommended weight.

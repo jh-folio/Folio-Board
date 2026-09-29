@@ -5,6 +5,8 @@ import type { WorkLogEntry } from "../api";
 
 const TASK_TITLES: Record<WorkLogEntry["taskType"], string> = {
   macro_refresh: "거시 자료 갱신",
+  macro_evaluate: "거시 규칙 검증",
+  macro_exposure: "공시 노출 확인",
   companion: "Agent와 대화",
   briefing: "일일 브리핑 생성",
   company_analysis: "기업 분석 생성",
