@@ -35,7 +35,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # 그 이름은 DART 상장 목록에만 있었는데 그 파일은 배포에 없고 API 키가 있어야 받아진다
 # — 키 없이 설치하면 한국 기업이 수동 사전 8곳으로만 풀렸다. 같은 커밋에서
 # company_master 의 `현대자동차` 별칭과, 배포본에만 빠져 있던 NAVER 항목을 맞췄다.
-BASE_COMMIT = "352903faecac8091eac0da204e0099520150b71d"
+# 2026-09-30 검토하고 옮김: `rss_feeds.yaml`에 WSJ Tech 피드(`RSSWSJD`)를 되살리고 World News의
+# category를 `world`로 바로잡았다. 호스트 이전 때 Tech URL이 World News로 바뀌면서 기술 기사가
+# 통째로 수집되지 않았다. 피드 1개 추가와 라벨 정정 외에 defaults 변화는 없다.
+BASE_COMMIT = "86bf21404f8f914024eecfe73a1d50f65e4597e3"
 sys.path.insert(0, str(ROOT))
 from features.common.config_bootstrap import DEFAULT_CONFIG_NAMES  # noqa: E402
 
