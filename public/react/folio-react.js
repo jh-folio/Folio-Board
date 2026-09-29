@@ -8018,6 +8018,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	"total",
 	"entries"
 ], g = ["maxEntries", "maxDays"], _ = /* @__PURE__ */ new Set(["companion", "task"]), v = /* @__PURE__ */ new Set([
+	"macro_evaluate",
 	"macro_refresh",
 	"index",
 	"rss",
@@ -8029,6 +8030,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	"topic_report",
 	"market_state_snapshot"
 ]), y = /* @__PURE__ */ new Set([
+	"macro_evaluate",
 	"macro_refresh",
 	"index",
 	"rss",
@@ -8045,6 +8047,7 @@ var e = (e, t) => () => (t || (e((t = { exports: {} }).exports, t), e = null), t
 	"quality_repair",
 	"investment_review"
 ]), b = /* @__PURE__ */ new Set([
+	"macro_evaluate",
 	"macro_refresh",
 	"index_rebuild",
 	"rss_import",
@@ -9417,6 +9420,7 @@ function wn(e = "agent_home") {
 //#region src/app/workLogCopy.ts
 var Tn = {
 	macro_refresh: "거시 자료 갱신",
+	macro_evaluate: "거시 규칙 검증",
 	companion: "Agent와 대화",
 	briefing: "일일 브리핑 생성",
 	company_analysis: "기업 분석 생성",

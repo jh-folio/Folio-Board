@@ -25,11 +25,21 @@ def test_growth_contraction_and_cycle_input_do_not_contaminate_axis_stage():
     rows=[row('UNRATE',f'2025-{m:02}-01','4' if m<10 else '5') for m in range(1,13)]
     rows += [row('UNRATE',f'2024-{m:02}-01','4') for m in (10,11,12)]
     rows += [row('INDPRO','2025-12-01','100'),row('INDPRO','2024-12-01','101')]
+    rows += [row('ICSA','2025-12-27','200000')]
     out=calculate('US','growth',rows,'2026-01-31T23:59:59Z')
     assert out['level']=='contraction' and out['confidence']=='low'
     assert out['cycleSignal']=='contraction_confirmed'
     assert 'leading' not in out['evidenceStage']
     assert out['cycleSignalPromotion']=='shadow'
+
+
+def test_no_claims_vintage_remains_unknown_even_after_first_provider_date():
+    rows=[row('UNRATE',f'2025-{m:02}-01','4' if m<10 else '5') for m in range(1,13)]
+    rows += [row('UNRATE',f'2024-{m:02}-01','4') for m in (10,11,12)]
+    rows += [row('INDPRO','2025-12-01','100'),row('INDPRO','2024-12-01','101')]
+    out=calculate('US','growth',rows,'2026-01-31T23:59:59Z')
+    assert out['level']=='contraction'
+    assert out['cycleSignal']=='unknown'
 
 
 def test_kr_target_reference_uses_observation_month_not_evaluation_date():

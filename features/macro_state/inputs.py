@@ -157,7 +157,7 @@ class Inputs:
             else:
                 values.append(value);run=0
             cursor=shift_months(cursor,step)
-        if len(values)*10<count*9 or longest>2:
+        if len(values)<minimum or len(values)*10<count*9 or longest>2:
             self.gap(key,period,'trendUnavailable')
             return None
         return median(values)
@@ -181,6 +181,8 @@ class Inputs:
                            'availableAt':utc(r['availableAt']),'vintageDate':r.get('vintageDate'),
                            'firstSeenAt':utc(r['firstSeenAt']) if r.get('firstSeenAt') else None,
                            'conflict':bool(r.get('conflict'))})
+            if r.get('diagnosticAvailability'):
+                result[-1].update(diagnosticAvailability=True, actualSourceAvailableAt=utc(r['actualSourceAvailableAt']))
         for (key,period),f in sorted(self.used_facts.items()):
             result.append({'rowKind':'fact','seriesId':key,'period':period,'observationMonth':f['observationMonth'],
                            'availableAt':utc(f['availableAt']),'sourceUrl':f['sourceUrl']})

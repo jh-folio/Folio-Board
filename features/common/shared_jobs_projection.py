@@ -78,6 +78,8 @@ def default_label(kind: JobKind, task_type: TaskType) -> LabelCode:
     match task_type:
         case TaskType.MACRO_REFRESH:
             return LabelCode.MACRO_REFRESH
+        case TaskType.MACRO_EVALUATE:
+            return LabelCode.MACRO_EVALUATE
         case TaskType.INDEX:
             return LabelCode.INDEX_REBUILD
         case TaskType.RSS:
@@ -243,7 +245,7 @@ def _artifact_projection(job: SharedJob, result: Mapping[str, str | int | bool |
         case TaskType.INVESTMENT_REVIEW:
             artifact_id = _required_text(job.taskType, result, "artifactId")
             report_id = _required_text(job.taskType, result, "reportId")
-        case TaskType.INDEX | TaskType.RSS | TaskType.SETUP | TaskType.COMPANION | TaskType.MACRO_REFRESH:
+        case TaskType.INDEX | TaskType.RSS | TaskType.SETUP | TaskType.COMPANION | TaskType.MACRO_REFRESH | TaskType.MACRO_EVALUATE:
             raise ProjectionTaskError(job.taskType)
         case unreachable:
             assert_never(unreachable)
@@ -298,7 +300,7 @@ def project_terminal_result(
                 incremental=bool(safe.get("incremental")),
                 sqlite=_text(safe, "sqlite") or "research-index.sqlite3",
             )
-        case TaskType.MACRO_REFRESH:
+        case TaskType.MACRO_REFRESH | TaskType.MACRO_EVALUATE:
             return MacroProjection(savedCount=_integer(safe, "savedCount") or 0)
         case TaskType.RSS:
             return RssProjection(

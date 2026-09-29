@@ -11,6 +11,13 @@ from .inputs import utc,month_end
 from .rules import shift_months
 
 
+def revision_cutoff(as_of,market='US',*,weekly=False):
+    timezone='America/Chicago' if market=='US' else 'Asia/Seoul'
+    local=dt.datetime.fromisoformat(utc(as_of).replace('Z','+00:00')).astimezone(ZoneInfo(timezone))
+    target=shift_months(local.date().isoformat(),3)
+    return utc(day_end(target if weekly else month_end(target),timezone))
+
+
 def evaluation_cutoffs(start_month,end_month,market='US',*,weekly=False):
     timezone='America/Chicago' if market=='US' else 'Asia/Seoul'
     first=dt.date.fromisoformat(start_month+'-01')

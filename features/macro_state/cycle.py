@@ -86,7 +86,7 @@ def us_cycle(book, *, theta_c=D('.20'),theta_r=D('.15'),diagnostic=False):
     conditions={'W':w,'K':k,'R':r,'Q':q}
     base=['GDPC1','INDPRO','UNRATE']
     inputs={'W':['ICSA'],'K':base,'R':base+['ICSA'],'Q':base+['ICSA']}
-    unavailable=not diagnostic and book.as_of<utc(day_end('2009-05-28','America/Chicago'))
+    unavailable=not diagnostic and (book.as_of<utc(day_end('2009-05-28','America/Chicago')) or not book.periods('ICSA'))
     signal,quality,freshness=_result(book,conditions,inputs,unavailable=unavailable)
     cfnai='not_available'
     if book.as_of>=utc('2011-06-01T00:00:00-05:00'):
