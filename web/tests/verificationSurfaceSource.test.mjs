@@ -21,8 +21,7 @@ test("every personal surface speaks one verdict language", async () => {
     // 6값 verdict 라벨을 화면 파일 안에서 다시 정의하면 안 된다.
     assert.ok(!/at_risk:\s*"/.test(source), `${label}이 verdict 라벨을 직접 만듭니다`);
   }
-  const workspace = await read(WORKSPACE);
-  assert.match(workspace, /checkpointDisplay\(/, "Thesis workspace가 체크포인트 판정 라벨을 직접 만듭니다");
+  // 2026-09-29: 이유 화면은 판정 배지를 그리지 않으므로 체크포인트 라벨도 쓰지 않는다.
 });
 
 test("every state carries an icon and a label, not colour alone", async () => {
@@ -34,7 +33,7 @@ test("every state carries an icon and a label, not colour alone", async () => {
     assert.doesNotMatch(block, /icon: ""/, "아이콘 없는 상태 정의가 있습니다");
     assert.doesNotMatch(block, /label: ""/, "라벨 없는 상태 정의가 있습니다");
   }
-  for (const file of [PANEL, WORKSPACE, REVIEW]) {
+  for (const file of [PANEL, REVIEW]) {
     const source = await read(file);
     assert.match(source, /aria-hidden="true">\{[a-zA-Z.]*(display|signal|verdict)\.icon\}|aria-hidden="true">\{[a-zA-Z]+Display\([^)]*\)\.icon\}/, "기호가 라벨 없이 쓰입니다");
   }
@@ -53,15 +52,16 @@ test("the two verdict enums never merge into one badge", async () => {
     assert.ok(!verdictKeys.includes(threeValue), `Thesis verdict 표에 체크포인트 판정 ${threeValue}가 섞였습니다`);
   }
 
+  // 2026-09-29: 이유 화면은 헤드라인 단어 세기 판정을 표시하지 않는다(일시적 악재와 논리
+  // 훼손을 가르지 못한다). 두 층을 한 배지로 합칠 위험 자체가 이 화면에서 사라졌다.
   const workspace = await read(WORKSPACE);
-  assert.match(workspace, /Thesis 종합 판정/, "Thesis verdict 배지가 어느 층인지 말하지 않습니다");
-  assert.match(workspace, /thesisVerdictDisplay\(delta\?\.verdict\)/, "Delta verdict가 6값 표를 쓰지 않습니다");
+  assert.ok(!/thesisVerdictDisplay|checkpointDisplay/.test(workspace), "이유 화면이 판정 배지를 그립니다");
 });
 
 test("the personal area declares the hypothesis boundary", async () => {
   const workspace = await read(WORKSPACE);
   assert.match(workspace, /data-layer="hypothesis"/, "개인 영역이 hypothesis 계층을 선언하지 않습니다");
-  assert.match(workspace, /내 생각·가설 · 근거 아님/, "근거 아님 경계 표시가 없습니다");
+  assert.match(workspace, /data-tone="purple">내 생각 · 근거 아님/, "근거 아님 경계 표시가 보라(개인 층) 칩이 아닙니다");
 });
 
 test("silence badge wording comes from the fixed ladder", async () => {
@@ -91,15 +91,16 @@ test("entering the screen does not run an Agent", async () => {
   }
 });
 
-test("the workspace reads a projection and writes only from an explicit review click", async () => {
+test("the workspace reads a projection and writes only from an explicit decision click", async () => {
   const workspace = await read(WORKSPACE);
   assert.match(workspace, /getThesisWorkspace\(/, "workspace projection을 읽지 않습니다");
-  assert.match(workspace, /async function reviewLatestEvidence\(\)/, "명시적 최신 근거 검토 action이 없습니다");
-  assert.match(workspace, /onClick=\{\(\) => void reviewLatestEvidence\(\)\}/, "검토가 사용자 클릭으로 시작되지 않습니다");
-  assert.match(workspace, /runThesisReview\(ticker,/, "기존 Thesis Delta 경로를 재사용하지 않습니다");
-  assert.match(workspace, /pollAgentJobBounded\(result/, "비동기 Thesis Delta 작업을 공용 bounded polling으로 처리하지 않습니다");
+  // 2026-09-29: 헤드라인 단어 세기 판정(Folio 점검)은 이유 화면에서 실행·표시하지 않는다.
+  assert.ok(!workspace.includes("runThesisReview"), "이유 화면이 판정 생성을 다시 실행합니다");
+  assert.match(workspace, /async function keepReason\(\)/, "명시적 '그대로 두기' action이 없습니다");
+  assert.match(workspace, /onClick=\{\(\) => void keepReason\(\)\}/, "판단 기록이 사용자 클릭으로 시작되지 않습니다");
+  assert.match(workspace, /completeReasonReview\(ticker,[\s\S]*basisRefs: news\.items\.map\(newsRef\)/, "본 소식을 판단 기록에 남기지 않습니다");
   const effect = workspace.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[ticker\]\);/)?.[0] || "";
-  assert.ok(!effect.includes("runThesisReview"), "화면 진입이 검토 write를 실행합니다");
+  assert.ok(!/completeReasonReview|saveThesis|approveAssistedReason/.test(effect), "화면 진입이 write를 실행합니다");
 });
 
 test("Watchlist keeps Thesis creation in place and exposes both actions", async () => {
@@ -109,8 +110,9 @@ test("Watchlist keeps Thesis creation in place and exposes both actions", async 
   assert.match(workspace, /saveThesis\(\{[\s\S]*ticker,/, "명시적 저장이 선택 ticker를 보내지 않습니다");
   assert.match(workspace, /onSubmit=\{\(event\) => \{ event\.preventDefault\(\); void saveDraft\(\); \}\}/, "Thesis 저장이 form action에 묶이지 않았습니다");
   assert.ok(!workspace.includes("window.location.hash"), "Thesis 편집이 Watchlist 밖으로 이동합니다");
-  assert.match(workspace, />Thesis 만들기\/수정</, "만들기·수정 action이 없습니다");
-  assert.match(workspace, />최신 근거로 검토</, "최신 근거 검토 action이 없습니다");
+  assert.match(workspace, /\{reasonLabel\} 남기기/, "만들기 action이 없습니다");
+  assert.match(workspace, />수정하기</, "수정 action이 없습니다");
+  assert.ok(!workspace.includes("최신 근거로 검토"), "판정 생성 버튼이 이유 화면에 남아 있습니다");
 });
 
 test("timeline labels never expose stored state or evidence-count codes", async () => {
@@ -121,12 +123,14 @@ test("timeline labels never expose stored state or evidence-count codes", async 
   assert.match(language, /slice\(1\)\}일/, "근거 수 한국어 표기가 없습니다");
 });
 
-test("workspace localizes stored enums and renders bias-control content", async () => {
+test("workspace shows facts, not headline verdicts, and keeps bias-control copy", async () => {
   const workspace = await read(WORKSPACE);
-  assert.match(workspace, /displayConviction/, "conviction 표시 매핑이 없습니다");
-  assert.match(workspace, /displayReviewCycle/, "review cycle 표시 매핑이 없습니다");
-  assert.match(workspace, /displayPeriod/, "delta period 표시 매핑이 없습니다");
-  assert.match(workspace, /모순·반증 관찰/, "contradictions를 표시하지 않습니다");
+  // 판정(강화/약화) 배지를 보여 주지 않는다 — 일시적 악재와 논리 훼손을 가르지 못한다.
+  assert.ok(!/thesisVerdictDisplay|latestDelta|verdictLabel/.test(workspace), "이유 화면이 판정을 표시합니다");
+  // 확신도·검토 주기·핵심 가정은 편집에서 보내지 않는다(부분 갱신으로 보존).
+  assert.ok(!/keyAssumptions|reviewCycle|conviction/.test(workspace), "편집 화면이 추가 항목을 다시 다룹니다");
+  assert.match(workspace, /일시적인 일인지, 이유 자체가 흔들리는 일인지는 원문과 다음 실적을 함께 보고 판단하세요/, "소식 단서 문장이 없습니다");
+  assert.match(workspace, /checkMetricCondition\(/, "판단 조건의 지금 숫자(사실)를 보여 주지 않습니다");
 });
 
 test("async errors announce and disclosures meet the touch target", async () => {
@@ -140,20 +144,22 @@ test("async errors announce and disclosures meet the touch target", async () => 
 
 test("checkpoint direction is explained in words", async () => {
   // direction은 "이 신호가 잡히면 무슨 뜻인가"이므로 라벨 없이 두면 읽히지 않는다.
-  for (const file of [PANEL, WORKSPACE]) {
+  for (const file of [PANEL]) {
     const source = await read(file);
     assert.match(source, /반증 신호를 기다리는 항목/, "challenging 항목 설명이 없습니다");
     assert.match(source, /확인 신호를 기다리는 항목/, "supporting 항목 설명이 없습니다");
   }
 });
 
-test("unverifiable stored checkpoints are surfaced on the thesis surface", async () => {
+test("unverifiable stored checkpoints stay in the API, not on the reason screen", async () => {
   // 내러티브 알림 줄에서는 뺐다(2026-09-01 사용자 결정) — 저장 형식이 규칙과 맞지
   // 않는다는 사실은 엔지니어링 신호이지 사용자를 부를 이유가 아니다. 개수는
   // `GET /api/memory/verification`에 그대로 있다. 종목 Thesis는 사용자가 직접 쓴
   // 항목이라 계속 화면이 말한다.
-  const workspace = await read(WORKSPACE);
-  assert.match(workspace, />\s*검증 불가/, "검증 실패 원소를 Thesis 화면이 말하지 않습니다");
+  // 2026-09-29: 구조화 확인 항목은 이제 AI 다듬기 승인 때 서버가 만든다. 형식 불일치는
+  // 엔지니어링 신호라 이유 화면에 올리지 않고 workspace payload의 unverifiableCount로 남긴다.
+  const api = await read("../src/api.ts");
+  assert.match(api, /unverifiableCount: number/, "검증 실패 개수가 API 계약에서 사라졌습니다");
 });
 
 test("the ownership pause is announced on the thesis surface", async () => {
@@ -166,7 +172,7 @@ test("linked-regime propagation says it changes nothing", async () => {
   // A.3 — 전파는 표시일 뿐 verdict를 바꾸지 않는다.
   const workspace = await read(WORKSPACE);
   assert.match(workspace, /regimeAlerts/, "연결 내러티브 경고를 읽지 않습니다");
-  assert.match(workspace, /표시일 뿐 Thesis 판정을 바꾸지 않습니다/, "전파 경계 문구가 없습니다");
+  assert.match(workspace, /표시일 뿐 이유를 바꾸지 않습니다/, "전파 경계 문구가 없습니다");
 });
 
 test("new screen CSS uses tokens, not raw radius or weight numbers", async () => {

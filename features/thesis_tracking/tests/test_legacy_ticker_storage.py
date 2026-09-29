@@ -11,7 +11,8 @@ def test_legacy_key_history_and_owner_survive_update_and_reopen(tmp_path, legacy
         conn.execute("INSERT INTO thesis(ticker, source, core_thesis) VALUES (?, 'obsidian', 'old')", (legacy,))
         conn.execute("INSERT INTO thesis_delta(delta_id, ticker, summary) VALUES ('old-delta', ?, 'original')", (legacy,))
         conn.commit()
-    result = service.upsert_manual_thesis({"ticker": canonical, "coreThesis": "updated"}, db_path=path)
+    token = service.thesis_detail_payload(legacy, db_path=path, sync=False)["reasonRevision"]["revisionId"]
+    result = service.upsert_manual_thesis({"ticker": canonical, "coreThesis": "updated", "expectedRevisionId": token}, db_path=path)
     assert result["ticker"] == legacy and result["source"] == "obsidian"
     with store.connect(path) as conn:
         assert len(store.list_theses(conn)) == 1

@@ -110,7 +110,22 @@ run_thesis_delta("LRCX", {"period": "90d", "useLlm": False})     # Delta 생성/
 - Step 9 Data Source Reliability 이후 저장된 Delta에는 `dataGaps`와 `officialMaterials` 메타가 함께 들어갈 수 있다. 공식자료가 부족하면 `suggestedAction`으로 SEC/DART 설정 확인 또는 `research-inbox/filings/` 보강 경로를 안내한다.
 - Obsidian export: `type: thesis_delta`, `generated_by: Folio Board`, `source_layer: primary_processed`, `reuse_as_evidence: false` frontmatter로 `Thesis Delta/` 폴더에 저장한다. 과거(리네이밍 전)에 내보낸 노트는 `generated_by: Folio OS`를 그대로 가지며, importer는 둘 다 자기참조로 인식한다.
 
-## 화면 — Watchlist 상세가 주 표면이다 (0.6 Stage C.2)
+## 화면 — Watchlist 상세가 주 표면이다 (0.8 선행 R0~R3)
+
+현재 사용자 표시명은 보유 여부에 따라 `관심 이유`/`투자 이유`다. 내부 `thesis` 스키마와 `/api/theses` 경로, `company_thesis` 노트 타입은 호환을 위해 유지한다. `reason_revision`은 같은 `market-memory.sqlite3`에 현재 이유의 불변 사본을 저장하며, 기존 행은 백업·복원 확인 후 첫 `legacy_import` revision으로 남긴다. 직접 수정/명시적 노트 승격/AI 승인에는 기준 revision을 요구하고 충돌 시 409와 최신 내용을 반환한다. `reason_review_event`는 명시적 검토의 대상 revision·확인 범위·결과를 저장한다. 조회, 구조화 체크포인트 자동 판정, 단순 대화는 이유 revision이나 검토 완료를 만들지 않는다.
+
+Watchlist projection은 Portfolio 보유 종목을 개인 watchlist 파일에 자동 등록하지 않는다. 2026-09-29 재설계 이후 화면 계약(두 탭, 보라=내가 쓴 것, 관련 새 소식, 판정 비표시, 지금 숫자, AI 다듬기)은 `features/watchlist_notes/README.md`의 "관심 이유·투자 이유 workspace" 절이 갖는다. 이유 저장만으로 판단 기록이 되지는 않으며 검토를 강제하지 않는다. AI 도우미는 전역 CLI·모델·추론 강도를 사용하며 사용자가 칸마다 제안을 골라 저장하기 전에는 정본을 바꾸지 않는다. 실제 사용자 화면 수용은 로컬 계획의 U4 확인을 별도로 따른다.
+
+### 관련 새 소식과 AI 다듬기의 대조 단어 (2026-09-29)
+
+- `reason_news.py` — 현재 이유 개정의 판단 조건과 **문장이 같은** 구조화 확인 항목의 최근 근거 사본을 "관련 새 소식"으로 읽는다. 판정이 그대로여도 새 기사는 최근 사본에 반영하고, 판정 결론(강화/약화)은 싣지 않는다. 이유 저장 전 날짜의 소식, `그대로 두기`(`reason_review_event` source `manual_review`, outcome `no_material_change`)나 이유 개정 참조로 이미 본 소식은 다시 세지 않는다. 비교는 정확한 참조 키(URL 우선, 없으면 날짜+제목; 긴 키는 전체 값의 SHA-256)로 하며 같은 제목의 다른 URL은 다른 소식이다. 대조 단어가 없으면 `searchReady=false`로 "찾지 않음"을 알린다. `lastDecisionAt`은 `그대로 두기`만 가리킨다 — 이전 화면의 다른 검토 결과를 "그대로 두었다"로 부르지 않는다.
+- 목록(`overview.py`)은 같은 계산으로 `reasonNewsCount`를 싣는다.
+- `reason_assist.py` — 초안 단계에서 최근 분기 실적(`get_fundamentals`, 실패 시 빈 값)을 참고 자료로 전달하고 `reasonBasis`·`conditionBasis`·`conditionKeywords`를 받는다. 대조 단어는 미리보기 토큰에 서명된다. 승인(`approve_reason_draft`) 때 **최종 판단 조건이 제안과 같을 경우에만** `direction=challenging`, `trusted=False` 구조화 확인 항목을 이유 개정과 한 트랜잭션으로 등록한다(같은 문장의 기존 항목은 이력을 지키고 matcher만 바꾼다). 등록 실패 시 이유 개정도 되돌린다. 티커·회사명은 대조 단어가 될 수 없다.
+- 사용자 결정(2026-09-29): AI는 모호한 표현을 Folio 자료로 확인할 수 있게 다듬을 수 있고 숫자·기간은 **제안**으로만 낸다. 사용자가 칸마다 골라야 들어간다. 확신도·검토 주기·핵심 가정은 편집 화면에서 뺐으며 값은 부분 갱신으로 보존된다.
+
+미저장 초안은 시작한 이유 revision ID와 함께 브라우저 세션에 보관한다. 다른 화면에서 이유가 바뀌면 409를 보여주며 사용자가 최신 기록을 확인해 명시적으로 기준을 바꾸기 전에는 덮어쓰지 않는다. 이전 revision에 묶인 AI 승인 토큰은 기준 변경 때 폐기하고, 고른 문장은 초안에 남긴다. 다시 AI 정리를 받거나 직접 저장할 수 있다. Delta는 생성 시작 당시 revision에만 연결한다. 기존 이유가 그 사이 바뀌었다면 현재 이유의 검토 완료로 표시하지 않는다. Portfolio에서만 보이는 해외 상장 종목의 시장 접미사는 화면·가격 조회에서 보존한다.
+
+### 이전 0.6 화면 계약 (2026-09-29 재설계로 화면 표시 부분은 대체 — payload·Delta 계약은 유효)
 
 종목 Thesis의 주 표면은 **Watchlist 상세**입니다. 기업 분석 reader의 `가설 검토 상태` 카드는 만들기·검토 진입점으로 남고 정본을 따로 두지 않습니다.
 

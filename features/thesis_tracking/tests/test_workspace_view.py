@@ -164,6 +164,28 @@ def test_thesis_checkpoint_evidence_has_no_role_key():
         assert evidence == [{"date": "2026-08-24", "title": "엔비디아 가이던스상향"}]
 
 
+def test_workspace_exposes_only_openable_source_urls():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        checkpoint = _checkpoint()
+        checkpoint["lastVerdict"]["evidence"] = [
+            {"docId": "https://www.sec.gov/example", "date": "2026-08-24", "title": "공식 원문"},
+            {"docId": "research-inbox/rss/x.md", "date": "2026-08-24", "title": "로컬 문서"},
+        ]
+        _seed_thesis(db_path, checkpoints=[checkpoint])
+        conn = ST.connect(db_path)
+        ST.save_delta(conn, TICKER, {"verdict": "insufficient_evidence", "generatedAt": "2026-08-28T00:00:00+00:00",
+                                    "counterEvidence": [{"title": "링크", "url": "https://www.sec.gov/example"},
+                                                        {"title": "열 수 없음", "url": "javascript:alert(1)"}]})
+        conn.close()
+        out = W.thesis_workspace_payload(TICKER, db_path, as_of=TODAY)
+        evidence = out["checkpoints"]["structured"][0]["lastVerdict"]["evidence"]
+        assert evidence[0]["url"] == "https://www.sec.gov/example"
+        assert "url" not in evidence[1]
+        assert out["latestDelta"]["counterEvidence"][0]["url"] == "https://www.sec.gov/example"
+        assert "url" not in out["latestDelta"]["counterEvidence"][1]
+
+
 def test_history_comes_from_checkpoint_dict_and_delta_rows():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "market-memory.sqlite3")

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCompanyResolution } from "./companyAnalysis/useCompanyResolution";
 import { getJson, postJson } from "../api";
 import { setReactAgentContextScope } from "./agentContext";
@@ -23,6 +23,12 @@ type WatchlistOverviewItem = {
   name?: string;
   sector?: string;
   count?: number;
+  reasonKind?: "interest" | "investment";
+  reasonStatus?: "unwritten" | "unreviewed" | "reviewed" | "evidence_gap";
+  reasonPreview?: string;
+  /** 이유의 판단 조건과 연결된 새 소식 수. 절차 상태 대신 목록이 보여 준다. */
+  reasonNewsCount?: number;
+  portfolioOnly?: boolean;
 };
 
 type WatchlistCompany = {
@@ -122,7 +128,9 @@ export function splitAddInput(raw: string, resolvedWhole: boolean) {
     .filter((item) => !LEGAL_SUFFIX_ONLY.test(item));
 }
 
+let watchlistScrollY = 0;
 function setWatchlistHash(item?: string) {
+  if (item) watchlistScrollY = window.scrollY;
   window.location.hash = item ? `#/watchlist/${encodeURIComponent(item)}` : "#/watchlist";
 }
 
@@ -139,7 +147,12 @@ export function WatchlistRoute() {
   const [items, setItems] = useState<string[]>([]);
   const [cards, setCards] = useState<WatchlistOverviewItem[]>([]);
   const [keyword, setKeyword] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [listSearch, setListSearch] = useState("");
+  const [reasonFilter, setReasonFilter] = useState<"all" | "interest" | "investment">("all");
+  const [listMode, setListMode] = useState<"compact" | "cards">("compact");
   const [detailItem, setDetailItem] = useState(() => readWatchlistDetailItem());
+  const previousDetailItem = useRef(readWatchlistDetailItem());
   const [detail, setDetail] = useState<WatchlistDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -154,11 +167,7 @@ export function WatchlistRoute() {
   const [chartRange, setChartRange] = useState("3m");
   const [chartStyle, setChartStyle] = useState<"candle" | "line">("line");
 
-  const loadOverview = useCallback(async (nextItems: string[]) => {
-    if (!nextItems.length) {
-      setCards([]);
-      return;
-    }
+  const loadOverview = useCallback(async () => {
     const overview = await getJson<{ items?: WatchlistOverviewItem[] }>("/api/watchlist/overview");
     const rows = Array.isArray(overview.items) ? overview.items : [];
     setCards(rows);
@@ -173,7 +182,7 @@ export function WatchlistRoute() {
       const payload = await getJson<string[]>("/api/watchlist");
       const normalized = normalizeItems(Array.isArray(payload) ? payload : []);
       setItems(normalized);
-      await loadOverview(normalized);
+      await loadOverview();
       setReactAgentContextScope("watchlist", { surface: "watchlist", viewId: "watchlist", reportKind: "", reportId: "" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "워치리스트를 불러오지 못했습니다.");
@@ -189,12 +198,19 @@ export function WatchlistRoute() {
   useEffect(() => {
     const handleHashChange = () => {
       if (!isWatchlistHash()) return;
-      setDetailItem(readWatchlistDetailItem());
+      const nextDetailItem = readWatchlistDetailItem();
+      const returningToList = Boolean(previousDetailItem.current) && !nextDetailItem;
+      previousDetailItem.current = nextDetailItem;
+      setDetailItem(nextDetailItem);
+      if (!nextDetailItem) {
+        if (returningToList) void loadOverview().catch(() => {});
+        requestAnimationFrame(() => window.scrollTo(0, watchlistScrollY));
+      }
     };
     window.addEventListener("hashchange", handleHashChange);
     handleHashChange();
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [loadOverview]);
 
   useEffect(() => {
     let alive = true;
@@ -233,7 +249,7 @@ export function WatchlistRoute() {
       const saved = await postJson<string[]>("/api/watchlist", { items: nextItems });
       const normalized = normalizeItems(Array.isArray(saved) ? saved : []);
       setItems(normalized);
-      await loadOverview(normalized);
+      await loadOverview();
       if (message) setStatus(message);
     } catch (err) {
       setError(err instanceof Error ? err.message : "워치리스트 저장에 실패했습니다.");
@@ -338,7 +354,23 @@ export function WatchlistRoute() {
   const detailCard = cards.find((row) => (row.item || cardCompanyName(row)) === detailItem) || null;
   const detailTicker = String(detailCard?.ticker || detail?.company?.ticker || "").trim();
   const detailCompanyName = detailCard ? cardCompanyName(detailCard) : detailLabel(detail, detailItem);
+  const filteredCards = cards.filter((card) => {
+    if (reasonFilter !== "all" && (card.reasonKind || "interest") !== reasonFilter) return false;
+    const needle = listSearch.trim().toLocaleLowerCase();
+    return !needle || `${cardTicker(card)} ${cardCompanyName(card)}`.toLocaleLowerCase().includes(needle);
+  });
   const fundamentals = useFundamentals(detailTicker);
+  // 상세는 "기업 정보 | 내 이유" 두 탭이다(2026-09-29). 처음엔 기업 정보를 연다.
+  const [detailTab, setDetailTab] = useState<"company" | "reason">("company");
+  const [reasonNewsCount, setReasonNewsCount] = useState(0);
+  useEffect(() => {
+    setDetailTab("company");
+    setReasonNewsCount(detailCard?.reasonNewsCount || 0);
+    // 종목이 바뀔 때만 초기화한다. 목록 재조회로 카드 객체가 바뀌어도 선택한 탭은 유지한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailItem]);
+  const onReasonNewsCount = useCallback((count: number) => setReasonNewsCount(count), []);
+  const reasonTabLabel = detailCard?.reasonKind === "investment" ? "내 투자 이유" : "내 관심 이유";
 
   function earningsFor(card: WatchlistOverviewItem | null): EarningsEvent | undefined {
     const ticker = String(card?.ticker || "").toUpperCase();
@@ -376,6 +408,26 @@ export function WatchlistRoute() {
                 아니라 구분선과 여백이 맡고, 면은 실적의 "다음 발표" 강조 상자 하나만 남긴다.
                 간격은 grid gap 하나가 소유한다 — 자식 margin-top이 겹치면 리듬이 깨진다. */}
             {detailTicker ? (
+              <>
+              <div className="segment watchlist-detail-tabs" role="group" aria-label="상세 보기">
+                <button type="button" aria-pressed={detailTab === "company"} onClick={() => setDetailTab("company")}>기업 정보</button>
+                <button type="button" aria-pressed={detailTab === "reason"} onClick={() => setDetailTab("reason")}>
+                  {reasonTabLabel}
+                  {reasonNewsCount > 0 && <span className="watchlist-detail-tabs__dot" aria-hidden="true" />}
+                  {reasonNewsCount > 0 && <span className="sr-only"> (새 소식 {reasonNewsCount}건)</span>}
+                </button>
+              </div>
+              {/* 내 이유 탭은 숨겨도 마운트해 둔다 — 새 소식 수(탭 점)와 입력 중인 초안을 유지한다. */}
+              <div className="watchlist-detail-reason" hidden={detailTab !== "reason"}>
+                <ThesisWorkspace
+                  ticker={detailTicker}
+                  companyName={detailCompanyName}
+                  quarters={fundamentals.payload?.quarters}
+                  currency={fundamentals.payload?.currency}
+                  onNewsCountChange={onReasonNewsCount}
+                />
+              </div>
+              {detailTab === "company" && (
               <div className="watchlist-detail-grid">
                 <section className="watchlist-detail-section watchlist-detail-section--metrics">
                   <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
@@ -395,18 +447,15 @@ export function WatchlistRoute() {
                     showEvent={false}
                   />
                 </section>
-                <section className="watchlist-detail-section watchlist-detail-section--earnings">
+                <section id="watchlist-earnings" className="watchlist-detail-section watchlist-detail-section--earnings">
                   <EarningsPanel ticker={detailTicker} />
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--news">
                   {newsSection}
                 </section>
-                {/* 여기부터는 사실이 아니라 개인 판단이다(0.6 Stage C.2). 같은 구분 문법
-                    (제목 + 헤어라인 + 여백)을 쓰되 hypothesis 경계를 스스로 표시한다. */}
-                <section className="watchlist-detail-section watchlist-detail-section--thesis">
-                  <ThesisWorkspace ticker={detailTicker} companyName={detailCompanyName} />
-                </section>
               </div>
+              )}
+              </>
             ) : (
               <>
                 {/* 워치리스트에는 테마 키워드도 들어간다. 그런 항목에는 그릴 시세가 없다. */}
@@ -428,6 +477,7 @@ export function WatchlistRoute() {
         description="관심 기업, 섹터, 테마를 추적하고 관련 뉴스와 시장 반응을 확인합니다."
         actions={(
         <div className="brief-controls">
+          <button className="btn" type="button" aria-expanded={addOpen} aria-controls="watchlist-add-panel" onClick={() => setAddOpen((value) => !value)}>종목·키워드 추가</button>
           <button className="btn" type="button" onClick={loadWatchlist} disabled={loading}>
             {loading ? "불러오는 중" : "다시 읽기"}
           </button>
@@ -437,7 +487,7 @@ export function WatchlistRoute() {
         </div>
         )}
       />
-      <div className="watchlist-editor input-panel">
+      {addOpen && <div className="watchlist-editor input-panel" id="watchlist-add-panel">
         <div className="input-panel-header">
           <h3>키워드 추가</h3>
           <p>관심 기업, 섹터, 테마를 하나씩 추가해 뉴스와 브리핑 추적 범위를 관리합니다.</p>
@@ -478,19 +528,29 @@ export function WatchlistRoute() {
           )}
         </label>
         <button className="btn" type="button" onClick={addKeyword} disabled={saving}>추가</button>
-      </div>
+      </div>}
       {/* 워치리스트는 테마 키워드도 받는다. 못 알아본 입력은 오류가 아니라 키워드다. */}
-      <p className="analysis-resolution" id="watchlist-resolution" data-status={keyword.trim() ? (picked ? "picked" : resolution?.status || "idle") : "idle"}>
+      {addOpen && <p className="analysis-resolution" id="watchlist-resolution" data-status={keyword.trim() ? (picked ? "picked" : resolution?.status || "idle") : "idle"}>
         {watchlistResolutionMessage}
-      </p>
+      </p>}
       {error && <p className="react-dashboard-error">{error}</p>}
       {status && <p className="react-dashboard-warning">{status}</p>}
-      <div className="watchlist-grid">
-        {cards.length ? cards.map((card) => {
+      <div className="watchlist-reason-controls surface surface--group">
+        <label className="field">종목 찾기<input value={listSearch} onChange={(event) => setListSearch(event.target.value)} placeholder="기업명 또는 티커" /></label>
+        <div className="segment" role="group" aria-label="관심과 보유 필터">
+          {([ ["all", "전체"], ["interest", "관심"], ["investment", "보유"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={reasonFilter === value} onClick={() => setReasonFilter(value)}>{label}</button>)}
+        </div>
+        <div className="segment" role="group" aria-label="워치리스트 보기 방식">
+          <button type="button" aria-pressed={listMode === "compact"} onClick={() => setListMode("compact")}>간결한 목록</button>
+          <button type="button" aria-pressed={listMode === "cards"} onClick={() => setListMode("cards")}>카드</button>
+        </div>
+      </div>
+      <div className={listMode === "compact" ? "watchlist-reason-list" : "watchlist-grid"}>
+        {filteredCards.length ? filteredCards.map((card) => {
           const item = card.item || cardCompanyName(card);
           return (
             <article
-              className="watchlist-card"
+              className={listMode === "compact" ? "watchlist-reason-row surface surface--group" : "watchlist-card"}
               data-watchlist-detail-item={item}
               tabIndex={0}
               role="button"
@@ -505,7 +565,7 @@ export function WatchlistRoute() {
               }}
             >
               <span className="watchlist-card-accent" aria-hidden="true" />
-              <button
+              {!card.portfolioOnly && <button
                 className="btn btn--icon watchlist-card-delete"
                 type="button"
                 aria-label={`${item} 워치리스트에서 삭제`}
@@ -520,12 +580,16 @@ export function WatchlistRoute() {
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M2.5 4h11M6 4V2.5h4V4M5 4l.5 9h5L11 4" />
                 </svg>
-              </button>
+              </button>}
               <div className="watchlist-card-top">
                 <strong className="watchlist-ticker">{cardTicker(card)}</strong>
                 <h3>{cardCompanyName(card)}</h3>
               </div>
               <div className="watchlist-card-meta">
+                <span className="chip" data-tone={card.reasonKind === "investment" ? "purple" : "muted"}>{card.reasonKind === "investment" ? "보유" : "관심"}</span>
+                <span className="watchlist-reason-row__summary">{card.reasonPreview || "이유 미작성"}</span>
+                {/* 절차 상태(미검토·근거 부족) 대신, 이유와 연결된 새 소식이 있을 때만 알린다(2026-09-29). */}
+                {(card.reasonNewsCount || 0) > 0 && <span className="chip watchlist-reason-news-chip" data-tone="gold">새 소식 {card.reasonNewsCount}</span>}
                 {/* 카드에는 **잘 안 변하는 것**만 둔다. 뉴스에서 뽑은 주제 태그는 상세의
                     `수집한 뉴스`로 옮겼다(2026-09-01 사용자 결정) — 그 태그는 매일 바뀌고
                     카드끼리 겹쳐서(여러 종목이 나란히 `매출 성장`·`마진`) 훑는 데 도움이
@@ -556,7 +620,7 @@ export function WatchlistRoute() {
           );
         }) : (
           <div className="result">
-            <p>워치리스트 항목을 저장하면 항목별 최신 뉴스 카드가 표시됩니다.</p>
+            <p>{cards.length ? "조건에 맞는 종목이 없습니다." : "워치리스트 항목을 저장하거나 Portfolio에 보유 종목을 추가하면 여기에 표시됩니다."}</p>
           </div>
         )}
       </div>

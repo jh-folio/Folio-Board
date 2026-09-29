@@ -27,7 +27,7 @@ test("review card renders controlled state and explicit actions", () => {
     "체크포인트 확인",
     "Agent에게 설명 요청",
     "아직 저장된 노트가 없습니다",
-    "티커가 없어 Thesis와 연결할 수 없습니다",
+    "티커가 없어 관심·투자 이유와 연결할 수 없습니다",
     "최신 Delta가 없습니다",
     "Agent를 사용할 수 없습니다",
   ]) {

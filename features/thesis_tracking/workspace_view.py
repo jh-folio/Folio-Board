@@ -22,6 +22,9 @@ from pathlib import Path
 
 from features.common.research_schema.tracked_checkpoints import partition_checkpoints, squash
 from features.thesis_tracking import model as M
+from features.thesis_tracking import reason_history as RH
+from features.thesis_tracking import reason_news as RN
+from features.thesis_tracking import reason_review as RR
 from features.thesis_tracking import store as ST
 
 CHECKPOINT_STATUS_LABELS = {
@@ -56,6 +59,15 @@ def _date(value) -> dt.date | None:
 def _checkpoint_projection(checkpoint: dict) -> dict:
     last = checkpoint.get("lastVerdict") or {}
     status = str(checkpoint.get("status") or "open")
+    evidence = []
+    for item in (last.get("evidence") or [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        copy = {"date": str(item.get("date") or ""), "title": str(item.get("title") or "")}
+        url = _public_source_url(item.get("docId") or item.get("url"))
+        if url:
+            copy["url"] = url
+        evidence.append(copy)
     return {
         "id": checkpoint.get("id", ""),
         "item": checkpoint.get("item", ""),
@@ -68,11 +80,7 @@ def _checkpoint_projection(checkpoint: dict) -> dict:
             "verdictLabel": VERDICT_LABELS.get(str(last.get("verdict") or ""), ""),
             "at": last.get("at", ""),
             # thesis 근거 풀은 연구 인덱스 문서라 사본 키가 docId이고 role이 없다.
-            "evidence": [
-                {"date": str(item.get("date") or ""), "title": str(item.get("title") or "")}
-                for item in (last.get("evidence") or [])[:3]
-                if isinstance(item, dict)
-            ],
+            "evidence": evidence,
         } if last else None,
         "history": [
             {
@@ -116,8 +124,8 @@ def _ownership(thesis: dict, vault_note: dict) -> dict:
         "vaultNote": vault_note or None,
         "syncPaused": sync_paused,
         "message": (
-            "이 Thesis는 Vault에서 더 이상 갱신되지 않습니다. 앱에서 만든 내용이 우선이며, "
-            "Vault 노트를 반영하려면 그 노트를 Thesis로 다시 등록하세요."
+            "이 이유는 Vault에서 더 이상 갱신되지 않습니다. 앱에서 만든 내용이 우선이며, "
+            "Vault 노트를 반영하려면 그 노트를 이유로 다시 등록하세요."
             if sync_paused else ""
         ),
     }
@@ -146,15 +154,24 @@ def _evidence_list(values) -> list:
     out = []
     for item in (values or [])[:5]:
         if isinstance(item, dict):
-            out.append({
+            copy = {
                 "title": str(item.get("title") or "")[:220],
                 "source": str(item.get("source") or "")[:80],
                 "date": str(item.get("date") or "")[:10],
                 "reason": str(item.get("reason") or "")[:400],
-            })
+            }
+            url = _public_source_url(item.get("url") or item.get("docId"))
+            if url:
+                copy["url"] = url
+            out.append(copy)
         elif str(item).strip():
             out.append({"title": str(item)[:220], "source": "", "date": "", "reason": ""})
     return out
+
+
+def _public_source_url(value) -> str:
+    url = str(value or "").strip()
+    return url[:2048] if url.lower().startswith(("https://", "http://")) else ""
 
 
 def _linked_state_ids(conn, thesis: dict, ticker: str) -> set:
@@ -274,6 +291,13 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
     empty = {
         "ticker": ticker,
         "hasThesis": False,
+        "reasonKind": "interest",
+        "reasonRevision": None,
+        "reasonHistory": [],
+        "reasonStatus": "unwritten",
+        "reviewEvents": [],
+        "reasonConnections": [],
+        "news": RN.reason_news(None, None, []),
         "thesis": None,
         "ownership": None,
         "latestDelta": None,
@@ -287,6 +311,7 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
         return empty
     conn = ST.connect(db_path)
     try:
+        empty["reasonKind"] = RH._kind_at_write(conn, ticker) if ticker else "interest"
         thesis = ST.get_thesis(conn, requested_ticker)
         if not thesis:
             # thesis가 없어도 Vault 노트 유무는 알려준다 — 만드는 경로 안내가 달라진다.
@@ -305,9 +330,57 @@ def thesis_workspace_payload(ticker: str, db_path: str | Path | None = None, *, 
         for item in checkpoints:
             counts[item["status"]] = counts.get(item["status"], 0) + 1
         deltas = ST.list_deltas(conn, ticker, limit=HISTORY_LIMIT)
+        reason = RH.latest(conn, ticker)
+        reason_status, review_events = RR.status_for_reason(
+            conn, ticker, reason["revisionId"] if reason else None,
+            bool(thesis.get("core_thesis")),
+        )
+        authored = set(reason["content"].get("falsification_triggers") or []) if reason else set()
+        authored.update(reason["content"].get("next_checkpoints") or [] if reason else [])
+        connections = []
+        for checkpoint in checkpoints:
+            if checkpoint["status"] == "open" and not checkpoint.get("lastVerdict"):
+                continue
+            exact = checkpoint["item"] in authored
+            connections.append({
+                "kind": "checkpoint", "identity": checkpoint["id"], "label": checkpoint["item"],
+                "relationship": "exact_condition" if exact else "company_change_only",
+                "reasonRevisionId": reason["revisionId"] if exact and reason else None,
+                "status": (checkpoint.get("lastVerdict") or {}).get("verdict") or checkpoint["status"],
+                "at": (checkpoint.get("lastVerdict") or {}).get("at") or "",
+                "source": "구조화 확인 항목", "gap": "관련성은 문장 일치만 확인" if exact else "이 이유에 미치는 영향 미확인",
+            })
+        if deltas:
+            linked = next((event for event in review_events if event.get("deltaId") == deltas[0]["deltaId"]), None)
+            connections.append({
+                "kind": "delta", "identity": deltas[0]["deltaId"], "label": deltas[0].get("summary") or "종합 검토",
+                "relationship": "exact_revision" if linked else "company_change_only",
+                "reasonRevisionId": linked["reasonRevisionId"] if linked else None,
+                "status": deltas[0].get("verdict") or "", "at": deltas[0].get("generatedAt") or "",
+                "source": deltas[0].get("evidenceSource") or "저장된 Delta",
+                "gap": "Delta의 결론은 사용자 이유의 자동 변경이 아님",
+            })
+        for ref in (reason or {}).get("basisRefs") or []:
+            if isinstance(ref, dict):
+                connections.append({
+                    "kind": "user_ref", "identity": str(ref.get("id") or ref.get("url") or ""),
+                    "label": str(ref.get("title") or ref.get("id") or "연결한 자료"),
+                    "relationship": "user_linked", "reasonRevisionId": reason["revisionId"],
+                    "status": "availability_unverified", "at": reason["recordedAt"],
+                    "source": "사용자 연결", "gap": "원문 가용 여부 미확인",
+                    "url": str(ref.get("url") or "") if str(ref.get("url") or "").startswith(("https://", "http://")) else "",
+                })
         return {
             "ticker": ticker,
             "hasThesis": True,
+            "reasonKind": RH._kind_at_write(conn, ticker),
+            "reasonRevision": reason,
+            "reasonHistory": RH.list_for_ticker(conn, ticker, limit=12),
+            "reasonStatus": reason_status,
+            "reviewEvents": review_events,
+            "reasonConnections": connections,
+            # 이유와 연결된 새 소식(사실). 판정이 아니며 사용자의 "그대로 두기"가 세는 기준이다.
+            "news": RN.reason_news(thesis, reason, review_events),
             "thesis": {
                 "ticker": thesis["ticker"],
                 "company": str(thesis.get("company") or ""),

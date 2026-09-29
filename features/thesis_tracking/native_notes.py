@@ -99,7 +99,10 @@ def thesis_from_note(note: dict):
     return thesis
 
 
-def register_thesis_from_note(note: dict, *, db_path=None, overwrite: bool = False) -> dict:
+def register_thesis_from_note(
+    note: dict, *, db_path=None, overwrite: bool = False,
+    expected_revision_id: str | None = None,
+) -> dict:
     """노트에서 thesis를 등록한다. 무엇을 했는지 status로 돌려준다.
 
     `overwrite=False`(노트 저장 경로)는 **빈자리만** 채운다. `overwrite=True`는
@@ -113,9 +116,12 @@ def register_thesis_from_note(note: dict, *, db_path=None, overwrite: bool = Fal
         return {"status": "skipped_no_ticker", "ticker": ""}
     conn = ST.connect(db_path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
         existing = ST.get_thesis(conn, thesis.ticker)
         if existing and not overwrite:
             return {"status": "skipped_existing", "ticker": thesis.ticker}
+        if existing and expected_revision_id is None:
+            raise ValueError("expectedRevisionId is required for an existing reason")
         if existing:
             # 갱신에서도 **노트가 값을 주지 않는 필드는 기존을 유지한다.** 노트에는
             # 그 값이 없어서 빈 값·기본값으로 되돌아가기 때문이다 — 확인 대화상자는
@@ -135,7 +141,8 @@ def register_thesis_from_note(note: dict, *, db_path=None, overwrite: bool = Fal
                 if not getattr(thesis, field):
                     setattr(thesis, field, list(existing.get(field) or []))
             thesis.company = thesis.company or str(existing.get("company") or "")
-        ST.upsert_thesis(conn, thesis)
+        ST.upsert_thesis(conn, thesis, edit_source="native_note",
+                         expected_revision_id=expected_revision_id)
         return {
             "status": "updated" if existing else "created",
             "ticker": thesis.ticker,

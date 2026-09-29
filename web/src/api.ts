@@ -1110,6 +1110,7 @@ export async function updateHypothesisCheckpoint(
 export type CheckpointEvidenceCopy = {
   date: string;
   title: string;
+  url?: string;
   /** 내러티브 근거 풀에만 있다. thesis 풀(문서)에는 role 분류가 없다. */
   role?: string;
 };
@@ -1168,6 +1169,14 @@ export type NarrativeVerificationPayload = {
 export type ThesisWorkspacePayload = {
   ticker: string;
   hasThesis: boolean;
+  reasonKind: "interest" | "investment";
+  reasonRevision: ReasonRevision | null;
+  reasonHistory: ReasonRevision[];
+  reasonStatus: "unwritten" | "unreviewed" | "reviewed" | "evidence_gap";
+  reviewEvents: Array<{ eventId: string; reasonRevisionId: string; source: string; outcome: string; checkedScope: string[]; basisRefs: unknown[]; deltaId: string; reviewedAt: string }>;
+  reasonConnections: Array<{ kind: "checkpoint" | "delta" | "user_ref"; identity: string; label: string; relationship: string; reasonRevisionId: string | null; status: string; at: string; source: string; gap: string; url?: string }>;
+  /** 이유의 판단 조건과 연결된 새 소식(사실). 판정이 아니다. */
+  news: ReasonNews;
   thesis: {
     ticker: string;
     company: string;
@@ -1198,8 +1207,8 @@ export type ThesisWorkspacePayload = {
     generatedAt: string;
     period: string;
     summary: string;
-    supportingEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
-    counterEvidence: Array<{ title: string; source: string; date: string; reason: string }>;
+    supportingEvidence: Array<{ title: string; source: string; date: string; reason: string; url?: string }>;
+    counterEvidence: Array<{ title: string; source: string; date: string; reason: string; url?: string }>;
     contradictions: string[];
     uncertainties: string[];
   } | null;
@@ -1222,8 +1231,40 @@ export type ThesisWorkspacePayload = {
   reuseAsEvidence: boolean;
 };
 
+export type ReasonNewsItem = { key: string; title: string; date: string; url: string; condition: string };
+export type ReasonNews = {
+  items: ReasonNewsItem[];
+  count: number;
+  since: string;
+  /** 대조할 단어가 있어 실제로 찾고 있는지. false면 "새 소식 없음"이 아니라 "찾지 않음"이다. */
+  searchReady: boolean;
+  keywords: string[];
+  lastDecisionAt: string;
+};
+
+export type ReasonRevision = {
+  revisionId: string;
+  ticker: string;
+  revision: number;
+  previousRevisionId: string;
+  contentHash: string;
+  content: Record<string, unknown>;
+  conditionResponse: "unanswered" | "unknown" | "skipped" | "written" | "legacy_unknown";
+  fieldPresence: Record<string, boolean | "unknown">;
+  editSource: string;
+  kindAtWrite: string;
+  changeReason: string;
+  userStatedAt: string;
+  basisRefs: Array<{ id?: string; revision?: string; title?: string; url?: string }>;
+  recordedAt: string;
+};
+
 export type SaveThesisRequest = {
   ticker: string;
+  expectedRevisionId?: string;
+  conditionResponse?: "unanswered" | "unknown" | "skipped" | "written";
+  changeReason?: string;
+  basisRefs?: Array<{ id?: string; revision?: string; title?: string; url?: string }>;
   company?: string;
   coreThesis?: string;
   keyAssumptions?: string[];
@@ -1237,6 +1278,27 @@ export async function saveThesis(
   options: JsonRequestOptions = {},
 ): Promise<{ ok: boolean; thesis: ThesisWorkspacePayload["thesis"] }> {
   return postJson("/api/theses", body, options);
+}
+
+export type ReasonAssistAnswer = { question: string; answer: string; response: "written" | "unknown" | "skipped" };
+export type ReasonAssistRequest = {
+  expectedRevisionId: string; draftReason: string; draftCondition: string;
+  answers: ReasonAssistAnswer[]; phase: "question" | "draft";
+};
+export type ReasonAssistResult = {
+  phase: "question" | "draft"; revisionId: string; question?: string;
+  suggestedReason?: string; suggestedCondition?: string; uncertainties?: string[];
+  reasonBasis?: string; conditionBasis?: string; conditionKeywords?: string[];
+  originalReason?: string; originalCondition?: string; previewToken?: string;
+};
+export async function assistReason(ticker: string, request: ReasonAssistRequest, options: JsonRequestOptions = {}) {
+  return postJson<ReasonAssistResult>(`/api/theses/${encodeURIComponent(ticker)}/reason-assist`, request, options);
+}
+export async function approveAssistedReason(ticker: string, request: Record<string, unknown>, options: JsonRequestOptions = {}) {
+  return postJson<{ ok: boolean }>(`/api/theses/${encodeURIComponent(ticker)}/reason-assist/approve`, request, options);
+}
+export async function completeReasonReview(ticker: string, request: { expectedRevisionId: string; outcome: string; checkedScope: string[]; basisRefs?: Array<{ key: string; title: string; date: string; url: string }> }, options: JsonRequestOptions = {}) {
+  return postJson<{ eventId: string }>(`/api/theses/${encodeURIComponent(ticker)}/reason-review`, request, options);
 }
 
 export async function getNarrativeVerification(
@@ -1264,10 +1326,11 @@ export async function promoteNoteToThesis(
   noteId: string,
   overwrite = false,
   options: JsonRequestOptions = {},
+  expectedRevisionId = "",
 ): Promise<PromoteNoteToThesisResult> {
   return postJson<PromoteNoteToThesisResult>(
     `/api/investment-notes/${encodeURIComponent(noteId)}/thesis`,
-    { overwrite },
+    { overwrite, expectedRevisionId },
     options,
   );
 }

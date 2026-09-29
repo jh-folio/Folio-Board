@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from features.thesis_tracking import model as M
+from features.thesis_tracking import reason_history as RH
 from features.common.research_schema.checkpoints import checkpoints_from_thesis_delta
 from features.common.research_schema.evidence import evidence_items_from_list
 from features.common.research_schema.source_ledger import source_ledger_from_items
@@ -31,16 +32,29 @@ VAULT_OWNED_SOURCES = frozenset({"obsidian", ""})
 def connect(db_path=None) -> sqlite3.Connection:
     if db_path == ":memory:":
         conn = sqlite3.connect(":memory:")
+        backup = None
     else:
         path = Path(db_path or DEFAULT_DB)
         path.parent.mkdir(parents=True, exist_ok=True)
+        backup = RH.backup_before_migration(path)
         conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    init_db(conn)
+    try:
+        if backup:
+            conn.execute("BEGIN IMMEDIATE")
+            ensure_schema(conn, commit=False)
+            RH.verify_legacy_import(backup, conn)
+            conn.commit()
+        else:
+            init_db(conn)
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     return conn
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: sqlite3.Connection, *, commit: bool = True) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS thesis (
@@ -92,7 +106,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     from features.thesis_tracking.review_state import ensure_schema as ensure_review_state_schema
 
     ensure_review_state_schema(conn)
-    conn.commit()
+    RH.ensure_schema(conn)
+    from features.thesis_tracking.reason_review import ensure_schema as ensure_reason_review_schema
+    ensure_reason_review_schema(conn)
+    if commit:
+        conn.commit()
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -132,7 +150,13 @@ def _storage_ticker(conn, ticker: str) -> str:
     return canonical or raw
 
 
-def upsert_thesis(conn, thesis: M.Thesis) -> str:
+def upsert_thesis(
+    conn, thesis: M.Thesis, *, edit_source: str | None = None,
+    expected_revision_id: str | None = None, condition_state: str | None = None,
+    field_presence: dict | None = None, change_reason: str = "",
+    user_stated_at: str | None = None, basis_refs: list | None = None,
+    commit: bool = True,
+) -> str:
     """Thesis를 ticker 기준으로 upsert. ticker 반환.
 
     `next_checkpoints`는 통째로 덮지 않는다 — 저장돼 있던 **구조화 체크포인트(dict)는
@@ -142,6 +166,8 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
     """
     from features.common.research_schema.tracked_checkpoints import merge_with_templates
 
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     row = thesis.to_row()
     # New rows use normalized keys; existing keys retain their history and owner.
     ticker = M.normalize_ticker(row["ticker"])
@@ -149,10 +175,14 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
         raise ValueError("thesis.ticker가 비어 있거나 형식이 올바르지 않습니다.")
     ticker = _storage_ticker(conn, row["ticker"])
     row["ticker"] = ticker
+    if expected_revision_id is not None:
+        current = RH.latest(conn, ticker)
+        actual = current["revisionId"] if current else ""
+        if actual != expected_revision_id:
+            conn.rollback()
+            raise RH.ReasonRevisionConflictError(current)
     now = _now()
-    existing = conn.execute(
-        "SELECT first_seen, next_checkpoints_json FROM thesis WHERE ticker=?", (ticker,)
-    ).fetchone()
+    existing = conn.execute("SELECT * FROM thesis WHERE ticker=?", (ticker,)).fetchone()
     first_seen = existing["first_seen"] if existing else now
     try:
         stored_checkpoints = json.loads(existing["next_checkpoints_json"]) if existing else []
@@ -182,6 +212,18 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
     }
     for field_name, col in _LIST_COLS.items():
         values[col] = json.dumps(row[field_name], ensure_ascii=False)
+    if existing and all(existing[key] == value for key, value in values.items() if key != "updated_at"):
+        # A Vault read or duplicate save is not a new event. Preserve the old
+        # write time as well as the reason revision.
+        RH.record_revision(
+            conn, existing, edit_source=edit_source or row["source"],
+            condition_state=condition_state, field_presence=field_presence,
+            change_reason=change_reason, user_stated_at=user_stated_at,
+            basis_refs=basis_refs,
+        )
+        if commit:
+            conn.commit()
+        return ticker
     cols = list(values.keys())
     placeholders = ",".join("?" for _ in cols)
     updates = ",".join(f"{c}=excluded.{c}" for c in cols if c not in ("ticker", "first_seen"))
@@ -190,11 +232,19 @@ def upsert_thesis(conn, thesis: M.Thesis) -> str:
         f"ON CONFLICT(ticker) DO UPDATE SET {updates}",
         [values[c] for c in cols],
     )
-    conn.commit()
+    stored = conn.execute("SELECT * FROM thesis WHERE ticker=?", (ticker,)).fetchone()
+    RH.record_revision(
+        conn, stored, edit_source=edit_source or row["source"],
+        condition_state=condition_state, field_presence=field_presence,
+        change_reason=change_reason,
+        user_stated_at=user_stated_at, basis_refs=basis_refs,
+    )
+    if commit:
+        conn.commit()
     return ticker
 
 
-def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
+def save_thesis_checkpoints(conn, ticker: str, checkpoints: list, *, commit: bool = True) -> None:
     """`next_checkpoints_json`만 제자리 교체한다(판정 pass 전용).
 
     `upsert_thesis`를 쓰지 않는 것은 그쪽이 문자열 목록을 받는 노트 동기화 경로라서다.
@@ -208,7 +258,8 @@ def save_thesis_checkpoints(conn, ticker: str, checkpoints: list) -> None:
         "UPDATE thesis SET next_checkpoints_json=? WHERE ticker=?",
         (json.dumps(checkpoints, ensure_ascii=False), _storage_ticker(conn, ticker)),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def _row_to_dict(row) -> dict:

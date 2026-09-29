@@ -180,6 +180,23 @@ def test_second_run_is_idempotent():
         assert len([c for c in _stored(db_path) if isinstance(c, dict)][0]["history"]) == 1
 
 
+def test_same_verdict_still_persists_new_article_without_rewriting_history():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = os.path.join(tmp, "market-memory.sqlite3")
+        _seed_thesis(db_path, [_checkpoint()])
+        first = _doc(path="research-inbox/rss/first.md", date="2026-08-20")
+        second = _doc(path="research-inbox/rss/second.md", date="2026-08-30",
+                      title="엔비디아, 새 가이던스상향 보도")
+        CV.run_thesis_checkpoint_verdicts(db_path, as_of=AS_OF, index_loader=_Spy(_index([first])))
+        following = CV.run_thesis_checkpoint_verdicts(
+            db_path, as_of="2026-08-31T00:00:00+00:00", index_loader=_Spy(_index([first, second])))
+        stored = [c for c in _stored(db_path) if isinstance(c, dict)][0]
+        assert following["changeCount"] == 0
+        assert [row["docId"] for row in stored["lastVerdict"]["evidence"]] == [
+            "research-inbox/rss/second.md", "research-inbox/rss/first.md"]
+        assert len(stored["history"]) == 1
+
+
 def test_verdict_does_not_touch_last_reviewed_at():
     """기계 판정은 사용자의 검토가 아니다."""
     with tempfile.TemporaryDirectory() as tmp:

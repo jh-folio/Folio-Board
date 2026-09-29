@@ -118,6 +118,18 @@ def commit_thesis_delta(
             commit=False,
             created_at=prepared.created_at,
         )
+        # The pack carries the revision used for generation. Commit-time latest
+        # can be a newer reason and must never receive this Delta's review event.
+        from features.thesis_tracking import reason_history as RH
+        from features.thesis_tracking import reason_review as RR
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reason_revision'").fetchone():
+            revision_id = str(prepared.delta.get("reasonRevisionId") or "")
+            revision = RH.get(connection, revision_id) if revision_id else None
+            if revision and revision["ticker"] == prepared.ticker:
+                RR.record(connection, prepared.ticker, revision_id,
+                          source="delta_generation", outcome="evidence_gap" if prepared.delta.get("verdict") == "insufficient_evidence" else "reviewed",
+                          checked_scope=["저장된 Delta의 자료 범위"], delta_id=prepared.delta_id,
+                          event_id=f"delta:{prepared.delta_id}")
         if _row_hash(connection, prepared.delta_id) != prepared.target_hash:
             raise ReceiptVerificationError(code="thesis_target_hash_mismatch")
         write_receipt(
