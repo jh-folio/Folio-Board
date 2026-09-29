@@ -1100,8 +1100,7 @@ for (const theme of ["light", "dark"] as const) {
         profile: { market: "US", limitations: ["공식 공시 일부 문단"], items: [
           { id: "e1", factor: "interest_rate", direction: "hurt_by_rise", magnitudeBasis: "qualitative_only", quote: "Higher interest rates increase our borrowing costs.", sourceRef: source("10-K", "2026-01-01") },
           { id: "e2", factor: "interest_rate", direction: "unclear", magnitudeBasis: "qualitative_only", quote: "We are exposed to interest rate risk.", sourceRef: source("10-K", "2026-01-01") },
-          { id: "e3", factor: "fx", direction: "unclear", magnitudeBasis: "qualitative_only", quote: "We may hedge foreign currency exposure.", sourceRef: source("10-K", "2026-01-01") },
-          { id: "e4", factor: "fx", direction: "unclear", magnitudeBasis: "qualitative_only", quote: "We may hedge foreign currency exposure.", sourceRef: source("10-Q", "2026-07-31") },
+          { id: "e3", factor: "fx", direction: "unclear", magnitudeBasis: "qualitative_only", quote: "We may hedge foreign currency exposure.", sourceRef: source("10-K", "2026-01-01"), sourceRefs: [source("10-K", "2026-01-01"), source("10-Q", "2026-07-31")] },
         ] },
         interpretation: { notice: "조건부 해석", items: [
           { exposureId: "e1", factor: "interest_rate", interpretation: "challenging", observation: { seriesId: "DFF", direction: "rising", period: "2026-09-25", comparisonPeriod: "2026-06-25", sourceRefs: [{ period: "2026-06-25", value: "3.63" }, { period: "2026-09-25", value: "3.88" }] } },
@@ -1123,19 +1122,35 @@ for (const theme of ["light", "dark"] as const) {
     await expect(rate).toContainText("금리가 오르면 불리");
     await expect(rate).toContainText("시장 금리 3.63%에서 3.88%로(3개월)");
     await expect(rate).toContainText("공시가 불리하다고 한 쪽으로 움직임");
-    await expect(panel.getByRole("row", { name: /^환율/ })).toContainText("영향이 있다고만 적음");
+    await expect(panel.getByRole("row", { name: /^환율/ })).toContainText("영향 방향을 확인하지 못함");
     await expect(panel.getByText("검증 중", { exact: true })).toBeVisible();
     // 원문은 접혀 있고, 같은 문장은 한 번만(출처 둘 다) 보인다.
-    const summary = panel.locator("summary").filter({ hasText: "공시 원문 보기 · 문장 4개" });
+    const summary = panel.locator("summary").filter({ hasText: "공시 원문 보기 · 문장 3개" });
     await expect(panel.locator("blockquote").first()).toBeHidden();
     await summary.focus(); await page.keyboard.press("Enter");
     await expect(panel.locator("blockquote")).toHaveCount(3);
     await expect(panel.locator(".macro-exposure__quote").filter({ hasText: "foreign currency" })).toContainText("10-Q · 항목 2 · 2026-07-31");
+    await expect(panel.locator(".macro-exposure__quote").filter({ hasText: "foreign currency" }).getByRole("link", { name: "원문", exact: true })).toHaveCount(2);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     expect((await new AxeBuilder({ page }).include(".macro-exposure").withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations).toEqual([]);
     await panel.screenshot({ path: info.outputPath(`exposure-${theme}.png`) });
     await openReasonTab(page);
     await expect(panel).toHaveCount(0);
     expect(writes).toBe(0);
+  });
+}
+
+for (const mode of ["opposite", "two-sided", "mixed-paths"]) {
+  test(`0.8 conflicting exposure paths preserve mixed meaning ${mode}`, async ({ page }) => {
+    await prepare(page, "light");
+    const directions = mode === "two-sided" ? ["two_sided"] : mode === "mixed-paths" ? ["hurt_by_rise", "two_sided"] : ["hurt_by_rise", "benefits_from_rise"];
+    await page.route("**/api/macro/exposures/NVDA**", route => route.fulfill({ json: {
+      profile: { market: "US", limitations: [], items: directions.map((direction, i) => ({ id: `r${i}`, factor: "interest_rate", direction, quote: `Disclosed rate effect ${i}.`, sourceRef: { url: "https://www.sec.gov/example", form: "10-K", date: "2026-01-01" } })) },
+      interpretation: { items: directions.map((direction, i) => ({ exposureId: `r${i}`, factor: "interest_rate", interpretation: direction === "two_sided" ? "mixed" : i === 0 ? "challenging" : "supportive", observation: { seriesId: "DFF", direction: "rising", period: "2026-09-25" } })) }
+    } }));
+    await open(page, "watchlist/NVDA");
+    const panel = page.getByRole("region", { name: /금리·환율 영향/ });
+    await expect(panel.getByRole("row", { name: /^금리/ })).toContainText("유리·불리 경로가 함께 있어 한쪽으로 말할 수 없음");
+    if (mode !== "opposite") await expect(panel.locator(".macro-exposure__answer")).toContainText("유리한 경로와 불리한 경로가 함께");
   });
 }

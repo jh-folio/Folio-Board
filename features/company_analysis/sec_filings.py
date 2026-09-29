@@ -202,14 +202,20 @@ def paragraphs_with_items(markup: str, form: str = "10-K"):
                         target.insert_before(heading)
             table.decompose()
     if form == '10-K':
-        for block in list(soup.find_all(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])):
+        for block in list(soup.find_all(['div', 'p', 'td', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])):
             # Only standalone body headings: exclude table contents, links,
             # and spans embedded in prose that happens to cite this title.
-            if block.find_parent(['table', 'a']) or block.find('a') or block.find(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                continue
             title = re.sub(r'\s+', ' ', block.get_text(' ')).strip()
             section = ('8' if re.fullmatch(r'(?:Notes to (?:the )?)?Consolidated Financial Statements', title, re.I) else
                        '7' if re.fullmatch(r'Management[’\']s Discussion and Analysis of Financial Condition(?:s)? and Results of Operations', title, re.I) else '')
+            if not section:
+                continue
+            table = block.find_parent('table')
+            links = table.select('a[href]') if table else []
+            running_header = bool(links) and len(table.get_text(' ', strip=True)) < 240 and all(
+                re.fullmatch(r'(?:Financial )?Table of Contents', a.get_text(' ', strip=True), re.I) for a in links)
+            if (table and not running_header) or block.find_parent('a') or block.find('a') or block.find(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                continue
             if section:
                 heading = soup.new_tag('div')
                 heading.string = 'ITEM ' + section

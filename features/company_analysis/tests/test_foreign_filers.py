@@ -389,3 +389,10 @@ def test_linked_item_number_inside_semantic_heading():
     paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
     markup = f'<div>Item 7. Discussion</div><h2><a href="#top">Item 1A.</a> Risk Factors</h2><p>{paragraph}</p>'
     assert list(paragraphs_with_items(markup))[0][0] == '1A'
+
+
+def test_financial_running_header_layout_table_is_not_contents():
+    paragraph = 'Our interest rate exposure affects borrowing costs and financial results across our business operations.'
+    markup = '<div>Item 14. Fees</div><table><tr><td>Notes to the Consolidated Financial Statements</td><td><a href="#toc">Financial Table of Contents</a></td></tr></table>'
+    markup += f'<p>{paragraph}</p>'
+    assert [item for item, text in paragraphs_with_items(markup) if text == paragraph] == ['8']

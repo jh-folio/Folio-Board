@@ -16,7 +16,7 @@ function directionText(direction: string, factor: string, market: string): strin
   if (direction === "hurt_by_rise") return `${riseWord(factor, market)} 불리`;
   if (direction === "benefits_from_rise") return `${riseWord(factor, market)} 유리`;
   if (direction === "two_sided") return "유리·불리 경로가 함께 있음";
-  return "영향이 있다고만 적음";
+  return "영향 방향을 확인하지 못함";
 }
 
 const SERIES_NAME: Record<string, string> = { DFF: "시장 금리", KR_RATE: "기준금리", KR_USDKRW: "원/달러 환율" };
@@ -30,7 +30,7 @@ const EFFECT: Record<string, string> = {
 };
 
 type SourceRef = { url: string; path: string; form: string; date: string; section?: string };
-type Exposure = { id: string; factor: string; direction: string; quote: string; sourceRef: SourceRef; magnitudeBasis: string; magnitudeQuote?: string };
+type Exposure = { id: string; factor: string; direction: string; quote: string; sourceRef: SourceRef; sourceRefs?: SourceRef[]; magnitudeBasis: string; magnitudeQuote?: string };
 type Observation = { seriesId: string; direction: string; period: string; comparisonPeriod?: string; sourceRefs?: { period: string; value: string }[] };
 type Reading = { exposureId: string; factor: string; interpretation: string; observation: Observation | null; dataGap?: string };
 type Response = { profile: { market?: string; items: Exposure[]; limitations: string[] } | null; interpretation: { items: Reading[]; notice: string } | null };
@@ -53,7 +53,10 @@ function mergeQuotes(items: Exposure[]) {
   for (const item of items) {
     const key = item.quote.trim();
     const row = merged.get(key);
-    if (row) row.sources.push(item.sourceRef); else merged.set(key, { item, sources: [item.sourceRef] });
+    const refs = item.sourceRefs?.length ? item.sourceRefs : [item.sourceRef];
+    if (row) {
+      for (const ref of refs) if (!row.sources.some(r => JSON.stringify(r) === JSON.stringify(ref))) row.sources.push(ref);
+    } else merged.set(key, { item, sources: [...refs] });
   }
   return [...merged.values()];
 }
@@ -78,7 +81,9 @@ function factorRows(items: Exposure[], readings: Reading[]): FactorRow[] {
     const directions = [...new Set(rows.map(item => item.direction).filter(d => d !== "unclear"))];
     const ids = new Set(rows.filter(item => item.direction !== "unclear").map(item => item.id));
     const own = readings.filter(r => ids.has(r.exposureId));
-    const reading = own.find(r => r.interpretation !== "unknown" && r.observation) || own.find(r => r.observation) || own[0] || null;
+    let reading = own.find(r => r.interpretation !== "unknown" && r.observation) || own.find(r => r.observation) || own[0] || null;
+    const outcomes = new Set(own.map(r => r.interpretation).filter(value => value !== "unknown"));
+    if (reading && (outcomes.size > 1 || outcomes.has("mixed"))) reading = { ...reading, interpretation: "mixed" };
     return { factor, items: rows, directions, reading };
   }).filter(row => row.items.length)
     .sort((a, b) => Number(b.directions.length > 0) - Number(a.directions.length > 0));
@@ -133,7 +138,7 @@ export function ExposurePanel({ ticker }: { ticker: string }) {
   const hurt = rows.filter(r => r.directions.includes("hurt_by_rise")).map(r => riseWord(r.factor, market));
   const help = rows.filter(r => r.directions.includes("benefits_from_rise")).map(r => riseWord(r.factor, market));
   const moved = rows.map(r => r.reading?.observation).find(o => o && o.direction !== "flat");
-  const filings = [...new Map(items.map(i => [`${i.sourceRef.form} ${i.sourceRef.date}`, i.sourceRef])).values()];
+  const filings = [...new Map(items.flatMap(i => i.sourceRefs?.length ? i.sourceRefs : [i.sourceRef]).map(ref => [`${ref.form} ${ref.date}`, ref])).values()];
   const checked = data?.profile != null;
 
   return <section className="watchlist-detail-section watchlist-detail-section--exposure macro-exposure" aria-labelledby={`exposure-${ticker}`}>
@@ -148,7 +153,7 @@ export function ExposurePanel({ ticker }: { ticker: string }) {
     {error && <p role="alert" className="macro-exposure__lead">{error}</p>}
     {message && <p role="status" className="macro-exposure__lead">{message}</p>}
     {loaded && !checked && !busy && <div className="macro-exposure__empty">
-      <p className="macro-exposure__lead">SEC 10-K·10-Q의 위험 문단에서 금리·환율 같은 영향 경로를 찾아 원문과 함께 보여 줍니다.</p>
+      <p className="macro-exposure__lead">{market === "KR" ? "자료함의 한국 공식 공시 재무위험 문단" : "SEC 10-K·10-Q의 위험 문단"}에서 금리·환율 같은 영향 경로를 찾아 원문과 함께 보여 줍니다.</p>
       <button type="button" className="btn" onClick={() => void refresh()}>공시에서 찾기</button>
     </div>}
     {checked && !items.length && !busy && <p className="macro-exposure__lead">공시 위험 문단에서 금리·환율 등의 경로를 찾지 못했습니다. 영향이 없다는 뜻은 아닙니다.</p>}
@@ -156,7 +161,10 @@ export function ExposurePanel({ ticker }: { ticker: string }) {
       <p className="macro-exposure__answer">
         {hurt.length || help.length
           ? <>공시에서 {hurt.length > 0 && <><b>{hurt.join(", ")}</b> 불리하다고</>}{hurt.length > 0 && help.length > 0 && ", "}{help.length > 0 && <><b>{help.join(", ")}</b> 유리하다고</>} 밝혔습니다.</>
-          : <>공시에서 {rows.map(r => FACTOR_LABELS[r.factor]).join("·")}의 영향을 언급했지만, 어느 쪽으로 움직일 때 불리한지는 적지 않았습니다.</>}
+          : rows.some(r => r.directions.includes("two_sided"))
+            ? <>공시에 유리한 경로와 불리한 경로가 함께 있어 한쪽 영향으로 요약할 수 없습니다.</>
+            : <>공시에서 {rows.map(r => FACTOR_LABELS[r.factor]).join("·")}의 영향을 언급했지만, 어느 쪽으로 움직일 때 불리한지는 확인하지 못했습니다.</>}
+        {!!(hurt.length || help.length) && rows.some(r => r.directions.includes("two_sided")) && <> 유리한 경로와 불리한 경로가 함께 적힌 항목도 있습니다.</>}
         {moved && MOVED[moved.direction] && <> 최근 3개월 {SERIES_NAME[moved.seriesId] || moved.seriesId}는 <b>{MOVED[moved.direction]}</b>.</>}
       </p>
       <p className="macro-exposure__lead">회사가 스스로 적은 내용이며, 헤지·상쇄를 합친 회사 전체의 영향은 아닙니다.</p>
@@ -166,7 +174,7 @@ export function ExposurePanel({ ticker }: { ticker: string }) {
           <th scope="row">{FACTOR_LABELS[row.factor]}</th>
           <td>{row.directions.length
             ? <b>{row.directions.map(d => directionText(d, row.factor, market)).join(" · ")}</b>
-            : <span className="macro-exposure__quiet">영향이 있다고만 적음</span>}
+            : <span className="macro-exposure__quiet">영향 방향을 확인하지 못함</span>}
             <small>문장 {row.items.length}개</small></td>
           <td><NowCell reading={row.directions.length ? row.reading : null} /></td>
         </tr>)}</tbody>
@@ -183,12 +191,20 @@ export function ExposurePanel({ ticker }: { ticker: string }) {
   </section>;
 }
 
-export type PortfolioExposure = { groups: { factor: string; direction: string; combinedWeight: number | null; positions: { ticker: string }[]; evidence: { ticker: string; quote: string; magnitudeQuote?: string; sourceRef: { url: string } }[] }[]; dataGaps: { ticker: string }[]; notice: string; weightBasis: string };
+export type PortfolioExposure = { groups: { factor: string; direction: string; combinedWeight: number | null; positions: { ticker: string; market?: string }[]; evidence: { ticker: string; quote: string; magnitudeQuote?: string; sourceRef: { url: string }; sourceRefs?: { url: string }[] }[] }[]; dataGaps: { ticker: string }[]; notice: string; weightBasis: string };
 
 const pct = (value: number | null) => value == null ? "계산 불가" : `${(value * 100).toFixed(1)}%`;
 
 /** 포트폴리오: 같은 요인·같은 방향을 공시에 적은 보유 종목을 묶는다. 비중 추천은 없다. */
-export function PortfolioExposurePanel({ value, market = "US" }: { value?: PortfolioExposure; market?: string }) {
+function groupDirection(group: PortfolioExposure["groups"][number]): string {
+  const markets = [...new Set(group.positions.map(p => p.market || (/^\d{6}$/.test(p.ticker) ? "KR" : "US")))];
+  if (group.factor === "fx" && markets.length > 1 && ["hurt_by_rise", "benefits_from_rise"].includes(group.direction)) {
+    return `미국은 달러 강세, 한국은 원/달러 상승 시 ${group.direction === "hurt_by_rise" ? "불리" : "유리"}`;
+  }
+  return directionText(group.direction, group.factor, markets[0] || "US");
+}
+
+export function PortfolioExposurePanel({ value }: { value?: PortfolioExposure }) {
   if (!value) return null;
   const groups = [...value.groups].sort((a, b) => Number(b.direction !== "unclear") - Number(a.direction !== "unclear") || (b.combinedWeight ?? -1) - (a.combinedWeight ?? -1));
   const lead = groups.find(g => g.direction === "hurt_by_rise" || g.direction === "benefits_from_rise");
@@ -198,12 +214,12 @@ export function PortfolioExposurePanel({ value, market = "US" }: { value?: Portf
       <span className="chip macro-now__chip" data-tone="muted">검증 중</span>
     </div>
     {!groups.length && <p className="macro-exposure__lead">연결된 공시 기록이 없습니다. 워치리스트 기업 정보에서 공시를 확인하면 여기에 모입니다.</p>}
-    {lead && <p className="macro-exposure__answer">보유 비중 <b>{pct(lead.combinedWeight)}</b>({lead.positions.length}종목)가 공시에서 <b>{directionText(lead.direction, lead.factor, market)}</b>하다고 밝혔습니다.</p>}
+    {lead && <p className="macro-exposure__answer">보유 비중 <b>{pct(lead.combinedWeight)}</b>({lead.positions.length}종목)가 공시에서 <b>{groupDirection(lead)}</b>하다고 밝혔습니다.</p>}
     {groups.length > 0 && <table className="macro-exposure__table">
       <thead><tr><th scope="col">요인</th><th scope="col">공시에 적힌 방향</th><th scope="col">종목</th><th scope="col" className="macro-exposure__num">보유 비중</th></tr></thead>
       <tbody>{groups.map(group => <tr key={`${group.factor}:${group.direction}`}>
         <th scope="row">{FACTOR_LABELS[group.factor] || group.factor}</th>
-        <td>{group.direction === "unclear" ? <span className="macro-exposure__quiet">영향이 있다고만 적음</span> : <b>{directionText(group.direction, group.factor, market)}</b>}</td>
+        <td>{group.direction === "unclear" ? <span className="macro-exposure__quiet">영향 방향을 확인하지 못함</span> : <b>{groupDirection(group)}</b>}</td>
         <td className="macro-exposure__quiet">{group.positions.map(row => row.ticker).join(" · ")}</td>
         <td className="macro-exposure__num"><b>{pct(group.combinedWeight)}</b></td>
       </tr>)}</tbody>
@@ -211,10 +227,10 @@ export function PortfolioExposurePanel({ value, market = "US" }: { value?: Portf
     {groups.length > 0 && <details className="macro-exposure__quotes">
       <summary>공시 원문 보기</summary>
       {groups.map(group => <div key={`${group.factor}:${group.direction}`} className="macro-exposure__group">
-        <h4>{FACTOR_LABELS[group.factor] || group.factor} · {group.direction === "unclear" ? "방향 없음" : directionText(group.direction, group.factor, market)}</h4>
+        <h4>{FACTOR_LABELS[group.factor] || group.factor} · {group.direction === "unclear" ? "방향 없음" : groupDirection(group)}</h4>
         {group.evidence.map((item, index) => <div key={index} className="surface surface--inset macro-exposure__quote">
           <blockquote>{item.quote}</blockquote>
-          <p><a href={`#/watchlist/${encodeURIComponent(item.ticker)}`}>{item.ticker}</a>{item.sourceRef.url && <> · <a href={item.sourceRef.url} target="_blank" rel="noreferrer">공시 원문</a></>}{item.magnitudeQuote && <> · 회사가 밝힌 수치: {item.magnitudeQuote}</>}</p>
+          <p><a href={`#/watchlist/${encodeURIComponent(item.ticker)}`}>{item.ticker}</a>{(item.sourceRefs?.length ? item.sourceRefs : [item.sourceRef]).filter(ref => ref.url).map((ref, i) => <span key={i}> · <a href={ref.url} target="_blank" rel="noreferrer">공시 원문</a></span>)}{item.magnitudeQuote && <> · 회사가 밝힌 수치: {item.magnitudeQuote}</>}</p>
         </div>)}
       </div>)}
     </details>}
