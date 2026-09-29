@@ -61,7 +61,7 @@ def test_newer_schema_cannot_be_written_by_older_runtime(tmp_path):
     store = MacroStore(tmp_path / 'market-memory.sqlite3')
     write(store, point())
     with sqlite3.connect(store.path) as conn:
-        conn.execute('INSERT INTO macro_schema VALUES(2)')
+        conn.execute('INSERT INTO macro_schema VALUES(3)')
     before = store.path.read_bytes()
     with pytest.raises(RuntimeError, match='newer_than_runtime'):
         write(store, point(value='101'))

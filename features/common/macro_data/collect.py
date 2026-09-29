@@ -6,7 +6,7 @@ from pathlib import Path
 from features.common.data_reliability.fetch_runtime import ProviderFetchRuntime
 from features.llm_settings.client import bok_api_key, fred_api_key
 from .providers import OfficialReader, ProviderError
-from .registry import SERIES
+from .registry import SERIES, WARMUP_START
 from .store import MacroStore
 from .cache_policy import prune_owned_cache
 
@@ -24,27 +24,28 @@ def collect(data_root: Path, *, start='2000-01-01', cancel=lambda: None, reader=
             if selected is not None and spec.id not in selected:
                 continue
             cancel()
+            series_start = min(start, WARMUP_START.get(spec.id, start))
             state = store.state(spec.id)
             saved = state.get('cursor', {})
             # 중단된 수집은 저장된 페이지 다음부터 이어 간다. 시작 연도가 바뀌면 처음부터.
             cursor = saved if saved.get('phase') in {'fred', 'fred_metadata', 'ecos'} else {}
-            if saved.get('start', start) != start:
+            if saved.get('start', start) != series_start:
                 cursor = {}
-            if not cursor and saved.get('start') == start and spec.provider == 'fred' and state.get('last_success'):
+            if not cursor and saved.get('start') == series_start and spec.provider == 'fred' and state.get('last_success'):
                 # Re-read a small vintage overlap. Same-vintage corrections become visible conflicts.
-                cursor = {'since': max(start, (dt.date.fromisoformat(state['last_success'][:10]) - dt.timedelta(days=7)).isoformat())}
+                cursor = {'since': max(series_start, (dt.date.fromisoformat(state['last_success'][:10]) - dt.timedelta(days=7)).isoformat())}
             count = 0
             try:
                 pages = (
-                    reader.fred_pages(spec, start, cursor=cursor, cancel=cancel)
+                    reader.fred_pages(spec, series_start, cursor=cursor, cancel=cancel)
                     if spec.provider == 'fred'
-                    else reader.ecos_pages(spec, start, cursor=cursor, cancel=cancel)
+                    else reader.ecos_pages(spec, series_start, cursor=cursor, cancel=cancel)
                 )
                 for rows, next_cursor, at in pages:
                     cancel()
-                    count += store.ingest(spec.id, rows, cursor={**next_cursor, 'start': start}, at=at)
+                    count += store.ingest(spec.id, rows, cursor={**next_cursor, 'start': series_start}, at=at)
                 cancel()
-                store.set_state(spec.id, 'ok', cursor={'phase': 'complete', 'start': start})
+                store.set_state(spec.id, 'ok', cursor={'phase': 'complete', 'start': series_start})
                 results.append({'seriesId': spec.id, 'status': 'ok', 'inserted': count})
             except (ProviderError, ValueError, KeyError, TypeError) as exc:
                 # 이미 저장한 페이지는 그대로 두고, 이 계열만 실패로 남긴다.

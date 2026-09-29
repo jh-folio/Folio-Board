@@ -1,4 +1,4 @@
-"""The sixteen approved indicators (seventeen provider series). No economic verdicts."""
+"""Approved map indicators and cycle inputs. No economic verdicts."""
 from dataclasses import asdict, dataclass
 
 
@@ -54,7 +54,14 @@ SERIES = (
     Series('KR_CORP', '회사채 3년 AA-', 'KR', 'stress_vulnerability', 'D', '연%', 'NSA', 'ecos', '817Y002', ('010300000',), max_age_days=7, visible=False),
     Series('KR_GOV', '국고채 3년', 'KR', 'stress_vulnerability', 'D', '연%', 'NSA', 'ecos', '817Y002', ('010200000',), max_age_days=7, visible=False),
     Series('KR_CREDIT', '가계신용', 'KR', 'stress_vulnerability', 'Q', '십억원', 'NSA', 'ecos', '151Y001', ('1000000',), stage='structural', transform='yoy', max_age_days=180),
+    # 국면 신호 전용 입력. 기존 거시 지도와 네 축의 입력 목록은 유지한다.
+    Series('ICSA', '신규 실업수당 청구', 'US', 'growth', 'W', 'Number', 'SA', 'fred', 'ICSA', stage='leading', max_age_days=14, visible=False),
+    Series('CFNAIMA3', 'CFNAI 3개월 평균', 'US', 'growth', 'M', 'Index', 'SA', 'fred', 'CFNAIMA3', visible=False),
+    Series('KR_LEADING', '선행지수 순환변동치', 'KR', 'growth', 'M', '2020=100', 'unknown', 'ecos', '901Y067', ('I16E',), stage='leading', max_age_days=70, visible=False),
+    Series('KR_COINCIDENT', '동행지수 순환변동치', 'KR', 'growth', 'M', '2020=100', 'unknown', 'ecos', '901Y067', ('I16D',), max_age_days=70, visible=False),
 )
+# 2000년 화면 시작점의 계산 창을 채우기 위한 원천 관측 시작점.
+WARMUP_START = {'UNRATE': '1998-05-01', 'INDPRO': '1998-07-01', 'GDPC1': '1999-01-01', 'ICSA': '1999-04-01'}
 BY_ID = {s.id: s for s in SERIES}
 AXES = {'growth': '경기', 'inflation': '물가', 'financial_conditions': '금융여건', 'stress_vulnerability': '위험'}
 

@@ -1,6 +1,20 @@
 # 공통 거시 원장
 
-16개 표시 지표의 17개 원천 시계열을 allowlist로 관리합니다. FRED 8개, ECOS 9개이며 한국 회사채 AA−·국고채 3년을 같은 날짜에 연결해 스프레드 하나로 표시합니다. [거시 지도](../../macro_map/README.md)가 첫 소비자이고 Calendar는 FRED vintage parser를 공유합니다.
+16개 표시 지표의 17개 원천 시계열과 국면 계산 전용 4계열을 allowlist로 관리합니다. 전체 FRED 10개, ECOS 11개이며 한국 회사채 AA−·국고채 3년을 같은 날짜에 연결해 스프레드 하나로 표시합니다. [거시 지도](../../macro_map/README.md)가 첫 소비자이고 Calendar는 FRED vintage parser를 공유합니다.
+
+국면 전용 입력은 `ICSA`(주간, 선행, 노후 기준 14일), `CFNAIMA3`(월간, 동행, 60일), `KR_LEADING`·`KR_COINCIDENT`(ECOS `901Y067`의 `I16E`·`I16D`, 월간, 70일)입니다. 기존 지도 표시 지표에는 추가하지 않습니다. 2000년 시작 계산에 필요한 관측은 UNRATE 1998-05, INDPRO 1998-07, GDPC1 1999Q1, ICSA 1999-04까지 수집 범위를 넓혀 추가합니다. 요청 시작일이 더 이르면 그 날짜를 유지합니다. 화면의 시작 범위는 바꾸지 않습니다.
+
+## 공식 미발표 사실 등록
+
+일반 결측은 공식 미발표 사실로 변환하지 않습니다. UNRATE의 공식 미발표 월만 관리자가 BLS 원문을 확인한 뒤 `publication_facts`의 별도 명시 경로로 등록합니다. JSON 입력 필드는 `seriesId`, `observationMonth`(`YYYY-MM`), `sourceUrl`(BLS HTTPS 원문), `availableAt`(시간대 포함)입니다. 공개 시각과 실제 기록 시각 `recordedAt`을 분리합니다. 원문 내용의 확인 책임은 관리자에게 있으며 URL 형태 검사만으로 사실 여부를 판정하지 않습니다.
+
+```powershell
+py -3 -X utf8 -m features.common.macro_data.publication_facts --input "fact.json"
+# 내용을 확인한 뒤 출력된 confirmationToken을 명시해야 저장됩니다.
+py -3 -X utf8 -m features.common.macro_data.publication_facts --input "fact.json" --database "path/market-memory.sqlite3" --confirm "확인한 토큰"
+```
+
+미리보기와 조회는 파일·테이블을 만들지 않습니다. 같은 사실의 재등록은 멱등이며 최초 `recordedAt`을 보존합니다. 사실은 schema v2의 `macro_publication_facts`에 저장하고 `availableAt <= cutoff`인 행만 조회합니다. 수집·화면 조회에서 등록 함수를 호출하지 않습니다. v1→v2는 SQLite backup API 사본 생성 후 트랜잭션으로 테이블만 추가하며 기존 관측은 수정하지 않습니다.
 
 ## 시간·값 계약
 
