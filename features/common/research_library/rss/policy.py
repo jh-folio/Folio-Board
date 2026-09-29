@@ -122,6 +122,19 @@ TRACKING_QUERY_KEYS = {
 }
 
 
+# Dow Jones 매체는 같은 기사를 피드마다 다른 `?mod=`(유입 위치 태그)로 내보낸다
+# (`rss_markets_main` / `pls_whats_news_us_business_f` / `rss_Technology`). 기사 식별과
+# 무관하지만 URL 문자열이 달라 같은 기사가 두 번 저장됐다. `mod`는 다른 사이트에서
+# 다른 뜻일 수 있어 이 호스트에서만 추적 파라미터로 본다.
+MOD_TRACKING_HOSTS = ("wsj.com", "barrons.com", "marketwatch.com")
+# Financial Times 신디케이션 링크의 `?syn-<해시>=1`. 키 이름 자체가 바뀌므로 접두로 거른다.
+SYNDICATION_QUERY_PREFIX = "syn-"
+
+
+def _host_in(netloc: str, hosts) -> bool:
+    return any(netloc == host or netloc.endswith("." + host) for host in hosts)
+
+
 def normalize_url(url: str) -> str:
     """Return a stable URL key for dedupe without changing the original URL."""
     raw = str(url or "").strip()
@@ -133,10 +146,13 @@ def normalize_url(url: str) -> str:
     if netloc.startswith("www."):
         netloc = netloc[4:]
     path = parts.path.rstrip("/") or parts.path
+    drop_mod = _host_in(netloc, MOD_TRACKING_HOSTS)
     query_rows = []
     for key, value in parse_qsl(parts.query, keep_blank_values=True):
         low = key.lower()
         if low.startswith("utm_") or low in TRACKING_QUERY_KEYS:
+            continue
+        if low.startswith(SYNDICATION_QUERY_PREFIX) or (drop_mod and low == "mod"):
             continue
         query_rows.append((key, value))
     query = urlencode(sorted(query_rows), doseq=True)

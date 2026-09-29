@@ -18,6 +18,7 @@ from features.common.research_library.rss.feed_config import (
     feed_metadata_for_query,
 )
 from features.common.research_library.rss.normalizer import markets_with_feed_fallback
+from features.common.research_library.rss.policy import normalize_url
 from features.common.research_library.rss.retention import (
     delete_expired as delete_expired_rss,
     prune_orphan_evidence,
@@ -340,8 +341,10 @@ def _row_to_item(row):
 
 
 def _rss_row_dedupe_key(row):
-    normalized_url = str(row["normalized_url"] or "").strip().lower()
-    url = str(row["url"] or "").strip().lower()
+    # 저장된 normalized_url은 정규화 규칙이 바뀌기 전 값일 수 있다(WSJ `?mod=` 등).
+    # 지금 규칙으로 다시 정규화해야 이미 쌓인 중복도 목록에서 하나로 묶인다.
+    normalized_url = normalize_url(str(row["normalized_url"] or "")).lower()
+    url = normalize_url(str(row["url"] or "")).lower()
     if normalized_url:
         return f"url:{normalized_url}"
     if url:
