@@ -9,7 +9,7 @@ from features.common.macro_data.schema import digest
 
 FACTORS = {
     'interest_rate': r'interest rates?|금리|이자율',
-    'fx': r'foreign currency(?! controls)|foreign exchange (?:rates?|risks?|fluctuations)|exchange rates?|환율|외환위험',
+    'fx': r'foreign currency(?! controls)|foreign exchange (?:rates?|risks?|fluctuations)|exchange rates?|(?:U\.S\.|US) dollar|원/달러|원화|환율|외환위험',
     'commodity_input': r'raw material|commodity (?:prices?|costs?)|원자재|원재료 가격',
     'freight': r'freight|shipping costs?|운임|운송비',
     'regional_demand': r'regional demand|geographic(?:al)? (?:revenue|sales)|지역별 매출|지역 수요',
@@ -24,13 +24,15 @@ LIMITATIONS = ['공시가 밝힌 노출이며 기업 전체의 순효과가 아�
                '선별 공시 문단 밖의 노출은 누락될 수 있습니다.']
 
 
-def direction(quote, factor):
+def direction(quote, factor, market="US"):
     # Only narrow, explicit effect statements. Negation or multiple factors
     # requires human interpretation, so never infer a signed net effect.
     if re.search(r'\b(?:not|no|insignificant|immaterial)\b|않|없', quote, re.I):
         return 'unclear'
     if sum(bool(re.search(pattern, quote, re.I)) for pattern in FACTORS.values()) != 1:
         return 'unclear'
+    if factor == 'fx':
+        return fx_direction(quote, market)
     phrase = FACTORS[factor]
     rise = rf'(?:higher|rising|increases? in)\s+(?:market\s+)?(?:{phrase})'
     negative = bool(re.search(rf'{rise}.{{0,240}}(?:increase|raise)\s+(?:(?:our|the company.s|the corporation.s|the group.s|the)\s+)?(?:interest expense|borrowing costs|costs?|cost of capital)', quote, re.I))
@@ -44,6 +46,45 @@ def direction(quote, factor):
     if re.search(rf'(?:{phrase}).{{0,12}}상승.{{0,30}}(?:이자비용|조달비용).{{0,12}}증가', quote):
         return 'hurt_by_rise'
     return 'unclear'
+
+
+def fx_direction(quote, market):
+    """Explicit local FX basis only; this does not add a market data series."""
+    dollar = r'(?:U\.S\.|US) dollar'
+    if market == 'US':
+        rise = rf'(?:strengthening|appreciation) of (?:the )?{dollar}|(?:stronger {dollar})|{dollar} (?:strengthens|appreciates)'
+        fall = rf'(?:weakening|depreciation) of (?:the )?{dollar}|(?:weaker {dollar})|{dollar} (?:weakens|depreciates)'
+    else:
+        rise = r'원\s*/\s*달러(?:\s*환율)?(?:이|의)?\s*상승|(?:미국\s*)?달러\s*대비\s*원화(?:가|의)?\s*약세|depreciation of (?:the )?(?:Korean )?won against (?:the )?(?:U\.S\.|US) dollar'
+        fall = r'원\s*/\s*달러(?:\s*환율)?(?:이|의)?\s*하락|(?:미국\s*)?달러\s*대비\s*원화(?:가|의)?\s*강세|appreciation of (?:the )?(?:Korean )?won against (?:the )?(?:U\.S\.|US) dollar'
+    up = re.search(rise, quote, re.I)
+    down = re.search(fall, quote, re.I)
+    if bool(up) == bool(down):
+        return 'unclear'
+    match = up or down
+    # Do not let an effect in a subsequent independent clause set the sign.
+    effect = re.split(r';|\bwhereas\b', quote[match.end():], maxsplit=1, flags=re.I)[0]
+    clauses = re.split(r'\bbut\b', effect, flags=re.I)
+    effect = clauses[0]
+    for clause in clauses[1:]:
+        # Elliptical coordinated verbs retain the FX subject. A new subject
+        # (e.g. a new product) must not lend its effect to the currency move.
+        if not re.match(r'\s*(?:(?:would|will|could|may|also)\s+)*(?:reduce|decrease|lower|increase|improve|raise|negatively affect|positively affect|adversely affect)\b', clause, re.I):
+            break
+        effect += ' and ' + clause
+    if len(effect) > 350:
+        return 'unclear'
+    owner = r"(?:(?:our|the company's|the company’s|the group's|the group’s|net|gross|borrowing|import|export|operating|interest)\s+)*"
+    earnings = r'(?:sales|revenues?|margins?|income|profits?)'
+    costs = r'(?:costs?|expenses?)'
+    negative = bool(re.search(rf'negatively affect|adversely affect|(?:reduce|decrease|lower)\s+{owner}{earnings}|(?:increase|raise)\s+{owner}{costs}|(?:비용|손실)(?:이|가|은|는)?\s*증가|(?:매출|이익)(?:이|가|은|는)?\s*감소', effect, re.I))
+    positive = bool(re.search(rf'positively affect|(?:increase|improve|raise)\s+{owner}{earnings}|(?:reduce|decrease|lower)\s+{owner}{costs}|(?:매출|이익)(?:이|가|은|는)?\s*증가|(?:비용|손실)(?:이|가|은|는)?\s*감소', effect, re.I))
+    if negative and positive:
+        return 'two_sided'
+    if not negative and not positive:
+        return 'unclear'
+    favorable_on_rise = positive if up else negative
+    return 'benefits_from_rise' if favorable_on_rise else 'hurt_by_rise'
 
 
 def sentences(original):
@@ -67,8 +108,8 @@ def explicit_exposure(quote, factor):
     if factor == 'fx':
         # A named tax rule is not an exchange-rate exposure. Remove its name
         # before requiring an actual FX risk/effect relationship in a clause.
-        if re.search(r'effective tax rate|실효세율', quote, re.I) and not re.search(
-                r'(?:exchange rates?|환율).{0,40}(?:fluctuat|strengthen|weaken|변동|상승|하락)|'
+        if re.search(r'effective tax rate|tax expense|tax benefit|실효세율|법인세', quote, re.I) and not re.search(
+                r'(?:strengthening|weakening|appreciation|depreciation) of (?:the )?(?:U\.S\.|US) dollar|(?:exchange rates?|환율).{0,40}(?:fluctuat|strengthen|weaken|변동|상승|하락)|'
                 r'(?:fluctuat|strengthen|weaken).{0,40}(?:exchange rates?|currenc)', quote, re.I):
             return False
         exposure_text = re.sub(r'foreign currency (?:loss |gain )?(?:regulations?|rules?)', '', quote, flags=re.I)
@@ -156,7 +197,7 @@ def extract(company, materials, *, personal_reason=None):
                     continue
                 if not explicit_exposure(quote, factor):
                     continue
-                item = {'factor': factor, 'direction': direction(quote, factor),
+                item = {'factor': factor, 'direction': direction(quote, factor, market),
                         'magnitudeBasis': 'qualitative_only', 'quote': quote,
                         'sourceRef': ref, 'sourceRefs': [ref], 'layer': 'canonical'}
                 # Do not turn arbitrary figures (dates, debt balance, segment

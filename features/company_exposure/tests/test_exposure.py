@@ -143,3 +143,56 @@ def test_identical_sentence_merges_sources_and_preserves_roundtrip(tmp_path):
 def test_explicit_fx_cost_exposure_is_retained_without_resolving_direction_basis():
     quote = 'Higher exchange rates would increase our borrowing costs.'
     assert {i['factor'] for i in extract({'ticker': 'T'}, materials(quote))['items']} == {'fx'}
+
+
+@pytest.mark.parametrize('market,quote,expected', [
+    ('US', "Changes in exchange rates, and in particular a strengthening of the U.S. dollar, will negatively affect the Company's net sales and gross margins as expressed in U.S. dollars.", 'hurt_by_rise'),
+    ('US', 'A weakening of the U.S. dollar would increase our revenues.', 'hurt_by_rise'),
+    ('US', 'A strengthening of the U.S. dollar would reduce our costs.', 'benefits_from_rise'),
+    ('US', 'A strengthening of the U.S. dollar would increase our costs and increase our revenues.', 'two_sided'),
+    ('US', 'Higher exchange rates would increase our borrowing costs.', 'unclear'),
+    ('US', 'A strengthening of the Canadian dollar would increase our costs.', 'unclear'),
+    ('US', 'A strengthening of the U.S. dollar would not reduce our costs.', 'unclear'),
+    ('KR', '당사는 원/달러 환율 상승과 원재료 가격 상승으로 수입 비용이 증가할 수 있습니다.', 'unclear'),
+    ('KR', '당사는 원/달러 환율 상승으로 수입 비용이 증가할 수 있습니다.', 'hurt_by_rise'),
+    ('KR', '당사는 원/달러 환율 하락으로 수입 비용이 감소할 수 있습니다.', 'hurt_by_rise'),
+])
+def test_explicit_market_fx_basis(market, quote, expected):
+    from features.company_exposure.extraction import direction
+    assert direction(quote, 'fx', market) == expected
+
+
+def test_us_fx_direction_does_not_invent_connected_observation():
+    profile = extract({'ticker': 'T'}, materials('A strengthening of the U.S. dollar would reduce our costs.'))
+    assert profile['items'][0]['direction'] == 'benefits_from_rise'
+    assert interpret(profile, [], '2026-09-29T00:00:00Z')['items'][0]['dataGap'] == 'connected_series_unavailable'
+
+
+
+@pytest.mark.parametrize('quote,expected', [
+ ('A strengthening of the U.S. dollar would reduce our costs and increase our revenues.', 'benefits_from_rise'),
+ ('A strengthening of the U.S. dollar would increase our costs and reduce our revenues.', 'hurt_by_rise'),
+ ('당사는 원/달러 환율 상승으로 비용이 감소하고 매출이 증가할 수 있습니다.', 'benefits_from_rise'),
+ ('당사는 유로화 대비 원화 약세로 비용이 증가할 수 있습니다.', 'unclear'),
+])
+def test_fx_effects_do_not_cross_objects_or_currency_pairs(quote, expected):
+    from features.company_exposure.extraction import direction
+    assert direction(quote, 'fx', 'KR' if quote.startswith('당사') else 'US') == expected
+
+
+def test_tax_expense_revaluation_is_not_fx_risk():
+    assert extract({'ticker': 'T'}, materials('Our tax expense increased due to foreign currency revaluations related to a tax decision.'))['items'] == []
+
+
+def test_fx_effect_not_borrowed_from_but_clause():
+    from features.company_exposure.extraction import direction
+    assert direction('A strengthening of the U.S. dollar affects us, but new products increase our revenues.', 'fx') == 'unclear'
+
+def test_explicit_dollar_effect_not_removed_by_tax_mention():
+    quote = 'A strengthening of the U.S. dollar would reduce our costs and affect our effective tax rate.'
+    assert extract({'ticker': 'T'}, materials(quote))['items'][0]['direction'] == 'benefits_from_rise'
+
+
+def test_fx_coordinated_counter_effect_is_not_discarded():
+    from features.company_exposure.extraction import direction
+    assert direction('A strengthening of the U.S. dollar would reduce our costs but reduce our revenues.', 'fx') == 'two_sided'
