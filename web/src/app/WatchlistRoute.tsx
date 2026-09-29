@@ -433,7 +433,6 @@ export function WatchlistRoute() {
                 <section className="watchlist-detail-section watchlist-detail-section--metrics">
                   <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
                   <FundamentalsPanel ticker={detailTicker} payload={fundamentals.payload} error={fundamentals.error} />
-                  <ExposurePanel ticker={detailTicker} />
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--chart">
                   <MarketChartFigure
@@ -452,6 +451,8 @@ export function WatchlistRoute() {
                 <section id="watchlist-earnings" className="watchlist-detail-section watchlist-detail-section--earnings">
                   <EarningsPanel ticker={detailTicker} />
                 </section>
+                {/* 공시에 적힌 금리·환율 영향은 가격·실적 다음에 둔다(0.8_PLAN M8). */}
+                <ExposurePanel ticker={detailTicker} />
                 <section className="watchlist-detail-section watchlist-detail-section--news">
                   {newsSection}
                 </section>

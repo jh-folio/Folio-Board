@@ -117,6 +117,7 @@ const SHORT_LABEL: Record<string, string> = {
 const TINY_LABEL: Record<string, string> = {
   GDPC1: "GDP", INDPRO: "산업생산", UNRATE: "실업률", CPIAUCSL: "CPI", PCEPILFE: "근원 PCE", DFF: "연방기금금리",
   KR_GDP: "GDP", KR_IP: "생산", KR_UNRATE: "실업률", KR_CPI: "CPI", KR_RATE: "금통위", KR_CREDIT: "가계신용",
+  NFCI: "금융여건지수", STLFSI4: "금융스트레스지수", KR_USDKRW: "원/달러", KR_SPREAD: "신용 스프레드", CFNAIMA3: "CFNAI", ICSA: "신규 실업수당 청구",
 };
 
 export function shortLabel(series: { id: string; label: string }): string {

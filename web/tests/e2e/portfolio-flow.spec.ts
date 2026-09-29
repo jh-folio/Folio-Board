@@ -391,14 +391,16 @@ for (const theme of ["light", "dark"]) {
 for (const theme of ["light", "dark"]) {
   test(`0.8 portfolio exposure sources ${theme}`, async ({ page }, info) => {
     const calls = await fixture(page, theme);
-    const panel = page.locator(".portfolio-block").filter({ has: page.getByRole("heading", { name: "보유 종목이 공유하는 노출" }) });
+    const panel = page.getByRole("region", { name: "보유 종목의 금리·환율 영향" });
     await expect(panel).toBeVisible();
+    await expect(panel.locator(".macro-exposure__answer")).toHaveText("보유 비중 50.0%(1종목)가 공시에서 금리가 오르면 불리하다고 밝혔습니다.");
+    await expect(panel.getByRole("row", { name: /^금리/ })).toContainText("50.0%");
     await panel.locator("summary").focus(); await page.keyboard.press("Enter");
-    await expect(panel).toContainText("50.0%");
     await expect(panel.getByRole("link", { name: "공시 원문" })).toHaveAttribute("href", "https://www.sec.gov/example");
-    await expect(panel).toContainText("노출 미확인: SPY");
+    await expect(panel).toContainText("공시를 아직 확인하지 않은 종목: SPY");
+    await expect(panel).toContainText("비중 조정 제안이 아닙니다");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-    expect((await new AxeBuilder({ page }).include(".macro-state-card").withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations).toEqual([]);
+    expect((await new AxeBuilder({ page }).include(".macro-exposure").withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations).toEqual([]);
     await panel.screenshot({ path: info.outputPath(`portfolio-exposure-${theme}.png`) });
     expect(writes(calls)).toEqual([]);
   });

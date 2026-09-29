@@ -17438,6 +17438,7 @@ select { min-height: 36px; padding: 0 12px; }
   grid-template-areas:
     "metrics metrics"
     "chart earnings"
+    "exposure exposure"
     "news news";
   align-items: start;
 }
@@ -17446,6 +17447,7 @@ select { min-height: 36px; padding: 0 12px; }
 .watchlist-detail-section--chart { grid-area: chart; }
 .watchlist-detail-section--earnings { grid-area: earnings; }
 .watchlist-detail-section--news { grid-area: news; }
+.watchlist-detail-section--exposure { grid-area: exposure; }
 .watchlist-detail-section__head {
   display: flex;
   flex-wrap: wrap;
@@ -17573,7 +17575,7 @@ select { min-height: 36px; padding: 0 12px; }
 @media (max-width: 820px) {
   /* `1fr`은 min-content가 셀을 밀어낸다(minmax(auto,1fr)) — nowrap 값 한 줄이면
      모달 전체에 가로 스크롤이 생긴다(실측 375px에서 +26px). minmax(0,1fr)로 잠근다. */
-  .watchlist-detail-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "metrics" "chart" "earnings" "news"; }
+  .watchlist-detail-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "metrics" "chart" "earnings" "exposure" "news"; }
   .watchlist-fundamentals { grid-template-columns: minmax(0, 1fr); }
   .watchlist-fundamentals-rows { grid-template-columns: minmax(0, 1fr); }
 }
@@ -17741,18 +17743,133 @@ select { min-height: 36px; padding: 0 12px; }
 .folio-chart[data-state="error"] .folio-chart__state { color: var(--ink); border-inline-start: 3px solid var(--folio-warning); }
 .folio-chart__stale { justify-self: start; }
 
-/* 0.8 시장·거시: 기존 표면·폼 프리미티브를 배치만 확장한다. */
-.macro-state-stack { display: grid; gap: 24px; min-width: 0; }
-.macro-state-toolbar, .macro-state-card > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.macro-state-card { padding: 24px; min-width: 0; overflow-wrap: anywhere; }
-.macro-state-card h2 { font-size: var(--fs-title); }
-.macro-state-reading { font-size: var(--fs-title); }
-.macro-state-card summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; }
-.macro-state-card details { margin-top: 12px; }
-.macro-state-source-list { max-height: 320px; overflow-y: auto; }
-.macro-state-identity { font-size: var(--fs-meta); color: var(--folio-ink-soft); }
-.macro-state-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.macro-state-form label { display: grid; gap: 8px; }
-.macro-state-form textarea { min-height: 88px; }
-.macro-state-stack button, .macro-state-stack select, .macro-state-stack input:not([type=checkbox]) { min-height: 44px; }
-@media (max-width: 680px) { .macro-state-card { padding: 16px; } .macro-state-form { grid-template-columns: 1fr; } }
+/* 0.8 시장·거시 — 현재 상태·검증 이력(0.8_PLAN M8). 패널은 거시 지도(.macro-panel), 모양은 프리미티브
+   (.surface/.chip/.btn/.segment)에서 가져오고 여기는 배치·글자 크기만 갖는다. 판정 규칙은 화면 이름과 별개다. */
+.macro-route { display: grid; min-width: 0; }
+.macro-now__chip { font-size: var(--fs-label); }
+.macro-now__summary { display: grid; gap: var(--sp-2); }
+.macro-now__answer { margin: 0; font-size: var(--fs-title-sm); line-height: 1.6; color: var(--folio-ink); max-width: 48em; }
+.macro-now__answer b { font-weight: var(--fw-bold); }
+.macro-now__compare-bar { display: grid; gap: var(--sp-2); justify-items: start; }
+.macro-now__compare-bar input { min-width: 11em; }
+
+.macro-now__rows { list-style: none; margin: 0; padding: 0; display: grid; }
+.macro-now__row {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 480px) minmax(96px, 1fr) auto;
+  grid-template-areas: "name scale dir toggle" ". text text text";
+  gap: var(--sp-1) var(--sp-4);
+  align-items: center;
+  padding: var(--sp-3) 0 var(--sp-4);
+  border-top: 1px solid var(--folio-surface-muted);
+}
+.macro-now__row:last-child { border-bottom: 1px solid var(--folio-surface-muted); }
+.macro-now__name { grid-area: name; display: grid; gap: 4px; justify-items: start; }
+.macro-now__name b { font-size: var(--fs-body); font-weight: var(--fw-bold); color: var(--folio-ink); }
+.macro-now__name small { font-size: var(--fs-meta); color: var(--folio-ink-muted); }
+.macro-now__row .macro-scale { grid-area: scale; }
+.macro-now__dir { grid-area: dir; display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-body-sm); font-weight: var(--fw-bold); color: var(--folio-ink); white-space: nowrap; }
+.macro-now__dir svg { width: 18px; height: 18px; flex: none; }
+.macro-now__toggle { grid-area: toggle; }
+.macro-now__text { grid-area: text; display: grid; gap: 4px; min-width: 0; }
+.macro-now__text p { margin: 0; font-size: var(--fs-meta); line-height: 1.6; color: var(--folio-ink-muted); }
+.macro-now__text .macro-now__facts { color: var(--folio-ink-soft); font-variant-numeric: tabular-nums; }
+.macro-now__text .macro-now__facts b { color: var(--folio-ink); }
+.macro-now__text .macro-now__conflict { padding-left: var(--sp-2); border-left: 3px solid var(--folio-gold); color: var(--folio-ink-soft); }
+.macro-now__text .macro-now__compare { color: var(--folio-ink); }
+.macro-now__criteria b { font-weight: var(--fw-medium); color: var(--folio-ink-soft); }
+
+/* 칸 눈금: 칸 수는 판정 규칙 그대로(4·4·3·3). 칸 위 ▼는 기준(평균·2% 등)의 위치, 칸 아래 숫자는 칸 경계. */
+.macro-scale { position: relative; padding: 18px 0 16px; min-width: 0; }
+.macro-scale__cells { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 3px; }
+.macro-scale__cells span { display: grid; place-items: center; min-height: 32px; padding: 0 4px; background: var(--surface-control); color: var(--folio-ink-subtle); font-size: var(--fs-label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.macro-scale__cells span:first-child { border-radius: var(--r-control) 0 0 var(--r-control); }
+.macro-scale__cells span:last-child { border-radius: 0 var(--r-control) var(--r-control) 0; }
+.macro-scale__cells span[aria-current="true"] { background: var(--folio-ink); color: var(--surface-panel); font-size: var(--fs-meta); font-weight: var(--fw-bold); }
+.macro-scale__cells span[data-compare="true"] { box-shadow: inset 0 0 0 2px var(--folio-gold); }
+.macro-scale[data-unknown] .macro-scale__cells span { background: transparent; box-shadow: inset 0 0 0 1px var(--folio-border); }
+.macro-scale__mid { position: absolute; top: 0; height: 18px; width: 0; pointer-events: none; }
+.macro-scale__mid::after { content: ""; position: absolute; left: -5px; bottom: 1px; border: 5px solid transparent; border-top: 6px solid var(--folio-gold); border-bottom: 0; }
+.macro-scale__mid b { position: absolute; top: -2px; left: 0; transform: translateX(-50%); font-size: var(--fs-label); line-height: 14px; font-weight: var(--fw-bold); color: var(--folio-gold); white-space: nowrap; }
+.macro-scale__cut { position: absolute; bottom: 0; transform: translateX(-50%); font-size: var(--fs-label); line-height: 14px; color: var(--folio-ink-subtle); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* 경기 전환 신호: 네 축(현재 위치)과 성격이 다른 경보라 형식도 다르다. 조건마다 없음·켜짐·판단 보류.
+   평소엔 조용하고, 켜진 조건만 금색 테두리로 강조한다. */
+.macro-cycle { padding: var(--sp-4) var(--sp-5); display: grid; gap: var(--sp-3); }
+.macro-cycle__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); }
+.macro-cycle__head h3 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-bold); color: var(--folio-ink); }
+.macro-cycle__head small { font-size: var(--fs-meta); color: var(--folio-ink-muted); }
+.macro-cycle__head .chip { margin-left: auto; align-self: center; }
+.macro-cycle__steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2); }
+.macro-cycle__steps li { display: grid; gap: 2px; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-control); background: var(--surface-panel); }
+.macro-cycle__steps b { font-size: var(--fs-meta); font-weight: var(--fw-medium); color: var(--folio-ink-soft); }
+.macro-cycle__steps span { font-size: var(--fs-body-sm); font-weight: var(--fw-bold); color: var(--folio-ink); }
+.macro-cycle__steps li[data-state="hold"] { background: transparent; box-shadow: inset 0 0 0 1px var(--folio-border); }
+.macro-cycle__steps li[data-state="hold"] span { font-weight: var(--fw-normal); color: var(--folio-ink-muted); }
+.macro-cycle__steps li[data-state="on"] { box-shadow: inset 0 0 0 2px var(--folio-gold); }
+.macro-cycle__steps li[data-state="on"] span { color: var(--folio-gold); }
+.macro-cycle__note { margin: 0; font-size: var(--fs-meta); line-height: 1.6; color: var(--folio-ink-muted); }
+.macro-cycle__note b { color: var(--folio-ink); }
+@media (max-width: 680px) { .macro-cycle__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } .macro-cycle__head .chip { margin-left: 0; } }
+
+.macro-now__legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-meta); color: var(--folio-ink-muted); }
+.macro-now__legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.macro-now__evidence { margin-top: var(--sp-2); padding: var(--sp-3) var(--sp-4); display: grid; gap: var(--sp-2); overflow-x: auto; }
+.macro-now__evidence table, .macro-now__table { width: 100%; border-collapse: collapse; font-size: var(--fs-meta); }
+.macro-now__evidence th, .macro-now__evidence td { text-align: left; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--folio-surface-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.macro-now__evidence th, .macro-now__table thead th { font-weight: var(--fw-medium); color: var(--folio-ink-muted); }
+.macro-now__evidence small { color: var(--folio-ink-subtle); }
+.macro-now__table { font-size: var(--fs-body-sm); }
+.macro-now__table th, .macro-now__table td { text-align: left; padding: var(--sp-3) var(--sp-3) var(--sp-3) 0; border-bottom: 1px solid var(--folio-surface-muted); vertical-align: top; }
+.macro-now__table thead th { font-size: var(--fs-meta); }
+.macro-now__table tbody th { font-weight: var(--fw-bold); color: var(--folio-ink); white-space: nowrap; }
+.macro-now__table td small { display: block; margin-top: 2px; font-size: var(--fs-meta); color: var(--folio-ink-subtle); }
+.macro-now__accept { display: grid; gap: var(--sp-2); }
+.macro-now__accept h3 { margin: 0; font-size: var(--fs-body); }
+.macro-now__accept ul { margin: 0; padding-left: 18px; font-size: var(--fs-body-sm); color: var(--folio-ink-soft); }
+.macro-now__how summary, .macro-exposure__quotes > summary { cursor: pointer; min-height: var(--touch-min); display: list-item; padding-top: 12px; font-size: var(--fs-body-sm); color: var(--folio-ink-soft); }
+.macro-now__how p { margin: 0; font-size: var(--fs-body-sm); line-height: 1.7; color: var(--folio-ink-soft); max-width: 60em; }
+
+@media (max-width: 760px) {
+  .macro-now__row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name dir" "scale scale" "text text" "toggle toggle"; }
+  .macro-now__name { grid-auto-flow: column; justify-content: start; align-items: center; gap: var(--sp-2); }
+  .macro-now__toggle { justify-self: start; }
+  .macro-now__answer { font-size: var(--fs-body); }
+  .macro-now__table thead { display: none; }
+  .macro-now__table tr { display: grid; gap: 4px; padding: var(--sp-3) 0; border-bottom: 1px solid var(--folio-surface-muted); }
+  .macro-now__table th, .macro-now__table td { padding: 0; border: 0; }
+}
+
+/* 0.8 기업 노출(워치리스트 기업 정보·Portfolio): 한 문장 → 요인 표 → 접힌 원문. 시험 표시이며 순효과가 아니다. */
+.macro-exposure { min-width: 0; }
+.macro-exposure h3 small { font-size: var(--fs-meta); font-weight: var(--fw-normal); color: var(--folio-ink-subtle); }
+.macro-exposure__head-side { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.macro-exposure__answer { margin: 0; font-size: var(--fs-body); line-height: 1.6; color: var(--folio-ink); }
+.macro-exposure__answer b { font-weight: var(--fw-bold); }
+.macro-exposure__lead, .macro-exposure__foot { margin: 0; font-size: var(--fs-body-sm); line-height: 1.6; color: var(--folio-ink-muted); }
+.macro-exposure__foot { font-size: var(--fs-meta); color: var(--folio-ink-subtle); }
+.macro-exposure__empty { display: grid; gap: var(--sp-3); justify-items: start; }
+.macro-exposure a:not(.btn) { color: var(--folio-ink); text-decoration: underline; text-decoration-color: var(--folio-border-strong); text-underline-offset: 3px; }
+.macro-exposure__table { width: 100%; border-collapse: collapse; font-size: var(--fs-body-sm); }
+.macro-exposure__table th, .macro-exposure__table td { text-align: left; padding: var(--sp-3) var(--sp-3) var(--sp-3) 0; border-bottom: 1px solid var(--folio-surface-muted); vertical-align: top; }
+.macro-exposure__table thead th { font-size: var(--fs-meta); font-weight: var(--fw-medium); color: var(--folio-ink-muted); }
+.macro-exposure__table tbody th { font-size: var(--fs-body); font-weight: var(--fw-bold); color: var(--folio-ink); white-space: nowrap; }
+.macro-exposure__table td b { font-weight: var(--fw-bold); color: var(--folio-ink); }
+.macro-exposure__table td small, .macro-exposure__quiet small { display: block; margin-top: 2px; font-size: var(--fs-meta); color: var(--folio-ink-subtle); }
+.macro-exposure__quiet { color: var(--folio-ink-muted); }
+.macro-exposure__table .macro-exposure__num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.macro-exposure__move { display: inline-flex; align-items: center; gap: 6px; font-weight: var(--fw-medium); color: var(--folio-ink); }
+.macro-exposure__move svg { width: 16px; height: 16px; }
+.macro-exposure__match { display: block; width: fit-content; margin-top: 4px; padding-left: var(--sp-2); border-left: 3px solid var(--folio-gold); font-size: var(--fs-meta); font-weight: var(--fw-medium); color: var(--folio-ink); }
+.macro-exposure__group { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
+.macro-exposure__group h4 { margin: 0; font-size: var(--fs-meta); font-weight: var(--fw-medium); color: var(--folio-ink-muted); }
+.macro-exposure__quote { padding: var(--sp-3) var(--sp-4); display: grid; gap: 6px; }
+.macro-exposure__quote blockquote { margin: 0; font-size: var(--fs-body-sm); line-height: 1.6; color: var(--folio-ink); }
+.macro-exposure__quote[data-quiet] blockquote { color: var(--folio-ink-soft); }
+.macro-exposure__quote p { margin: 0; font-size: var(--fs-meta); color: var(--folio-ink-subtle); }
+@media (max-width: 680px) {
+  .macro-exposure__table thead { display: none; }
+  .macro-exposure__table tr { display: grid; gap: 4px; padding: var(--sp-3) 0; border-bottom: 1px solid var(--folio-surface-muted); }
+  .macro-exposure__table th, .macro-exposure__table td { padding: 0; border: 0; }
+  .macro-exposure__table .macro-exposure__num { text-align: left; }
+}
