@@ -83,6 +83,9 @@ for (const theme of ['light', 'dark']) {
     await expect(rows.nth(2)).toContainText('시장 금리(실효 연방기금금리) 3.63%에서 3.88%로(3개월)');
     await expect(rows.nth(2)).toContainText('시장 금리와 금융여건지수의 움직임이 다릅니다: 시장 금리 상승 · 금융여건지수 보합');
     await expect(rows.nth(2)).not.toContainText('기준금리 3');
+    await expect(rows.nth(1)).toContainText('최신 참고값');
+    await expect(rows.nth(1)).toContainText('저장 판정의 입력과 다를 수 있습니다');
+    await expect(rows.nth(2)).toContainText('저장 판정의 입력');
     await expect(rows.nth(1)).toContainText('근원 PCE 3.34%(전년 대비) · 3개월 전 3.33% · CPI 3.35%(전년 대비, 참고)');
     // 경기 전환 신호는 네 축과 다른 별도 칸이고, 조건마다 없음·켜짐·판단 보류를 따로 보인다.
     await expect(rows).toHaveCount(4);

@@ -15,7 +15,7 @@
 | `dashboard/` | 대시보드 탭 | Change Feed·이야기 비중·시장 일정·네이티브 차트로 구성한 Research Cockpit. Legacy 모드는 0.5에서 삭제 |
 | `market_memory/` | 시장 내러티브 탭 | 중기 내러티브, regime 추세, story family 관리 |
 | `macro_map/` | 시장·거시의 거시 지도 | 미국·한국 16지표, 원값·수정 이력, 미국 지원 기간의 과거 재현. [계약](macro_map/README.md) |
-| `macro_policy/` | 시장·거시의 정책 기록 | 공식 원문 확인·미리보기·명시 저장, 불변 이력. [계약](macro_policy/README.md) |
+| `macro_policy/` | 정책 기록 API·저장(입력 화면 미제공) | 공식 원문 확인·미리보기·명시 저장, 불변 이력. [계약](macro_policy/README.md) |
 | `company_exposure/` | 기업 정보·Portfolio 공시 노출 | 공시 인용·조건부 원자료 해석·보유 비중. [계약](company_exposure/README.md) |
 | `macro_state/` | 시장·거시의 현재 상태·검증 이력 | 공식 원장 기반 순수 규칙·결측·국면 조건. 저장 기록·비교·명시적 수용 이력. [계약](macro_state/README.md) |
 | `market_calendar/` | 대시보드 내부 | 경제지표·중앙은행·휴장·실적·공시·배당 일정과 certainty badge |

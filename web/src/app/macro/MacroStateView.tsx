@@ -55,7 +55,7 @@ function Scale({ axis, market, level, compare }: { axis: AxisKey; market: Market
 }
 
 
-/** 판정에 쓴 숫자 한 줄. 머리 숫자는 거시 지도와 같은 값이다. */
+/** 최신 원장의 참고값은 저장 판정의 입력과 구분한다. */
 /** 지표 이름. 실효 연방기금금리는 중앙은행 기준금리와 구분해 "시장 금리"라 부른다. */
 const seriesName = (id: string) => (id === "DFF" ? "시장 금리" : tinyLabel(id));
 
@@ -71,8 +71,8 @@ const SKIP = new Set(["DFF", "KR_RATE"]);
 
 const refsOf = (s: Snapshot | null, id: string) => (s?.sourceRefs || []).filter(ref => ref.seriesId === id).sort((a, b) => a.period.localeCompare(b.period));
 
-/** 판정에 쓴 숫자 한 줄. 머리 숫자는 거시 지도와 같은 값이고, 비교값은 판정에 쓴 원자료다. */
-function facts(axis: AxisKey, map: MacroItem[], s: Snapshot | null): string[] {
+/** 최신 거시 지도의 참고 숫자. 저장 판정 계산에 사용한 값이라는 뜻은 아니다. */
+function facts(axis: AxisKey, map: MacroItem[]): string[] {
   const parts: string[] = [];
   const order = MAIN_FIRST[axis];
   const rows = map.filter(row => row.series.axis === axis && row.headline && !SKIP.has(row.series.id))
@@ -86,10 +86,17 @@ function facts(axis: AxisKey, map: MacroItem[], s: Snapshot | null): string[] {
       const past = h.spark[h.spark.length - 4][1];
       if (past != null) parts.push(`3개월 전 ${fixed(past, h.digits)}%`);
     }
-    if ((item.series.id === "NFCI" || item.series.id === "STLFSI4") && s) {
-      const refs = refsOf(s, item.series.id);
-      if (refs.length >= 2 && refs[0].value != null) parts.push(`4주 전 ${fixed(Number(refs[0].value), 2)}`);
-    }
+  }
+  return parts;
+}
+
+function savedComparisons(axis: AxisKey, s: Snapshot | null): string[] {
+  const parts: string[] = [];
+  if (!s) return parts;
+  for (const id of ["NFCI", "STLFSI4"]) {
+    const refs = refsOf(s, id);
+    if (refs.length >= 2 && refs[0].value != null && refs[refs.length - 1].value != null)
+      parts.push(`${seriesName(id)} ${fixed(Number(refs[0].value), 2)}에서 ${fixed(Number(refs[refs.length - 1].value), 2)}로(4주)`);
   }
   if (axis === "financial_conditions" && s) {
     for (const id of ["DFF", "KR_RATE"]) {
@@ -124,7 +131,8 @@ function AxisRow({ axis, market, s, compare, map, limitation }: { axis: AxisKey;
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const view = AXIS_VIEW[axis];
-  const numbers = facts(axis, map, s);
+  const numbers = facts(axis, map);
+  const savedNumbers = savedComparisons(axis, s);
   const conflicts = (s?.conflicts || []).map(c => conflictText(c.kind, c.signals, seriesName)).filter(Boolean);
   return <li className="macro-now__row">
     <div className="macro-now__name"><b>{view.name}</b><small>{view.measure}</small><VerifyChip passed={s?.promotion === "primary"} /></div>
@@ -133,7 +141,8 @@ function AxisRow({ axis, market, s, compare, map, limitation }: { axis: AxisKey;
     {s && <button type="button" className="btn btn--text btn--sm macro-now__toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(v => !v)}>계산 근거</button>}
     <div className="macro-now__text">
       {!s && <p className="macro-now__facts">저장된 기록이 없습니다.</p>}
-      {s && numbers.length > 0 && <p className="macro-now__facts">{numbers.join(" · ")}</p>}
+      {s && savedNumbers.length > 0 && <p className="macro-now__facts">저장 판정의 입력 · {savedNumbers.join(" · ")}</p>}
+      {s && numbers.length > 0 && <p className="macro-now__facts">최신 참고값 · {numbers.join(" · ")}<small>거시 지도의 최신 자료이며 {shortKst(s.asOf)} 저장 판정의 입력과 다를 수 있습니다.</small></p>}
       {conflicts.length > 0 && <p className="macro-now__conflict">{conflicts.join(" · ")}</p>}
       {compare && <p className="macro-now__compare">기준일 {longDate(compare.date)} · {compare.s ? `${levelWord(axis, compare.s.level)} · ${directionWord(axis, compare.s.direction)} (${shortKst(compare.s.asOf)} 기록)` : "그 날짜 이전에 저장된 기록이 없습니다"}</p>}
       <p className="macro-now__criteria"><b>기준</b> · {criteria(axis, market)}{axis === "inflation" && s?.promotion === "primary" && limitation ? " 검증 여유가 작았습니다(한도 5%p 중 4.76%p)." : ""}</p>
