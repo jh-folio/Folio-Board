@@ -201,10 +201,36 @@ def paragraphs_with_items(markup: str, form: str = "10-K"):
                         heading.string = 'ITEM ' + label.group(1)
                         target.insert_before(heading)
             table.decompose()
+    if form == '10-K':
+        for block in list(soup.find_all(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])):
+            # Only standalone body headings: exclude table contents, links,
+            # and spans embedded in prose that happens to cite this title.
+            if block.find_parent(['table', 'a']) or block.find('a') or block.find(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                continue
+            title = re.sub(r'\s+', ' ', block.get_text(' ')).strip()
+            section = ('8' if re.fullmatch(r'(?:Notes to (?:the )?)?Consolidated Financial Statements', title, re.I) else
+                       '7' if re.fullmatch(r'Management[’\']s Discussion and Analysis of Financial Condition(?:s)? and Results of Operations', title, re.I) else '')
+            if section:
+                heading = soup.new_tag('div')
+                heading.string = 'ITEM ' + section
+                block.insert_before(heading)
+    # Inline cross-reference anchors are split onto their own lines by the
+    # text reader. They must not reset the current section to their target.
+    reference_marker = '__FOLIO_INLINE_REFERENCE__'
+    for anchor in soup.select('a[href]'):
+        label = re.sub(r'\s+', ' ', anchor.get_text(' ')).strip()
+        block = anchor.find_parent(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        block_text = re.sub(r'\s+', ' ', block.get_text(' ')).strip() if block else ''
+        semantic_heading = block is not None and block.name in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
+        if re.match(r'Item\s+\d', label, re.I) and block_text != label and not semantic_heading:
+            anchor.string = reference_marker + label
     markup = str(soup)
     current = ""
     for line in _clean_lines(markup):
-        current = item_for_paragraph(line, current, form)
+        if line.startswith(reference_marker):
+            line = line[len(reference_marker):]
+        else:
+            current = item_for_paragraph(line, current, form)
         if _is_paragraph(line):
             yield current, line
 
@@ -215,7 +241,7 @@ def paragraphs_with_items(markup: str, form: str = "10-K"):
 #   20-F: 3.D 위험 · 4 회사 정보 · 5 경영진 논의 · 11 시장위험 · 18/19 재무제표
 #   10-Q: Part I 1 재무제표 · 2 MD&A · 3 시장위험 / Part II 1A 위험
 _ITEM_PATTERNS = {
-    "10-K": r"\bITEM\s+(1A|1B|1|7A|7|8|9A|9B|9)\b",
+    "10-K": r"\bITEM\s+(\d{1,2}[A-C]?)\b",
     "20-F": r"\bITEM\s+(3\.?D|3|4A|4|5|11|18|19)\b",
     "10-Q": r"\bITEM\s+(1A|1|2|3|4)\b",
 }

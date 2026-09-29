@@ -196,3 +196,19 @@ def test_explicit_dollar_effect_not_removed_by_tax_mention():
 def test_fx_coordinated_counter_effect_is_not_discarded():
     from features.company_exposure.extraction import direction
     assert direction('A strengthening of the U.S. dollar would reduce our costs but reduce our revenues.', 'fx') == 'two_sided'
+
+@pytest.mark.parametrize('quote,expected', [
+    ('Our net operating revenues were favorably impacted by a weaker U.S. dollar.', 'hurt_by_rise'),
+    ('Our revenues were adversely affected by a weaker U.S. dollar.', 'benefits_from_rise'),
+    ('Our revenues were favorably impacted by a stronger U.S. dollar.', 'benefits_from_rise'),
+    ('Our revenues increased; a weaker U.S. dollar also affected us.', 'unclear'),
+])
+def test_passive_fx_effect_requires_explicit_binding(quote, expected):
+    from features.company_exposure.extraction import direction
+    assert direction(quote, 'fx') == expected
+
+
+def test_valuation_definition_and_industry_inventory_are_not_issuer_exposures():
+    assert extract({'ticker': 'T', 'market': 'KR'}, materials('회사는 금융위험 공정가치 서열체계의 공시가격에 금리 상승 및 인플레이션 시장 가정이 반영되어 있습니다.'))['items'] == []
+    assert extract({'ticker': 'T'}, materials('Prices beyond our control reflect global demand, industry production and inventory levels.'))['items'] == []
+    assert extract({'ticker': 'T'}, materials('Our inventory levels depend on product demand and product transitions.'))['items'][0]['factor'] == 'inventory_cycle'

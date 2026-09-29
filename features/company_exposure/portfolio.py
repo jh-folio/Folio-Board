@@ -30,7 +30,8 @@ def aggregate(root, positions):
             key = (item['factor'], item['direction'])
             group = groups.setdefault(key, {'factor': key[0], 'direction': key[1], 'positions': {}, 'evidence': []})
             # Several passages for one holding do not multiply its weight.
-            group['positions'][ticker] = {'ticker': ticker, 'weight': float(weight) if weight is not None else None}
+            group['positions'][ticker] = {'ticker': ticker, 'market': profile.get('market'),
+                                          'weight': float(weight) if weight is not None else None}
             evidence = {'ticker': ticker, 'profileId': profile['profileId'], 'exposureId': item['id'],
                         'quote': item['quote'], 'sourceRef': item['sourceRef'],
                         'sourceRefs': item.get('sourceRefs') or [item['sourceRef']], 'magnitudeBasis': item['magnitudeBasis']}

@@ -79,6 +79,12 @@ def fx_direction(quote, market):
     costs = r'(?:costs?|expenses?)'
     negative = bool(re.search(rf'negatively affect|adversely affect|(?:reduce|decrease|lower)\s+{owner}{earnings}|(?:increase|raise)\s+{owner}{costs}|(?:비용|손실)(?:이|가|은|는)?\s*증가|(?:매출|이익)(?:이|가|은|는)?\s*감소', effect, re.I))
     positive = bool(re.search(rf'positively affect|(?:increase|improve|raise)\s+{owner}{earnings}|(?:reduce|decrease|lower)\s+{owner}{costs}|(?:매출|이익)(?:이|가|은|는)?\s*증가|(?:비용|손실)(?:이|가|은|는)?\s*감소', effect, re.I))
+    # Passive statements bind the effect before the currency move explicitly
+    # through "by". Do not borrow an effect from an unrelated preceding clause.
+    passive = re.search(rf'{owner}{earnings}\s+(?:was|were|is|are)\s+(favorably|adversely|unfavorably)\s+(?:impacted|affected)\s+by\s+(?:a\s+|the\s+)?$', quote[:match.start()], re.I)
+    if passive:
+        positive |= passive.group(1).lower() == 'favorably'
+        negative |= passive.group(1).lower() != 'favorably'
     if negative and positive:
         return 'two_sided'
     if not negative and not positive:
@@ -119,7 +125,13 @@ def explicit_exposure(quote, factor):
             for clause in re.split(r';|\bbut\b|\bwhereas\b', exposure_text, flags=re.I)
         )
     if factor == 'inventory_cycle':
+        if re.search(r'industry\s+(?:production and\s+)?inventory', quote, re.I) and not re.search(r'\b(?:our|company.s)\s+inventor', quote, re.I):
+            return False
         return bool(re.search(r'demand|product transitions|고객|수요|재고.{0,20}(?:폐기|평가손실)', quote, re.I))
+    if factor == 'interest_rate' and re.search(r'공정가치\s*서열체계|fair value hierarchy', quote, re.I):
+        # Definitions of valuation inputs are not issuer rate sensitivities.
+        if not re.search(r'이자비용|차입금|금리위험|금리\s*위험|interest expense|borrowing costs|interest rate risk', quote, re.I):
+            return False
     if factor == 'commodity_input':
         return bool(re.search(r'raw materials?|fuel|purchase|cost fluctuations|원재료|원자재.{0,20}비용', quote, re.I))
     if factor == 'policy_specific':
