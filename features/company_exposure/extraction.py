@@ -33,7 +33,7 @@ def direction(quote, factor):
         return 'unclear'
     phrase = FACTORS[factor]
     rise = rf'(?:higher|rising|increases? in)\s+(?:market\s+)?(?:{phrase})'
-    negative = bool(re.search(rf'{rise}.{{0,240}}(?:increase|raise)\s+(?:(?:our|the|NEE.s and FPL.s)\s+)?(?:interest expense|borrowing costs|costs?|cost of capital)', quote, re.I))
+    negative = bool(re.search(rf'{rise}.{{0,240}}(?:increase|raise)\s+(?:(?:our|the company.s|the corporation.s|the group.s|the)\s+)?(?:interest expense|borrowing costs|costs?|cost of capital)', quote, re.I))
     positive = bool(re.search(rf'{rise}.{{0,240}}(?:increase|improve)\s+(?:our\s+)?(?:net interest income|revenue|revenues)', quote, re.I))
     if negative and positive:
         return 'two_sided'
@@ -62,8 +62,21 @@ def sentences(original):
 def explicit_exposure(quote, factor):
     # Accounting inventory balances, trading inventory and generic third-party
     # access to capital are not the issuer's inventory-cycle/credit exposure.
-    if not re.search(r'\b(?:our|we|company|corporation|group|firm|NEE|FPL|Duke Energy)\b|당사|회사|연결기업|그룹', quote, re.I):
+    if not re.search(r'\b(?:our|we|company|corporation|group|firm)\b|당사|회사|연결기업|그룹', quote, re.I):
         return False
+    if factor == 'fx':
+        # A named tax rule is not an exchange-rate exposure. Remove its name
+        # before requiring an actual FX risk/effect relationship in a clause.
+        if re.search(r'effective tax rate|실효세율', quote, re.I) and not re.search(
+                r'(?:exchange rates?|환율).{0,40}(?:fluctuat|strengthen|weaken|변동|상승|하락)|'
+                r'(?:fluctuat|strengthen|weaken).{0,40}(?:exchange rates?|currenc)', quote, re.I):
+            return False
+        exposure_text = re.sub(r'foreign currency (?:loss |gain )?(?:regulations?|rules?)', '', quote, flags=re.I)
+        return any(
+            re.search(FACTORS['fx'], clause, re.I)
+            and re.search(r'risk|expos|sensitiv|hedg|derivative|fluctuat|affect|impact|cost|expense|income|revenue|위험|노출|영향|변동|비용|매출', clause, re.I)
+            for clause in re.split(r';|\bbut\b|\bwhereas\b', exposure_text, flags=re.I)
+        )
     if factor == 'inventory_cycle':
         return bool(re.search(r'demand|product transitions|고객|수요|재고.{0,20}(?:폐기|평가손실)', quote, re.I))
     if factor == 'commodity_input':
@@ -145,14 +158,21 @@ def extract(company, materials, *, personal_reason=None):
                     continue
                 item = {'factor': factor, 'direction': direction(quote, factor),
                         'magnitudeBasis': 'qualitative_only', 'quote': quote,
-                        'sourceRef': ref, 'layer': 'canonical'}
+                        'sourceRef': ref, 'sourceRefs': [ref], 'layer': 'canonical'}
                 # Do not turn arbitrary figures (dates, debt balance, segment
                 # revenue) into a quantified sensitivity. Only explicitly
                 # supplied and reviewed quantified items can use that basis.
-                item['id'] = 'exposure-' + digest(item)
                 validate_item(item, original)
-                items[item['id']] = item
-    result = {'schemaVersion': 'company-exposure-1', 'ticker': ticker, 'market': market,
+                # Only identical source sentences merge; similar wording must
+                # not hide a changed hedge, period, qualifier or numerical value.
+                key = (factor, item['direction'], quote)
+                if key not in items:
+                    items[key] = item
+                elif ref not in items[key]['sourceRefs']:
+                    items[key]['sourceRefs'].append(ref)
+    for item in items.values():
+        item['id'] = 'exposure-' + digest(item)
+    result = {'schemaVersion': 'company-exposure-1', 'extractionVersion': 'company-exposure-rules-2', 'ticker': ticker, 'market': market,
               'layer': 'canonical', 'promotion': 'shadow',
               'items': sorted(items.values(), key=lambda x: x['id']),
               'coverage': {'scoredPassages': source_count, 'exposures': len(items), 'omittedFragments': omitted_fragments},

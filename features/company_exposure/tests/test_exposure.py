@@ -103,3 +103,43 @@ def test_counter_channels_controls_abbreviations_and_save_tampering(tmp_path):
 def test_utility_tariff_is_not_trade_policy():
     profile = extract({'ticker': 'T'}, materials('Our published tariffs govern the cost of electricity services.'))
     assert profile['items'] == []
+
+
+def test_tax_regulation_mention_is_not_fx_exposure():
+    quote = "The Company's effective tax rate increased due to foreign currency loss regulations."
+    assert extract({'ticker': 'T'}, materials(quote))['items'] == []
+    quote = "The Company's effective tax rate reflects the impact of foreign currency loss regulations and foreign currency revaluations related to a tax decision."
+    assert extract({'ticker': 'T'}, materials(quote))['items'] == []
+    quote = "Our exposure to fluctuations in foreign currency exchange rates affects our revenue."
+    assert {i['factor'] for i in extract({'ticker': 'T'}, materials(quote))['items']} == {'fx'}
+
+
+def test_issuer_names_are_not_special_cased():
+    for issuer in ['NEE', 'FPL', 'Duke Energy', 'Unseen Issuer']:
+        quote = f'Higher interest rates would increase {issuer} borrowing costs.'
+        assert extract({'ticker': 'T'}, materials(quote))['items'] == []
+    quote = "Higher interest rates would increase the Company's borrowing costs."
+    assert extract({'ticker': 'T'}, materials(quote))['items'][0]['direction'] == 'hurt_by_rise'
+
+
+def test_identical_sentence_merges_sources_and_preserves_roundtrip(tmp_path):
+    m = materials()
+    m['rankedQuarterlyFiling'] = copy.deepcopy(m['rankedFiling'])
+    m['rankedQuarterlyFiling']['form'] = '10-Q'
+    m['rankedQuarterlyFiling']['metadata']['url'] = 'https://www.sec.gov/Archives/quarterly'
+    m['rankedQuarterlyFiling']['paragraphs'] *= 2
+    result = extract({'ticker': 'T'}, m)
+    assert len(result['items']) == 1
+    item = result['items'][0]
+    assert [r['form'] for r in item['sourceRefs']] == ['10-K', '10-Q']
+    assert item['sourceRef'] == item['sourceRefs'][0]
+    store = ExposureStore(tmp_path)
+    store.save(result, materials=m)
+    assert store.get('T') == result
+    m['rankedQuarterlyFiling']['paragraphs'] = [{'item': '7A', 'text': 'Higher interest rates could increase our borrowing costs.'}]
+    assert len(extract({'ticker': 'T'}, m)['items']) == 2
+
+
+def test_explicit_fx_cost_exposure_is_retained_without_resolving_direction_basis():
+    quote = 'Higher exchange rates would increase our borrowing costs.'
+    assert {i['factor'] for i in extract({'ticker': 'T'}, materials(quote))['items']} == {'fx'}

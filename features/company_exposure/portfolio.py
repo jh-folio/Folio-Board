@@ -32,7 +32,8 @@ def aggregate(root, positions):
             # Several passages for one holding do not multiply its weight.
             group['positions'][ticker] = {'ticker': ticker, 'weight': float(weight) if weight is not None else None}
             evidence = {'ticker': ticker, 'profileId': profile['profileId'], 'exposureId': item['id'],
-                        'quote': item['quote'], 'sourceRef': item['sourceRef'], 'magnitudeBasis': item['magnitudeBasis']}
+                        'quote': item['quote'], 'sourceRef': item['sourceRef'],
+                        'sourceRefs': item.get('sourceRefs') or [item['sourceRef']], 'magnitudeBasis': item['magnitudeBasis']}
             if item['magnitudeBasis'] == 'company_quantified':
                 evidence['magnitudeQuote'] = item['magnitudeQuote']
             group['evidence'].append(evidence)
