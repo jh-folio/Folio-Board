@@ -22,6 +22,19 @@
 - SharedJob 저장 구간은 취소할 수 없는 commit 단계로 전환하고 불변 결과의 hash와 SQLite receipt를 검증합니다. 재시작 시 receipt·결과가 모두 확인된 작업만 완료로 복구합니다. 중간 저장은 보존하되 완료로 숨기지 않습니다.
 - 미국 물가의 평가 한계(검증 B1 대비 4.76%p, 한도 5%p에 근접)를 표시합니다. 각 워크스페이스의 실제 수용은 별도 명시 결정에 따릅니다. 나머지 축·국면은 시험 표시이며 종목/Portfolio에는 level·국면 신호를 전달하지 않습니다.
 
+## 화면 이름 (판정 값은 그대로)
+
+화면은 판정 enum을 바꾸지 않고 이름만 붙입니다. 칸은 왼쪽(적음·낮음) → 오른쪽(많음·높음) 순서이고 화살표 ↗는 항상 오른쪽 칸 쪽입니다. 유동성은 금리 상승(`rising`)이 유동성 감소이므로 칸을 부족 → 풍부로 두고 `rising`(축소)을 ↘로 그립니다.
+
+| 축 | 화면 이름 | level → 칸 | direction |
+|---|---|---|---|
+| `growth` | 경기 | contraction 수축 · weak 부진 · moderate 추세 성장 · strong 호조 | rising 가속 · falling 둔화 · flat 횡보 · mixed 엇갈림 |
+| `inflation` | 물가 | below_reference 낮음 · near_reference 2% 부근 · above_reference 높음 · high 매우 높음 | 가속 · 둔화 · 보합 |
+| `financial_conditions` | 유동성 | tight 부족 · neutral 중립 · loose 풍부 | rising 축소(↘) · falling 확대(↗) · 보합 · 엇갈림 |
+| `stress_vulnerability` | 신용 위험 | normal 안정 · elevated 주의 · high 경계 | rising 악화 · falling 개선 · 보합 |
+
+`unknown`은 판단 보류입니다. `promotion`은 primary = 검증 통과, shadow = 검증 중으로 보입니다. 미국 유동성의 위치는 NFCI, 방향은 실효 연방기금금리(화면: 시장 금리)이며 중앙은행 결정으로 부르지 않습니다.
+
 검증: `py -3 -X utf8 -m pytest features/macro_state -q`. 표 형태 fixture로 경계값·목표표 전환·결측·상충을 검사합니다. 실제 자료 평가와 사용자 수용은 별도입니다.
 
 ## 명시적 평가 작업
