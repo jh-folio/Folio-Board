@@ -22,6 +22,7 @@ class StrictModel(BaseModel):
 class JobKind(StrEnum):
     MACRO_REFRESH = "macro_refresh"
     MACRO_EVALUATE = "macro_evaluate"
+    MACRO_EXPOSURE = "macro_exposure"
     INDEX = "index"
     RSS = "rss"
     SETUP = "setup"
@@ -36,6 +37,7 @@ class JobKind(StrEnum):
 class TaskType(StrEnum):
     MACRO_REFRESH = "macro_refresh"
     MACRO_EVALUATE = "macro_evaluate"
+    MACRO_EXPOSURE = "macro_exposure"
     INDEX = "index"
     RSS = "rss"
     SETUP = "setup"
@@ -132,6 +134,7 @@ class PhaseCode(StrEnum):
 class LabelCode(StrEnum):
     MACRO_REFRESH = "macro_refresh"
     MACRO_EVALUATE = "macro_evaluate"
+    MACRO_EXPOSURE = "macro_exposure"
     INDEX_REBUILD = "index_rebuild"
     RSS_IMPORT = "rss_import"
     SETUP = "setup"

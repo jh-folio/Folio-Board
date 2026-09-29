@@ -183,6 +183,16 @@ def test_revision_period_selection_and_spread_missing_leg(tmp_path):
 @pytest.mark.parametrize('outcome', ['done', 'failed', 'cancelled'])
 def test_real_shared_job_lifecycle_uses_macro_result_and_cancel_boundary(tmp_path, monkeypatch, outcome):
     from features.common import jobs
+    from features.macro_state import service as state_service
+    snapshots_called = []
+    def snapshots(root, **kwargs):
+        snapshots_called.append(root)
+        # Exercise the actual frozen engine and commit receipt after the mocked
+        # collector; an empty ledger is a legitimate all-unknown snapshot set.
+        MacroStore(root / 'market-memory.sqlite3').ensure()
+        return real_snapshots(root, **kwargs)
+    real_snapshots = state_service.refresh_snapshots
+    monkeypatch.setattr(state_service, 'refresh_snapshots', snapshots)
     monkeypatch.setattr(jobs, 'JOBS_PATH', tmp_path / 'jobs.json')
     jobs._LIFECYCLES.clear()
     job = jobs.new_shared_job(kind='macro_refresh', task_type='macro_refresh', generation_mode='none', adapter='none', requested_mode=None, mode='collect', attempted_engine=None, clock=jobs._clock)
@@ -199,6 +209,7 @@ def test_real_shared_job_lifecycle_uses_macro_result_and_cancel_boundary(tmp_pat
     jobs.run_job(job.id, operations.run_collection, tmp_path, start='2000-01-01', _folio_job_id=job.id)
     saved = jobs.get_job(job.id)
     assert saved['status'] == outcome
+    assert snapshots_called == ([tmp_path] if outcome == 'done' else [])
     if outcome == 'done':
         assert saved['result']['savedCount'] == 2
 
@@ -275,6 +286,8 @@ def test_connected_source_failure_is_still_incomplete(tmp_path):
 
 def test_worker_completes_with_one_key_and_names_the_no_key_failure(tmp_path, monkeypatch):
     import features.common.jobs as jobs
+    from features.macro_state import service as state_service
+    monkeypatch.setattr(state_service, 'refresh_snapshots', lambda *a, **k: [])
     monkeypatch.setattr(jobs, 'get_shared_job', lambda _id: SimpleNamespace(status=SimpleNamespace(value='running')))
     monkeypatch.setattr(operations, 'collect', lambda root, **k: collect(root, reader=_OneKeyReader(), selected={'CPIAUCSL', 'KR_CPI'}, cancel=k['cancel']))
     done = operations.run_collection(tmp_path, start='2000-01-01', job_id='x')

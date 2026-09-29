@@ -17740,3 +17740,19 @@ select { min-height: 36px; padding: 0 12px; }
 .folio-chart__state { display: grid; place-items: center; padding: var(--sp-3); text-align: center; color: var(--muted); font-size: var(--fs-sm); background: var(--surface-control); border-radius: var(--r-group); }
 .folio-chart[data-state="error"] .folio-chart__state { color: var(--ink); border-inline-start: 3px solid var(--folio-warning); }
 .folio-chart__stale { justify-self: start; }
+
+/* 0.8 시장·거시: 기존 표면·폼 프리미티브를 배치만 확장한다. */
+.macro-state-stack { display: grid; gap: 24px; min-width: 0; }
+.macro-state-toolbar, .macro-state-card > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.macro-state-card { padding: 24px; min-width: 0; overflow-wrap: anywhere; }
+.macro-state-card h2 { font-size: var(--fs-title); }
+.macro-state-reading { font-size: var(--fs-title); }
+.macro-state-card summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; }
+.macro-state-card details { margin-top: 12px; }
+.macro-state-source-list { max-height: 320px; overflow-y: auto; }
+.macro-state-identity { font-size: var(--fs-meta); color: var(--folio-ink-soft); }
+.macro-state-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.macro-state-form label { display: grid; gap: 8px; }
+.macro-state-form textarea { min-height: 88px; }
+.macro-state-stack button, .macro-state-stack select, .macro-state-stack input:not([type=checkbox]) { min-height: 44px; }
+@media (max-width: 680px) { .macro-state-card { padding: 16px; } .macro-state-form { grid-template-columns: 1fr; } }

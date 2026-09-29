@@ -127,9 +127,9 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('group', { name: '거시 자료 시장' }).getByRole('button', { name: '한국' }).click();
     await expect(page.locator('.macro-asof')).toContainText('과거 시점 재현 미지원');
     await expect(page.getByRole('group', { name: '자료 기준' })).toHaveCount(0);
-    await page.getByRole('group', { name: '시장 내러티브 하위 보기' }).getByRole('button', { name: '내러티브' }).click();
-    await expect(page.locator('.react-market-memory-content')).toBeVisible();
-    await page.getByRole('group', { name: '시장 내러티브 하위 보기' }).getByRole('button', { name: '거시 지도' }).click();
+    await page.getByRole('group', { name: '시장·거시 하위 보기' }).getByRole('button', { name: '검증 이력' }).click();
+    await expect(page.getByRole('heading', { name: '검증 결과와 해석 범위' })).toBeVisible();
+    await page.getByRole('group', { name: '시장·거시 하위 보기' }).getByRole('button', { name: '거시 지도' }).click();
     await expect(page.getByRole('group', { name: '거시 자료 시장' }).getByRole('button', { name: '한국' })).toHaveAttribute('aria-pressed', 'true');
   });
 }

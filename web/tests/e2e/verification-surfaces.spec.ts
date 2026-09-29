@@ -1088,3 +1088,27 @@ test.describe("0.6 verification surfaces", () => {
     });
   }
 });
+
+for (const theme of ["light", "dark"] as const) {
+  test(`0.8 company exposure grouped sources ${theme}`, async ({ page }, info) => {
+    await prepare(page, theme);
+    let writes = 0;
+    await page.route("**/api/macro/exposures/NVDA**", route => {
+      if (route.request().method() !== "GET") writes++;
+      return route.fulfill({ json: { profile: { limitations: ["공식 공시 일부 문단"], items: [1, 2].map(n => ({ id: `e${n}`, factor: "interest_rate", direction: "hurt_by_rise", quote: `Higher interest rates increase our borrowing costs. Source ${n}.`, sourceRef: { url: "https://www.sec.gov/example", form: "10-K", date: "2026-01-01" } })) }, interpretation: null } });
+    });
+    await open(page, "watchlist/NVDA");
+    const panel = page.getByRole("region", { name: "공시에서 확인한 거시 노출" });
+    const summary = panel.locator("summary").filter({ hasText: "공시 문장 2개" });
+    await expect(summary).toHaveCount(1);
+    await summary.focus(); await page.keyboard.press("Enter");
+    await expect(panel.getByRole("link", { name: "공식 공시 원문" })).toHaveCount(2);
+    await expect(panel.getByText(/현재 영향은 판단하기 어려움/)).toHaveCount(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    expect((await new AxeBuilder({ page }).include('[aria-label="공시에서 확인한 거시 노출"]').withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations).toEqual([]);
+    await panel.screenshot({ path: info.outputPath(`exposure-${theme}.png`) });
+    await openReasonTab(page);
+    await expect(panel).toHaveCount(0);
+    expect(writes).toBe(0);
+  });
+}

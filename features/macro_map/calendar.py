@@ -69,7 +69,18 @@ def next_releases(path: Path, day: str, *, cutoff=None):
                 'fetchedAt': match['fetched_at'],
             }
     for series_id, provider, title, basis in KR_RELEASES:
-        match = next((row for row in kr_rows if row['provider'] == provider and row['title'] == title), None)
+        eligible = []
+        for row in kr_rows:
+            if row['provider'] != provider or row['title'] != title:
+                continue
+            if cutoff:
+                try:
+                    if timestamp(row['fetched_at']) > cutoff:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            eligible.append(row)
+        match = next(iter(eligible), None)
         if match:
             result[series_id] = {
                 'date': match['starts_at'][:10],

@@ -12,3 +12,7 @@
 API와 저장 경계를 먼저 구현했습니다. 화면 입력과 기업 노출 연결은 후속 통합 대상입니다.
 
 검증: `py -3 -X utf8 -m pytest features/macro_policy -q`
+
+## 기업·개인 조건 연결
+
+채널마다 공식 sourceRef가 필요합니다. `GET /api/macro/policies/targets/{ticker}`로 저장된 공시 노출과 현재 이유 개정의 조건을 읽습니다. 미리보기는 정확한 profileId/exposureId를 검증하고 원문을 가져오며, 종목명 동시 등장으로 연결하지 않습니다. 개인 조건은 정확한 현재 revisionId/index와 전달 설명·조건에 모두 존재하는 명시적 공통 표현을 확인합니다. 조건은 hypothesis로 보존합니다. 확인 직전 입력이 달라지면 저장을 거부하고 다시 미리보기해야 합니다.

@@ -92,8 +92,8 @@ export function readMacroLocation() {
 }
 
 export function lastMacroView() {
-  const saved = sessionStorage.getItem("folio.macro.lastView.v1");
-  return saved?.startsWith("#/market-memory/macro") ? saved : "#/market-memory/macro";
+  const saved = sessionStorage.getItem("folio.macro.lastView.v1")?.replace("#/market-memory/macro", "#/macro/map");
+  return saved?.startsWith("#/macro/map") ? saved : "#/macro/map";
 }
 
 export function navigateMacro(patch: Partial<ReturnType<typeof readMacroLocation>>) {
@@ -101,7 +101,7 @@ export function navigateMacro(patch: Partial<ReturnType<typeof readMacroLocation
   if ("series" in patch || "market" in patch) current.period = "";
   if (current.market === "KR") current.mode = "latest_revised";
   const params = new URLSearchParams(Object.entries(current).filter(([, value]) => Boolean(value)));
-  window.location.hash = `/market-memory/macro?${params}`;
+  window.location.hash = `/macro/map?${params}`;
 }
 
 // 화면에 보이는 짧은 이름. 발표 기관은 괄호에 한국어로 남긴다.

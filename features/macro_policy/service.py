@@ -65,11 +65,13 @@ def normalize(draft):
         raise ValueError('policy_invalid_channels')
     result['channels'] = []
     for entry in channels:
-        if not isinstance(entry, dict) or set(entry) != {'channel', 'explanation', 'sourceRef'} or entry['channel'] not in CHANNELS:
+        if not isinstance(entry, dict) or not {'channel', 'explanation', 'sourceRef'} <= entry.keys() or entry.keys() - {'channel', 'explanation', 'sourceRef', 'companyLink'} or entry['channel'] not in CHANNELS:
             raise ValueError('policy_invalid_channel')
         result['channels'].append({'channel': entry['channel'],
                                    'explanation': text(entry['explanation'], 'explanation'),
                                    'sourceRef': source(entry['sourceRef'])})
+        if entry.get('companyLink') is not None:
+            result['channels'][-1]['companyLink'] = entry['companyLink']
     return result
 
 
@@ -83,6 +85,19 @@ def preview(draft):
 class PolicyStore:
     def __init__(self, data_root):
         self.path = Path(data_root).resolve() / 'market-memory.sqlite3'
+
+    def preview(self, draft):
+        from .links import resolve
+        checked = preview(draft)
+        resolved = []
+        for channel in checked['draft']['channels']:
+            if channel.get('companyLink') is not None:
+                resolved.append(resolve(self.path.parent, channel['companyLink'], channel['explanation']))
+            else:
+                resolved.append(None)
+        checked['resolvedLinks'] = resolved
+        checked['previewId'] = digest({'base': checked['previewId'], 'resolvedLinks': resolved}) if any(resolved) else checked['previewId']
+        return checked
 
     def list(self):
         if not self.path.exists():
@@ -107,7 +122,7 @@ class PolicyStore:
                     conn.execute(f"CREATE TRIGGER macro_policy_no_{operation.lower()} BEFORE {operation} ON macro_policy_events BEGIN SELECT RAISE(ABORT,'immutable_policy_event'); END")
 
     def confirm(self, draft, *, preview_id, user_confirmed, official_source_confirmed):
-        checked = preview(draft)
+        checked = self.preview(draft)
         if user_confirmed is not True or official_source_confirmed is not True:
             raise ValueError('policy_explicit_confirmation_required')
         if checked['previewId'] != preview_id:
@@ -116,11 +131,16 @@ class PolicyStore:
         body = dict(checked['draft'], id=ident, schemaVersion='policy-event-1',
                     confirmedAt=dt.datetime.now(dt.timezone.utc).isoformat(),
                     layer='source-grounded', reuseAsEvidence=False)
+        for channel, resolved in zip(body['channels'], checked['resolvedLinks']):
+            if resolved is not None:
+                channel['resolvedCompanyLink'] = resolved
         self.ensure()
         with sqlite3.connect(self.path, timeout=30) as conn:
             conn.execute('BEGIN IMMEDIATE')
             old = conn.execute('SELECT body FROM macro_policy_events WHERE id=?', (ident,)).fetchone()
             if old:
                 return json.loads(old[0])
+            if self.preview(draft)['previewId'] != preview_id:
+                raise ValueError('policy_preview_changed')
             conn.execute('INSERT INTO macro_policy_events(id,body) VALUES(?,?)', (ident, canonical(body)))
         return body

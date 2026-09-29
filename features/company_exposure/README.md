@@ -1,0 +1,20 @@
+# 기업 공시의 거시 노출
+
+Watchlist 기업 정보의 `공시에서 확인하기`는 기존 기업분석 공시 수집·문단 점수화를 재사용합니다. 미국 연차 위험·시장위험·재무 주석과 최근 분기 공시, 한국 공식 재무위험 공시의 명시적 문장만 추출합니다. 새 수집기를 만들지 않습니다. 한국은 사용자가 자료함에 저장하고 인덱싱한 공식 공시를 사용합니다.
+
+## 계약
+
+- 모든 항목은 factor/direction enum, 원문 인용, sourceRef를 갖습니다. 현재 규칙은 정성 노출만 추출합니다. 임의 민감도·실적 영향 숫자는 만들지 않습니다. `company_quantified`는 원문에 같은 숫자가 있는 검증된 항목에만 허용되는 계약입니다.
+- 이유 없음·한 줄·긴 이유에 따라 canonical 프로필이 바뀌지 않습니다. 저장은 실제 수집 materials로 다시 추출한 결과와 바이트 비교합니다.
+- 불변 `company_macro_exposures`는 기존 market-memory.sqlite3에 저장하며 첫 schema 변경 전 백업합니다. 이전 profileId는 계속 조회할 수 있습니다. 조회는 쓰기·수집을 하지 않습니다.
+- 미국 금리 방향은 DFF의 정확한 달력 3개월 변화, NFCI 28일 변화는 별도 맥락입니다. 한국은 KR_RATE/KR_USDKRW의 정확한 3개월 변화입니다. 날짜가 없는 달은 말일로 맞추고 해당 관측이 없으면 unknown입니다. stale·flat·unclear는 unknown, two_sided의 상승/하락은 mixed입니다. 나머지 요인은 연결 자료 없음입니다.
+- 이 해석은 시험 표시이며 기업 전체의 순효과가 아닙니다. 헤지·시차·반대 채널·정량 민감도 미확인을 함께 밝힙니다. Macro State level·국면 신호를 종목/Portfolio에 노출하지 않습니다.
+- 선별 문단 밖의 노출과 문장 조각·긴 표에 섞인 구간은 누락될 수 있습니다. 공시 날짜를 알 수 없으면 임의로 채우지 않습니다. 영문 한국 공시를 SEC 10-K로 표시하지 않습니다.
+
+## API·작업
+
+- `GET /api/macro/exposures/{ticker}`: 마지막 저장 프로필과 현재 원자료의 조건부 해석.
+- `POST /api/macro/exposures/{ticker}/refresh`: 명시적 SharedJob. commit 진입 전 취소는 저장하지 않으며 commit 이후에는 receipt·hash로 완료/재시작 복구를 검증합니다.
+- Portfolio 집계는 실제 보유 행의 같은 티커 비중을 합산하고 공시 중복으로 비중을 늘리지 않습니다. 비중 없는 항목은 unknown이며 목표 비중을 대신 쓰지 않습니다.
+
+검증: `py -3 -X utf8 -m pytest features/company_exposure features/macro_policy -q`. 고정 실제 공시 표본의 독립 판독과 사용자 해석 수용은 자동 테스트와 별도입니다.

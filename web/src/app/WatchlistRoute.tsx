@@ -6,6 +6,7 @@ import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
 import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
+import { ExposurePanel } from "./macro/ExposurePanel";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
@@ -432,6 +433,7 @@ export function WatchlistRoute() {
                 <section className="watchlist-detail-section watchlist-detail-section--metrics">
                   <div className="watchlist-detail-section__head"><h3>재무·투자 지표</h3></div>
                   <FundamentalsPanel ticker={detailTicker} payload={fundamentals.payload} error={fundamentals.error} />
+                  <ExposurePanel ticker={detailTicker} />
                 </section>
                 <section className="watchlist-detail-section watchlist-detail-section--chart">
                   <MarketChartFigure

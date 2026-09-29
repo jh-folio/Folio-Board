@@ -180,6 +180,28 @@ def paragraphs_with_items(markup: str, form: str = "10-K"):
     each heading on its own line, so every paragraph came back `Unknown` and the
     section weighting never applied.
     """
+    # Linked contents tables can have Item numbers that never appear in the
+    # actual body. Do not carry the final contents entry into unlabeled prose.
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(markup, "html.parser")
+    for table in list(soup.find_all("table")):
+        if table.parent is None:
+            continue
+        labels = re.findall(r"\bItem\s+\d+[A-Z]?\b", table.get_text(" "), re.I)
+        links = table.select('a[href^="#"]')
+        if len(labels) >= 2 and len(links) >= 2:
+            for row in table.find_all("tr"):
+                label = re.search(_ITEM_PATTERNS.get(form, _ITEM_PATTERNS['10-K']), row.get_text(" "), re.I)
+                link = row.select_one('a[href^="#"]')
+                if label and link:
+                    anchor = link['href'][1:]
+                    target = soup.find(id=anchor) or soup.find('a', attrs={'name': anchor})
+                    if target and table not in target.parents:
+                        heading = soup.new_tag('div')
+                        heading.string = 'ITEM ' + label.group(1)
+                        target.insert_before(heading)
+            table.decompose()
+    markup = str(soup)
     current = ""
     for line in _clean_lines(markup):
         current = item_for_paragraph(line, current, form)
@@ -223,7 +245,8 @@ def equivalent_items(items, form: str) -> set[str]:
 
 def item_for_paragraph(paragraph: str, current_item: str, form: str = "10-K") -> str:
     pattern = _ITEM_PATTERNS.get(str(form or "").upper(), _ITEM_PATTERNS["10-K"])
-    match = re.search(pattern, paragraph, flags=re.I)
+    # A prose cross-reference ("Refer to Item 1A") is not a section heading.
+    match = re.match(r"^\s*(?:PART\s+[IVX]+[.\s:-]*)?" + pattern, paragraph, flags=re.I)
     if match:
         return match.group(1).upper().replace(".", "")
     return current_item

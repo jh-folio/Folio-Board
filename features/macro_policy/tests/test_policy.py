@@ -60,3 +60,37 @@ def test_routes_and_link_source_boundary(tmp_path):
         assert client.post('/api/macro/policies/confirm', json=payload).status_code == 200
         body['channels'][0]['ticker'] = 'AAPL'
         assert client.post('/api/macro/policies/preview', json=body).status_code == 400
+
+
+def test_explicit_exposure_link_and_stale_profile(tmp_path):
+    from features.company_exposure.tests.test_exposure import materials
+    from features.company_exposure.extraction import extract
+    from features.company_exposure.store import ExposureStore
+    profile = extract({'ticker': 'T'}, materials())
+    ExposureStore(tmp_path).save(profile, materials=materials())
+    body = draft()
+    body['channels'] = [{'channel': 'financing_cost', 'explanation': '금리 상승으로 자금조달 비용 증가 가능',
+                         'sourceRef': body['sourceRef'], 'companyLink': {'ticker': 'T',
+                         'profileId': profile['profileId'], 'exposureId': profile['items'][0]['id']}}]
+    store = PolicyStore(tmp_path); p = store.preview(body)
+    assert p['resolvedLinks'][0]['quote'] == profile['items'][0]['quote']
+    saved = store.confirm(p['draft'], preview_id=p['previewId'], user_confirmed=True, official_source_confirmed=True)
+    assert saved['channels'][0]['resolvedCompanyLink']['sourceRef'] == profile['items'][0]['sourceRef']
+    changed = materials('Higher interest rates would increase our net interest income.')
+    ExposureStore(tmp_path).save(extract({'ticker': 'T'}, changed), materials=changed)
+    with pytest.raises(ValueError, match='stale_exposure'):
+        store.preview(body)
+    assert len(store.list()) == 1
+
+
+def test_condition_requires_current_revision_and_exact_overlap(tmp_path, monkeypatch):
+    from features.macro_policy import links
+    profile = {'profileId': 'p', 'items': [{'id': 'e', 'quote': 'Our borrowing cost risk.', 'sourceRef': {'url': 'https://official.example/a'}}]}
+    monkeypatch.setattr(links, 'targets', lambda *a: {'profile': profile, 'reason': {'revisionId': 'r', 'conditions': ['금리 상승으로 비용이 늘면 다시 본다.']}})
+    link = {'ticker': 'T', 'profileId': 'p', 'exposureId': 'e', 'condition': {'revisionId': 'r', 'index': 0, 'overlapQuote': '금리 상승'}}
+    assert links.resolve(tmp_path, link, '금리 상승 경로')['condition']['layer'] == 'hypothesis'
+    with pytest.raises(ValueError, match='overlapping'):
+        links.resolve(tmp_path, link, '수요 감소 경로')
+    link['condition']['revisionId'] = 'old'
+    with pytest.raises(ValueError, match='stale_reason'):
+        links.resolve(tmp_path, link, '금리 상승 경로')

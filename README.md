@@ -287,3 +287,9 @@ If AI features do not work, check that:
 Folio Board should still run with local rule-based behavior when LLM features are unavailable.
 
 AI generation uses the configured CLI. If Settings asks you to update an older configuration, select and save a CLI connection or turn AI off. Saved reports, historical logs, and external data integrations remain available.
+
+### Market & Macro and disclosed company exposures
+
+**Market & Macro** provides saved current-state summaries, the macro map, and validation history. Summaries describe observed data, not forecasts. Trial displays and accepted summaries remain distinct; missing data stays unknown.
+
+Watchlist company information can explicitly refresh disclosed interest-rate and currency exposures with original filing references. Portfolio groups current holding weights sharing an exposure; these are neither estimated losses nor recommended weights. Policy events require an official source, preview, and explicit confirmation. Personal conditions remain hypotheses.

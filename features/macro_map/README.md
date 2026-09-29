@@ -1,6 +1,6 @@
 # 거시 지도
 
-시장 내러티브의 `거시 지도` 하위 보기에서 미국 8개·한국 8개 지표를 경기·물가·금융여건·위험 네 축으로 읽습니다. 자동 경기 판정, 투자 추천, AI 해설은 만들지 않습니다.
+시장·거시의 `거시 지도` 하위 보기에서 미국 8개·한국 8개 지표를 경기·물가·금융여건·위험 네 축으로 읽습니다. 자동 경기 판정, 투자 추천, AI 해설은 만들지 않습니다.
 
 ## 화면 (2026-09-27 재설계)
 
@@ -45,3 +45,5 @@
 0.8은 이 조회 결과의 `availabilityBasis`, `availableAt`, `metadataId`, `quality`, 원천 지원 범위를 입력 계약으로 삼아야 합니다. 현재 수정치·한국 로컬 관측·FRED 날짜를 과거 공식 발표시각으로 바꾸지 않습니다. 사용자 가설과 Portfolio 상태는 이 원장의 근거가 아닙니다.
 
 검증: `py -3 -X utf8 -m pytest features/common/macro_data/tests features/market_calendar/tests -q`, `web`에서 `npm run typecheck`, `npm test`, `npm run test:ui -- macro-map.spec.ts`, `npm run build`.
+
+0.8: `#/macro/map`으로 이동합니다. 옛 `#/market-memory/macro` 주소는 query의 시장·기준·기준일·기간·지표를 보존해 전달합니다. 공식 자료 수집 뒤의 저장된 상태 해석은 [macro_state](../macro_state/README.md)가 소유합니다. 지도 자체는 원자료를 계속 보여 줍니다.

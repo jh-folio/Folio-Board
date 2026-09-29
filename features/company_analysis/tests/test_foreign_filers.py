@@ -168,6 +168,11 @@ def test_10k_item_numbering_is_untouched():
     assert item_for_paragraph("ITEM 1A. RISK FACTORS", "", "10-K") == "1A"
 
 
+def test_prose_cross_reference_does_not_relabel_current_section():
+    assert item_for_paragraph('Refer to Item 1A for our risk factors.', '7', '10-K') == '7'
+    assert item_for_paragraph('Further details are in Item 8 of our annual report.', '1A', '10-K') == '1A'
+
+
 def test_a_heading_on_its_own_line_still_labels_the_paragraphs_under_it():
     """ASML's 20-F puts each heading on a short line the paragraph filter drops."""
     body = "This section discusses revenue growth and operating margin at length. " * 3
@@ -347,3 +352,8 @@ def test_a_single_currency_company_labels_everything_the_same():
 def test_a_report_without_a_currency_falls_back_to_dollars():
     charts = _charts("", "")
     assert charts["performance"]["currency"] == "USD"
+def test_linked_contents_does_not_assign_section_to_unlabeled_body():
+    from features.company_analysis.sec_filings import paragraphs_with_items
+    text = '<table><tr><td>Item 2.</td><td><a href="#m">Discussion</a></td></tr><tr><td>Item 4.</td><td><a href="#c">Controls</a></td></tr></table>'
+    text += '<p>Our interest rate sensitivity and market risk discussion is long enough to form a narrative paragraph without a numbered heading.</p>'
+    assert list(paragraphs_with_items(text, '10-Q'))[0][0] == ''

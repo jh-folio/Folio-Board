@@ -22,7 +22,12 @@ def create_policy_router(data_root):
 
     @router.post('/preview')
     def draft(body: dict = Body(...)):
-        return call(preview, body)
+        return call(store.preview, body)
+
+    @router.get('/targets/{ticker}')
+    def company_targets(ticker: str):
+        from .links import targets
+        return call(targets, data_root, ticker)
 
     @router.post('/confirm')
     def confirm(body: dict = Body(...)):

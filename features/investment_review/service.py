@@ -923,6 +923,8 @@ def _effective_view(raw: dict, date: str) -> dict:
     selection_version = str((view.get("inputBasis") or {}).get("reportSelectionVersion") or "")
     inputs = gather_inputs(_v2_data_dir(), analytics_authority=(view.get("inputBasis") or {}).get("analytics"),
                            report_selection_version=selection_version)
+    from features.investment_review.review_v2 import attach_macro_lineage
+    attach_macro_lineage(inputs, _v2_data_dir(), view.get("inputBasis") or {})
     basis = build_input_basis(inputs, previous=find_previous(REVIEW_DIR, date))
     state, freshness, reasons = effective_freshness(view, basis)
     view["reviewState"] = state

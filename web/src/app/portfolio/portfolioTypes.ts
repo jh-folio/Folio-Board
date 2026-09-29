@@ -76,6 +76,7 @@ export type PortfolioComment = {
 };
 
 export type PortfolioAnalytics = PortfolioSummary & {
+  macroExposure?: import("../macro/ExposurePanel").PortfolioExposure;
   readonly analytics: {
     readonly baseCurrency: string;
     readonly totalMarketValue: number | null;
