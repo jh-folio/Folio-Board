@@ -61,6 +61,13 @@ def sec_history(data: dict, *, as_of: str | None = None, years=10) -> dict:
         table["Net Income"] = ["ProfitLossAttributableToOwnersOfParent", "ProfitLoss"]
         # Measured in the NVS 20-F EPS table: basic weighted shares + dilution.
         table["Shares Diluted"] = ["AdjustedWeightedAverageShares", *table["Shares Diluted"]]
+        # NVS annual cash-flow statements use the standard investing-activity
+        # PPE purchase tag. PPE additions from the balance note are not cash.
+        table["Capital Expenditure"] = [
+            "PurchaseOfPropertyPlantAndEquipment",
+            "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+            *table["Capital Expenditure"][1:],
+        ]
     table["DPS"] = (["DividendsPerShare"] if taxonomy == "ifrs-full" else
                     ["CommonStockDividendsPerShareDeclared", "CommonStockDividendsPerShareCashPaid"])
     currency = sec.reporting_currency(concepts) if concepts else ""

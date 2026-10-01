@@ -85,6 +85,21 @@ def test_annual_filing_quarterly_and_opening_balances_are_not_fiscal_year_ends()
     assert by_metric(sec_history(data), "Total Assets")[0]["period"]["end"] == "2025-02-01"
 
 
+def test_measured_ifrs_cash_capex_does_not_substitute_non_cash_ppe_additions():
+    concepts = {
+        "Revenue": {"units": {"USD": [fact("100", form="20-F")] }},
+        "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities": {
+            "units": {"USD": [fact("15", form="20-F")] }},
+        "AdditionsOtherThanThroughBusinessCombinationsPropertyPlantAndEquipment": {
+            "units": {"USD": [fact("99", form="20-F")] }},
+    }
+    data = {"facts": {"ifrs-full": concepts}}
+    row = by_metric(sec_history(data), "Capital Expenditure")[0]
+    assert row["value"] == "15" and row["concept"].endswith("ClassifiedAsInvestingActivities")
+    del concepts["PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities"]
+    assert by_metric(sec_history(data), "Capital Expenditure") == []
+
+
 def dart_row(account, current, prior="10", previous="9", *, accession="20260310002820", currency="KRW"):
     return {"account_id":account,"currency":currency,"rcept_no":accession,"reprt_code":"11011",
             "thstrm_amount":current,"frmtrm_amount":prior,"bfefrmtrm_amount":previous}
