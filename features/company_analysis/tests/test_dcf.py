@@ -93,6 +93,47 @@ class TestNormalizedBase:
 
 
 class TestGrowthDriver:
+    def test_sparse_revenue_keeps_the_actual_four_year_distance(self):
+        summary = {"rows": [{"metric": "Revenue", "annual": [
+            {"val": 161.051, "end": "2025-12-31", "accn": "latest"},
+            {"val": 133.1, "end": "2023-12-31", "accn": "middle"},
+            {"val": 110, "end": "2021-12-31", "accn": "first"},
+        ]}]}
+        growth = D.growth_driver(summary)
+        assert growth["rate"] == 0.1
+        window = growth["growthWindow"]
+        assert window["periodYears"] == 4
+        assert window["start"]["fiscalYear"] == 2021
+        assert window["end"]["sources"][0]["accn"] == "latest"
+        assert len(window["observations"]["revenue"]) == 3
+
+    def test_fcf_fallback_uses_same_year_pairs_and_elapsed_years(self):
+        summary = {"rows": [
+            {"metric": "Operating Cash Flow", "annual": [
+                {"val": 166.41, "end": "2025-12-31"}, {"val": 120, "end": "2021-12-31"}]},
+            {"metric": "Capital Expenditure", "annual": [
+                {"val": 20, "end": "2025-12-31"}, {"val": 999, "end": "2024-12-31"},
+                {"val": 20, "end": "2021-12-31"}]},
+        ]}
+        growth = D.growth_driver(summary)
+        assert growth["basis"] == "fcf_cagr"
+        assert growth["rate"] == 0.1
+        assert growth["growthWindow"]["periodYears"] == 4
+        assert [r["fiscalYear"] for r in growth["growthWindow"]["observations"]["fcf"]] == [2025, 2021]
+
+    def test_zero_and_negative_candidates_are_not_compacted_into_fake_years(self):
+        summary = {"rows": [{"metric": "Revenue", "annual": [
+            {"val": 146.41, "end": "2025-12-31"}, {"val": 0, "end": "2024-12-31"},
+            {"val": -1, "end": "2023-12-31"}, {"val": 100, "end": "2021-12-31"},
+        ]}]}
+        growth = D.growth_driver(summary)
+        assert growth["rate"] == 0.1
+        assert growth["growthWindow"]["periodYears"] == 4
+        assert len(growth["growthWindow"]["observations"]["revenue"]) == 4
+        fallback = D.growth_driver(_summary({"Revenue": [1, 0, -1]}))
+        assert fallback["basis"] == "fallback" and fallback["rate"] == 0.04
+        assert fallback["growthWindow"]["periodYears"] is None
+
     def test_revenue_leads_because_fcf_growth_contradicts_it(self):
         """실측 MSFT 매출 +10% vs FCF −3.0%, TSLA −1.0% vs +10%로 부호까지 어긋났다."""
         row = D.growth_driver(STEADY)

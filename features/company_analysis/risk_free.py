@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, localcontext
 from pathlib import Path
 
 from features.common.utils import read_json, write_json
@@ -197,4 +198,87 @@ def _write_cache(payload: dict) -> None:
         pass  # 캐시 실패가 값 자체를 버리게 하지 않는다
 
 
-__all__ = ["current_risk_free", "CACHE_TTL_HOURS", "STALE_MAX_AGE_DAYS", "FAILURE_COOLDOWN_HOURS"]
+def _fetch_fred_as_of(api_key: str, session_date: str) -> list[dict]:
+    import requests
+
+    response = requests.get(
+        "https://api.stlouisfed.org/fred/series/observations",
+        params={"series_id": "DGS10", "api_key": api_key, "file_type": "json",
+                "observation_end": session_date, "sort_order": "desc", "limit": "20"},
+        timeout=8.0,
+    )
+    response.raise_for_status()
+    return response.json().get("observations") or []
+
+
+def _fetch_tnx_as_of(session_date: str) -> list[dict]:
+    import yfinance as yf
+
+    end = dt.date.fromisoformat(session_date)
+    history = yf.Ticker("^TNX").history(
+        start=(end - dt.timedelta(days=30)).isoformat(), end=(end + dt.timedelta(days=1)).isoformat(),
+        interval="1d", auto_adjust=False, timeout=8.0,
+    )
+    if history is None or getattr(history, "empty", True):
+        return []
+    return [{"date": str(index.date()), "value": str(row["Close"])} for index, row in history.iterrows()]
+
+
+def _historical_observation(rows: list[dict], session_date: str, source: str) -> dict | None:
+    end = dt.date.fromisoformat(session_date)
+    valid = []
+    for row in rows:
+        try:
+            day = dt.date.fromisoformat(str(row.get("date")))
+            raw = Decimal(str(row.get("value")))
+            with localcontext() as context:
+                context.prec = 28
+                context.rounding = ROUND_HALF_EVEN
+                rate = raw / Decimal(100)
+        except (ValueError, InvalidOperation, TypeError):
+            continue
+        if not raw.is_finite() or day > end or not Decimal("0.001") <= rate <= Decimal("0.20"):
+            continue
+        valid.append((day, raw, rate))
+    if not valid:
+        return None
+    day, raw, rate = max(valid, key=lambda item: item[0])
+    weekday_age = sum((day + dt.timedelta(days=i)).weekday() < 5 for i in range(1, (end-day).days+1))
+    if weekday_age > 10:
+        return None
+    return {"rate": str(rate), "source": source, "observedAt": day.isoformat(),
+            "rawObservation": {"value": str(raw), "unit": "percent"}}
+
+
+def risk_free_as_of(session_date: str, currency: str = "USD", *, api_key: str = "") -> dict:
+    """Snapshot input tied to the completed price session, without cache writes.
+
+    The caller supplies its existing FRED credential. Keys and request URLs are
+    never returned. Legacy latest-observation caches cannot satisfy this query.
+    Rates and source observations are Decimal strings; fetched time is metadata.
+    """
+    dt.date.fromisoformat(session_date)  # Invalid input must not silently fall back.
+    unit = str(currency or "").upper()
+    from .dcf import RISK_FREE_BY_CURRENCY
+
+    if unit not in RISK_FREE_BY_CURRENCY:
+        raise ValueError("risk_free_currency_unknown")
+    if unit == "USD":
+        if api_key:
+            try:
+                observation = _historical_observation(_fetch_fred_as_of(api_key, session_date), session_date, "fred_dgs10")
+            except Exception:
+                observation = None
+            if observation is not None:
+                return observation
+        try:
+            observation = _historical_observation(_fetch_tnx_as_of(session_date), session_date, "yfinance_tnx")
+        except Exception:
+            observation = None
+        if observation is not None:
+            return observation
+    return {"rate": str(RISK_FREE_BY_CURRENCY[unit]), "source": "constant", "observedAt": None,
+            "rawObservation": {"value": str(RISK_FREE_BY_CURRENCY[unit]), "unit": "fraction"}}
+
+
+__all__ = ["current_risk_free", "risk_free_as_of", "CACHE_TTL_HOURS", "STALE_MAX_AGE_DAYS", "FAILURE_COOLDOWN_HOURS"]
