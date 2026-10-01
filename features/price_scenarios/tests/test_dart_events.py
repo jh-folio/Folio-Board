@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 from features.price_scenarios.dart_events import bonus_decisions, dart_date, dated_share_changes
-from features.price_scenarios.events import merge_events, reconcile_korean_shares
+from features.price_scenarios.events import merge_events, reconcile_korean_shares_v1 as reconcile_korean_shares
 
 
 def decision(**extra):

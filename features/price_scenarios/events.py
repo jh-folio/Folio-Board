@@ -105,7 +105,7 @@ def event_price_checks(events: list[dict], closes: list[dict], fiscal_prices: li
     return checked, inputs
 
 
-def reconcile_korean_shares(previous: dict, current: dict, events: list[dict], changes: list[dict]) -> dict:
+def reconcile_korean_shares_v1(previous: dict, current: dict, events: list[dict], changes: list[dict]) -> dict:
     """DART common ending shares; dated deltas and both cumulative-decrease units.
 
     `decreaseCumulative` is profit cancellations plus redemptions, not the
@@ -138,6 +138,13 @@ def reconcile_korean_shares(previous: dict, current: dict, events: list[dict], c
                 "reason": None if rho <= Decimal("1.05").ln() else "unexplained_share_change",
                 "eventProduct": str(p), "datedDeltaAdjusted": str(delta), "decrease": str(decrease),
                 "unitInterval": [str(low), str(high)], "residual": str(rho)}
+
+
+def reconcile_korean_shares(previous: dict, current: dict, events: list[dict], changes: list[dict],
+                            *, coverage: dict, as_of: str) -> dict:
+    """spec-2 requires source-confirmed cumulative units; no unit guesses."""
+    from .korean_shares import reconcile
+    return reconcile(previous, current, events, changes, coverage=coverage, as_of=as_of)
 
 
 def adjust_history(history: dict, events: list[dict], *, session_date: str, state: str, ads_ratio: str | None = None) -> dict:

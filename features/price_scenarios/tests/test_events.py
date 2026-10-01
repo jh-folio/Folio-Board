@@ -1,7 +1,7 @@
 from decimal import Decimal
 import pytest
 
-from features.price_scenarios.events import (merge_events, price_check, event_price_checks, reconcile_korean_shares,
+from features.price_scenarios.events import (merge_events, price_check, event_price_checks, reconcile_korean_shares_v1 as reconcile_korean_shares,
                                             adjust_history, adjust_fiscal_prices)
 
 
