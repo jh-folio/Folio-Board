@@ -5,6 +5,13 @@
 
 ### 기업 분석
 
+- 한국 가격 조회는 DART 기업개황의 종목 코드 일치와 `corp_cls`를 먼저 확인한다.
+  Y는 `.KS`, K는 `.KQ`이며 N/E·조회 불가·다른 종목은 접미사를 추정하지 않고 중단한다.
+  `market_identity.py`가 식별을 소유하고 `report_rules`의 조회도 이 경로를 쓴다.
+  공식 기업개황 캐시를 조회 실패 뒤 사용하면 `exchangeWarning`에 남긴다.
+  거래소 캐시 형태 갱신이 기존 형태 4의 검증된 통화 출처를 무효화하지 않으며,
+  통화 출처가 없던 형태 3 이하는 기존처럼 unknown으로 남긴다.
+
 - 시가총액의 모든 `price × shares` 유도 분기는 `marketValueDerivedSafe` 조건을 따른다. 명시 시장가치 통화가 신고 통화와 같아도 주가 통화가 다르면 유도하지 않는다. cap이 없어 계산하지 못한 PSR/FCF Yield와 별도로 검증된 EV/EBITDA를 구분한다.
 
 - 입력은 `build_company_analysis_materials()`에서 구성한다.

@@ -95,6 +95,10 @@ def sec_history(data: dict, *, as_of: str | None = None, years=10) -> dict:
                            "period": {"start": fact.get("start"), "end": end}, "concept": taxonomy + ":" + concept,
                            "form": fact["form"], "filed": fact["filed"], "accession": fact.get("accn", ""),
                            "unit": unit, "precision": _precision(value), "priorValues": prior})
+    # 10-K/20-F can include quarterly balance snapshots and opening balances.
+    # Filing form alone does not make an instant a fiscal-year-end observation.
+    annual_ends = {row["period"]["end"] for row in output if row["period"].get("start")}
+    output = [row for row in output if row["period"].get("start") or row["period"]["end"] in annual_ends]
     return _limit(output, exclusions, currency=currency, basis=taxonomy, shares_basis="diluted_weighted_average", years=years)
 
 

@@ -71,6 +71,20 @@ def test_quarterly_facts_inside_annual_filing_do_not_exclude_the_full_fiscal_yea
     assert result["excludedYears"]==[]
 
 
+def test_annual_filing_quarterly_and_opening_balances_are_not_fiscal_year_ends():
+    data = packet({"Revenues": {"units": {"USD": [fact("100")] }},
+        "Assets": {"units": {"USD": [fact("50", "2025-03-31", start=None),
+            fact("60", "2025-06-30", start=None), fact("70", "2025-09-30", start=None),
+            fact("80", "2025-12-31", start=None), fact("40", "2025-01-01", start=None)]}}})
+    history = sec_history(data)
+    assert [(r["period"]["end"], r["value"]) for r in by_metric(history, "Total Assets")] == [("2025-12-31", "80")]
+    assert history["excludedYears"] == []  # Only observations were excluded.
+    # A 53-week fiscal year ends in February, without inventing December data.
+    data["facts"]["us-gaap"]["Revenues"]["units"]["USD"] = [fact("100", "2025-02-01", start="2024-01-28")]
+    data["facts"]["us-gaap"]["Assets"]["units"]["USD"].append(fact("81", "2025-02-01", start=None))
+    assert by_metric(sec_history(data), "Total Assets")[0]["period"]["end"] == "2025-02-01"
+
+
 def dart_row(account, current, prior="10", previous="9", *, accession="20260310002820", currency="KRW"):
     return {"account_id":account,"currency":currency,"rcept_no":accession,"reprt_code":"11011",
             "thstrm_amount":current,"frmtrm_amount":prior,"bfefrmtrm_amount":previous}
