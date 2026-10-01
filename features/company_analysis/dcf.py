@@ -546,6 +546,7 @@ def build_dcf(
     beta: float | None = None,
     currency: str = "USD",
     risk_free: float | dict | None = None,
+    captured_inputs: dict | None = None,
 ) -> dict:
     """정상화 → 할인율 → 감쇠 → 시나리오 → 역산. 하나라도 빠지면 빈 dict.
 
@@ -562,15 +563,31 @@ def build_dcf(
             risk_free = float(risk_free)
         except (TypeError, ValueError):
             risk_free = None
-    base = normalized_base_fcf(sec_summary)
+    # The price snapshot path captures the complete same-period inputs first.
+    # Existing report callers keep the legacy derivation until connected to a
+    # snapshot. Replay never rereads provider balances or derives new rates.
+    base = dict(captured_inputs["baseFcf"]) if captured_inputs is not None else normalized_base_fcf(sec_summary)
     base_value = _positive(base.get("value"))
-    share_count = _positive(shares) or _positive(financial_engine.latest_value(sec_summary, "Shares Diluted"))
+    share_count = (_positive(captured_inputs["shares"]) if captured_inputs is not None else
+                   _positive(shares) or _positive(financial_engine.latest_value(sec_summary, "Shares Diluted")))
     if not base_value or not share_count:
         return {"ok": False, "reason": "insufficient_inputs", "baseFcf": base}
 
-    derived = financial_engine.derived_financials(sec_summary)
-    debt = net_debt_from(sec_summary)
-    cap = _positive(market_cap) or (_positive(price) * share_count if _positive(price) else None)
+    derived = (captured_inputs["financialRates"] if captured_inputs is not None else
+               financial_engine.derived_financials(sec_summary))
+    debt = (dict(captured_inputs["debtPosition"]) if captured_inputs is not None else net_debt_from(sec_summary))
+    if captured_inputs is not None:
+        # Float is the established DCF engine; captured inputs remain strings.
+        for key in ("netDebt", "totalDebt", "cash"):
+            debt[key] = float(debt[key])
+        derived = {key: float(value) if value is not None else None for key, value in derived.items()}
+        price, beta, currency = float(captured_inputs["price"]), captured_inputs["beta"].get("value"), captured_inputs["currency"]
+        beta = float(beta) if beta is not None else None
+        risk_free_meta = dict(captured_inputs["riskFree"])
+        risk_free = float(risk_free_meta["rate"])
+        cap = float(captured_inputs["marketCap"])
+    else:
+        cap = _positive(market_cap) or (_positive(price) * share_count if _positive(price) else None)
     discount_inputs = {
         "beta": beta,
         "tax_rate": derived.get("taxRate"),
@@ -579,10 +596,13 @@ def build_dcf(
         "debt": debt["totalDebt"],
         "currency": currency,
     }
-    discount = estimate_discount_rate(**discount_inputs, risk_free=risk_free)
+    erp = float(captured_inputs["equityRiskPremium"]) if captured_inputs is not None else None
+    discount = estimate_discount_rate(**discount_inputs, risk_free=risk_free, equity_risk_premium=erp)
     rate = discount["rate"]
-    terminal = terminal_growth_for(currency, rate)
-    growth = growth_driver(sec_summary)
+    terminal = float(captured_inputs["terminalGrowth"]) if captured_inputs is not None else terminal_growth_for(currency, rate)
+    growth = dict(captured_inputs["growth"]) if captured_inputs is not None else growth_driver(sec_summary)
+    if captured_inputs is not None:
+        growth["rate"] = float(growth["rate"])
 
     # **시나리오는 사업 가정만 흔든다.** 성장·할인율·영구성장을 한꺼번에 움직이면
     # 세 가정이 같은 방향으로 겹쳐 범위가 인위적으로 넓어지고, 무엇 때문에 차이가
