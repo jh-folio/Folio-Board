@@ -85,6 +85,40 @@ def test_normalize_url_removes_tracking_query():
     assert normalize_url(url) == "https://example.com/path?a=1&b=2"
 
 
+def test_normalize_url_ignores_dow_jones_mod_tag_and_ft_syndication_key():
+    """같은 기사가 피드마다 다른 `?mod=`로 와서 두 번 저장되던 사례(WSJ 346건)."""
+    base = "https://www.wsj.com/business/tech-media-telecom-roundup-market-talk-60e57249"
+    assert normalize_url(f"{base}?mod=rss_markets_main") == normalize_url(f"{base}?mod=pls_whats_news_us_business_f")
+    assert normalize_url(f"{base}?mod=rss_Technology") == normalize_url(base)
+    ft = "https://www.ft.com/content/dabdeae3-9855-484b-9369-e74176352107"
+    assert normalize_url(f"{ft}?syn-25a6b1a6=1") == normalize_url(ft)
+
+
+def test_normalize_url_keeps_mod_and_article_ids_on_other_hosts():
+    """`mod`는 다른 사이트에서 콘텐츠를 가를 수 있고, 인포맥스 `idxno`는 기사 번호다."""
+    assert normalize_url("https://example.com/view?mod=1") != normalize_url("https://example.com/view?mod=2")
+    a = "https://news.einfomax.co.kr/news/articleView.html?idxno=1"
+    b = "https://news.einfomax.co.kr/news/articleView.html?idxno=2"
+    assert normalize_url(a) != normalize_url(b)
+
+
+def test_rss_list_dedupe_merges_rows_stored_before_the_mod_rule():
+    base = "https://www.wsj.com/tech/ai/openai-chatgpt-model-release-cancel-safety-5a2f9f42"
+    rows = [
+        {"normalized_url": f"{base}?mod=rss_markets_main", "url": f"{base}?mod=rss_markets_main"},
+        {"normalized_url": f"{base}?mod=pls_whats_news_us_business_f", "url": f"{base}?mod=pls_whats_news_us_business_f"},
+    ]
+    assert len(_dedupe_rss_rows(rows)) == 1
+
+
+def test_shipped_configs_collect_the_wsj_technology_feed():
+    from features.common.research_library.rss.feed_config import load_rss_feeds
+
+    for relative in ("config/rss_feeds.yaml", "defaults/config/rss_feeds.yaml"):
+        urls = {feed["url"] for feed in load_rss_feeds(ROOT / relative) if feed["media"] == "WSJ"}
+        assert "https://feeds.content.dowjones.io/public/rss/RSSWSJD" in urls, relative
+
+
 def test_retry_policy_defaults_to_no_repeated_fetch():
     assert should_retry_existing_item("full_text") is False
     assert should_retry_existing_item("summary_only") is False
