@@ -388,7 +388,15 @@ feeds:
     language: "en"
   - media: "WSJ"
     url: "https://feeds.content.dowjones.io/public/rss/RSSWorldNews"
-    category: "markets"
+    category: "world"
+    enabled: true
+    priority: 4
+    reliability_tier: 2
+    default_market: "US"
+    language: "en"
+  - media: "WSJ"
+    url: "https://feeds.content.dowjones.io/public/rss/RSSWSJD"
+    category: "technology"
     enabled: true
     priority: 4
     reliability_tier: 2
