@@ -31,6 +31,14 @@ REASONS = {
     "financial_holding": "금융지주는 이 계산 방식이 맞지 않아 지원하지 않습니다",
     "fund_not_supported": "펀드·ETF는 이 계산 방식이 맞지 않아 지원하지 않습니다",
     "dcf_not_computable": "현금흐름 할인 계산에 필요한 입력이 부족해 계산하지 않았습니다",
+    "price_stale": "최근 종가가 10거래일 넘게 갱신되지 않아 계산하지 않았습니다",
+    "price_unavailable": "종가를 가져오지 못해 계산하지 않았습니다",
+    "financial_history_unavailable": "공시 재무 자료를 가져오지 못해 계산하지 않았습니다",
+    "company_not_found": "공식 자료에서 이 종목을 찾지 못해 계산하지 않았습니다",
+    "source_credential_missing": "필요한 공시 조회 키가 설정되어 있지 않아 계산하지 않았습니다",
+    "instrument_not_supported": "지원하지 않는 종목 형식이라 계산하지 않았습니다",
+    "price_snapshot_failed": "가격 시나리오 계산 결과를 저장하지 못해 쓰지 않았습니다",
+    "price_snapshot_unavailable": "가격 시나리오를 계산하지 못했습니다",
 }
 NOTICES = {
     "share_classes_same_eps": "같은 주당이익을 공시하는 여러 주식 종류가 있습니다.",
@@ -39,6 +47,7 @@ NOTICES = {
     "shares_implied_from_eps": "주식 수는 순이익을 주당이익으로 나눠 구한 값입니다.",
     "classification_unknown": "업종 분류를 확인하지 못했습니다.",
     "common_row_label_voting_shares": "주식 수 표의 보통주 행을 '의결권 있는 주식' 항목으로 읽었습니다.",
+    "dividend_assumed_zero_from_absence": "배당 공시가 없는 해는 배당이 없었던 것으로 읽었습니다.",
     "excluded_growth_windows": "과거 5년 구간 일부는 값이 없거나 0 이하라 빼고 계산했습니다. 범위가 위로 치우칠 수 있습니다.",
 }
 ROWS = (("conservative", "과거 10년 중 낮은 편(하위 25%)"), ("base", "중간값"), ("optimistic", "높은 편(상위 25%)"))
@@ -208,7 +217,8 @@ def dcf_chart(view: dict) -> dict | None:
             "subtitle": f"초기 FCF 성장률 가정별 주당 내재가치 (할인율 {float(result['discountRate']['rate']) * 100:.1f}%, "
                         f"{len(result.get('fadePath') or [])}년 감쇠)",
             "kind": "dcf", "scenarios": rows, "currentPrice": float(view["inputSummary"]["price"]["value"]),
-            "impliedGrowth": float(implied["growth"]) if implied.get("status") == "solved" else None,
+            "impliedGrowth": (float(implied["growth"]) if implied.get("status") == "solved" and block.get("marginOfSafetyJudgment") == "eligible"
+                              else None),
             "terminalShare": float(result["terminalShare"]) if result.get("terminalShare") is not None else None,
             "currency": view["inputSummary"]["price"].get("currency") or "", "priceSnapshotId": view["snapshotId"]}
 

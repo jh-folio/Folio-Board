@@ -13,19 +13,34 @@ from . import report
 SUPERSEDED = "price_snapshot_owns_valuation"
 LEGACY_HEADING = "## 앱 계산 Valuation 및 DCF"
 NEXT_HEADING = "## 공식 숫자 데이터"
+METRICS_HEADING = "### Valuation Metrics"
 POINTER = ("이 보고서의 PER 시나리오와 DCF 계산은 아래 '가격 시나리오' 블록 하나뿐입니다. "
-           "이 자리에 따로 계산한 밸류에이션·DCF 표는 만들지 않았으니 다시 계산하거나 추정하지 마세요.")
+           "위 현재 배수 표 외에 따로 계산한 시나리오·DCF 표는 만들지 않았으니 다시 계산하거나 추정하지 마세요.")
+
+
+def current_multiples(text) -> str:
+    """The "### Valuation Metrics" table (price, market cap, net debt, PER, PSR, EV/EBITDA, FCF yield/margin) of the old block.
+
+    These are today's multiples, not a scenario or a DCF, so a snapshot report keeps them.
+    """
+    if not isinstance(text, str) or METRICS_HEADING not in text:
+        return ""
+    start = text.index(METRICS_HEADING)
+    following = text.find("\n### ", start + len(METRICS_HEADING))
+    return text[start:following if following != -1 else len(text)].rstrip()
 
 
 def replace_legacy_valuation(materials: dict) -> None:
     """The materials context carries a second valuation/DCF calculation; a snapshot report has exactly one."""
     context = materials.get("context")
+    multiples = current_multiples(materials.get("computedValuation"))
     if isinstance(context, str) and LEGACY_HEADING in context and NEXT_HEADING in context:
         start = context.index(LEGACY_HEADING)
         end = context.index(NEXT_HEADING, start)
-        materials["context"] = "\n".join([context[:start] + LEGACY_HEADING, POINTER, "", context[end:]])
+        kept = current_multiples(context[start:end]) or multiples
+        materials["context"] = "\n".join([context[:start] + LEGACY_HEADING, *([kept, ""] if kept else []), POINTER, "", context[end:]])
     if "computedValuation" in materials:
-        materials["computedValuation"] = POINTER
+        materials["computedValuation"] = "\n\n".join(part for part in (multiples, POINTER) if part)
 
 
 def _price(view: dict | None) -> tuple[float | None, str]:

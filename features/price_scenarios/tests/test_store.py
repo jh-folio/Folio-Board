@@ -225,3 +225,15 @@ def test_schema_backup_keeps_existing_tables_and_a_newer_schema_is_refused(tmp_p
         conn.execute("insert into price_scenario_schema values(?)", (store_module.SCHEMA_VERSION + 1,))
     with pytest.raises(RuntimeError, match="newer_than_runtime"):
         PriceStore(path).ensure()
+
+
+def test_the_report_reader_marker_follows_the_stored_review_rows(tmp_path):
+    from features.price_scenarios import service
+    store = service.store_for(tmp_path)
+    first = store.save_snapshot(*make(rows=raw_rows(eps_override={2024: "2.10"})))
+    assert service.review_marker(tmp_path, first["snapshotId"])["reviewNeeded"] == []
+    third = store.save_snapshot(*make(price=moved("31"), rows=raw_rows(eps_override={2024: "2.05"})))
+    marker = service.review_marker(tmp_path, first["snapshotId"])
+    assert [(row["reason"], row["metric"], row["fiscalYear"], row["detectedBySnapshotId"]) for row in marker["reviewNeeded"]] == [
+        ("restated", "EPS Diluted", 2024, third["snapshotId"])]
+    assert service.review_marker(tmp_path, "price-unknown") is None and service.review_marker(tmp_path, None) is None

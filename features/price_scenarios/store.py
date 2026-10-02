@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from decimal import Decimal
 from pathlib import Path
 
@@ -99,7 +99,7 @@ class PriceStore:
         if not self.path.exists():
             yield None
             return
-        with sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=30) as conn:
+        with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=30)) as conn:
             conn.row_factory = sqlite3.Row
             if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_scenario_schema'").fetchone():
                 yield None
@@ -117,7 +117,7 @@ class PriceStore:
                         return
             self.path.parent.mkdir(parents=True, exist_ok=True)
             backup_database(self.path, "before-price-scenarios-v1")
-            with sqlite3.connect(self.path, timeout=30) as conn:
+            with closing(sqlite3.connect(self.path, timeout=30)) as conn, conn:
                 conn.execute("BEGIN IMMEDIATE")
                 for statement in DDL:
                     conn.execute(statement)
@@ -127,12 +127,18 @@ class PriceStore:
                                      "BEGIN SELECT RAISE(ABORT,'immutable_price_scenario'); END")
                 conn.execute("INSERT INTO price_scenario_schema VALUES(?)", (SCHEMA_VERSION,))
 
+    @contextmanager
     def _write(self):
+        """A write connection: commits on success, rolls back on error and is always closed."""
         self.ensure()
         conn = sqlite3.connect(self.path, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     # --- snapshots -------------------------------------------------------------
 

@@ -20,7 +20,7 @@ from features.company_analysis.dcf import (
 )
 from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
-from features.price_scenarios.report_link import rule_section
+from features.price_scenarios.report_link import current_multiples, rule_section
 from features.company_analysis.valuation_basis import (
     build_valuation_basis,
     market_cashflow_is_compatible,
@@ -825,6 +825,16 @@ def _dcf_value(base_fcf: float, net_debt: float, shares: float, near_growth: flo
                      years if years is not None else PROJECTION_YEARS)
 
 
+def _snapshot_valuation(snapshot, company: dict, sec_summary: dict, market_data: dict | None) -> str:
+    """Valuation section: the stored snapshot's scenarios and DCF, with today's multiples kept; no snapshot decision -> the old section."""
+    section = rule_section(snapshot)
+    legacy = build_valuation_metrics(company, sec_summary, market_data)
+    if section is None:
+        return legacy
+    multiples = current_multiples(legacy)
+    return "\n\n".join([multiples, section]) if multiples else section
+
+
 def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict | None = None) -> str:
     currency = _reporting_currency(sec_summary)
     reporting_currency = normalize_currency((sec_summary or {}).get("currency"))
@@ -1318,7 +1328,7 @@ def build_rule_report(analysis: dict, analysis_style: str = "beginner") -> str:
         "financial_commentary": financial_commentary,
         "financial_quality": build_financial_quality_analysis(sec_summary, market_data),
         # 새 보고서는 가격 스냅샷에서 읽는다(PER 시나리오·DCF 한 벌). 스냅샷 판정이 없으면 예전 경로.
-        "valuation_metrics": rule_section(analysis.get("priceSnapshot")) or build_valuation_metrics(company, sec_summary, market_data),
+        "valuation_metrics": _snapshot_valuation(analysis.get("priceSnapshot"), company, sec_summary, market_data),
         "competitive_analysis": competitive_analysis,
         "risk_table": risk_table,
         "risk_commentary": risk_commentary,

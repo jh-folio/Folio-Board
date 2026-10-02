@@ -134,7 +134,7 @@ from features.macro_policy.routes import create_policy_router
 from features.company_exposure.routes import create_exposure_router
 from features.macro_state.routes import create_state_router
 from features.price_scenarios.routes import create_price_router
-from features.price_scenarios.service import snapshot_for_report
+from features.price_scenarios.service import review_marker as price_review_marker, snapshot_for_report
 from features.company_analysis.generation_context import set_price_snapshot_provider
 from features.portfolio.routes import create_portfolio_router
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
@@ -982,7 +982,10 @@ def api_get_analysis_report(report_id: str, includePersonal: bool = False):
             report["quality"] = evaluate_research_artifact("company_analysis", report)
         except Exception:
             report["quality"] = {"status": "warn", "warnings": ["quality evaluation failed"]}
-    return strip_overlay(report, includePersonal)
+    shown = dict(strip_overlay(report, includePersonal))
+    if shown.get("priceSnapshotId"):  # a response-only marker: the stored report is never rewritten by reading it
+        shown["priceReview"] = price_review_marker(DATA_DIR, shown["priceSnapshotId"])
+    return shown
 
 
 @fastapi_app.post("/api/analysis-reports/{report_id}/personal-overlay")

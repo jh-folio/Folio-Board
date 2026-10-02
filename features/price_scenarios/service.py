@@ -171,6 +171,17 @@ def projection_view(root, snapshot_id_: str, *, criteria_revision_id: int | None
 
 # --- company analysis link ---------------------------------------------------------
 
+def review_marker(root, snapshot_id_) -> dict | None:
+    """The re-check rows a report's snapshot carries, for the report reader (spec §4.3). Read only; None without a stored snapshot."""
+    if not isinstance(snapshot_id_, str) or not snapshot_id_:
+        return None
+    store = store_for(root)
+    snapshot = store.get(snapshot_id_)
+    if snapshot is None:
+        return None
+    return {"snapshotId": snapshot_id_, "asOf": snapshot["asOf"], "reviewNeeded": [dict(row) for row in store.reviews(snapshot_id_)]}
+
+
 def snapshot_for_report(root, company: dict, *, calculator=None, progress=None, cancel=None) -> dict:
     """Calculate (or re-confirm) the snapshot a report is written from.
 

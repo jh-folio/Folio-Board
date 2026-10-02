@@ -71,12 +71,13 @@ def test_the_rule_report_reads_its_valuation_section_from_the_snapshot(tmp_path)
     snapshot = saved(tmp_path)
     text = build_rule_report(analysis(snapshot), "beginner")
     assert "## 3. 밸류에이션 지표" in text and "### 가정별 연환산 수익률" in text and snapshot["snapshotId"] in text
-    assert "### Valuation Metrics" not in text and "현재 주가" not in text
+    assert "### Valuation Metrics" in text and "현재 주가" in text and "| PER |" in text          # today's multiples are kept
+    assert "현재가 대비" not in text and "### DCF 기반 내재가치" not in text and "×0.7" not in text   # the x0.7/x1.3 table and the second DCF are not
     section = text.split("## 3. 밸류에이션 지표", 1)[1].split("## 4.", 1)[0]
     for banned in FORBIDDEN:
         assert banned not in section, banned
     missing = build_rule_report(analysis({"status": "unavailable", "reason": {"code": "price_unavailable"}}), "beginner")
-    assert "가격 시나리오는 계산하지 못했습니다" in missing and "### Valuation Metrics" not in missing
+    assert "가격 시나리오는 계산하지 못했습니다" in missing and "### Valuation Metrics" in missing and "### DCF 기반 내재가치" not in missing
     legacy = build_rule_report(analysis(), "beginner")
     assert "### Valuation Metrics" in legacy                                   # no decision -> the existing report is unchanged
 
@@ -91,6 +92,12 @@ def test_the_second_valuation_in_the_materials_context_is_replaced_for_snapshot_
         assert "현재가 대비" not in materials["context"] and "내재가치/주" not in materials["context"]
         assert materials["context"].startswith("앞부분") and materials["context"].endswith("## 공식 숫자 데이터\n숫자")
         assert report_link.POINTER in materials["context"] and materials["computedValuation"] == report_link.POINTER
+    block = "\n".join(["### Valuation Metrics", "", "| 지표 | 계산값 |", "| PER | 20.0배 |", "", "### DCF 기반 내재가치", legacy])
+    with_multiples = "\n".join(["앞부분", "", "## 앱 계산 Valuation 및 DCF", "설명", block, "", "## 공식 숫자 데이터", "숫자"])
+    materials = {"context": with_multiples, "computedValuation": block}
+    report_link.apply_price_snapshot(LEGACY_CHARTS, materials, saved(tmp_path))
+    assert "| PER | 20.0배 |" in materials["context"] and "### DCF 기반 내재가치" not in materials["context"] and "현재가 대비" not in materials["context"]
+    assert materials["computedValuation"].startswith("### Valuation Metrics") and materials["computedValuation"].endswith(report_link.POINTER)
     untouched = {"context": context}
     report_link.apply_price_snapshot(LEGACY_CHARTS, untouched, None)
     assert untouched["context"] == context
