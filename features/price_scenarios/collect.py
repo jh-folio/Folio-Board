@@ -134,6 +134,28 @@ class Collector:
 
     # --- KR --------------------------------------------------------------------
 
+    def _dart_year(self, endpoint: str, corp_code: str, year: int, fs_div: str | None) -> dict:
+        self.cancel()
+        self.progress(message=f"DART {year}년 사업보고서의 {endpoint}를 읽고 있습니다.")
+        params = {"corp_code": corp_code, "bsns_year": str(year), "reprt_code": "11011", **({"fs_div": fs_div} if fs_div else {})}
+        try:
+            return self.dart_get(endpoint, params)
+        except Exception:  # noqa: BLE001
+            raise CollectionError("financial_history_unavailable", f"dart_{endpoint}_failed") from None
+
+    @staticmethod
+    def _statement_batches(financials: dict, stocks: dict, basis: str):
+        batches, latest_rows = [], []
+        for year in sorted(financials):
+            financial, stock = financials[year], stocks[year]
+            if financial.get("status") == stock.get("status") == "000":
+                ends = {row["stlm_dt"] for row in stock.get("list", []) if row.get("stlm_dt")}
+                if len(ends) == 1:
+                    batches.append({"basis": basis, "periodEnd": ends.pop(), "periodEndSource": f"stockTotqySttus:{year}:stlm_dt",
+                                    "rows": financial["list"]})
+                    latest_rows = financial["list"]
+        return batches, latest_rows
+
     def _collect_kr(self, ticker: str) -> dict:
         self.cancel()
         if not dart_client.dart_api_key():
@@ -151,37 +173,25 @@ class Collector:
         except Exception:  # noqa: BLE001
             raise CollectionError("price_unavailable") from None
         today = self.now().date()
+        years = range(today.year - KR_REPORT_YEARS + 1, today.year + 1)
         packets: dict[str, dict[int, dict]] = {name: {} for name in DART_YEAR_ENDPOINTS}
         # The current year is included: a March fiscal year closes in the same calendar year it is filed.
         # A report that is not filed yet answers status 013 and is skipped downstream.
-        for year in range(today.year - KR_REPORT_YEARS + 1, today.year + 1):
+        for year in years:
             for endpoint in DART_YEAR_ENDPOINTS:
-                self.cancel()
-                self.progress(message=f"DART {year}년 사업보고서의 {endpoint}를 읽고 있습니다.")
-                params = {"corp_code": corp_code, "bsns_year": str(year), "reprt_code": "11011"}
-                if endpoint == "fnlttSinglAcntAll":
-                    params["fs_div"] = "CFS"
-                try:
-                    packets[endpoint][year] = self.dart_get(endpoint, params)
-                except Exception:  # noqa: BLE001
-                    raise CollectionError("financial_history_unavailable", f"dart_{endpoint}_failed") from None
+                packets[endpoint][year] = self._dart_year(endpoint, corp_code, year, "CFS" if endpoint == "fnlttSinglAcntAll" else None)
         begin = today.replace(year=today.year - DECISION_LOOKBACK_YEARS) if not (today.month == 2 and today.day == 29) else today.replace(year=today.year - DECISION_LOOKBACK_YEARS, day=28)
         try:
             bonus = self.dart_get("fricDecsn", {"corp_code": corp_code, "bgn_de": begin.strftime("%Y%m%d"), "end_de": today.strftime("%Y%m%d")})
         except Exception:  # noqa: BLE001
             raise CollectionError("financial_history_unavailable", "dart_fricDecsn_failed") from None
-        batches, latest_rows, dividends, stock_totqy, irds = [], [], [], {}, {}
-        for year in sorted(packets["fnlttSinglAcntAll"]):
-            financial, stock = packets["fnlttSinglAcntAll"][year], packets["stockTotqySttus"][year]
-            if financial.get("status") == stock.get("status") == "000":
-                ends = {row["stlm_dt"] for row in stock.get("list", []) if row.get("stlm_dt")}
-                if len(ends) == 1:
-                    batches.append({"basis": "CFS", "periodEnd": ends.pop(), "periodEndSource": f"stockTotqySttus:{year}:stlm_dt",
-                                    "rows": financial["list"]})
-                    latest_rows = financial["list"]
-            dividends.append(packets["alotMatter"][year])
-            stock_totqy[str(year)] = stock
-            irds[str(year)] = packets["irdsSttus"][year]
+        batches, latest_rows = self._statement_batches(packets["fnlttSinglAcntAll"], packets["stockTotqySttus"], "CFS")
+        if not batches:  # no consolidated statement at all: one separate-statement basis for the whole company (spec §2.3)
+            separate = {year: self._dart_year("fnlttSinglAcntAll", corp_code, year, "OFS") for year in years}
+            batches, latest_rows = self._statement_batches(separate, packets["stockTotqySttus"], "OFS")
+        dividends = [packets["alotMatter"][year] for year in sorted(years)]
+        stock_totqy = {str(year): packets["stockTotqySttus"][year] for year in sorted(years)}
+        irds = {str(year): packets["irdsSttus"][year] for year in sorted(years)}
         raw = {"market": "KR", "ticker": ticker, "now": self.now().isoformat(),
                "identity": {"providerSymbol": identity["providerSymbol"], "exchangeSource": identity["exchangeSource"],
                             "exchange": identity["exchange"], "corpCode": corp_code},

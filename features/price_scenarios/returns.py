@@ -7,7 +7,7 @@ are never clipped into a number.
 """
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+from decimal import Decimal, InvalidOperation, Overflow, ROUND_HALF_EVEN, localcontext
 
 from .decimal_ops import number
 
@@ -66,7 +66,10 @@ def irr(flows):
 
 
 def scenario_irr(price, eps0, growth, exit_pe, payout, years: int):
-    return irr(cash_flows(price, eps0, growth, exit_pe, payout, years))
+    try:
+        return irr(cash_flows(price, eps0, growth, exit_pe, payout, years))
+    except (Overflow, InvalidOperation):  # an assumption far beyond the search range is a range state, never an error
+        return ABOVE_RANGE
 
 
 def required_exit_pe(price, eps0, growth, payout, years: int, target):

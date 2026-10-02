@@ -69,13 +69,19 @@ def snapshot_id(instrument_id: str, as_of: str, method: str, input_fingerprint: 
     return "price-" + hashlib.sha256(canonical([instrument_id, as_of, method, input_fingerprint]).encode()).hexdigest()
 
 
+PLAIN_DECIMAL = re.compile(r"-?[0-9]{1,30}(\.[0-9]{1,30})?")
+
+
 def decimal_text(value, *, field: str, low=None, high=None, low_open=False) -> str:
     """Finite Decimal text with a closed range; never repaired or clamped."""
+    if isinstance(value, (float, bool)):
+        raise PriceStoreError("invalid_number", field)
     try:
         parsed = number(value)
-    except ValueError as exc:
+        text = value if isinstance(value, str) else format(parsed, "f")
+    except (ValueError, TypeError) as exc:
         raise PriceStoreError("invalid_number", field) from exc
-    if isinstance(value, float):
+    if not PLAIN_DECIMAL.fullmatch(text.strip()):  # exponent notation would be read at a different scale by the person and the screen
         raise PriceStoreError("invalid_number", field)
     if (low is not None and (parsed < low or (low_open and parsed == low))) or (high is not None and parsed > high):
         raise PriceStoreError("out_of_range", field)

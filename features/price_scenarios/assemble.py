@@ -93,32 +93,33 @@ def _kr_share_reconciliation(raw: dict, events: list[dict], session: str, *, spe
     corp_code = raw["identity"]["corpCode"]
     unit_bases = dart.get("unitBases") or {}
     observed, notices = [], set()
+    stored = lambda: [{"year": year, "observation": observation} for year, observation in observed]
     for year, packet in sorted((dart.get("stockTotqy") or {}).items()):
         if packet.get("status") == "013":  # that year's report is not filed yet; a gap in the middle is caught below
             continue
         adapted = (korean_table.observation(packet, corp_code=corp_code, as_of=session) if spec3 else
                    dart_observation(packet, corp_code=corp_code, as_of=session, unit_bases=unit_bases.get(str(year))))
         if adapted["state"] != "received":
-            return {"state": "unknown", "reason": adapted["reason"], "pairs": []}
+            return {"state": "unknown", "reason": adapted["reason"], "pairs": [], "observations": stored()}
         if adapted.get("notice"):
             notices.add(adapted["notice"])
         observed.append((int(year), adapted["observation"]))
     checks = []
     for (year_a, first), (year_b, second) in zip(observed, observed[1:]):
         if year_b != year_a + 1:
-            return {"state": "unknown", "reason": "share_count_gap", "pairs": checks}
+            return {"state": "unknown", "reason": "share_count_gap", "pairs": checks, "observations": stored()}
         packet = (dart.get("irds") or {}).get(str(year_b))
         changes = dated_share_changes(packet or {}, corp_code=corp_code, as_of=session)
         if changes["state"] != "received":
-            return {"state": "unknown", "reason": changes["reason"], "pairs": checks}
+            return {"state": "unknown", "reason": changes["reason"], "pairs": checks, "observations": stored()}
         interval = [c for c in changes["changes"] if first["periodEnd"] < c["date"] <= second["periodEnd"]]
         coverage = dart.get("coverage") or {"state": "unknown"}
         outcome = reconcile_korean_shares(first, second, events, interval, coverage=coverage, as_of=session)
         checks.append({"start": year_a, "end": year_b, **outcome})
         if outcome["state"] != "matched":
-            return {"state": "unknown", "reason": outcome["reason"], "pairs": checks}
+            return {"state": "unknown", "reason": outcome["reason"], "pairs": checks, "observations": stored()}
     return {"state": "matched" if checks else "unknown", "reason": None if checks else "share_count_evidence_unavailable",
-            "pairs": checks, "notices": sorted(notices)}
+            "pairs": checks, "notices": sorted(notices), "observations": stored()}
 
 
 def dividend_coverage(packets: list[dict]) -> list[int]:
@@ -188,10 +189,16 @@ def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
             kr_notices = []
             kr = _kr_events(raw, daily, session)
             share_sources["dartDecisions"] = (kr.get("decisions") or {}).get("events", [])
+            dart = raw["dart"]
+            share_sources["krShareCounts"] = {"stockTotqySttus": deepcopy(dart.get("stockTotqy") or {}),
+                                              "irdsSttus": deepcopy(dart.get("irds") or {}),
+                                              "coverage": deepcopy(dart.get("coverage")),
+                                              "unitBases": deepcopy(dart.get("unitBases") or {}), "observations": []}
             shares_block = {"state": kr["state"], "reason": kr["reason"], "events": kr["events"], "evidence": []}
             if kr["state"] != "unknown":
                 recon = _kr_share_reconciliation(raw, kr["events"], session, spec3=spec3)
                 shares_block["evidence"] = recon["pairs"]
+                share_sources["krShareCounts"]["observations"] = recon["observations"]
                 kr_notices = recon.get("notices", [])
                 if recon["state"] != "matched":
                     shares_block.update(state="unknown", reason=recon["reason"])
@@ -215,6 +222,9 @@ def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
             used = sorted({row["fiscalYear"] for row in results["ranges"]["payout"].get("values", [])} & set(zero_years))
             if spec3:
                 results["ranges"]["payout"]["zeroReadYears"] = used
+                for item in results["ranges"]["payout"].get("values", []):
+                    if item["fiscalYear"] in used:  # only the years read as "no dividend" carry the basis (§3.1-3)
+                        item["dividendBasis"] = "no_dividend_fact"
                 if used:
                     results["notices"] = [*results["notices"], DIVIDEND_NOTICE]
                 if market == "KR" and kr_notices:

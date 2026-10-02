@@ -79,6 +79,17 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(kt.observation(packet(SAMSUNG_2018, status="013"), corp_code=CORP, as_of="2026-10-01")["reason"], "share_count_source_unavailable")
         self.assertEqual(kt.observation(packet(SAMSUNG_2018), corp_code=CORP, as_of="2019-01-01")["reason"], "future_share_count_source")
 
+    def test_a_numeric_zero_cell_stays_an_explicit_zero_when_the_row_arithmetic_fails(self):
+        broken = row("보통주", "1,001", "0", "1,000", profit="0", redeem="0", etc="-")   # (a) fails: 1,001 - 0 != 1,000
+        decreases = kt.observation(packet(broken), corp_code=CORP, as_of="2026-10-01")["observation"]["decreases"]
+        for key in ("profitCancellation", "redemption"):
+            self.assertEqual((decreases[key]["value"], decreases[key]["unitProof"]["statement"], decreases[key]["unitDate"]),
+                             ("0", "explicit_zero", "2018-12-31"))
+            self.assertEqual(decreases[key]["unitProof"]["rowCells"]["istc_totqy"], "1,000")
+        unproven = kt.observation(packet(row("보통주", "1,001", "5", "1,000", profit="5")), corp_code=CORP, as_of="2026-10-01")["observation"]["decreases"]
+        self.assertIsNone(unproven["profitCancellation"]["value"])                      # a positive cell without proof stays unknown
+        self.assertIsNone(unproven["redemption"]["value"])                              # an empty cell is not proven 0 when the row fails
+
     def test_the_samsung_split_year_reconciles_to_zero_residual_with_the_table_proof(self):
         first = kt.observation(packet(SAMSUNG_2017), corp_code=CORP, as_of="2026-10-01")["observation"]
         second = kt.observation(packet(SAMSUNG_2018), corp_code=CORP, as_of="2026-10-01")["observation"]

@@ -104,10 +104,15 @@ def observation(packet: dict, *, corp_code: str, as_of: str) -> dict:
             was_empty = field in reading["zeroCells"]
             value = reading["cells"][field]
             statement = ("row_arithmetic_zero" if was_empty else "explicit_zero" if value == 0 else "row_arithmetic_period_end_unit")
-            entry.update(value=str(value), unitDate=end, unitProof={
-                "source": "dart_report", "accession": accession, "filed": filed, "locator": f"stockTotqySttus.{field}",
-                "statement": statement, "sameDayBasis": "post_event",
-                "rowCells": {"label": row.get("se"), "accession": accession, "stlm_dt": end, **cells}})
+        elif read_cell(raw) == 0:  # a cell written as numeric 0 stays an explicit zero even when the row arithmetic fails (§2.4)
+            value, statement = 0, "explicit_zero"
+        else:
+            decreases[key] = entry
+            continue
+        entry.update(value=str(value), unitDate=end, unitProof={
+            "source": "dart_report", "accession": accession, "filed": filed, "locator": f"stockTotqySttus.{field}",
+            "statement": statement, "sameDayBasis": "post_event",
+            "rowCells": {"label": row.get("se"), "accession": accession, "stlm_dt": end, **cells}})
         decreases[key] = entry
     out = {"state": "received", "observation": {"periodEnd": end, "shares": shares, "decreases": decreases,
           "source": {"provider": "dart_stockTotqySttus", "accession": accession, "filed": filed, "corpCode": corp_code,

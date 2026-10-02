@@ -140,3 +140,9 @@ def test_projection_reads_a_stored_snapshot_without_touching_the_database(tmp_pa
     store.save_criteria(required_return="99", holding_years=10, expected_revision_id=1)
     assert project(loaded, store.criteria(), None, (), today=TODAY)["verdict"]["return"]["state"] == "unmet"
     assert store.get(saved["snapshotId"]) == loaded
+
+
+def test_an_assumption_far_beyond_the_search_range_is_a_range_state_not_an_error():
+    huge = "9" * 30  # the longest growth the store accepts
+    assert scenario_irr("100", "5", huge, "15", "0.3", 10) == "above_range"
+    assert scenario_irr("100", "5", "1e99999", "15", "0.3", 10) == "above_range"
