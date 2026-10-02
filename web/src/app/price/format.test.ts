@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attemptBanner, bannerFor, decompositionCards, fractionToPercent, heroText, irrText, money, multiple, pct, pctPlain, pctSigned,
-  percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
+  atLeastRequired, compareDecimal, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
 } from "./format";
 import type { Projection, ScenarioRow } from "./types";
 
@@ -19,7 +19,7 @@ describe("decimal text", () => {
     expect(fractionToPercent(null)).toBe("");
     expect(shiftDecimal("abc", 2)).toBe("abc");
     expect(percentToFraction("0.1")).toBe("0.001");
-    expect(percentToFraction("1e2")).toBe("1e2"); // not a plain decimal: the server rejects it
+    expect(percentToFraction("1e2")).toBe("1e2"); // not a plain decimal: passed on unchanged, the server answers invalid_number
   });
 });
 
@@ -48,19 +48,38 @@ describe("number words", () => {
 });
 
 describe("headline (A form)", () => {
-  const base = { horizon: 10 as const, baseIrr: 0.066, holdingYears: 10, baseHoldingIrr: 0.066 };
+  const rowOf = (irr: string | null, irrRange: string | null = null, horizon = 10) =>
+    ({ label: "base", horizon, status: "available", irr, irrRange }) as unknown as ScenarioRow;
+  const base = { horizon: 10 as const, base: rowOf("0.0661"), holdingYears: 10, baseHolding: rowOf("0.0661") };
   it("compares only when the horizon is the chosen holding period", () => {
     expect(heroText({ ...base, required: "6" }).title).toBe("10년간 연 6.6%로, 내 기준 연 6%보다 높습니다.");
     expect(heroText({ ...base, required: "7" }).title).toBe("10년간 연 6.6%로, 내 기준 연 7%보다 낮습니다.");
-    expect(heroText({ ...base, required: "6.5" }).title).toContain("연 6.5%");
-    const other = heroText({ ...base, horizon: 5, baseIrr: 0.03, required: "6" });
+    expect(heroText({ ...base, required: "6.5" }).title).toContain("연 6.6%");
+    const other = heroText({ ...base, horizon: 5, base: rowOf("0.03", null, 5), required: "6" });
     expect(other.title).toBe("5년간 연 3.0%입니다.");
     expect(other.sub).toContain("기본 보유 10년(연 6.6%)");
+  });
+  it("compares exactly like the server: 0.29 is not below 29%", () => {
+    const exact = { ...base, base: rowOf("0.29"), baseHolding: rowOf("0.29") };
+    expect(0.29 * 100 >= 29).toBe(false); // the float trap this guards against
+    expect(heroText({ ...exact, required: "29" }).title).toContain("보다 높습니다");
+    expect(atLeastRequired(rowOf("0.29"), "29")).toBe(true);
+    expect(atLeastRequired(rowOf("0.2899"), "29")).toBe(false);
+    expect(atLeastRequired(rowOf("-0.05"), "-5")).toBe(true);
+    expect(compareDecimal("1.50", "1.5")).toBe(0);
+    expect(compareDecimal("-0.1", "0.01")).toBe(-1);
+    expect(compareDecimal("abc", "1")).toBeNull();
+  });
+  it("names an out-of-range base return and still compares it", () => {
+    const above = { ...base, base: rowOf(null, "above_range"), baseHolding: rowOf(null, "above_range") };
+    expect(heroText({ ...above, required: "20" }).title).toBe("10년간 연 100% 초과로, 내 기준 연 20%보다 높습니다.");
+    expect(atLeastRequired(rowOf(null, "below_range"), "-50")).toBe(false);
   });
   it("never invents a comparison without a criterion or a number", () => {
     expect(heroText({ ...base, required: null, holdingYears: null }).title).toBe("10년간 연 6.6%입니다.");
     expect(heroText({ ...base, required: null, holdingYears: null }).sub).toContain("내 기준을 정하면 비교");
-    expect(heroText({ ...base, baseIrr: null, required: "6" }).title).toContain("계산하지 못했습니다");
+    expect(heroText({ ...base, base: undefined, required: "6" }).title).toContain("계산하지 못했습니다");
+    expect(atLeastRequired(rowOf("0.1"), null)).toBeNull();
   });
 });
 

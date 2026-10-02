@@ -42,7 +42,8 @@ export function CriteriaForm({ initial, onSaved, onCancel, idPrefix = "criteria"
     } catch (err) {
       const code = err instanceof ApiRequestError ? err.code : "";
       setError(FIELD_ERRORS[code] || "저장하지 못했습니다. 입력한 값은 그대로 남겨 두었습니다.");
-      if (code === "revision_conflict") void loadCriteria().then(latest => { setCurrent(latest); onSaved(latest); }).catch(() => undefined);
+      // The edited values stay as typed; only the revision the next save is based on is refreshed. The dialog stays open with the message.
+      if (code === "revision_conflict") void loadCriteria().then(latest => setCurrent(latest)).catch(() => undefined);
     } finally { setBusy(false); }
   }
 
@@ -70,7 +71,7 @@ export function CriteriaForm({ initial, onSaved, onCancel, idPrefix = "criteria"
       </div>
       <p className="price-meta">모든 종목에 똑같이 적용됩니다. 빈 칸은 &ldquo;정하지 않음&rdquo;이며 0과 다릅니다. 기준은 이 화면의 비교에만 쓰이고 보고서·이유·포트폴리오를 바꾸지 않습니다.</p>
       <div className="price-row">
-        {onCancel && <button className="btn btn--text" type="button" onClick={onCancel}>취소</button>}
+        {onCancel && <button className="btn btn--text" type="button" onClick={() => { setRequired(current?.requiredReturn ?? ""); setMargin(current?.minMarginOfSafety ?? ""); setHolding(current?.holdingYears ? String(current.holdingYears) : ""); setError(""); setStatus(""); onCancel(); }}>취소</button>}
         <button className="btn" type="button" disabled={busy} onClick={() => { if (!current?.requiredReturn && !current?.minMarginOfSafety) { setStatus("지울 기준이 없습니다."); return; } setRequired(""); setMargin(""); void save({ required: "", margin: "", holding }); }}>기준 지우기</button>
         <button className={`btn${changed ? " btn--primary" : ""}`} type="submit" disabled={busy}>{busy ? "저장 중…" : "저장"}</button>
         {changed && <span className="price-meta">저장 안 된 변경이 있습니다</span>}

@@ -37,6 +37,7 @@ type AnalysisReport = {
   generation?: { message?: string; mode?: string; webSearch?: boolean; generatedAt?: string };
   sources?: Array<{ source?: string; date?: string; type?: string; title?: string; url?: string; path?: string }>;
   analysisCharts?: { available?: boolean; reason?: string; charts?: unknown[] };
+  priceReview?: { snapshotId?: string; asOf?: string; reviewNeeded?: Array<{ metric?: string; fiscalYear?: number }> } | null;
   dataGaps?: DataGap[] | { gaps?: DataGap[]; summary?: Record<string, number> };
   canonicalRevision?: unknown;
   personalOverlay?: unknown;
@@ -706,7 +707,7 @@ export function CompanyAnalysisRoute() {
           noteLinkedTitle={readerContent.title}
           noteOverlay={parsePersonalOverlayPayload(selected.personalOverlay, selected.canonicalRevision)}
         >
-          <CompanyAnalysisBody markdown={readerContent.body || readerMarkdown} charts={selected.analysisCharts} />
+          <CompanyAnalysisBody markdown={readerContent.body || readerMarkdown} charts={selected.analysisCharts} priceReview={selected.priceReview} />
           {sources.length > 0 && (
             <section className="source-panel react-analysis-sources">
               <h4>참고자료</h4>

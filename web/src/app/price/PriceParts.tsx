@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import {
-  NOTICE_TEXT, SCENARIO_NAMES, SCENARIO_ORDER, decompositionCards, irrText, irrValue, money, multiple, pct, pctPlain, pctSigned,
+  NOTICE_TEXT, SCENARIO_NAMES, SCENARIO_ORDER, atLeastRequired, decompositionCards, irrText, irrValue, money, multiple, pct, pctPlain, pctSigned,
   rangePosition, reasonText, rowFor, scaleLayout, toNumber,
 } from "./format";
 import type { Criteria, HistoryRow, MyAssumptions, Projection, ScenarioRow, SnapshotView } from "./types";
@@ -44,7 +44,7 @@ export function ScaleBar({ rows, horizon, selected, goal }: { rows: ScenarioRow[
   );
 }
 
-export function ScenarioCards({ rows, horizon, selected, goal, onSelect }: { rows: ScenarioRow[]; horizon: number; selected: number; goal: number | null; onSelect: (index: number) => void }) {
+export function ScenarioCards({ rows, horizon, selected, required, onSelect }: { rows: ScenarioRow[]; horizon: number; selected: number; required: string | null; onSelect: (index: number) => void }) {
   return (
     <div className="price-cards" role="group" aria-label="시나리오 선택: 누르면 막대에서 강조">
       {SCENARIO_ORDER.map((key, index) => {
@@ -55,7 +55,7 @@ export function ScenarioCards({ rows, horizon, selected, goal, onSelect }: { row
             <b>{SCENARIO_NAMES[key].name}</b>
             <small>{SCENARIO_NAMES[key].short}</small>
             <strong>{value === null ? irrText(row) : `연 ${pct(value)}`}</strong>
-            {goal !== null && value !== null && <span>기준보다 {value * 100 >= goal ? "높음" : "낮음"}</span>}
+            {atLeastRequired(row, required) !== null && <span>기준보다 {atLeastRequired(row, required) ? "높음" : "낮음"}</span>}
           </button>
         );
       })}
@@ -176,7 +176,7 @@ export function RequirementSection({ view, projection, horizon, onSetCriteria }:
   );
 }
 
-const DEC_COLOR: Record<string, string> = { R: "c1", M: "c3", S: "c5" };
+const DEC_COLOR: Record<string, string> = { R: "price-c1", M: "price-c3", S: "price-c5" };
 
 export function DecompositionSection({ view, selected, onSelect }: { view: SnapshotView; selected: string | null; onSelect: (key: string | null) => void }) {
   const block = view.results.decomposition;

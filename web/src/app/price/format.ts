@@ -112,21 +112,54 @@ export function irrValue(row: ScenarioRow | undefined): number | null {
 
 const ASSUMPTION = "회사가 과거 보통 수준으로 성장하고, 주가 수준(PER)도 과거 보통일 때를 가정한 계산입니다.";
 
-/** 결론 제목(A안). 판정은 기본 보유 기간의 기본 시나리오로만 한다. */
-export function heroText(input: { horizon: number; baseIrr: number | null; required: string | null; holdingYears: number | null; baseHoldingIrr: number | null }): { title: string; sub: string } {
-  const { horizon, baseIrr, required, holdingYears, baseHoldingIrr } = input;
-  if (baseIrr === null) return { title: "이 기간의 수익률은 계산하지 못했습니다.", sub: "아래 사유를 확인해 주세요." };
-  const value = `연 ${pct(baseIrr)}`;
-  const goal = toNumber(required);
+/** 소수 문자열 둘의 크기 비교(부동소수 없이). 평범한 소수가 아니면 null. */
+export function compareDecimal(left: string, right: string): -1 | 0 | 1 | null {
+  const parse = (text: string) => {
+    const match = /^([-−]?)(\d*)(?:\.(\d*))?$/.exec(text.trim());
+    return match && (match[2] !== "" || match[3]) ? { negative: match[1] !== "", whole: match[2] || "0", fraction: match[3] ?? "" } : null;
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  const places = Math.max(a.fraction.length, b.fraction.length);
+  const scaled = (value: NonNullable<typeof a>) => {
+    const magnitude = BigInt(value.whole + value.fraction.padEnd(places, "0"));
+    return value.negative ? -magnitude : magnitude;
+  };
+  const x = scaled(a);
+  const y = scaled(b);
+  return x === y ? 0 : x > y ? 1 : -1;
+}
+
+/** 서버 판정(project)과 같은 규칙으로, 시나리오 수익률이 내 기준(% 문자열) 이상인지. 모르면 null. */
+export function atLeastRequired(row: ScenarioRow | undefined, required: string | null | undefined): boolean | null {
+  if (!row || row.status !== "available" || required === null || required === undefined || required === "") return null;
+  if (row.irrRange === "above_range") return true;
+  if (row.irrRange === "below_range") return false;
+  if (row.irr === null) return null;
+  const order = compareDecimal(shiftDecimal(row.irr, 2), required);
+  return order === null ? null : order >= 0;
+}
+
+const valueText = (row: ScenarioRow | undefined): string | null => (row && row.status === "available" && (row.irr !== null || row.irrRange) ? `연 ${irrText(row)}` : null);
+
+/** 결론 제목(A안). 판정은 기본 보유 기간의 기본 시나리오로만 한다. 값과 비교는 서버가 준 문자열에서 바로 만든다. */
+export function heroText(input: { horizon: number; base: ScenarioRow | undefined; required: string | null; holdingYears: number | null; baseHolding: ScenarioRow | undefined }): { title: string; sub: string } {
+  const { horizon, base, required, holdingYears, baseHolding } = input;
+  const value = valueText(base);
+  if (value === null) return { title: "이 기간의 수익률은 계산하지 못했습니다.", sub: "아래 사유를 확인해 주세요." };
+  const goal = required !== null && required !== "" && compareDecimal(required, "0") !== null ? required : null;
   if (goal === null || holdingYears === null) {
     return { title: `${horizon}년간 ${value}입니다.`, sub: `${ASSUMPTION} 내 기준을 정하면 비교해 드립니다.` };
   }
-  const goalText = `연 ${pctPlain(required, goal % 1 === 0 ? 0 : 1)}`;
-  if (horizon !== holdingYears || baseHoldingIrr === null) {
-    const compare = baseHoldingIrr === null ? "" : ` 내 기준 비교는 기본 보유 ${holdingYears}년(연 ${pct(baseHoldingIrr)})으로 하며, 내 기준보다 ${baseHoldingIrr * 100 >= goal ? "높습니다" : "낮습니다"}.`;
+  const goalText = `연 ${pctPlain(goal, Number(goal) % 1 === 0 ? 0 : 1)}`;
+  const word = (row: ScenarioRow | undefined) => (atLeastRequired(row, goal) ? "높습니다" : "낮습니다");
+  const holdingValue = valueText(baseHolding);
+  if (horizon !== holdingYears || holdingValue === null) {
+    const compare = holdingValue === null ? "" : ` 내 기준 비교는 기본 보유 ${holdingYears}년(${holdingValue})으로 하며, 내 기준보다 ${word(baseHolding)}.`;
     return { title: `${horizon}년간 ${value}입니다.`, sub: `${ASSUMPTION}${compare}` };
   }
-  return { title: `${horizon}년간 ${value}로, 내 기준 ${goalText}보다 ${baseIrr * 100 >= goal ? "높습니다" : "낮습니다"}.`, sub: ASSUMPTION };
+  return { title: `${horizon}년간 ${value}로, 내 기준 ${goalText}보다 ${word(base)}.`, sub: ASSUMPTION };
 }
 
 export type ScalePoint = { key: string; label: string; value: number; left: number };

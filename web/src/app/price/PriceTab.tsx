@@ -5,7 +5,7 @@ import { CriteriaForm, loadCriteria } from "./CriteriaForm";
 import {
   CriteriaLine, DecompositionSection, HistoryList, MyAssumptionsResult, RequirementSection, ScaleBar, ScenarioCards, ScenarioTable, SourcesDetails,
 } from "./PriceParts";
-import { attemptBanner, bannerFor, heroText, irrText, irrValue, money, pct, percentToFraction, fractionToPercent, reasonText, rowFor, toNumber, type Banner } from "./format";
+import { attemptBanner, bannerFor, heroText, irrText, money, pct, percentToFraction, fractionToPercent, reasonText, rowFor, toNumber, type Banner } from "./format";
 import type { Criteria, Override, Overview, Projection, SnapshotView } from "./types";
 
 const CALCULATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -137,12 +137,11 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
   const supported = view?.results.support.status === "supported";
   const currency = view?.inputSummary.price.currency ?? "";
   const baseRow = rowFor(rows, "base", horizon);
-  const baseIrr = irrValue(baseRow);
   const holding = criteria?.holdingYears ?? null;
-  const baseHoldingIrr = holding ? irrValue(rowFor(rows, "base", holding)) : null;
+  const baseHolding = holding ? rowFor(rows, "base", holding) : undefined;
   const requiredText = criteria?.requiredReturn ?? null;
   const goal = requiredText !== null && toNumber(requiredText) !== null ? Number(requiredText) : null;
-  const hero = heroText({ horizon, baseIrr, required: requiredText, holdingYears: holding, baseHoldingIrr });
+  const hero = heroText({ horizon, base: baseRow, required: requiredText, holdingYears: holding, baseHolding });
   const banner: Banner = bannerFor({ projection, view, saveFailed: false }) || attemptBanner(overview.lastAttempt, overview.latest?.asOf ?? null);
   const marginNote = view && criteria?.minMarginOfSafety !== null && criteria?.minMarginOfSafety !== undefined && projection?.verdict.marginOfSafety.state === "unknown"
     ? `안전마진 판정 보류: ${reasonText(projection.verdict.marginOfSafety.reason)}. 수익률 비교도 계산상 비교일 뿐 투자 판단을 대신하지 않습니다.` : "";
@@ -175,7 +174,7 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
           <>
             <div className="price-hchart">
               <p className="price-note">{horizon}년 보유 시 연 수익률 <span className="price-meta">· 카드를 누르면 막대에서 위치를 보여 줍니다</span></p>
-              <ScenarioCards rows={rows} horizon={horizon} selected={selected} goal={goal} onSelect={index => setSelected(current => (current === index && index !== 1 ? 1 : index))} />
+              <ScenarioCards rows={rows} horizon={horizon} selected={selected} required={requiredText} onSelect={index => setSelected(current => (current === index && index !== 1 ? 1 : index))} />
               <ScaleBar rows={rows} horizon={horizon} selected={selected} goal={goal} />
             </div>
             <CriteriaLine projection={projection} criteria={criteria} onEdit={() => openCriteria(document.activeElement as HTMLElement | null)} />
