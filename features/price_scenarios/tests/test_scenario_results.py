@@ -266,3 +266,12 @@ class ComputeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PriceEventPrecedenceTests(unittest.TestCase):
+    def test_an_unverified_price_event_names_the_scenarios_even_when_other_ranges_are_short_too(self):
+        short, _ = steady(range(2022, 2025))
+        out = compute(short, {"value": "30", "sessionDate": "2025-03-01", "currency": "USD"}, fiscal_prices=None,
+                      prices_reason={"code": "price_event_unverified"})
+        self.assertEqual(out["ranges"]["growth"]["reason"]["code"], "history_too_short")
+        self.assertEqual({row["reason"]["code"] for row in out["scenarios"]}, {"price_event_unverified"})

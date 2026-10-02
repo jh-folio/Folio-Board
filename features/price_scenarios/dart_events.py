@@ -94,6 +94,8 @@ def dated_share_changes(packet: dict, *, corp_code: str, as_of: str) -> dict:
             return {"state": "unknown", "reason": "share_change_security_unconfirmed", "changes": []}
         if kind in {"무상증자", "주식배당", "주식분할", "주식병합"}:
             continue
+        if kind == "-" and dart_date(date) is not None and source_number(raw) is not None and number(source_number(raw)) >= 0:
+            continue  # a dated change whose reason cell is blank explains nothing; the residual tolerance decides (spec §2.4)
         sign = (1 if kind and (kind.startswith("유상증자") or kind in
                     {"전환권행사", "신주인수권행사", "주식매수선택권행사"})
                 else -1 if kind and kind.startswith("감자") else None)

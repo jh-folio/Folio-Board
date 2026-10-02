@@ -27,6 +27,9 @@ def _shift_months(date: dt.date, months: int) -> dt.date:
     return dt.date(year, month + 1, min(date.day, calendar.monthrange(year, month + 1)[1]))
 
 
+MIN_ACCOUNTING_PERIOD_DAYS = 60
+
+
 def _annual_period(start, end) -> bool:
     begin, finish = _date(start), _date(end)
     return bool(begin and finish and _shift_months(finish, -13) <= begin <= _shift_months(finish, -11))
@@ -85,7 +88,11 @@ def sec_history(data: dict, *, as_of: str | None = None, years=10) -> dict:
                     continue
                 instant = metric in sec.POINT_IN_TIME_METRICS or metric == "Short-Term Debt"
                 if not instant and not _annual_period(fact.get("start"), fact.get("end")):
-                    exclusions.append({"fiscalYear": end.year, "reason": "non_annual_period"})
+                    begin = _date(fact.get("start"))
+                    if begin is None or (end - begin).days >= MIN_ACCOUNTING_PERIOD_DAYS:
+                        # A fiscal-year change is an accounting period; a one-or-two-day measurement (a post-year-end buyback
+                        # fact in an annual filing) is not a fiscal year and must not displace the latest real year.
+                        exclusions.append({"fiscalYear": end.year, "reason": "non_annual_period"})
                     continue
                 by_end[end.isoformat()].setdefault(priority, []).append((concept, fact, value))
         for end, priorities in sorted(by_end.items()):

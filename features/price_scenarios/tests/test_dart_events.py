@@ -75,3 +75,11 @@ def test_truncated_trading_history_cannot_supply_a_previous_trading_day():
     result = bonus_decisions({"status": "000", "list": [decision()]}, corp_code="00989619",
                             trading_dates=["2020-07-10"], as_of="2026-10-01")
     assert result["state"] == "unknown"
+
+
+def test_a_dated_increase_with_a_blank_reason_explains_nothing_but_does_not_stop_the_ledger():
+    rows = [change("-", day="2021.12.09", shares="3,789,032"), change("전환권행사", "2021.03.01", "10")]
+    result = dated_share_changes({"status": "000", "list": rows}, corp_code="00989619", as_of="2026-10-01")
+    assert result["state"] == "received" and [r["delta"] for r in result["changes"]] == ["10"]
+    for broken in (change("-", day="-", shares="5"), change("-", shares="-")):
+        assert dated_share_changes({"status": "000", "list": [broken]}, corp_code="00989619", as_of="2026-10-01")["state"] == "unknown"

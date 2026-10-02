@@ -55,6 +55,10 @@ def _irr_cell(value):
 
 def _blocked(ranges: dict, names) -> str | None:
     """Reason code of the first required range that could not be built."""
+    # The frozen spec blocks every calculation that uses the year-end PER range with that range's reason
+    # (price_event_unverified), whatever else is also too short.
+    if "pe" in names and (ranges["pe"].get("reason") or {}).get("code") == "price_event_unverified":
+        return "price_event_unverified"
     for name in names:
         if ranges[name]["status"] != "available":
             return ranges[name]["reason"]["code"]

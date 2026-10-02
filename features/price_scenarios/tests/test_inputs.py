@@ -180,3 +180,14 @@ def test_march_fiscal_price_daily_close_session_cutoff_weekend_and_stale():
     assert provider_symbol("035900","KR",{"corp_cls":"K"})==("035900.KQ","dart_corp_cls")
     with pytest.raises(ValueError,match="exchange"):
         provider_symbol("035900","KR",{})
+
+
+def test_a_one_day_measurement_after_year_end_is_not_a_fiscal_year():
+    eps = [fact("2.24"), fact("0.62", "2024-12-31", start="2024-01-01")]
+    stub = fact("5", "2026-01-02", start="2026-01-01", filed="2026-03-13", form="20-F")
+    result = sec_history(packet({"EarningsPerShareDiluted": {"units": {"USD/shares": eps}},
+                                 "PaymentsForRepurchaseOfCommonStock": {"units": {"USD": [stub]}}}))
+    assert result["excludedYears"] == []  # the stub neither excludes 2026 nor becomes the "latest fiscal year"
+    shift = fact("20", "2026-01-27", start="2025-10-01")  # a four-month accounting period still is a fiscal-year change
+    changed = sec_history(packet({"Revenues": {"units": {"USD": [fact("100"), shift]}}}))
+    assert changed["excludedYears"] == [{"fiscalYear": 2026, "reason": "non_annual_period"}]

@@ -129,3 +129,25 @@ class UnfiledYearTests(unittest.TestCase):
         self.assertEqual((out["state"], len(out["pairs"])), ("matched", 1))
         raw["dart"]["stockTotqy"] = {"2023": year(2023, "100"), "2024": {"status": "013", "list": []}, "2025": year(2025, "100")}
         self.assertEqual(_kr_share_reconciliation(raw, [], "2026-10-01", spec3=True)["reason"], "share_count_gap")
+
+
+class BlankReasonIncreaseTests(unittest.TestCase):
+    """SK 2021 type: a dated increase whose reason cell is `-` is judged by the 5% residual tolerance (spec fixture 11)."""
+
+    def run_pair(self, ending):
+        from features.price_scenarios.assemble import _kr_share_reconciliation
+        a = row("의결권있는주식", "76,579,477", "6,219,180", "70,360,297", redc="219,180", profit="6,000,000", end="2020-12-31", accession="20210308000001")
+        v = row("의결권있는주식", f"{ending + 6_219_180:,}", "6,219,180", f"{ending:,}", redc="219,180", profit="6,000,000", end="2021-12-31", accession="20220308000001")
+        n = lambda y: row("의결권없는주식", "566,135", "-", "566,135", end=f"{y}-12-31", accession=f"{y + 1}0308000001")
+        increase = {"corp_code": CORP, "rcept_no": "20220308000001", "isu_dcrs_de": "2021.12.09", "isu_dcrs_stle": "-",
+                    "isu_dcrs_stock_knd": "보통주", "isu_dcrs_qy": f"{ending - 70_360_297:,}"}
+        raw = {"identity": {"corpCode": CORP}, "dart": {"coverage": {"state": "confirmed", "start": "2015-01-01", "end": "2026-10-01"},
+               "stockTotqy": {"2020": packet(a, n(2020)), "2021": packet(v, n(2021))}, "irds": {"2021": {"status": "000", "list": [increase]}}}}
+        return _kr_share_reconciliation(raw, [], "2026-10-01", spec3=True)
+
+    def test_a_large_unexplained_increase_is_unexplained_not_unreadable(self):
+        out = self.run_pair(74_149_329)   # +5.39%
+        self.assertEqual((out["state"], out["reason"]), ("unknown", "unexplained_share_change"))
+
+    def test_a_small_one_is_within_the_tolerance(self):
+        self.assertEqual(self.run_pair(72_470_106)["state"], "matched")   # +3.0%
