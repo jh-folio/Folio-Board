@@ -3,9 +3,9 @@
 가격 시나리오는 외부 공시와 완결 거래일의 종가를 입력으로 삼는 규칙 계산이다.
 개인 투자 이유·대화·사용자 가정을 정본의 근거로 쓰지 않는다.
 
-현재는 입력 기반을 구현 중이며 화면/API·저장 장부와 기업분석 생성 경로에는 연결하지 않았다.
-기존 기업분석의 한국 가격 조회는 같은 공식 거래소 규칙에 연결했다.
-가격 시나리오 계산·화면은 아직 공개 동작에 연결하지 않았다.
+가격 시나리오는 워치리스트 기업 상세의 `가격` 탭, 기업분석 보고서, Agent 컨텍스트가 같은
+저장된 스냅샷 하나를 읽습니다. 계산은 명시적인 `계산` 동작과 기업분석 생성 때만 하며, 읽기는
+수집·계산·저장을 하지 않습니다. 확률·목표가격·매수/매도 지침은 만들지 않습니다.
 
 - `history.py`: SEC 원자료의 기간별 태그 선택·최신 공시/이전 값·최대 10년,
   DART 당기/전기/전전기와 동일 연결 기준을 보존한다. 기존 보고서 요약을 바꾸지 않는다.
@@ -59,3 +59,29 @@ FRED→Yahoo→상수 순서로 선택하고 원관측 단위와 출처를 반�
 경로 연결이 남아 있다. 입력 포착과 오프라인 재현을 제품 경로 연결로 간주하지 않는다.
 누적 소각 단위가 분할 전후에 달라 현재 잔차로 설명되지 않는 사례는 `unknown`을
 유지한다. 값을 임의 보정하거나 단위 검증 완료로 표시하지 않는다.
+
+## 계산·저장·연결 (0.9)
+
+- 계산(순수): `stats.py`(type 7 백분위), `returns.py`(IRR·역산), `ranges.py`(과거 범위),
+  `decomposition.py`(성장 분해), `scenarios.py`(저장되는 결과 조립). 새 계산은 Decimal이며
+  저장 직전에 한 번만 반올림합니다. 범위를 벗어난 해는 숫자로 자르지 않고 `above_range`/`below_range`입니다.
+- 베타(`beta.py`): 조회 시점 값을 출처와 함께 입력으로 저장합니다(제공자는 관측일을 주지 않으므로
+  조회 시각은 지문 밖). 없거나 이상하면 측정 안 됨이며 DCF는 대체값, 안전마진은 `unknown`입니다.
+- 저장(`store.py`): `market-memory.sqlite3`의 불변 테이블 `price_snapshots`·`price_snapshot_links`·
+  `price_snapshot_reviews`와 개인 층 `valuation_user_criteria`·`valuation_assumption_overrides`.
+  UPDATE/DELETE는 트리거로 막고, 스냅샷·대체 링크·재검토 행은 한 트랜잭션입니다. 같은 지문의 다른 결과는
+  `non_reproducible`로 거부합니다. 첫 migration 전 SQLite backup을 만듭니다. 읽기는 파일·테이블을 만들지 않습니다.
+- 변경 이유(`changes.py`): 직전 스냅샷과 입력을 비교해 `price_moved`·`new_fiscal_year`·`restated`·
+  `share_event_added`·`dcf_assumption_changed`·`method_changed`·`input_changed`를 적고, 정정된 값을 쓴
+  모든 이전 스냅샷에 재검토 행을 남깁니다.
+- 읽기 투영(`projection.py::project`): 기준 판정(기본 시나리오만)·요구수익률 역산·내 가정 수익률·재검토·경과 안내를
+  쓰기 없이 계산합니다. 모든 소비자가 이 함수를 부릅니다.
+- 수집·조립(`collect.py`, `assemble.py`): 수집만 외부 호출을 하고 조립은 순수합니다. 보고서와 화면의 숫자는 같은 스냅샷에서 옵니다.
+- API(`routes.py`, 접두사 `/api/price-snapshots`·`/api/valuation`): `POST calculate`(SharedJob `price_scenario`,
+  종목당 한 번에 하나), 스냅샷·이력·투영 조회, 전역 투자 기준과 종목별 내 가정(append-only, 기대 revision이 다르면 409).
+- 보고서 연결(`report.py`, `report_link.py`): 새 보고서는 `priceSnapshotId`만 가리키고 PER 시나리오·DCF를 스냅샷에서 읽으며,
+  ×0.7/×1.3 표와 "현재가 대비" 열은 만들지 않습니다. 스냅샷을 만들 수 없으면 사유와 함께 id 없이 생성합니다.
+  제공자는 앱 시작 때 등록되며(`set_price_snapshot_provider`) 등록이 없으면 예전 경로가 그대로 동작합니다.
+
+알려진 한계: SEC companyfacts로는 주식 종류별 주당이익 차이를 판정하지 못합니다. 한국 주식 수 대조는 명세 spec-3
+동결 전이라 아직 spec-2 규칙이며 한국 종목은 `share_event_unknown`입니다.
