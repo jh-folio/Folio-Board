@@ -17873,3 +17873,127 @@ select { min-height: 36px; padding: 0 12px; }
   .macro-exposure__table th, .macro-exposure__table td { padding: 0; border: 0; }
   .macro-exposure__table .macro-exposure__num { text-align: left; }
 }
+
+/* ============================================================
+   0.9 가격 탭 — 워치리스트 기업 상세(`가격`)와 투자 기준 폼.
+   버튼·칩·세그먼트·패널 면은 프리미티브가 갖는다. 여기는 배치와 범위 막대·표만.
+   범위 막대는 차트가 아니라 지표다: 같은 숫자가 카드·표에 글자로 있고(role="img"+label)
+   색은 토큰만 쓴다(sparkline 예외와 같은 조건). 결정 기록은 DESIGN_SYSTEM.md.
+   ============================================================ */
+.price-meta{font-size:var(--fs-meta);color:var(--folio-ink-muted);margin:0;line-height:1.6}
+.price-stack{display:grid;gap:28px;min-width:0}
+.price-section{display:grid;gap:14px;min-width:0}
+.price-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.price-row--between{justify-content:space-between}
+.price-hero{display:grid;gap:16px;padding:22px}
+.price-hero__head{display:grid;gap:6px}
+.price-hero__title{font-size:var(--fs-title)!important;line-height:1.45}
+.price-hero__title strong{font-variant-numeric:tabular-nums}
+.price-horizon{display:flex;align-items:center;gap:10px}
+.price-horizon span{font-size:var(--fs-body-sm);color:var(--folio-ink-muted)}
+.price-hchart{display:grid;gap:6px}
+.price-hchart__cap{font-size:var(--fs-body-sm);color:var(--folio-ink-soft)}
+.price-hr{position:relative;height:82px;margin:6px 18px 0}
+.price-hr__base{position:absolute;left:0;right:0;top:29px;height:2px;background:var(--folio-border)}
+.price-hr__span{position:absolute;top:25px;height:10px;border-radius:var(--r-pill);background:var(--folio-ink-subtle);opacity:.35}
+.price-hr__pt{position:absolute;top:24px;width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:var(--folio-surface-clean);border:2px solid var(--folio-ink-muted);transform:translateX(-50%)}
+.price-hr__pt--base{top:22px;width:16px;height:16px;background:var(--folio-ink);border-color:var(--folio-ink)}
+.price-hr__goal{position:absolute;z-index:1;top:16px;height:28px;width:0;border-left:2px dashed var(--folio-gold)}
+.price-hr__tick{position:absolute;top:36px;height:6px;width:0;border-left:1px solid var(--folio-ink-subtle)}
+.price-hr__t{position:absolute;white-space:nowrap;font-size:var(--fs-meta);font-variant-numeric:tabular-nums}
+.price-hr__t--sc{top:0;color:var(--folio-ink-muted)}
+.price-hr__t--base{top:-2px;color:var(--folio-ink);font-weight:var(--fw-bold);font-size:var(--fs-body-sm)}
+.price-hr__t--goal{top:46px;color:var(--folio-gold);font-weight:var(--fw-bold)}
+.price-hr__t--tick{top:64px;color:var(--folio-ink-subtle);font-size:var(--fs-xs);transform:translateX(-50%)}
+.price-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.price-card,.price-dec__card{font:inherit;color:inherit;text-align:left;border:0;cursor:pointer;transition:box-shadow .15s,opacity .15s}
+.price-card{display:grid;gap:2px;padding:12px 14px;border-radius:var(--r-group);background:var(--folio-surface-clean)}
+.price-card:hover,.price-dec__card:hover{box-shadow:inset 0 0 0 1px var(--folio-border-strong)}
+.price-card[aria-pressed="true"],.price-dec__card[aria-pressed="true"]{box-shadow:inset 0 0 0 2px var(--folio-ink)}
+.price-card:focus-visible,.price-dec__card:focus-visible{outline:2px solid var(--folio-focus);outline-offset:2px}
+.price-dec__bar span{transition:opacity .15s}.price-dec__bar span.is-dim{opacity:.22}
+.price-hr__pt,.price-hr__t{transition:all .15s}
+.price-card b{font-size:var(--fs-body-sm)}
+.price-card small{font-size:var(--fs-xs);color:var(--folio-ink-muted)}
+.price-card strong{font-size:var(--fs-title);font-variant-numeric:tabular-nums;margin-top:4px}
+.price-card span{font-size:var(--fs-meta);color:var(--folio-ink-muted)}
+.price-verdict{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.price-criteria-line{display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;padding-top:14px;border-top:1px solid var(--folio-border)}
+.price-criteria-line p{font-size:var(--fs-body-sm)}
+.price-note{font-size:var(--fs-body-sm);color:var(--folio-ink-muted)}
+.price-table{width:100%;border-collapse:collapse;font-size:var(--fs-body-sm);font-variant-numeric:tabular-nums}
+.price-table th,.price-table td{padding:12px 10px;text-align:right;vertical-align:middle;border-bottom:1px solid var(--folio-border)}
+.price-table thead th{font-weight:var(--fw-medium);color:var(--folio-ink-muted);font-size:var(--fs-meta)}
+.price-table th:first-child{text-align:left;padding-left:0}
+.price-table tbody th{font-weight:var(--fw-bold)}
+.price-table tbody th small{display:block;font-weight:var(--fw-normal);font-size:var(--fs-meta);color:var(--folio-ink-muted);margin-top:3px}
+.price-table td{color:var(--folio-ink-soft)}
+.price-table td.is-ret{font-weight:var(--fw-bold);color:var(--folio-ink)}
+.price-table .is-sel{background:var(--surface-control)}
+.price-table tr.is-base th,.price-table tr.is-base td.is-ret{font-size:var(--fs-body)}
+.price-table__mobile{display:none}
+.price-reverse{display:grid;gap:4px}
+.price-rev{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--folio-border)}
+.price-rev p{font-size:var(--fs-body)}
+.price-rev p strong{font-variant-numeric:tabular-nums}
+.price-range{display:grid;gap:2px}
+.price-range__pos{font-size:var(--fs-meta);font-weight:var(--fw-medium)}
+.price-range__bar{position:relative;height:38px;margin:0 12px}
+.price-range__base{position:absolute;left:0;right:0;top:24px;height:2px;background:var(--folio-border)}
+.price-range__span{position:absolute;top:21px;height:8px;border-radius:var(--r-pill);background:var(--folio-ink-subtle);opacity:.45}
+.price-range__mark{position:absolute;top:19px;width:12px;height:12px;border-radius:50%;background:var(--folio-gold);transform:translateX(-50%);box-shadow:0 0 0 2px var(--folio-surface-clean)}
+.price-range__mlabel{position:absolute;top:0;white-space:nowrap;font-size:var(--fs-meta);font-weight:var(--fw-bold);color:var(--folio-gold)}
+.price-range__legend{position:relative;height:16px;margin:0 12px;font-size:var(--fs-xs);color:var(--folio-ink-muted);font-variant-numeric:tabular-nums}
+.price-range__legend span{position:absolute;top:0;white-space:nowrap;transform:translateX(-50%)}
+.price-dec{display:grid;gap:10px}
+.price-dec__bar{display:flex;height:14px;margin-top:4px;border-radius:var(--r-pill);overflow:hidden;background:var(--folio-border)}
+.price-dec__bar span{display:block;height:100%}
+.price-dec__legend{display:flex;gap:6px 18px;flex-wrap:wrap;font-size:var(--fs-body-sm)}
+.price-dec__legend span{display:inline-flex;align-items:center;gap:6px}
+.price-dec__legend i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.price-dec__labels{position:relative;height:54px;margin-top:-10px}
+.price-dec__labels span{position:absolute;white-space:nowrap;font-size:var(--fs-meta);padding-left:7px;border-left:2px solid var(--folio-border)}
+.price-dec__labels b{font-variant-numeric:tabular-nums}
+.price-dec__cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.price-dec__card{display:grid;gap:2px;padding:12px 14px;border-radius:var(--r-group);background:var(--surface-control)}
+.price-dec__card span{font-size:var(--fs-meta);color:var(--folio-ink-muted)}
+.price-dec__card strong{font-size:var(--fs-title-sm);font-variant-numeric:tabular-nums}
+.price-dec__card i{display:block;width:24px;height:4px;border-radius:2px;margin-bottom:4px}
+.c1{background:var(--folio-chart-1)}.c3{background:var(--folio-chart-3)}.c5{background:var(--folio-chart-5)}
+.price-banner{display:grid;gap:6px;padding:14px 16px}
+.price-details{display:grid;gap:12px}
+.price-details summary{cursor:pointer;font-weight:var(--fw-medium);padding:6px 0}
+.price-details[open] summary{margin-bottom:6px}
+.price-details p{font-size:var(--fs-body-sm);color:var(--folio-ink-muted)}
+.price-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:4px}
+.price-form label{display:grid;gap:6px;font-size:var(--fs-body-sm);min-width:0}
+.price-form input,.price-form select{width:100%;min-width:0;box-sizing:border-box}
+.price-mine{font-size:var(--fs-body)!important;color:var(--folio-ink)!important}
+.price-history{display:grid;gap:4px;list-style:none;padding:0;margin:0}
+.price-history li{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--folio-border)}
+.price-dialog{max-width:620px;width:calc(100% - 32px);max-height:85vh;overflow:auto;padding:24px;box-sizing:border-box;border:0}
+.price-dialog::backdrop{background:rgba(13,15,18,.5)}
+.price-dialog h2{font-size:var(--fs-title);margin:0 0 12px}
+.price-dialog .price-row{margin-top:20px;justify-content:flex-end}
+@media (max-width: 640px) {
+  .price-hero { padding: 16px; }
+  .price-hr { margin: 0 10px; }
+  .price-cards, .price-dec__cards { gap: 6px; }
+  .price-card, .price-dec__card { padding: 10px; }
+  .price-card strong { font-size: var(--fs-title-sm); }
+  .price-form { grid-template-columns: 1fr; gap: 12px; }
+  .price-rev { grid-template-columns: 1fr; gap: 10px; }
+  .price-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .price-table tbody { display: grid; gap: 4px; }
+  .price-table tr { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0 14px; border-bottom: 1px solid var(--folio-border); padding: 10px 0; }
+  .price-table th, .price-table td { border: 0; padding: 0; }
+  .price-table td.is-assume { display: none; }
+  .price-table td.is-ret { display: grid; justify-items: end; gap: 2px; padding: 2px 6px; border-radius: var(--r-control); }
+  .price-table td.is-ret::before { content: attr(data-label); font-size: var(--fs-xs); font-weight: var(--fw-normal); color: var(--folio-ink-muted); }
+  .price-table__mobile { display: block; font-size: var(--fs-xs); font-weight: var(--fw-normal); color: var(--folio-ink-muted); margin-top: 3px; }
+  .price-table tbody th small { font-size: var(--fs-xs); }
+  .price-dialog { padding: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .price-card, .price-dec__card, .price-dec__bar span, .price-hr__pt, .price-hr__t { transition: none; }
+}
