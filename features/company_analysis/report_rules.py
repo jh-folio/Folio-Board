@@ -20,6 +20,7 @@ from features.company_analysis.dcf import (
 )
 from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
+from features.price_scenarios.report_link import rule_section
 from features.company_analysis.valuation_basis import (
     build_valuation_basis,
     market_cashflow_is_compatible,
@@ -1316,7 +1317,8 @@ def build_rule_report(analysis: dict, analysis_style: str = "beginner") -> str:
         "financial_table": build_financial_table(sec_summary, market_data),
         "financial_commentary": financial_commentary,
         "financial_quality": build_financial_quality_analysis(sec_summary, market_data),
-        "valuation_metrics": build_valuation_metrics(company, sec_summary, market_data),
+        # 새 보고서는 가격 스냅샷에서 읽는다(PER 시나리오·DCF 한 벌). 스냅샷 판정이 없으면 예전 경로.
+        "valuation_metrics": rule_section(analysis.get("priceSnapshot")) or build_valuation_metrics(company, sec_summary, market_data),
         "competitive_analysis": competitive_analysis,
         "risk_table": risk_table,
         "risk_commentary": risk_commentary,

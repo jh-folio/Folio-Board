@@ -91,6 +91,7 @@ def _task(raw: Mapping[str, JsonValue], kind: JobKind) -> TaskType:
         JobKind.MACRO_REFRESH: TaskType.MACRO_REFRESH,
         JobKind.MACRO_EVALUATE: TaskType.MACRO_EVALUATE,
         JobKind.MACRO_EXPOSURE: TaskType.MACRO_EXPOSURE,
+        JobKind.PRICE_SCENARIO: TaskType.PRICE_SCENARIO,
         JobKind.INDEX: TaskType.INDEX,
         JobKind.RSS: TaskType.RSS,
         JobKind.SETUP: TaskType.SETUP,

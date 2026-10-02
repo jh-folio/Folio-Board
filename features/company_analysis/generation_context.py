@@ -64,6 +64,16 @@ from features.company_analysis.valuation import render_valuation_contract
 from features.company_analysis.valuation_basis import render_valuation_basis_context
 from features.company_analysis.buyback import build_buyback_quality, render_buyback_quality
 from features.company_analysis.dcf import render_dcf_context
+from features.price_scenarios.report_link import apply_price_snapshot
+
+# 가격 시나리오 스냅샷을 만드는 제공자. 앱이 시작할 때 한 번 등록한다. 등록이 없으면
+# (테스트·단독 사용) 예전 계산 경로가 그대로 동작하고 보고서에는 스냅샷이 붙지 않는다.
+_PRICE_SNAPSHOT_PROVIDER = None
+
+
+def set_price_snapshot_provider(provider) -> None:
+    global _PRICE_SNAPSHOT_PROVIDER
+    _PRICE_SNAPSHOT_PROVIDER = provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +92,7 @@ class GenerationInputs:
     webRow: dict = field(default_factory=dict)
     buyback: dict = field(default_factory=dict)
     contextBlocks: list = field(default_factory=list)
+    priceSnapshot: dict = field(default_factory=dict)
 
     @property
     def context(self) -> str:
@@ -174,6 +185,18 @@ def _build_generation_inputs(
     materials = materials_fn(query, docs, company)
     selected = materials.get("selectedDocs", [])
     charts = charts_fn(materials)
+    price_state, price_context = {}, ""
+    snapshot_fn = runtime.get("price_snapshot_for_report", _PRICE_SNAPSHOT_PROVIDER)
+    if snapshot_fn is not None:
+        try:
+            snapshot = snapshot_fn(materials.get("company") or company)
+        except Exception as error:  # noqa: BLE001 - 스냅샷 계산 실패가 보고서를 죽이지 않는다
+            diagnostic_stage_failure(
+                context_recorder or current_diagnostic_recorder(), error, stage_id=context_stage,
+                stage_code="context" if context_stage is not None else None, boundary="generic",
+            )
+            snapshot = {"status": "unavailable", "reason": {"code": "price_snapshot_failed"}}
+        charts, price_state, price_context = apply_price_snapshot(charts, materials, snapshot)
 
     preflight = preflight_from_context("company_analysis", {}, {
         "sourceCount": len(selected) or len(docs),
@@ -265,10 +288,10 @@ def _build_generation_inputs(
         render_valuation_basis_context(valuation_basis),
         # 본문이 밸류에이션을 다시 계산하지 않게 값을 통째로 준다. 각자 계산하던
         # 시절 한 보고서에 시나리오가 두 벌 있었다.
-        render_valuation_contract(valuation),
+        price_context or render_valuation_contract(valuation),
         # DCF도 차트와 같은 객체다. 본문이 따로 계산하면 한 보고서가 두 내재가치를
         # 말한다 — PER 시나리오에서 이미 겪었다.
-        render_dcf_context((charts or {}).get("dcf") or {}),
+        "" if price_context else render_dcf_context((charts or {}).get("dcf") or {}),
         # 매입 금액만 주면 본문도 금액만 쓴다. 주식 수가 줄었는지가 함께 있어야
         # 주주환원인지 희석 상쇄인지 판단할 수 있다.
         render_buyback_quality(buyback),
@@ -291,6 +314,7 @@ def _build_generation_inputs(
         webRow=web_row,
         buyback=buyback,
         contextBlocks=[block for block in blocks if block],
+        priceSnapshot=price_state,
     )
 
 
@@ -316,7 +340,11 @@ def draft_artifact(inputs: GenerationInputs, query: str, *, analysis_style: str,
         "webLookup": inputs.webSummary,
         # 본문이 이 값을 썼는지 나중에 대조할 수 있어야 한다.
         "buybackQuality": inputs.buyback,
+        # 새 보고서는 어느 가격 스냅샷에서 쓰였는지를 id로만 가리킨다. 저장되지 않은 id는 달지 않는다.
+        **({"priceSnapshot": inputs.priceSnapshot,
+            **({"priceSnapshotId": inputs.priceSnapshot["snapshotId"]} if inputs.priceSnapshot.get("snapshotId") else {})}
+           if inputs.priceSnapshot else {}),
     }
 
 
-__all__ = ["GenerationInputs", "build_generation_inputs", "draft_artifact"]
+__all__ = ["GenerationInputs", "build_generation_inputs", "draft_artifact", "set_price_snapshot_provider"]
