@@ -118,7 +118,10 @@ class Collector:
         self.cancel()
         self.progress(message="완결 거래일 종가와 사건을 읽고 있습니다.")
         try:
-            daily = self.fetch_daily(ticker, "US", {}, now=self.now())
+            # The submissions carry the official exchanges/tickers that identify the listing.
+            daily = self.fetch_daily(ticker, "US", submissions, now=self.now())
+        except ValueError as error:
+            raise CollectionError("price_unavailable", str(error) if str(error) in {"exchange_unknown", "instrument_not_in_submissions", "price_unavailable"} else None) from None
         except Exception:  # noqa: BLE001
             raise CollectionError("price_unavailable") from None
         exchanges = submissions.get("exchanges") or []
@@ -143,6 +146,8 @@ class Collector:
         self.progress(message="완결 거래일 종가와 사건을 읽고 있습니다.")
         try:
             daily = self.fetch_daily(ticker, "KR", profile, now=self.now())
+        except ValueError as error:
+            raise CollectionError("price_unavailable", str(error) if str(error) in {"exchange_not_supported", "price_unavailable"} else None) from None
         except Exception:  # noqa: BLE001
             raise CollectionError("price_unavailable") from None
         today = self.now().date()

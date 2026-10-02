@@ -79,3 +79,18 @@ def test_the_rule_report_reads_its_valuation_section_from_the_snapshot(tmp_path)
     assert "가격 시나리오는 계산하지 못했습니다" in missing and "### Valuation Metrics" not in missing
     legacy = build_rule_report(analysis(), "beginner")
     assert "### Valuation Metrics" in legacy                                   # no decision -> the existing report is unchanged
+
+
+def test_the_second_valuation_in_the_materials_context_is_replaced_for_snapshot_reports(tmp_path):
+    legacy = " | ".join(["| 시나리오", "내재가치/주", "현재가 대비 |"])
+    parts = ["앞부분", "", "## 앱 계산 Valuation 및 DCF", "설명", legacy, "", "## 공식 숫자 데이터", "숫자"]
+    context = "\n".join(parts)
+    for snapshot in (saved(tmp_path), {"status": "unavailable", "reason": {"code": "price_stale"}}):
+        materials = {"context": context, "computedValuation": legacy}
+        report_link.apply_price_snapshot(LEGACY_CHARTS, materials, snapshot)
+        assert "현재가 대비" not in materials["context"] and "내재가치/주" not in materials["context"]
+        assert materials["context"].startswith("앞부분") and materials["context"].endswith("## 공식 숫자 데이터\n숫자")
+        assert report_link.POINTER in materials["context"] and materials["computedValuation"] == report_link.POINTER
+    untouched = {"context": context}
+    report_link.apply_price_snapshot(LEGACY_CHARTS, untouched, None)
+    assert untouched["context"] == context

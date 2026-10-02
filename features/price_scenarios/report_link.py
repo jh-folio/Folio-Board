@@ -11,6 +11,21 @@ from __future__ import annotations
 from . import report
 
 SUPERSEDED = "price_snapshot_owns_valuation"
+LEGACY_HEADING = "## 앱 계산 Valuation 및 DCF"
+NEXT_HEADING = "## 공식 숫자 데이터"
+POINTER = ("이 보고서의 PER 시나리오와 DCF 계산은 아래 '가격 시나리오' 블록 하나뿐입니다. "
+           "이 자리에 따로 계산한 밸류에이션·DCF 표는 만들지 않았으니 다시 계산하거나 추정하지 마세요.")
+
+
+def replace_legacy_valuation(materials: dict) -> None:
+    """The materials context carries a second valuation/DCF calculation; a snapshot report has exactly one."""
+    context = materials.get("context")
+    if isinstance(context, str) and LEGACY_HEADING in context and NEXT_HEADING in context:
+        start = context.index(LEGACY_HEADING)
+        end = context.index(NEXT_HEADING, start)
+        materials["context"] = "\n".join([context[:start] + LEGACY_HEADING, POINTER, "", context[end:]])
+    if "computedValuation" in materials:
+        materials["computedValuation"] = POINTER
 
 
 def _price(view: dict | None) -> tuple[float | None, str]:
@@ -59,6 +74,7 @@ def apply_price_snapshot(charts, materials: dict, snapshot: dict | None):
         context = "\n".join(["## 가격 시나리오", "", f"- {unavailable_lines(reason)[0]}",
                              "- 계산하지 않은 수익률·내재가치 숫자를 추정하거나 다시 계산하지 마세요."])
         materials["priceSnapshot"] = {"status": "unavailable", "reason": reason}
+    replace_legacy_valuation(materials)
     return out, state, context
 
 
