@@ -7,7 +7,7 @@ const FIELD_ERRORS: Record<string, string> = {
   out_of_range: "허용 범위를 벗어났습니다.",
   invalid_holding_years: "기본 보유 기간은 5년 또는 10년입니다.",
   holding_years_required: "숫자 기준을 저장하려면 기본 보유 기간을 골라 주세요.",
-  revision_conflict: "다른 화면에서 기준이 바뀌었습니다. 새로 불러온 값을 확인하고 다시 저장해 주세요.",
+  revision_conflict: "다른 화면에서 기준이 바뀌었습니다. 입력한 값은 그대로 두었으니, 확인하고 다시 저장하면 새 기준으로 저장됩니다.",
 };
 
 export async function loadCriteria(signal?: AbortSignal): Promise<Criteria | null> {

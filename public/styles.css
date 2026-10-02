@@ -17962,7 +17962,7 @@ select { min-height: 36px; padding: 0 12px; }
 .price-c1{background:var(--folio-chart-1)}.price-c3{background:var(--folio-chart-3)}.price-c5{background:var(--folio-chart-5)}
 .price-banner{display:grid;gap:6px;padding:14px 16px}
 .price-details{display:grid;gap:12px}
-.price-details summary{cursor:pointer;font-weight:var(--fw-medium);padding:6px 0;min-height:44px;display:flex;align-items:center;box-sizing:border-box}
+.price-details summary{cursor:pointer;font-weight:var(--fw-medium);padding:10px 0;min-height:44px;box-sizing:border-box}
 .price-details[open] summary{margin-bottom:6px}
 .price-details p{font-size:var(--fs-body-sm);color:var(--folio-ink-muted)}
 .price-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:4px}

@@ -984,7 +984,10 @@ def api_get_analysis_report(report_id: str, includePersonal: bool = False):
             report["quality"] = {"status": "warn", "warnings": ["quality evaluation failed"]}
     shown = dict(strip_overlay(report, includePersonal))
     if shown.get("priceSnapshotId"):  # a response-only marker: the stored report is never rewritten by reading it
-        shown["priceReview"] = price_review_marker(DATA_DIR, shown["priceSnapshotId"])
+        try:
+            shown["priceReview"] = price_review_marker(DATA_DIR, shown["priceSnapshotId"])
+        except Exception:  # the report must open even when the price database cannot be read
+            shown["priceReview"] = None
     return shown
 
 

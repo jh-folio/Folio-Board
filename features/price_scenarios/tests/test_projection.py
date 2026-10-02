@@ -143,6 +143,17 @@ def test_projection_reads_a_stored_snapshot_without_touching_the_database(tmp_pa
 
 
 def test_an_assumption_far_beyond_the_search_range_is_a_range_state_not_an_error():
-    huge = "9" * 30  # the longest growth the store accepts
+    huge = "9" * 12 + "." + "9" * 18  # the longest growth the store accepts
     assert scenario_irr("100", "5", huge, "15", "0.3", 10) == "above_range"
     assert scenario_irr("100", "5", "1e99999", "15", "0.3", 10) == "above_range"
+
+
+def test_the_longest_accepted_assumption_still_projects_without_an_error(tmp_path):
+    from features.price_scenarios.store import PriceStore
+    store = PriceStore(tmp_path / "m.sqlite3")
+    saved = store.save_snapshot(*make())
+    override = store.save_override("US:ACME", saved["snapshotId"], growth="9" * 12 + "." + "9" * 18, exit_pe="9" * 12 + "." + "9" * 18, payout="0.5")
+    out = project(store.get(saved["snapshotId"]), criteria("6"), override, (), today=TODAY)["myAssumptions"]
+    assert {row["irrRange"] for row in out["rows"]} == {"above_range"} and all(row["irr"] is None for row in out["rows"])
+    tiny = store.save_override("US:ACME", saved["snapshotId"], growth="0.0000001", expected_override_id=override["overrideId"])
+    assert tiny["growth"] == "0.0000001"  # never stored in exponent notation

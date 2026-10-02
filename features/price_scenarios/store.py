@@ -69,7 +69,7 @@ def snapshot_id(instrument_id: str, as_of: str, method: str, input_fingerprint: 
     return "price-" + hashlib.sha256(canonical([instrument_id, as_of, method, input_fingerprint]).encode()).hexdigest()
 
 
-PLAIN_DECIMAL = re.compile(r"-?[0-9]{1,30}(\.[0-9]{1,30})?")
+PLAIN_DECIMAL = re.compile(r"-?[0-9]{1,12}(\.[0-9]{1,18})?")  # wide enough for any real assumption, narrow enough to stay inside the 28-digit arithmetic
 
 
 def decimal_text(value, *, field: str, low=None, high=None, low_open=False) -> str:
@@ -85,7 +85,7 @@ def decimal_text(value, *, field: str, low=None, high=None, low_open=False) -> s
         raise PriceStoreError("invalid_number", field)
     if (low is not None and (parsed < low or (low_open and parsed == low))) or (high is not None and parsed > high):
         raise PriceStoreError("out_of_range", field)
-    return str(parsed)
+    return format(parsed, "f")
 
 
 class PriceStore:

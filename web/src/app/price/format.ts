@@ -88,6 +88,11 @@ export const NOTICE_TEXT: Record<string, string> = {
   snapshot_old: "계산 시점이 오래됐습니다. 다시 계산하면 최신 가격·공시로 바뀝니다.",
 };
 
+export const METRIC_TEXT: Record<string, string> = {
+  "EPS Diluted": "희석 주당이익", "Net Income": "순이익", Revenue: "매출", DPS: "주당 배당금", "Shares Diluted": "희석 주식 수",
+  "Operating Cash Flow": "영업현금흐름", "Dividends Paid": "배당금 지급",
+};
+
 export const SCENARIO_NAMES: Record<string, { name: string; note: string; short: string }> = {
   conservative: { name: "보수", short: "과거 낮은 편", note: "과거 10년 중 낮은 편(하위 25%)" },
   base: { name: "기본", short: "과거 보통 수준", note: "과거 10년의 중간값" },
@@ -214,7 +219,7 @@ export function bannerFor(args: { projection: Projection | null; view: SnapshotV
   if (saveFailed) return { tone: "warn", title: "이 결과는 저장되지 않았습니다.", detail: "화면에는 보이지만 기록에 남지 않았습니다. 이전 기록은 그대로입니다. 다시 계산하면 저장을 다시 시도합니다." };
   if (projection && projection.reviewNeeded.length > 0) {
     const first = projection.reviewNeeded[0];
-    return { tone: "warn", title: `${view?.asOf ?? projection.asOf} 계산에 쓴 공시 숫자가 정정됐습니다.`, detail: `${first.fiscalYear}년 ${first.metric} 값이 바뀌었습니다. 정정 전 숫자로 계산한 기록이라 다시 볼 필요가 있습니다. 지난 기록과 내 가정은 자동으로 바꾸지 않습니다.` };
+    return { tone: "warn", title: `${view?.asOf ?? projection.asOf} 계산에 쓴 공시 숫자가 정정됐습니다.`, detail: `${first.fiscalYear}년 ${METRIC_TEXT[first.metric] ?? first.metric} 값이 바뀌었습니다. 정정 전 숫자로 계산한 기록이라 다시 볼 필요가 있습니다. 지난 기록과 내 가정은 자동으로 바꾸지 않습니다.` };
   }
   if (projection?.notices.includes("snapshot_old")) return { tone: "info", title: "계산 시점이 오래됐습니다.", detail: NOTICE_TEXT.snapshot_old };
   return null;

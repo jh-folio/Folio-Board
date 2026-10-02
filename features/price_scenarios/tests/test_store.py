@@ -179,7 +179,7 @@ def test_overrides_are_appended_per_instrument_with_blank_inheritance(db):
     ({"exit_pe": "0"}, "out_of_range"), ({"exit_pe": "-3"}, "out_of_range"), ({"payout": "1.01"}, "out_of_range"),
     ({"payout": "-0.01"}, "out_of_range"), ({"growth": 0.1}, "invalid_number"),
     ({"growth": "1e1"}, "invalid_number"), ({"growth": "1E+1"}, "invalid_number"), ({"growth": "1e99999"}, "invalid_number"),
-    ({"exit_pe": "1.5e1"}, "invalid_number"), ({"growth": "9" * 31}, "invalid_number"), ({"growth": " 0x10"}, "invalid_number")])
+    ({"exit_pe": "1.5e1"}, "invalid_number"), ({"growth": "9" * 13}, "invalid_number"), ({"exit_pe": "1." + "0" * 19}, "invalid_number"), ({"growth": " 0x10"}, "invalid_number")])
 def test_override_validation(db, fields, code):
     snapshot = db.save_snapshot(*make())["snapshotId"]
     with pytest.raises(PriceStoreError) as error:
