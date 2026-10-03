@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | `daily_briefing/` | 브리핑 탭 | 미국장·한국장 범위별 브리핑, 이슈·출처 다양성, 생성 당시 가격 series·히트맵 사이드카, 생성 당시/현재 REST snapshot 전환, Lightweight Charts·ECharts 렌더링과 PNG 내보내기, 저장·품질 모드 |
 | `company_analysis/` | 기업 분석 탭 | SEC/DART 숫자, 공시 문단, 로컬 자료를 결합한 기업분석 |
-| `price_scenarios/` | 입력 기반 구현 중·화면 미연결 | 공시 이력·완결 종가·상장증권·주식 수 사건의 검증. [계약](price_scenarios/README.md) |
+| `price_scenarios/` | 구현됨(0.9) | 가격 탭의 시나리오 수익률 계산·저장·투영, 투자 기준, 기업분석 보고서 연결. [계약](price_scenarios/README.md) |
 | `topic_report/` | 딥 리서치 탭 | 질문-first 계획 승인, Smart Collection 재사용, 근거 추적 보고서(내부 Topic Report v2 호환) |
 | `smart_collections/` | 딥 리서치 내부 워크스페이스 | 결정적 저장 필터, 상태/reason, 제한된 snapshot 변화와 recovery |
 | `portfolio/` | 포트폴리오 탭 | `보유·평가 | 투자 리뷰 | 프리셋 | 백테스트` 4탭: 보유 포지션, 날짜별 투자 리뷰, 목표 프리셋, 리서치용 백테스트 |

@@ -30,6 +30,7 @@
 | Execution Diagnostics | `common/diagnostics` | 실행별 privacy-safe 단계·오류·엔진·권위 관측과 bounded JSON 저장, Work Log/자동화 상세 및 보고서 생성 오류 연결. 공통 목록·기간/실패/대체 필터의 headless API는 구현되어 있으며 목록 UI·나머지 행동 연결은 후속이다. SharedJob/commit/자동화 권위 불변 | 관측 metadata |
 | AI Agent Mode | `agent_mode` | Codex/Claude/Antigravity CLI용 context pack·Direct Bridge·기존 저장소 writeback + 도크 Agent 대화 스레드(`/api/agent/threads`)·수정 제안 diff 승인 writeback(`/api/agent/proposals/{id}`) | source-grounded + Personal Overlay |
 | 투자 리뷰 | `investment_review` | Portfolio `투자 리뷰` 하위 탭이 읽는 날짜별 v2 점검: 입력 기준·변화·우선 포지션·공동 위험·자료·이력 | Personal Overlay |
+| 가격 시나리오 | `price_scenarios` | 워치리스트 상세 `가격` 탭: 과거 10년 기록 기반 보수·기본·낙관 시나리오 연 수익률(EPS×끝날 때 PER+배당), 지금 가격이 전제하는 것, 성장 분해, DCF 안전마진, 설정 `투자 기준`·내 가정(개인 층), 기업분석 보고서의 스냅샷 연결(0.9) | Personal Overlay |
 | 현재 시장 위젯 | `market_widgets` | 예전 TradingView Current Market 위젯 설정. 0.5에서 Legacy 모드를, 0.5.4에서 마지막 소비자였던 워치리스트 상세 위젯과 브리지(`public/tradingview-widgets.js`)를 삭제했다. 설정 파일은 집중 종목 fallback으로만 read-only로 읽는다 | — |
 | Data Source Reliability | `common/data_reliability` | 공식자료 우선순위·provider status·한국 데이터 보강 경로·Thesis evidence 확장·공식자료 semantic cache/fetch runtime | source-grounded |
 | Fast-Origin Signals | `common/research_library/signals` | 기존 KR RSS(연합인포맥스·연합뉴스)의 빠른 게시 headline을 metadata-only lead로 수집·표시. 자격증명 없이 기본 동작하며 lead는 evidence count/source ledger 제외 | lead (evidence 이전 단계) |
