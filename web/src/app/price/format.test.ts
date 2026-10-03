@@ -4,6 +4,23 @@ import {
   atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
 } from "./format";
 import type { Projection, ScenarioRow } from "./types";
+import { cashPerHundred } from "./format";
+import { instrumentIdFor } from "./PriceTab";
+
+describe("spec-4 display", () => {
+  it("rounds stored cash ratios half-even without binary float ties", () => {
+    expect(cashPerHundred("0.7950")).toBe("80");
+    expect(cashPerHundred("0.8050")).toBe("80");
+    expect(cashPerHundred("1.5050")).toBe("150");
+    expect(cashPerHundred("-0.2050")).toBe("−20");
+    expect(cashPerHundred("-0.0000")).toBe("0");
+  });
+  it("uses the known market and accepts Korean alphanumeric codes", () => {
+    expect(instrumentIdFor("0123a0")).toBe("KR:0123A0");
+    expect(instrumentIdFor("ABCDE", "US")).toBe("US:ABCDE");
+    expect(instrumentIdFor("005930", "KR")).toBe("KR:005930");
+  });
+});
 
 describe("decimal text", () => {
   it("shifts the point without float error", () => {

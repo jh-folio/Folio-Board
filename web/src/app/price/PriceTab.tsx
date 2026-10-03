@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { ApiRequestError, getJson, postJson } from "../../api";
 import { pollAgentJobBounded, type PollableAgentJob } from "../agentPolling";
 import { CriteriaForm, loadCriteria } from "./CriteriaForm";
+import { CashConversionSection, NoGrowthLine, ReturnPartsLine } from "./Crosschecks";
 import {
   CriteriaLine, DecompositionSection, HistoryList, MyAssumptionsResult, RequirementSection, ScaleBar, ScenarioCards, ScenarioTable, SourcesDetails,
 } from "./PriceParts";
@@ -10,9 +11,9 @@ import type { Criteria, Override, Overview, Projection, SnapshotView } from "./t
 
 const CALCULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
-export function instrumentIdFor(ticker: string): string {
+export function instrumentIdFor(ticker: string, market?: string): string {
   const clean = ticker.trim().toUpperCase();
-  return /^\d{6}$/.test(clean) ? `KR:${clean}` : `US:${clean}`;
+  return market?.toUpperCase() === "KR" || (!market && /^[0-9][A-Z0-9]{5}$/.test(clean)) ? `KR:${clean}` : `US:${clean}`;
 }
 
 type Loaded = { overview: Overview; view: SnapshotView | null; projection: Projection | null; criteria: Criteria | null; override: Override | null };
@@ -38,8 +39,8 @@ function errorField(error: unknown): string {
 const ASSUMPTION_FIELDS: Record<string, string> = { growth: "이익 성장", exitPE: "끝날 때 PER", payout: "배당성향" };
 
 /** 워치리스트 기업 상세의 `가격` 탭. 계산은 서버가 하고 여기는 읽고 보여 준다. */
-export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSettings?: () => void }) {
-  const instrument = instrumentIdFor(ticker);
+export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ticker: string; market?: string; active?: boolean; onOpenSettings?: () => void }) {
+  const instrument = instrumentIdFor(ticker, market);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [calculating, setCalculating] = useState(false);
@@ -64,17 +65,19 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
   }, []);
 
   useEffect(() => {
+    if (!active) { controller.current?.abort(); return; }
     const control = new AbortController();
     controller.current?.abort(); controller.current = control;
     setPhase("loading"); setLoaded(null); setMessage(""); setFeedback(""); setCalculating(false); setSelected(1); setDecSelected(null);
     loadAll(instrument, control.signal)
       .then(next => { if (!control.signal.aborted) { apply(next, true); setPhase("ready"); } })
       .catch(() => { if (!control.signal.aborted) setPhase("error"); });
-    return () => control.abort();
-  }, [instrument, apply]);
+    return () => { control.abort(); controller.current?.abort(); };
+  }, [instrument, apply, active]);
 
-  async function reload(resetHorizon = false) {
-    try { apply(await loadAll(instrument), resetHorizon); setPhase("ready"); } catch { setPhase("error"); }
+  async function reload(resetHorizon = false, signal = controller.current?.signal) {
+    try { const next = await loadAll(instrument, signal); if (!signal?.aborted) { apply(next, resetHorizon); setPhase("ready"); } }
+    catch { if (!signal?.aborted) setPhase("error"); }
   }
 
   async function calculate() {
@@ -82,13 +85,14 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
     controller.current = control;
     setCalculating(true); setFeedback(""); setMessage("공시 실적, 분할 내역, 종가를 확인하고 있습니다. 보통 수십 초 걸립니다.");
     try {
-      const job = await postJson<PollableAgentJob>("/api/price-snapshots/calculate", { instrumentId: instrument });
+      const job = await postJson<PollableAgentJob>("/api/price-snapshots/calculate", { instrumentId: instrument }, { signal: control.signal });
       await pollAgentJobBounded(job, { signal: control.signal, timeoutMs: CALCULATION_TIMEOUT_MS, onUpdate: current => current.message && setMessage(current.message) });
       if (control.signal.aborted) return;
-      await reload(false);
+      await reload(false, control.signal);
     } catch (error) {
       if (control.signal.aborted) return;
-      await reload(false);
+      await reload(false, control.signal);
+      if (control.signal.aborted) return;
       setFeedback(error instanceof Error && error.name === "AgentPollTimeout" ? "계산이 아직 진행 중입니다. 잠시 뒤 다시 열어 확인해 주세요." : "");
     } finally { if (!control.signal.aborted) { setCalculating(false); setMessage(""); } }
   }
@@ -175,6 +179,7 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
             <div className="price-hchart">
               <p className="price-note">{horizon}년 보유 시 연 수익률 <span className="price-meta">· 카드를 누르면 막대에서 위치를 보여 줍니다</span></p>
               <ScenarioCards rows={rows} horizon={horizon} selected={selected} required={requiredText} onSelect={index => setSelected(current => (current === index && index !== 1 ? 1 : index))} />
+              <ReturnPartsLine view={view} horizon={horizon} selected={selected} />
               <ScaleBar rows={rows} horizon={horizon} selected={selected} goal={goal} />
             </div>
             <CriteriaLine projection={projection} criteria={criteria} onEdit={() => openCriteria(document.activeElement as HTMLElement | null)} />
@@ -200,6 +205,7 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
           <section className="price-section" aria-labelledby="price-reverse-title">
             <div className="watchlist-detail-section__head"><h3 id="price-reverse-title">지금 가격이 전제하는 것</h3><span className="price-meta">{horizon}년 보유 기준</span></div>
             <RequirementSection view={view} projection={projection} horizon={horizon} onSetCriteria={() => openCriteria(document.activeElement as HTMLElement | null)} />
+            <NoGrowthLine view={view} projection={projection} />
             <p className="price-meta">나머지 가정은 기본값으로 둔 계산입니다. 시장이 실제로 이렇게 기대한다는 뜻은 아니며, 달성 가능성을 판정하지 않습니다.</p>
           </section>
 
@@ -243,6 +249,8 @@ export function PriceTab({ ticker, onOpenSettings }: { ticker: string; onOpenSet
         </>
       )}
 
+      {view && view.results.support.status !== "unsupported" && !calculating && <CashConversionSection block={view.results.cashConversion} />}
+
       {overview.history.length > 0 && !calculating && (
         <section className="price-section" aria-labelledby="price-history-title">
           <div className="watchlist-detail-section__head"><h3 id="price-history-title">계산 기록</h3><span className="price-meta">이전 계산은 지우지 않고 남깁니다</span></div>
@@ -273,6 +281,8 @@ function PreviousBody({ view }: { view: SnapshotView }) {
   return (
     <>
       <h2 id="price-previous-title">{view.asOf} 계산</h2>
+      <ReturnPartsLine view={view} horizon={10} />
+      <CashConversionSection block={view.results.cashConversion} id="price-previous-cash" />
       <p>당시 종가 {money(view.inputSummary.price.value, view.inputSummary.price.currency)} · 기본 가정 5년 {irrText(five)}, 10년 {irrText(ten)}</p>
       <p className="price-meta">{base ? `당시 이익 성장 ${pct(base.g)} · 끝날 때 PER ${Number(base.exitPE).toFixed(1)}배 · 배당성향 ${pct(base.payout, 0)}. ` : ""}지난 계산을 읽기만 하는 화면입니다. 현재 기준과 내 가정은 바뀌지 않습니다.</p>
     </>

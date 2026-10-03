@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from zoneinfo import ZoneInfo
 
 from .decimal_ops import source_number, number
@@ -10,7 +11,7 @@ from .decimal_ops import source_number, number
 def provider_symbol(ticker: str, market: str, metadata: dict) -> tuple[str, str]:
     if market == "KR":
         suffix = {"Y": ".KS", "K": ".KQ"}.get(metadata.get("corp_cls"))
-        if not suffix or len(ticker) != 6 or not ticker.isdigit():
+        if not suffix or not re.fullmatch(r"[0-9][A-Z0-9]{5}", ticker):
             raise ValueError("exchange_not_supported")
         return ticker + suffix, "dart_corp_cls"
     if market == "US" and metadata.get("exchanges"):

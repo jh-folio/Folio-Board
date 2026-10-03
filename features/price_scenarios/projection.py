@@ -148,6 +148,7 @@ def project(snapshot: dict, criteria: dict | None = None, override: dict | None 
     years = criteria.get("holdingYears") if criteria else None
     age = (today - dt.date.fromisoformat(inputs["asOf"])).days
     notices = (["snapshot_old"] if age > SNAPSHOT_OLD_DAYS else [])
+    from .crosschecks import project_no_growth
     return {
         "snapshotId": snapshot["snapshotId"], "asOf": inputs["asOf"], "ageDays": age, "notices": notices,
         "criteria": None if criteria is None else {"revisionId": criteria["revisionId"], "holdingYears": years,
@@ -157,4 +158,5 @@ def project(snapshot: dict, criteria: dict | None = None, override: dict | None 
         "requirement": _requirement(results, price, eps0, required),
         "myAssumptions": _my_assumptions(results, price, eps0, override, snapshot["snapshotId"]),
         "reviewNeeded": [dict(row) for row in reviews],
+        "noGrowth": project_no_growth(snapshot, required, criteria),
     }

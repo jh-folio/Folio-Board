@@ -2,6 +2,18 @@
 // 숫자는 전부 문자열(Decimal)로 온다 — 화면에서 계산하지 않고 형식만 바꾼다.
 
 export type Unavailable = { status: "unavailable"; reason: { code: string; subCode?: string } };
+export type PreviousMethod = { status: "not_applicable"; reason: { code: string } };
+export type ReturnPart = ({ label: ScenarioRow["label"]; horizon: 5 | 10 } & Unavailable)
+  | { label: ScenarioRow["label"]; horizon: 5 | 10; status: "available"; peNow: string; exitPE: string;
+      growth: string; dividend: string; rerating: string; irrFlat: string };
+export type NoGrowth = Unavailable | PreviousMethod | { status: "available"; value: string; growthShare: string;
+  priceCoverage: string; requiredReturn: string; criteriaRevisionId: number; hasGrowthShare: boolean };
+export type CashConversion = (Unavailable | { status: "available"; ratio: string;
+  class: "cash_below_earnings" | "cash_in_line" | "cash_above_earnings" }) & {
+    currency?: string; years?: { fiscalYear: number; netIncome: string; ocf: string; capexRaw: string; capexOut: string; sbc?: string; fcf: string }[];
+    sumNetIncome?: string; sumFcf?: string; sbcBasis?: "deducted" | "not_deducted" | "not_applicable_kr";
+    notices?: { code: string; years?: number[] }[];
+  } | PreviousMethod;
 
 export type ScenarioRow =
   | ({ label: "conservative" | "base" | "optimistic"; horizon: 5 | 10; status: "available";
@@ -26,6 +38,9 @@ export type BreakEvenMargin =
   | Unavailable;
 
 export type SnapshotResults = {
+  returnParts?: ReturnPart[] | PreviousMethod;
+  noGrowth?: Unavailable | { status: "available"; rps0: string; marginP50: string; marginN: number; normEps: string; recentEps: string | null };
+  cashConversion?: CashConversion;
   support: { status: "supported" | "limited" | "unsupported"; reasons: { code: string; subCode?: string }[]; notices: string[] };
   shareEvents?: { state: string };
   ranges: Record<"growth" | "pe" | "payout" | "rpsGrowth" | "netMargin", RangeBlock>;
@@ -63,6 +78,7 @@ export type MyAssumptions = {
   rows: { horizon: number; status: string; g?: string; exitPE?: string; payout?: string; irr?: string | null; irrRange?: string | null }[];
 };
 export type Projection = {
+  noGrowth?: NoGrowth;
   snapshotId: string; asOf: string; ageDays: number; notices: string[];
   criteria: { revisionId: number; holdingYears: number | null; requiredReturn: string | null; minMarginOfSafety: string | null } | null;
   verdict: { return: Verdict; marginOfSafety: Verdict };

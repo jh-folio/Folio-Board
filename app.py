@@ -411,7 +411,7 @@ async def lifespan(_app: FastAPI):
     ensure_dirs()
     # 기업분석 생성(API·CLI 두 경로)이 같은 가격 스냅샷에서 쓰이도록 제공자를 등록한다.
     # 가져오기만 하는 테스트·도구에는 등록되지 않아 외부 호출이 생기지 않는다.
-    set_price_snapshot_provider(lambda company: snapshot_for_report(DATA_DIR, company))
+    set_price_snapshot_provider(lambda company, **options: snapshot_for_report(DATA_DIR, company, **options))
     # 거래소가 붙은 SEC 목록을 한 번 받아 둔다. 없으면 dual-listed 유럽·일본 기업이
     # 상장 라인과 원주 OTC 라인으로 갈려 전부 "애매"로 떨어진다.
     schedule_sec_exchange_cache()

@@ -40,7 +40,7 @@ test("상세는 네이티브 차트·실적 패널과 대화·Agent 맥락을 �
 test("AppShell renders WatchlistRoute on the watchlist route", async () => {
   const source = await readFile(new URL("../src/app/AppShell.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /<WatchlistRoute\s*\/>/);
+  assert.match(source, /<WatchlistRoute\s+active=\{active\.id === "watchlist"\}\s*\/>/);
   assert.match(source, /route\.id === "watchlist"/);
   assert.match(source, /renderRoutePane/);
 });

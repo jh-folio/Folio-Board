@@ -79,7 +79,7 @@ class Collector:
         ticker = str(ticker or "").strip().upper()
         if market == "US" and re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
             return self._collect_us(ticker)
-        if market == "KR" and re.fullmatch(r"\d{6}", ticker):
+        if market == "KR" and re.fullmatch(r"[0-9][A-Z0-9]{5}", ticker):
             return self._collect_kr(ticker)
         raise CollectionError("instrument_not_supported")
 

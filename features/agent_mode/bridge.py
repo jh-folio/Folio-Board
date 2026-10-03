@@ -1373,6 +1373,11 @@ def _run_agent_task_locked(
         }
         if durable:
             prepare_params["owner_job_id"] = job_id
+        if task_type == "company_analysis":
+            def check_price_cancelled():
+                if job_id and (get_job(job_id) or {}).get("status") in {"cancelled", "cancel_requested"}:
+                    raise RuntimeError("price_calculation_cancelled")
+            prepare_params["cancel"] = check_price_cancelled
         if task_type == "briefing":
             from features.agent_mode.setup import configured_model
             semantic_model = (

@@ -12,6 +12,8 @@ import datetime as dt
 import json
 import re
 import threading
+from copy import deepcopy
+from concurrent.futures import CancelledError
 from pathlib import Path
 
 from features.common.atomic_replace import write_bytes_atomic
@@ -26,6 +28,7 @@ INSTRUMENT = re.compile(r"^(US|KR):([A-Z0-9.\-]{1,10})$")
 ATTEMPTS_FILE = "price-attempts.json"
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+_ATTEMPTS_LOCK = threading.Lock()
 
 
 def _instrument_lock(instrument_id: str) -> threading.Lock:
@@ -44,7 +47,7 @@ class CalculationNotStored(RuntimeError):
 
 def parse_instrument(value) -> tuple[str, str]:
     match = INSTRUMENT.fullmatch(value) if isinstance(value, str) else None
-    if match is None or (match.group(1) == "KR" and not re.fullmatch(r"\d{6}", match.group(2))):
+    if match is None or (match.group(1) == "KR" and not re.fullmatch(r"[0-9][A-Z0-9]{5}", match.group(2))):
         raise ValueError("invalid_instrument_id")
     return match.group(1), match.group(2)
 
@@ -63,6 +66,11 @@ def read_attempt(root, instrument_id: str) -> dict | None:
 
 
 def _write_attempt(root, instrument_id: str, record: dict) -> None:
+    with _ATTEMPTS_LOCK:
+        _write_attempt_locked(root, instrument_id, record)
+
+
+def _write_attempt_locked(root, instrument_id: str, record: dict) -> None:
     path = Path(root) / ATTEMPTS_FILE
     try:
         current = json.loads(path.read_text(encoding="utf-8"))
@@ -75,7 +83,8 @@ def _write_attempt(root, instrument_id: str, record: dict) -> None:
 
 # --- calculation ----------------------------------------------------------------
 
-def calculate(root, instrument_id: str, *, job_id=None, progress=None, collector: Collector | None = None, now=None) -> dict:
+def calculate(root, instrument_id: str, *, job_id=None, progress=None, collector: Collector | None = None, now=None,
+              cancel_check=None) -> dict:
     """Collect, assemble and save one snapshot. Raises CalculationNotStored when nothing valid exists."""
     from features.common.jobs import get_shared_job
 
@@ -83,6 +92,13 @@ def calculate(root, instrument_id: str, *, job_id=None, progress=None, collector
     clock = now or (lambda: dt.datetime.now(dt.timezone.utc))
 
     def cancel():
+        if cancel_check:
+            try:
+                cancel_check()
+            except RuntimeError as error:
+                if str(error) == "cancelled":
+                    raise RuntimeError("price_calculation_cancelled") from error
+                raise
         if job_id:
             job = get_shared_job(job_id)
             if job is None or job.status.value in {"cancel_requested", "cancelled", "failed_restart"}:
@@ -109,6 +125,8 @@ def calculate(root, instrument_id: str, *, job_id=None, progress=None, collector
                                write, saved_count=1)
             else:
                 saved = write()
+        except CancelledError:
+            raise
         except CollectionError as error:
             _write_attempt(root, instrument_id, {"status": "failed", "reason": {"code": error.code, **({"subCode": error.sub_code} if error.sub_code else {})},
                                                  "startedAt": started, "finishedAt": clock().isoformat()})
@@ -154,7 +172,12 @@ def snapshot_view(root, snapshot_id_: str, *, include_inputs: bool = False) -> d
     snapshot = store_for(root).get(snapshot_id_)
     if snapshot is None:
         return None
-    view = {**_summary(snapshot), "results": snapshot["results"],
+    from . import method_at_least
+    from .blocks import not_applicable
+    results = deepcopy(snapshot["results"])
+    if not method_at_least(snapshot["inputs"]["methodVersion"], 4):
+        results.update(returnParts=not_applicable("previous_method"), cashConversion=not_applicable("previous_method"))
+    view = {**_summary(snapshot), "results": results,
             "inputSummary": {key: snapshot["inputs"].get(key) for key in ("asOf", "identity", "price", "classificationInputs")},
             "meta": snapshot["meta"]}
     if include_inputs:
@@ -204,7 +227,10 @@ def snapshot_for_report(root, company: dict, *, calculator=None, progress=None, 
     instrument = f"{market}:{ticker}"
     try:
         parse_instrument(instrument)
-        out = (calculator or calculate)(root, instrument, progress=progress)
+        if cancel:
+            cancel()
+        options = {"progress": progress, **({"cancel_check": cancel} if cancel else {})}
+        out = (calculator or calculate)(root, instrument, **options)
     except ValueError:
         return {"status": "unavailable", "reason": {"code": "instrument_not_supported"}}
     except CalculationNotStored as error:

@@ -17973,7 +17973,23 @@ select { min-height: 36px; padding: 0 12px; }
 .price-history{display:grid;gap:4px;list-style:none;padding:0;margin:0}
 .price-history li{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--folio-border)}
 .price-dialog{max-width:620px;width:calc(100% - 32px);max-height:85vh;overflow:auto;padding:24px;box-sizing:border-box;border:0}
-.price-dialog::backdrop{background:rgba(13,15,18,.5)}
+.price-dialog{
+  --price-dialog-scrim:rgba(23,34,53,.48);
+}
+:root[data-theme="dark"] .price-dialog{
+  --price-dialog-scrim:rgba(6,8,12,.62);
+}
+.price-dialog::backdrop{background:var(--price-dialog-scrim)}
+.price-return-parts,.price-no-growth{display:grid;gap:4px;padding:10px 0}
+.price-cash-table{width:100%;min-width:0;max-width:100%;overflow:auto}
+.price-stack>.price-section{min-width:0}
+.price-section>.price-details{min-width:0}
+.price-cash-details{display:block}
+.price-cash-table .price-table{min-width:700px}
+.price-cash-table .price-table thead{position:static;width:auto;height:auto;overflow:visible;clip-path:none}
+.price-cash-table .price-table tbody{display:table-row-group}
+.price-cash-table .price-table tr{display:table-row}
+.price-cash-table .price-table th,.price-cash-table .price-table td{padding:12px 10px;white-space:nowrap}
 .price-dialog h2{font-size:var(--fs-title);margin:0 0 12px}
 .price-dialog .price-row{margin-top:20px;justify-content:flex-end}
 @media (max-width: 640px) {

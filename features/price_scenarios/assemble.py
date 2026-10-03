@@ -143,7 +143,8 @@ def unreadable_dividend_years(history: dict) -> set[int]:
 
 
 def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
-    spec3 = METHOD_VERSION.endswith("-3") if spec3 is None else spec3
+    from . import method_at_least
+    spec3 = method_at_least(METHOD_VERSION, 3) if spec3 is None else spec3
     now = dt.datetime.fromisoformat(raw["now"])
     market, daily = raw["market"], raw.get("daily")
     if market not in {"US", "KR"} or not daily:
@@ -241,6 +242,8 @@ def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
                 dcf_inputs = {"status": "unavailable", "reason": captured["reason"]}
                 results["dcf"] = captured
     results = {"support": support, "shareEvents": shares_block, **results}
+    from .crosschecks import cash_conversion
+    results["cashConversion"] = cash_conversion(history, support, market, session)
     identity = dict(raw["identity"], ticker=raw["ticker"], market=market)
     inputs = {"instrumentId": f"{market}:{raw['ticker']}", "asOf": session, "methodVersion": METHOD_VERSION,
               "specVersion": SPEC_VERSION, "identity": identity, "classificationInputs": classification, "price": price,

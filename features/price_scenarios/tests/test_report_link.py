@@ -70,7 +70,8 @@ def analysis(snapshot=None):
 def test_the_rule_report_reads_its_valuation_section_from_the_snapshot(tmp_path):
     snapshot = saved(tmp_path)
     text = build_rule_report(analysis(snapshot), "beginner")
-    assert "## 3. 밸류에이션 지표" in text and "### 가정별 연환산 수익률" in text and snapshot["snapshotId"] in text
+    assert "## 3. 밸류에이션 지표" in text and "### 가정별 연환산 수익률" in text
+    assert snapshot["snapshotId"] not in text  # reference remains structured, the reader does not need the hash
     assert "### Valuation Metrics" in text and "현재 주가" in text and "| PER |" in text          # today's multiples are kept
     assert "현재가 대비" not in text and "### DCF 기반 내재가치" not in text and "×0.7" not in text   # the x0.7/x1.3 table and the second DCF are not
     section = text.split("## 3. 밸류에이션 지표", 1)[1].split("## 4.", 1)[0]

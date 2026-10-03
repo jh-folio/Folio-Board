@@ -44,6 +44,13 @@ export function money(value: string | number | null | undefined, currency: strin
 }
 
 export const REASON_TEXT: Record<string, string> = {
+  previous_method: "이 계산 기록에는 없는 항목입니다. 다시 계산하면 볼 수 있습니다",
+  non_positive_normalized_earnings: "과거 보통 이익률로 계산한 주당이익이 0 이하입니다",
+  required_return_not_positive: "내 요구수익률이 0 이하라 성장 없는 가치를 계산하지 않았습니다",
+  net_income_sum_not_positive: "대상 연도의 순이익 합이 0 이하라 현금 비율을 계산하지 않았습니다",
+  irr_above_range: "수익률이 계산 구간 상한을 넘어 세 조각으로 나누지 않았습니다",
+  irr_below_range: "수익률이 계산 구간 하한을 넘어 세 조각으로 나누지 않았습니다",
+  flat_irr_out_of_range: "PER이 그대로일 때 수익률이 계산 구간을 벗어납니다",
   history_too_short: "과거 자료가 부족해 계산하지 않았습니다",
   share_event_unknown: "주식 수가 바뀐 사건을 확인하지 못했습니다",
   price_event_unverified: "가격에 주식 수 변화가 반영됐는지 확인하지 못했습니다",
@@ -72,6 +79,17 @@ export const REASON_TEXT: Record<string, string> = {
   calculation_failed: "예상하지 못한 오류로 계산하지 못했습니다",
   dcf_fallback: "내재가치 계산에 자료 부족으로 채운 값이 있어 판정하지 않았습니다",
 };
+
+/** Stored four-place ratio ×100, rounded half-even as specified for the cash sentence. */
+export function cashPerHundred(ratio: string): string {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(ratio);
+  if (!match) return "—";
+  const digits = (match[3] ?? "").padEnd(4, "0");
+  const scaled = BigInt(match[2]) * 10000n + BigInt(digits.slice(0, 4));
+  const whole = scaled / 100n, remainder = scaled % 100n;
+  const rounded = whole + (remainder > 50n || (remainder === 50n && whole % 2n === 1n) ? 1n : 0n);
+  return `${match[1] && rounded !== 0n ? "−" : ""}${rounded}`;
+}
 
 export function reasonText(code: string | undefined | null): string {
   return (code && REASON_TEXT[code]) || (code ? `계산할 수 없습니다(${code})` : "계산할 수 없습니다");

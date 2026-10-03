@@ -35,7 +35,8 @@ def test_section_reads_every_number_from_the_snapshot_and_never_uses_forbidden_w
     view = view_of(tmp_path, dcf=dcf())
     text = report.render_section(view)
     assert text.startswith("## 가격과 가정별 수익률")
-    for needle in ("가정별 연환산 수익률", "과거 10년 중 낮은 편(하위 25%)", "중간값", "높은 편(상위 25%)", "끝날 때 PER", view["snapshotId"],
+    assert view["snapshotId"] not in text  # opaque IDs stay in the structured reference, not reader prose
+    for needle in ("가정별 연환산 수익률", "과거 10년 중 낮은 편(하위 25%)", "중간값", "높은 편(상위 25%)", "끝날 때 PER", view["asOf"],
                    "분할만 반영한 실제 종가", "손실이 나지 않으려면(손익분기)", "내재가치/주", "예측이 아니며"):
         assert needle in text, needle
     base = next(r for r in view["results"]["scenarios"] if r["label"] == "base" and r["horizon"] == 10)

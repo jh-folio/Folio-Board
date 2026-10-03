@@ -183,18 +183,21 @@ def compute(history: dict, price: dict, *, fiscal_prices: list[dict] | None, pri
                        ("netMargin", lambda: rng.margin_range(history))):
         ranges[key], quartiles[key] = build()
     base = base_year(history, session_date)
-    return {"ranges": ranges, "base": base, "scenarios": _scenario_rows(reference, base, quartiles, ranges),
+    results = {"ranges": ranges, "base": base, "scenarios": _scenario_rows(reference, base, quartiles, ranges),
             "decomposition": decompose(history),
             "reverse": {"breakEvenPE": _break_even_pe(reference, base, quartiles, ranges),
                         "breakEvenMargin": _break_even_margin(history, reference, session_date, quartiles, ranges),
                         "sensitivity": _sensitivity(reference, base, quartiles, ranges)},
             "notices": ["excluded_growth_windows"] if any(ranges[key].get("excluded") for key in ("growth", "rpsGrowth")) else []}
+    from .crosschecks import no_growth, return_parts
+    results.update(returnParts=return_parts(results, quartiles, reference), noGrowth=no_growth(history, price, ranges, quartiles))
+    return results
 
 
 def unavailable_results(code: str, sub_code: str | None = None) -> dict:
     """The same block shapes as `compute`, every one carrying the same reason."""
     block = unavailable(code, sub_code)
-    return {"ranges": {name: dict(block) for name in ("growth", "pe", "payout", "rpsGrowth", "netMargin")},
+    results = {"ranges": {name: dict(block) for name in ("growth", "pe", "payout", "rpsGrowth", "netMargin")},
             "base": dict(block),
             "scenarios": [{"label": label, "horizon": horizon, **block}
                           for horizon in HORIZONS for label, _, _ in SCENARIO_PERCENTILES],
@@ -202,3 +205,5 @@ def unavailable_results(code: str, sub_code: str | None = None) -> dict:
             "reverse": {"breakEvenPE": {str(h): dict(block) for h in HORIZONS},
                         "breakEvenMargin": {str(h): dict(block) for h in HORIZONS}, "sensitivity": dict(block)},
             "notices": []}
+    results.update(returnParts=[{"label": r["label"], "horizon": r["horizon"], **block} for r in results["scenarios"]], noGrowth=dict(block))
+    return results

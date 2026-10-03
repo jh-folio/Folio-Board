@@ -221,7 +221,7 @@ export function SourcesDetails({ view }: { view: SnapshotView }) {
   const lines = [
     `기준 가격 ${money(inputSummary.price.value, inputSummary.price.currency)} (${inputSummary.price.sessionDate} 종가, 분할만 반영한 실제 종가)`,
     base ? `최근 회계연도 ${base.fiscalYear}(${base.periodEnd} 마감) 희석 주당이익 ${base.eps0} · 기준 가격과 ${base.monthsBeforeSession}개월 차이` : "최근 회계연도 주당이익을 확인하지 못했습니다.",
-    `계산 방법 ${view.methodVersion} · 스냅샷 ${view.snapshotId}`,
+    `계산 방법 ${view.methodVersion} · 계산 기록 번호 ${view.snapshotId}`,
   ];
   return (
     <>

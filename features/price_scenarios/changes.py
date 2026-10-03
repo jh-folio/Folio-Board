@@ -64,6 +64,8 @@ def restated_items(old: dict, new: dict) -> list[dict]:
     with localcontext() as context:
         context.prec, context.rounding = 28, ROUND_HALF_EVEN
         for key in sorted(set(before) & set(after)):
+            if key[0] == "Stock-Based Compensation" and old["inputs"]["methodVersion"] != new["inputs"]["methodVersion"]:
+                continue  # IFRS tag precedence changed, not necessarily the issuer's disclosed value.
             old_value, old_res = _adjusted(before[key], events, session, ads)
             new_value, new_res = _adjusted(after[key], events, session, ads)
             tolerance = max(abs(new_value) * RELATIVE_TOLERANCE, old_res, new_res)
@@ -116,8 +118,11 @@ def review_rows(earlier: list[dict], new: dict) -> list[dict]:
     """One row per earlier snapshot of the instrument that used a value the new one corrects."""
     rows = []
     for snapshot in earlier:
-        if (snapshot["inputs"]["methodVersion"], snapshot["inputs"]["specVersion"]) != (
-                new["inputs"]["methodVersion"], new["inputs"]["specVersion"]):
+        from . import method_at_least
+        same = (snapshot["inputs"]["methodVersion"], snapshot["inputs"]["specVersion"]) == (
+            new["inputs"]["methodVersion"], new["inputs"]["specVersion"])
+        compatible = all(method_at_least(s["inputs"]["methodVersion"], 3) for s in (snapshot, new))
+        if not same and not compatible:
             continue
         for item in restated_items(snapshot, new):
             rows.append({"snapshotId": snapshot["snapshotId"], "reason": "restated", "metric": item["metric"],
