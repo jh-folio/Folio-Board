@@ -7,7 +7,9 @@ import re
 from pathlib import Path
 
 from features.common.workspace import data_dir
+from features.common.atomic_replace import write_bytes_atomic
 from features.company_analysis import financial_engine
+from features.company_analysis.market_identity import market_identity
 from features.company_analysis.dcf import (
     PROJECTION_YEARS,
     assumption_row_label,
@@ -18,6 +20,7 @@ from features.company_analysis.dcf import (
 )
 from features.company_analysis.risk_free import current_risk_free
 from features.company_analysis.style import analysis_style_label, normalize_analysis_style
+from features.price_scenarios.report_link import current_multiples, rule_section
 from features.company_analysis.valuation_basis import (
     build_valuation_basis,
     market_cashflow_is_compatible,
@@ -251,8 +254,7 @@ def _read_json(path: Path, default=None):
 
 
 def _write_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_bytes_atomic(path, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
 def _market_cache_dir() -> Path:
@@ -260,14 +262,20 @@ def _market_cache_dir() -> Path:
 
 
 # 캐시에 담는 항목이 늘면 올린다. 옛 파일은 신선해도 다시 받는다.
-MARKET_CACHE_SHAPE = 4  # 4: quote/financial currency provenance for valuation eligibility.
+MARKET_CACHE_SHAPE = 5  # 5: official Korean exchange identity, plus currency provenance.
+MARKET_CURRENCY_CACHE_SHAPE = 4
 
 
 def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
     ticker = str(company.get("ticker") or "").strip().upper()
     if not ticker:
         return {"ok": False, "reason": "market_price_unavailable_for_ticker"}
-    yf_symbol = f"{ticker}.KS" if company.get("market") == "KR" and re.fullmatch(r"\d{6}", ticker) else ticker
+    identity = market_identity(company, data_dir() / "dart-cache")
+    if not identity.get("ok"):
+        return {"ok": False, "reason": identity.get("reason") or "exchange_unknown"}
+    yf_symbol = identity["providerSymbol"]
+    exchange_meta = {"exchange": identity.get("exchange"), "exchangeSource": identity.get("exchangeSource"),
+                     "exchangeWarning": identity.get("warning") or None}
     cache_path = _market_cache_dir() / f"{yf_symbol.replace('.', '_')}.json"
     cached = _read_json(cache_path, None)
     if cached and cached.get("fetchedAt"):
@@ -280,7 +288,7 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
             # 번호를 붙여 두면 항목이 늘 때마다 특별 취급을 새로 쓰지 않아도 된다.
             same_shape = int(cached_data.get("shape") or 0) >= MARKET_CACHE_SHAPE
             if cache_is_fresh and same_shape and (cached_data.get("cashflowRows") or not cached_data.get("ok")):
-                return cached_data
+                return {**cached_data, **exchange_meta}
         except Exception:
             pass
     try:
@@ -407,6 +415,7 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
             "sector": info.get("sector") or "",
             "industry": info.get("industry") or "",
             "source": "yfinance",
+            **exchange_meta,
             "shape": MARKET_CACHE_SHAPE,
             "cashflowRows": cashflow_rows(),
         }
@@ -420,7 +429,7 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
             # therefore cannot prove that USD was the provider quote currency.
             # Do not let a provider outage turn that legacy label into an
             # eligible valuation input.
-            if int(fallback.get("shape") or 0) < MARKET_CACHE_SHAPE:
+            if int(fallback.get("shape") or 0) < MARKET_CURRENCY_CACHE_SHAPE:
                 fallback["currencyKnown"] = False
                 fallback["quoteCurrency"] = None
                 fallback["financialCurrencyKnown"] = False
@@ -428,6 +437,7 @@ def fetch_market_valuation_data(company: dict, ttl_hours: int = 6) -> dict:
                 fallback["marketValueCurrencyKnown"] = False
                 fallback["marketValueCurrency"] = None
             fallback["warning"] = "using cached market data after provider error"
+            fallback.update(exchange_meta)
             return fallback
         return {"ok": False, "reason": "market_data_provider_unavailable"}
 
@@ -813,6 +823,16 @@ def _dcf_value(base_fcf: float, net_debt: float, shares: float, near_growth: flo
     모델이라 같은 할인율에서 두 표가 다른 값을 말했다."""
     return dcf_value(base_fcf, net_debt, shares, near_growth, discount_rate, terminal_growth,
                      years if years is not None else PROJECTION_YEARS)
+
+
+def _snapshot_valuation(snapshot, company: dict, sec_summary: dict, market_data: dict | None) -> str:
+    """Valuation section: the stored snapshot's scenarios and DCF, with today's multiples kept; no snapshot decision -> the old section."""
+    section = rule_section(snapshot)
+    legacy = build_valuation_metrics(company, sec_summary, market_data)
+    if section is None:
+        return legacy
+    multiples = current_multiples(legacy)
+    return "\n\n".join([multiples, section]) if multiples else section
 
 
 def build_valuation_metrics(company: dict, sec_summary: dict, market_data: dict | None = None) -> str:
@@ -1307,7 +1327,8 @@ def build_rule_report(analysis: dict, analysis_style: str = "beginner") -> str:
         "financial_table": build_financial_table(sec_summary, market_data),
         "financial_commentary": financial_commentary,
         "financial_quality": build_financial_quality_analysis(sec_summary, market_data),
-        "valuation_metrics": build_valuation_metrics(company, sec_summary, market_data),
+        # 새 보고서는 가격 스냅샷에서 읽는다(PER 시나리오·DCF 한 벌). 스냅샷 판정이 없으면 예전 경로.
+        "valuation_metrics": _snapshot_valuation(analysis.get("priceSnapshot"), company, sec_summary, market_data),
         "competitive_analysis": competitive_analysis,
         "risk_table": risk_table,
         "risk_commentary": risk_commentary,

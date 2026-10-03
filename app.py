@@ -133,6 +133,9 @@ from features.macro_map.routes import create_macro_router
 from features.macro_policy.routes import create_policy_router
 from features.company_exposure.routes import create_exposure_router
 from features.macro_state.routes import create_state_router
+from features.price_scenarios.routes import create_price_router
+from features.price_scenarios.service import review_marker as price_review_marker, snapshot_for_report
+from features.company_analysis.generation_context import set_price_snapshot_provider
 from features.portfolio.routes import create_portfolio_router
 from features.common.research_schema.checkpoints import checkpoints_from_markdown
 from features.common.research_schema.data_gaps import data_gaps_from_messages
@@ -406,6 +409,9 @@ def analyze_company(q, web_search_override=None, llm_override=None, analysis_sty
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     ensure_dirs()
+    # 기업분석 생성(API·CLI 두 경로)이 같은 가격 스냅샷에서 쓰이도록 제공자를 등록한다.
+    # 가져오기만 하는 테스트·도구에는 등록되지 않아 외부 호출이 생기지 않는다.
+    set_price_snapshot_provider(lambda company: snapshot_for_report(DATA_DIR, company))
     # 거래소가 붙은 SEC 목록을 한 번 받아 둔다. 없으면 dual-listed 유럽·일본 기업이
     # 상장 라인과 원주 OTC 라인으로 갈려 전부 "애매"로 떨어진다.
     schedule_sec_exchange_cache()
@@ -470,6 +476,7 @@ fastapi_app.include_router(create_macro_router(DATA_DIR))
 fastapi_app.include_router(create_policy_router(DATA_DIR))
 fastapi_app.include_router(create_exposure_router(DATA_DIR))
 fastapi_app.include_router(create_state_router(DATA_DIR))
+fastapi_app.include_router(create_price_router(DATA_DIR))
 fastapi_app.include_router(create_market_data_router(DATA_DIR, realtime_hub=TOSS_REALTIME_HUB))
 fastapi_app.include_router(create_portfolio_router(DATA_DIR))
 
@@ -975,7 +982,13 @@ def api_get_analysis_report(report_id: str, includePersonal: bool = False):
             report["quality"] = evaluate_research_artifact("company_analysis", report)
         except Exception:
             report["quality"] = {"status": "warn", "warnings": ["quality evaluation failed"]}
-    return strip_overlay(report, includePersonal)
+    shown = dict(strip_overlay(report, includePersonal))
+    if shown.get("priceSnapshotId"):  # a response-only marker: the stored report is never rewritten by reading it
+        try:
+            shown["priceReview"] = price_review_marker(DATA_DIR, shown["priceSnapshotId"])
+        except Exception:  # the report must open even when the price database cannot be read
+            shown["priceReview"] = None
+    return shown
 
 
 @fastapi_app.post("/api/analysis-reports/{report_id}/personal-overlay")

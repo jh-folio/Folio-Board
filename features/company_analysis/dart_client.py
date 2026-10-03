@@ -11,10 +11,13 @@ from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from features.common.atomic_replace import write_bytes_atomic
+
 
 DART_CORP_CODE_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
 DART_FINANCIAL_ALL_URL = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
 DART_DISCLOSURE_LIST_URL = "https://opendart.fss.or.kr/api/list.json"
+DART_COMPANY_URL = "https://opendart.fss.or.kr/api/company.json"
 
 DART_REPORT_CODES = {
     "annual": "11011",
@@ -94,8 +97,7 @@ def _read_json(path: Path, default=None):
 
 
 def _write_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_bytes_atomic(path, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
 def _fresh(path: Path, ttl_hours: int) -> bool:
@@ -187,6 +189,33 @@ def resolve_dart_company(query: str, cache_dir: Path, api_key: str | None = None
         elif len(token_norm) >= 2 and token_norm in name_norm and contains_name is None:
             contains_name = candidate
     return exact_stock or exact_name or contains_name
+
+
+def fetch_company_profile(corp_code: str, cache_dir: Path, api_key: str | None = None) -> dict:
+    """Official exchange/industry/fiscal-month metadata; never infer a suffix.
+
+    A fresh official cache is usable without a credential. A fetch failure may
+    return a prior official packet with an explicit warning, as other DART
+    readers do. API errors and mismatched identities cannot confirm a market.
+    """
+    code = str(corp_code or "").strip()
+    if not re.fullmatch(r"\d{8}", code):
+        return {"ok": False, "reason": "invalid_corp_code"}
+    cache_path = cache_dir / "companies" / f"{code}.json"
+    key = (api_key or dart_api_key()).strip()
+    if not key:
+        if not _fresh(cache_path, ttl_hours=24):
+            return {"ok": False, "reason": "missing_dart_api_key"}
+        packet, warning = _read_json(cache_path), ""
+    else:
+        packet, warning = _request_json(DART_COMPANY_URL, {"crtfc_key": key, "corp_code": code},
+                                        cache_path, ttl_hours=24)
+    if not isinstance(packet, dict) or packet.get("status") != "000":
+        return {"ok": False, "reason": "dart_company_unavailable",
+                "status": packet.get("status") if isinstance(packet, dict) else None}
+    if packet.get("corp_code") != code:
+        return {"ok": False, "reason": "dart_company_identity_mismatch"}
+    return {"ok": True, "profile": packet, "source": "dart_company", "warning": warning}
 
 
 def _num(value) -> float | None:

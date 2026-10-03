@@ -1,0 +1,279 @@
+import type { Attempt, Overview, Projection, ScenarioRow, SnapshotView } from "./types";
+
+// 서버가 준 Decimal 문자열을 화면 글자로 바꾼다. 여기서 값을 새로 계산하지 않는다.
+
+const MINUS = "−";
+
+export function toNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function pct(fraction: string | number | null | undefined, places = 1): string {
+  const value = toNumber(fraction);
+  if (value === null) return "—";
+  const text = Math.abs(value * 100).toFixed(places);
+  return `${value < 0 && Number(text) !== 0 ? MINUS : ""}${text}%`;
+}
+
+export function pctSigned(fraction: string | number | null | undefined, places = 1): string {
+  const value = toNumber(fraction);
+  if (value === null) return "—";
+  const text = Math.abs(value * 100).toFixed(places);
+  return `${value > 0 && Number(text) !== 0 ? "+" : value < 0 && Number(text) !== 0 ? MINUS : ""}${text}%`;
+}
+
+/** 이미 % 단위인 값(사용자 기준 저장값). */
+export function pctPlain(percent: string | number | null | undefined, places = 0): string {
+  const value = toNumber(percent);
+  return value === null ? "—" : pct(value / 100, places);
+}
+
+export function multiple(value: string | number | null | undefined, places = 1): string {
+  const parsed = toNumber(value);
+  return parsed === null ? "—" : `${parsed.toFixed(places)}배`;
+}
+
+export function money(value: string | number | null | undefined, currency: string): string {
+  const parsed = toNumber(value);
+  if (parsed === null) return "—";
+  const digits = Math.abs(parsed) >= 1000 ? 0 : 2;
+  const text = parsed.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return currency === "KRW" ? `${text}원` : currency === "USD" ? `$${text}` : `${text} ${currency}`;
+}
+
+export const REASON_TEXT: Record<string, string> = {
+  history_too_short: "과거 자료가 부족해 계산하지 않았습니다",
+  share_event_unknown: "주식 수가 바뀐 사건을 확인하지 못했습니다",
+  price_event_unverified: "가격에 주식 수 변화가 반영됐는지 확인하지 못했습니다",
+  negative_base_eps: "최근 연도 주당이익이 0 이하입니다",
+  base_eps_missing: "최근 회계연도의 희석 주당이익이 없습니다",
+  stale_financials: "최근 재무제표가 15개월보다 오래됐습니다",
+  non_positive_revenue: "최근 매출이 0 이하입니다",
+  adr_ratio_unverified: "ADR 비율을 공시에서 확인하지 못했습니다",
+  currency_mismatch: "재무제표 통화와 주가 통화가 달라 비교하지 않았습니다",
+  currency_unknown: "통화를 확인하지 못했습니다",
+  share_unit_unknown: "주식 수 단위를 확인하지 못했습니다",
+  share_unit_mismatch: "주식 수 단위가 맞지 않습니다",
+  non_common_listing: "보통주가 아닌 종목입니다",
+  class_eps_differs: "주식 종류별 주당이익이 다릅니다",
+  industry_not_supported: "이 업종은 이 계산 방식이 맞지 않아 지원하지 않습니다",
+  financial_holding: "금융지주는 이 계산 방식이 맞지 않아 지원하지 않습니다",
+  fund_not_supported: "펀드·ETF는 이 계산 방식이 맞지 않아 지원하지 않습니다",
+  dcf_not_computable: "현금흐름 할인 계산에 필요한 입력이 부족합니다",
+  price_stale: "최근 종가가 10거래일 넘게 갱신되지 않았습니다",
+  price_unavailable: "종가를 가져오지 못했습니다",
+  financial_history_unavailable: "공시 재무 자료를 가져오지 못했습니다",
+  company_not_found: "공식 자료에서 이 종목을 찾지 못했습니다",
+  source_credential_missing: "필요한 공시 조회 키가 설정되어 있지 않습니다",
+  instrument_not_supported: "지원하지 않는 종목 형식입니다",
+  criteria_not_set: "내 기준이 정해지지 않았습니다",
+  calculation_failed: "예상하지 못한 오류로 계산하지 못했습니다",
+  dcf_fallback: "내재가치 계산에 자료 부족으로 채운 값이 있어 판정하지 않았습니다",
+};
+
+export function reasonText(code: string | undefined | null): string {
+  return (code && REASON_TEXT[code]) || (code ? `계산할 수 없습니다(${code})` : "계산할 수 없습니다");
+}
+
+export const NOTICE_TEXT: Record<string, string> = {
+  share_classes_same_eps: "같은 주당이익을 공시하는 여러 주식 종류가 있습니다.",
+  preferred_shares_exist: "우선주가 있으며 이 계산은 보통주 기준입니다.",
+  holding_company_consolidated: "지주회사: 연결 기준입니다. 자회사 가치를 합산해 보는 관점은 반영하지 않습니다.",
+  shares_implied_from_eps: "주식 수는 순이익을 주당이익으로 나눠 구한 값입니다.",
+  classification_unknown: "업종 분류를 확인하지 못했습니다.",
+  common_row_label_voting_shares: "주식 수 표의 보통주 행을 '의결권 있는 주식' 항목으로 읽었습니다.",
+  dividend_assumed_zero_from_absence: "배당 공시가 없는 해는 배당이 없었던 것으로 읽었습니다.",
+  excluded_growth_windows: "과거 5년 구간 일부는 값이 없거나 0 이하라 빼고 계산했습니다. 범위가 위로 치우칠 수 있습니다.",
+  snapshot_old: "계산 시점이 오래됐습니다. 다시 계산하면 최신 가격·공시로 바뀝니다.",
+};
+
+export const METRIC_TEXT: Record<string, string> = {
+  "EPS Diluted": "희석 주당이익", "Net Income": "순이익", Revenue: "매출", DPS: "주당 배당금", "Shares Diluted": "희석 주식 수",
+  "Operating Cash Flow": "영업현금흐름", "Dividends Paid": "배당금 지급",
+};
+
+export const SCENARIO_NAMES: Record<string, { name: string; note: string; short: string }> = {
+  conservative: { name: "보수", short: "과거 낮은 편", note: "과거 10년 중 낮은 편(하위 25%)" },
+  base: { name: "기본", short: "과거 보통 수준", note: "과거 10년의 중간값" },
+  optimistic: { name: "낙관", short: "과거 높은 편", note: "과거 10년 중 높은 편(상위 25%)" },
+};
+export const SCENARIO_ORDER = ["conservative", "base", "optimistic"] as const;
+
+export function rowFor(rows: ScenarioRow[], label: string, horizon: number): ScenarioRow | undefined {
+  return rows.find(row => row.label === label && row.horizon === horizon);
+}
+
+export function irrText(row: ScenarioRow | undefined): string {
+  if (!row || row.status !== "available") return "계산 불가";
+  if (row.irrRange === "above_range") return "100% 초과";
+  if (row.irrRange === "below_range") return "−99% 미만";
+  return pct(row.irr);
+}
+
+export function irrValue(row: ScenarioRow | undefined): number | null {
+  return row && row.status === "available" && row.irr !== null ? toNumber(row.irr) : null;
+}
+
+const ASSUMPTION = "회사가 과거 보통 수준으로 성장하고, 주가 수준(PER)도 과거 보통일 때를 가정한 계산입니다.";
+
+/** 소수 문자열 둘의 크기 비교(부동소수 없이). 평범한 소수가 아니면 null. */
+export function compareDecimal(left: string, right: string): -1 | 0 | 1 | null {
+  const parse = (text: string) => {
+    const match = /^([-−]?)(\d*)(?:\.(\d*))?$/.exec(text.trim());
+    return match && (match[2] !== "" || match[3]) ? { negative: match[1] !== "", whole: match[2] || "0", fraction: match[3] ?? "" } : null;
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  const places = Math.max(a.fraction.length, b.fraction.length);
+  const scaled = (value: NonNullable<typeof a>) => {
+    const magnitude = BigInt(value.whole + value.fraction.padEnd(places, "0"));
+    return value.negative ? -magnitude : magnitude;
+  };
+  const x = scaled(a);
+  const y = scaled(b);
+  return x === y ? 0 : x > y ? 1 : -1;
+}
+
+/** 서버 판정(project)과 같은 규칙으로, 시나리오 수익률이 내 기준(% 문자열) 이상인지. 모르면 null. */
+export function atLeastRequired(row: ScenarioRow | undefined, required: string | null | undefined): boolean | null {
+  if (!row || row.status !== "available" || required === null || required === undefined || required === "") return null;
+  if (row.irrRange === "above_range") return true;
+  if (row.irrRange === "below_range") return false;
+  if (row.irr === null) return null;
+  const order = compareDecimal(shiftDecimal(row.irr, 2), required);
+  return order === null ? null : order >= 0;
+}
+
+const valueText = (row: ScenarioRow | undefined): string | null => (row && row.status === "available" && (row.irr !== null || row.irrRange) ? `연 ${irrText(row)}` : null);
+
+/** 결론 제목(A안). 판정은 기본 보유 기간의 기본 시나리오로만 한다. 값과 비교는 서버가 준 문자열에서 바로 만든다. */
+export function heroText(input: { horizon: number; base: ScenarioRow | undefined; required: string | null; holdingYears: number | null; baseHolding: ScenarioRow | undefined }): { title: string; sub: string } {
+  const { horizon, base, required, holdingYears, baseHolding } = input;
+  const value = valueText(base);
+  if (value === null) return { title: "이 기간의 수익률은 계산하지 못했습니다.", sub: "아래 사유를 확인해 주세요." };
+  const goal = required !== null && required !== "" && compareDecimal(required, "0") !== null ? required : null;
+  if (goal === null || holdingYears === null) {
+    return { title: `${horizon}년간 ${value}입니다.`, sub: `${ASSUMPTION} 내 기준을 정하면 비교해 드립니다.` };
+  }
+  const goalText = `연 ${pctPlain(goal, Number(goal) % 1 === 0 ? 0 : 1)}`;
+  const word = (row: ScenarioRow | undefined) => (atLeastRequired(row, goal) ? "높습니다" : "낮습니다");
+  const holdingValue = valueText(baseHolding);
+  if (horizon !== holdingYears || holdingValue === null) {
+    const compare = holdingValue === null ? "" : ` 내 기준 비교는 기본 보유 ${holdingYears}년(${holdingValue})으로 하며, 내 기준보다 ${word(baseHolding)}.`;
+    return { title: `${horizon}년간 ${value}입니다.`, sub: `${ASSUMPTION}${compare}` };
+  }
+  return { title: `${horizon}년간 ${value}로, 내 기준 ${goalText}보다 ${word(base)}.`, sub: ASSUMPTION };
+}
+
+export type ScalePoint = { key: string; label: string; value: number; left: number; row: number };
+
+/** 가까운 점의 글자가 겹치지 않게 줄을 나눈다(왼쪽부터, 서로 gap(%) 안에 있으면 다른 줄). */
+export function labelRows(lefts: number[], gap = 26): number[] {
+  const order = lefts.map((left, index) => ({ left, index })).sort((a, b) => a.left - b.left);
+  const rows: number[] = new Array(lefts.length).fill(0);
+  const placed: { left: number; row: number }[] = [];
+  for (const item of order) {
+    let row = 0;
+    while (placed.some(other => other.row === row && Math.abs(other.left - item.left) < gap)) row += 1;
+    rows[item.index] = row;
+    placed.push({ left: item.left, row });
+  }
+  return rows;
+}
+/** 범위 막대 눈금: 세 점과 내 기준을 한 줄 위에 놓는 좌표(%)와 눈금 값. */
+export function scaleLayout(values: { key: string; label: string; value: number }[], goal: number | null) {
+  const all = values.map(v => v.value).concat(goal === null ? [] : [goal]);
+  const span = Math.max(...all) - Math.min(...all) || 1;
+  const lo = Math.min(...all) - span * 0.1;
+  const hi = Math.max(...all) + span * 0.1;
+  const at = (v: number) => ((v - lo) / (hi - lo)) * 100;
+  const raw = (hi - lo) / 5;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * magnitude).find(k => k >= raw) || magnitude;
+  const ticks: { value: number; left: number }[] = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+    const rounded = Math.round(t * 100) / 100;
+    ticks.push({ value: rounded, left: at(rounded) });
+  }
+  return {
+    points: (() => {
+      const lefts = values.map(v => at(v.value));
+      const rows = labelRows(lefts);
+      return values.map((v, index) => ({ ...v, left: lefts[index], row: rows[index] }));
+    })(),
+    goalLeft: goal === null ? null : at(goal),
+    ticks,
+    spanLeft: at(Math.min(...values.map(v => v.value))),
+    spanRight: at(Math.max(...values.map(v => v.value))),
+  };
+}
+
+/** 과거 범위 위에 필요한 값이 어디쯤인지. */
+export function rangePosition(value: number, min: number, max: number) {
+  const span = max - min || 1;
+  const lo = min - span * 0.35;
+  const hi = max + span * 0.35;
+  const clamp = (v: number) => Math.min(Math.max((v - lo) / (hi - lo), 0), 1) * 100;
+  const where = value < min ? "보다 낮습니다" : value > max ? "보다 높습니다" : " 안에 있습니다";
+  return { valueLeft: clamp(value), minLeft: clamp(min), maxLeft: clamp(max), where };
+}
+
+export function decompositionCards(annual: { R: string; M: string; S: string }) {
+  const approx = (log: string) => Math.exp(Number(log)) - 1;
+  return [
+    { key: "R", title: "매출 성장", value: approx(annual.R), weight: Math.abs(Number(annual.R)) },
+    { key: "M", title: "이익률 개선", value: approx(annual.M), weight: Math.abs(Number(annual.M)) },
+    { key: "S", title: "주식 수 감소", value: approx(annual.S), weight: Math.abs(Number(annual.S)) },
+  ];
+}
+
+export type Banner = { tone: "info" | "warn"; title: string; detail: string } | null;
+
+/** 화면 위쪽에 한 번만 보이는 상태 안내. 같은 말을 두 곳에 쓰지 않는다. */
+export function bannerFor(args: { projection: Projection | null; view: SnapshotView | null; saveFailed: boolean }): Banner {
+  const { projection, view, saveFailed } = args;
+  if (saveFailed) return { tone: "warn", title: "이 결과는 저장되지 않았습니다.", detail: "화면에는 보이지만 기록에 남지 않았습니다. 이전 기록은 그대로입니다. 다시 계산하면 저장을 다시 시도합니다." };
+  if (projection && projection.reviewNeeded.length > 0) {
+    const first = projection.reviewNeeded[0];
+    return { tone: "warn", title: `${view?.asOf ?? projection.asOf} 계산에 쓴 공시 숫자가 정정됐습니다.`, detail: `${first.fiscalYear}년 ${METRIC_TEXT[first.metric] ?? first.metric} 값이 바뀌었습니다. 정정 전 숫자로 계산한 기록이라 다시 볼 필요가 있습니다. 지난 기록과 내 가정은 자동으로 바꾸지 않습니다.` };
+  }
+  if (projection?.notices.includes("snapshot_old")) return { tone: "info", title: "계산 시점이 오래됐습니다.", detail: NOTICE_TEXT.snapshot_old };
+  return null;
+}
+
+export function attemptBanner(attempt: Attempt | null, latestAsOf: string | null): Banner {
+  if (!attempt || attempt.status !== "failed") return null;
+  const code = attempt.reason?.code;
+  const tail = latestAsOf ? ` ${latestAsOf} 계산은 아래 기록에서 볼 수 있습니다.` : "";
+  if (code === "price_stale") return { tone: "warn", title: "최근 종가가 오래돼 새로 계산하지 않았습니다.", detail: `마지막 종가가 10거래일 넘게 갱신되지 않았습니다.${tail}` };
+  return { tone: "warn", title: "이번에는 계산하지 못했습니다.", detail: `${reasonText(code)}. 틀린 숫자를 보여 드리지 않으려고 멈췄습니다.${tail}` };
+}
+
+export function overviewHasResult(overview: Overview | null): boolean {
+  return Boolean(overview?.latest);
+}
+
+/** 소수점을 문자열 그대로 옮긴다(부동소수 오차 없이). shift > 0 이면 오른쪽. 형식이 아니면 원문을 돌려준다. */
+export function shiftDecimal(text: string, shift: number): string {
+  const trimmed = text.trim();
+  const match = /^([-−+]?)(\d*)(?:\.(\d*))?$/.exec(trimmed);
+  if (!match || (match[2] === "" && !match[3])) return text;
+  const [, sign, whole, fraction = ""] = match;
+  const digits = whole + fraction;
+  const point = whole.length + shift;
+  let padded = digits;
+  let position = point;
+  if (position < 0) { padded = "0".repeat(-position) + padded; position = 0; }
+  if (position > padded.length) padded += "0".repeat(position - padded.length);
+  const integer = padded.slice(0, position).replace(/^0+(?=\d)/, "") || "0";
+  const rest = padded.slice(position).replace(/0+$/, "");
+  const negative = sign === "-" || sign === "−";
+  const out = rest ? `${integer}.${rest}` : integer;
+  return negative && Number(out) !== 0 ? `-${out}` : out;
+}
+
+export const percentToFraction = (text: string): string => shiftDecimal(text, -2);
+export const fractionToPercent = (text: string | null | undefined): string => (text === null || text === undefined ? "" : shiftDecimal(text, 2));

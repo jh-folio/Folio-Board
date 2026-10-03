@@ -9,6 +9,7 @@ import { RouteHero } from "./RouteHero";
 import { useThemePreference, type ThemePreference } from "./themePreference";
 import { WorkLogMigrationControl } from "./WorkLogMigration";
 import { DiagnosticRetention } from "./DiagnosticRetention";
+import { InvestmentCriteriaPanel } from "./price/InvestmentCriteriaPanel";
 
 type SettingsTab = "ai" | "admin" | "integrations";
 
@@ -2396,6 +2397,8 @@ export function SettingsRoute() {
           <MarketScopePanel readIssue={marketScopeReadIssue} />
 
           <WorkspacePanel />
+
+          <InvestmentCriteriaPanel />
 
           <section className="settings-panel input-panel">
             <div className="input-panel-header"><h3>자동화</h3><p>수집, 중기 시장 정리, 브리핑 생성을 각각 독립 루틴으로 관리합니다.</p></div>

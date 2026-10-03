@@ -305,6 +305,7 @@ features/company_analysis/financial_quality_prompt.md
 | 시장 캘린더 (Market Calendar) | [market-calendar](docs/agent-guides/market-calendar.md) |
 | Research Cockpit 대시보드 | [dashboard](docs/agent-guides/dashboard.md) |
 | 워치리스트 상세 (차트·실적) | [watchlist-detail](docs/agent-guides/watchlist-detail.md) |
+| 가격 시나리오 (가격 탭·투자 기준) | [price-scenarios](docs/agent-guides/price-scenarios.md) |
 | 입력 기업 판단 (Company Resolution) | [company-resolution](docs/agent-guides/company-resolution.md) |
 | Agent 대화 (Threads) | [agent-threads](docs/agent-guides/agent-threads.md) |
 

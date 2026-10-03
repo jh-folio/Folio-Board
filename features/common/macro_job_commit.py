@@ -12,8 +12,9 @@ from features.common.macro_data.store import backup_database, _SCHEMA_LOCK
 from features.common.shared_jobs_completion import ArtifactCompletionSource, _mint_artifact_completion_proof
 from features.common.shared_jobs_schema import CommitIntent, ExpectedArtifact, StorageKind, JobStatus, MacroProjection, ErrorCode, TaskType
 
-TASKS = {TaskType.MACRO_REFRESH, TaskType.MACRO_EXPOSURE}
-TABLES = {'macro_snapshot': 'macro_state_snapshots', 'company_exposure': 'company_macro_exposures'}
+TASKS = {TaskType.MACRO_REFRESH, TaskType.MACRO_EXPOSURE, TaskType.PRICE_SCENARIO}
+TABLES = {'macro_snapshot': 'macro_state_snapshots', 'company_exposure': 'company_macro_exposures',
+          'price_snapshot': 'price_snapshots'}
 
 
 def _ensure(path):

@@ -1,5 +1,6 @@
 import { AnalysisCharts } from "./AnalysisCharts";
 import { ReportBody } from "./ReportBody";
+import { METRIC_TEXT } from "../price/format";
 
 type AnalysisChartsPayload = {
   available?: boolean;
@@ -111,7 +112,23 @@ export function remainingChartIds(payload?: AnalysisChartsPayload, usedChartIds 
   return Array.from(availableChartIds(payload)).filter((id) => !usedChartIds.has(id));
 }
 
-export function CompanyAnalysisBody({ markdown, charts }: { markdown: string; charts?: AnalysisChartsPayload }) {
+type PriceReview = { snapshotId?: string; asOf?: string; reviewNeeded?: Array<{ metric?: string; fiscalYear?: number }> } | null;
+
+/** 이 보고서의 가격 시나리오가 쓴 공시 숫자가 뒤늦게 정정됐을 때만 보인다. 보고서 본문은 바꾸지 않는다. */
+export function PriceReviewNote({ review }: { review?: PriceReview }) {
+  const items = review?.reviewNeeded ?? [];
+  if (!items.length) return null;
+  const first = items[0];
+  const what = first.metric && first.fiscalYear ? `${first.fiscalYear}년 ${METRIC_TEXT[first.metric] ?? first.metric} 값` : "공시 숫자";
+  return (
+    <div className="surface surface--group price-banner" role="status">
+      <strong>{review?.asOf ? `${review.asOf} 계산에 쓴` : "이 보고서의 가격 시나리오에 쓴"} 공시 숫자가 정정됐습니다.</strong>
+      <p className="price-meta">{what}이 바뀌었습니다. 정정 전 숫자로 계산한 가격 시나리오라 다시 볼 필요가 있습니다. 가격 탭에서 다시 계산할 수 있으며, 이 보고서는 자동으로 바뀌지 않습니다.</p>
+    </div>
+  );
+}
+
+export function CompanyAnalysisBody({ markdown, charts, priceReview }: { markdown: string; charts?: AnalysisChartsPayload; priceReview?: PriceReview }) {
   const sections = splitAnalysisSections(markdown);
   if (!sections.length) return <AnalysisCharts payload={charts} />;
 
@@ -119,6 +136,7 @@ export function CompanyAnalysisBody({ markdown, charts }: { markdown: string; ch
 
   return (
     <>
+      <PriceReviewNote review={priceReview} />
       {sections.map((section, index) => {
         const chartIds = bySection.get(index) || [];
         return (

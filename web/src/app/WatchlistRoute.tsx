@@ -7,6 +7,7 @@ import { ConsultationEntry } from "./watchlist/ConsultationEntry";
 import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { ExposurePanel } from "./macro/ExposurePanel";
+import { PriceTab } from "./price/PriceTab";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
@@ -362,10 +363,13 @@ export function WatchlistRoute() {
   });
   const fundamentals = useFundamentals(detailTicker);
   // 상세는 "기업 정보 | 내 이유" 두 탭이다(2026-09-29). 처음엔 기업 정보를 연다.
-  const [detailTab, setDetailTab] = useState<"company" | "reason">("company");
+  const [detailTab, setDetailTab] = useState<"company" | "reason" | "price">("company");
+  // 가격 탭은 처음 열 때 읽고(계산·읽기 요청이 종목마다 생기지 않게) 이후에는 마운트해 둔다.
+  const [priceOpened, setPriceOpened] = useState(false);
   const [reasonNewsCount, setReasonNewsCount] = useState(0);
   useEffect(() => {
     setDetailTab("company");
+    setPriceOpened(false);
     setReasonNewsCount(detailCard?.reasonNewsCount || 0);
     // 종목이 바뀔 때만 초기화한다. 목록 재조회로 카드 객체가 바뀌어도 선택한 탭은 유지한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -417,6 +421,7 @@ export function WatchlistRoute() {
                   {reasonNewsCount > 0 && <span className="watchlist-detail-tabs__dot" aria-hidden="true" />}
                   {reasonNewsCount > 0 && <span className="sr-only"> (새 소식 {reasonNewsCount}건)</span>}
                 </button>
+                <button type="button" aria-pressed={detailTab === "price"} onClick={() => { setPriceOpened(true); setDetailTab("price"); }}>가격</button>
               </div>
               {/* 내 이유 탭은 숨겨도 마운트해 둔다 — 새 소식 수(탭 점)와 입력 중인 초안을 유지한다. */}
               <div className="watchlist-detail-reason" hidden={detailTab !== "reason"}>
@@ -428,6 +433,11 @@ export function WatchlistRoute() {
                   onNewsCountChange={onReasonNewsCount}
                 />
               </div>
+              {priceOpened && (
+                <div className="watchlist-detail-price" hidden={detailTab !== "price"}>
+                  <PriceTab ticker={detailTicker} />
+                </div>
+              )}
               {detailTab === "company" && (
               <div className="watchlist-detail-grid">
                 <section className="watchlist-detail-section watchlist-detail-section--metrics">
