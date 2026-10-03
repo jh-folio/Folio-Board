@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { ApiRequestError, getJson, postJson } from "../../api";
 import { pollAgentJobBounded, type PollableAgentJob } from "../agentPolling";
 import { CriteriaForm, loadCriteria } from "./CriteriaForm";
-import { CashConversionSection, NoGrowthLine, ReturnPartsLine } from "./Crosschecks";
+import { CashConversionSection, CashTableDetails, NoGrowthSection, ReturnPartsSection, ReturnPartsSummary } from "./Crosschecks";
+import { GlanceSection, GuideSection, PartHeader, SECTION_IDS, glanceItems } from "./Guide";
 import {
   CriteriaLine, DecompositionSection, HistoryList, MyAssumptionsResult, RequirementSection, ScaleBar, ScenarioCards, ScenarioTable, SourcesDetails,
 } from "./PriceParts";
@@ -150,6 +151,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
   const marginNote = view && criteria?.minMarginOfSafety !== null && criteria?.minMarginOfSafety !== undefined && projection?.verdict.marginOfSafety.state === "unknown"
     ? `안전마진 판정 보류: ${reasonText(projection.verdict.marginOfSafety.reason)}. 수익률 비교도 계산상 비교일 뿐 투자 판단을 대신하지 않습니다.` : "";
   const noResult = !view;
+  const showTitle2 = !calculating && !noResult && supported && Boolean(hero.title2);
   const heroTitle = calculating ? "계산하고 있습니다…" : noResult ? "아직 이 종목의 가격을 계산하지 않았습니다." : !supported
     ? "이 종목은 지금 계산하지 않았습니다." : hero.title;
   const heroSub = calculating ? message : noResult ? "가장 최근 거래일 종가와 공시 실적으로 계산합니다. 내 관심 이유를 쓰지 않아도 됩니다."
@@ -171,7 +173,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
           </div>
         )}
         <div className="price-hero__head">
-          <h3 className="price-hero__title" id="price-hero-title">{heroTitle}</h3>
+          <h3 className="price-hero__title" id="price-hero-title">{heroTitle}{showTitle2 && <span className="price-hero__title2">{hero.title2}</span>}</h3>
           <p className="price-note" role={calculating ? "status" : undefined}>{heroSub}</p>
         </div>
         {view && supported && !calculating && (
@@ -179,7 +181,6 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
             <div className="price-hchart">
               <p className="price-note">{horizon}년 보유 시 연 수익률 <span className="price-meta">· 카드를 누르면 막대에서 위치를 보여 줍니다</span></p>
               <ScenarioCards rows={rows} horizon={horizon} selected={selected} required={requiredText} onSelect={index => setSelected(current => (current === index && index !== 1 ? 1 : index))} />
-              <ReturnPartsLine view={view} horizon={horizon} selected={selected} />
               <ScaleBar rows={rows} horizon={horizon} selected={selected} goal={goal} />
             </div>
             <CriteriaLine projection={projection} criteria={criteria} onEdit={() => openCriteria(document.activeElement as HTMLElement | null)} />
@@ -196,27 +197,38 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
 
       {view && supported && (
         <>
-          <section className="price-section" aria-labelledby="price-scenario-title">
-            <div className="watchlist-detail-section__head"><h3 id="price-scenario-title">가정별 수익률</h3><span className="price-meta">이 회사의 과거 10년 기록에서 가져온 가정</span></div>
+          <GlanceSection items={glanceItems({ view, projection, criteria, horizon })} />
+
+          <PartHeader number={1} title="얼마를 벌 수 있나" sub="수익률이 어디서 나오고, 가정에 따라 얼마나 달라지는지" />
+          <ReturnPartsSection view={view} horizon={horizon} selected={selected} />
+          <GuideSection id="price-scenario-title" title="가정별 수익률" meta="이 회사의 과거 10년 기록에서 가져온 가정"
+            question="가정을 과거 10년 기록의 낮은 편·보통·높은 편으로 바꾸면 수익률이 얼마나 달라지는지 봅니다."
+            calc={`지금 가격 ${money(view.inputSummary.price.value, currency)}에 사서, 주당이익 ${view.results.base.status === "available" ? money(view.results.base.eps0, currency) : "—"}이 매년 ‘이익 성장’만큼 늘고, 이익의 ‘배당성향’만큼 배당을 받고, 끝에 이익의 ‘끝날 때 PER’배 가격에 판다고 본 연 수익률입니다.`}
+            read="보수와 낙관의 차이가 클수록 결과가 가정에 크게 기댑니다. 끝날 때 PER은 보유를 끝내는 시점에 주가가 1년 이익의 몇 배일지이며, 일어날 가능성은 계산하지 않습니다.">
             <ScenarioTable rows={rows} horizon={horizon} />
-            <p className="price-meta">끝날 때 PER은 보유를 끝내는 시점에 주가가 1년 이익의 몇 배일지입니다. 일어날 가능성은 계산하지 않습니다.</p>
-          </section>
+          </GuideSection>
 
-          <section className="price-section" aria-labelledby="price-reverse-title">
-            <div className="watchlist-detail-section__head"><h3 id="price-reverse-title">지금 가격이 전제하는 것</h3><span className="price-meta">{horizon}년 보유 기준</span></div>
+          <PartHeader number={2} title="지금 가격이 무엇을 가정하나" sub="지금 가격이 맞으려면 필요한 조건과, 가격 중 성장에 거는 몫" />
+          <GuideSection id={SECTION_IDS.reverse} title="지금 가격이 전제하는 것" meta={`${horizon}년 보유 기준`}
+            question="결과를 거꾸로 돌려, 지금 가격이 맞으려면 무엇이 필요한지 봅니다." hint="줄을 누르면 계산 방법이 펼쳐집니다"
+            calc={`다른 가정은 기본값으로 두고, 연 수익률이 0%(손익분기)${requiredText !== null ? " 또는 내 기준" : ""}이 되는 값을 거꾸로 찾았습니다. 시장이 실제로 이렇게 기대한다는 뜻은 아니며, 달성 가능성을 판정하지 않습니다.`}
+            read="필요한 값이 과거 10년 범위보다 낮으면 지금 가격이 요구하는 조건이 과거 기록보다 낮다는 뜻이고, 높으면 과거보다 높은 조건을 요구한다는 뜻입니다.">
             <RequirementSection view={view} projection={projection} horizon={horizon} onSetCriteria={() => openCriteria(document.activeElement as HTMLElement | null)} />
-            <NoGrowthLine view={view} projection={projection} />
-            <p className="price-meta">나머지 가정은 기본값으로 둔 계산입니다. 시장이 실제로 이렇게 기대한다는 뜻은 아니며, 달성 가능성을 판정하지 않습니다.</p>
-          </section>
+          </GuideSection>
+          <NoGrowthSection view={view} projection={projection} onSetCriteria={() => openCriteria(document.activeElement as HTMLElement | null)} />
 
-          <section className="price-section" aria-labelledby="price-decomp-title">
-            <div className="watchlist-detail-section__head"><h3 id="price-decomp-title">지난 5년 이익 성장은 어디서 왔나</h3>
-              {view.results.decomposition.status === "available" && <span className="price-meta">FY{view.results.decomposition.recentWindow[0]} → FY{view.results.decomposition.recentWindow[1]}</span>}
-            </div>
+          <PartHeader number={3} title="과거 기록은 어땠나" sub="이익이 무엇으로 늘었고, 현금으로 얼마나 남았는지" />
+          <GuideSection id="price-decomp-title" title="지난 5년 이익 성장은 어디서 왔나"
+            meta={view.results.decomposition.status === "available" ? `FY${view.results.decomposition.recentWindow[0]} → FY${view.results.decomposition.recentWindow[1]}` : undefined}
+            question="지난 5년 주당이익 성장이 무엇에서 왔는지 나눠 봅니다."
+            calc="주당이익 = 매출 × 이익률 ÷ 주식 수이므로, 5년 동안의 변화를 매출·이익률·주식 수 세 가지로 나눴습니다. 위의 가정과는 따로 계산합니다."
+            read="이익률 개선이나 주식 수 감소가 큰 몫이면, 같은 속도의 성장이 계속되기 어려울 수 있습니다.">
             <DecompositionSection view={view} selected={decSelected} onSelect={setDecSelected} />
-            <p className="price-meta">과거를 나눠 본 참고 자료이며, 위의 가정과는 따로 계산합니다.</p>
-          </section>
+          </GuideSection>
+          <CashConversionSection block={view.results.cashConversion} tableInside={false} />
 
+          <div className="price-folds">
+          <CashTableDetails block={view.results.cashConversion} />
           <details className="price-details" open={Boolean(override || projection?.myAssumptions)}>
             <summary>내 가정으로 계산해 보기 <span className="chip" data-tone="purple">개인 가정</span></summary>
             {projection?.myAssumptions && !projection.myAssumptions.basedOnCurrentSnapshot && (
@@ -246,10 +258,11 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
           </details>
 
           <details className="price-details"><summary>숫자의 근거와 출처</summary><SourcesDetails view={view} /></details>
+          </div>
         </>
       )}
 
-      {view && view.results.support.status !== "unsupported" && !calculating && <CashConversionSection block={view.results.cashConversion} />}
+      {view && !supported && view.results.support.status !== "unsupported" && !calculating && <CashConversionSection block={view.results.cashConversion} />}
 
       {overview.history.length > 0 && !calculating && (
         <section className="price-section" aria-labelledby="price-history-title">
@@ -281,7 +294,7 @@ function PreviousBody({ view }: { view: SnapshotView }) {
   return (
     <>
       <h2 id="price-previous-title">{view.asOf} 계산</h2>
-      <ReturnPartsLine view={view} horizon={10} />
+      <ReturnPartsSummary view={view} horizon={10} />
       <CashConversionSection block={view.results.cashConversion} id="price-previous-cash" />
       <p>당시 종가 {money(view.inputSummary.price.value, view.inputSummary.price.currency)} · 기본 가정 5년 {irrText(five)}, 10년 {irrText(ten)}</p>
       <p className="price-meta">{base ? `당시 이익 성장 ${pct(base.g)} · 끝날 때 PER ${Number(base.exitPE).toFixed(1)}배 · 배당성향 ${pct(base.payout, 0)}. ` : ""}지난 계산을 읽기만 하는 화면입니다. 현재 기준과 내 가정은 바뀌지 않습니다.</p>

@@ -17881,8 +17881,9 @@ select { min-height: 36px; padding: 0 12px; }
    색은 토큰만 쓴다(sparkline 예외와 같은 조건). 결정 기록은 DESIGN_SYSTEM.md.
    ============================================================ */
 .price-meta{font-size:var(--fs-meta);color:var(--folio-ink-muted);margin:0;line-height:1.6}
-.price-stack{display:grid;gap:28px;min-width:0}
-.price-section{display:grid;gap:14px;min-width:0}
+.price-stack{display:grid;gap:56px;min-width:0}
+.price-section{display:grid;gap:12px;min-width:0}
+.price-stack p{margin:0}
 .price-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .price-row--between{justify-content:space-between}
 .price-hero{display:grid;gap:16px;padding:22px}
@@ -17980,7 +17981,6 @@ select { min-height: 36px; padding: 0 12px; }
   --price-dialog-scrim:rgba(6,8,12,.62);
 }
 .price-dialog::backdrop{background:var(--price-dialog-scrim)}
-.price-return-parts,.price-no-growth{display:grid;gap:4px;padding:10px 0}
 .price-cash-table{width:100%;min-width:0;max-width:100%;overflow:auto}
 .price-stack>.price-section{min-width:0}
 .price-section>.price-details{min-width:0}
@@ -17990,6 +17990,56 @@ select { min-height: 36px; padding: 0 12px; }
 .price-cash-table .price-table tbody{display:table-row-group}
 .price-cash-table .price-table tr{display:table-row}
 .price-cash-table .price-table th,.price-cash-table .price-table td{padding:12px 10px;white-space:nowrap}
+/* 0.9.1 가격 탭 읽는 순서: ①②③ 묶음 · 섹션 틀(질문·계산·이렇게 보세요) · 한눈에 보기 · 접기 목록 */
+.price-stack .watchlist-detail-section__head h4{font-size:var(--fs-title);font-weight:var(--fw-bold);line-height:1.4;margin:0}
+.price-hero__title2{display:block;margin-top:4px;font-size:var(--fs-body);font-weight:var(--fw-medium);color:var(--folio-ink-soft)}
+.price-part{display:flex;gap:14px;align-items:center;margin-bottom:-24px;padding-top:24px;border-top:2px solid var(--folio-border)}
+.price-part__num{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:var(--r-pill);background:var(--folio-ink);color:var(--surface-page);font-weight:var(--fw-bold);font-size:var(--fs-body)}
+.price-part h3{font-size:22px;line-height:1.35;margin:0 0 2px;font-weight:var(--fw-bold)}
+.price-part p{font-size:var(--fs-body-sm);color:var(--folio-ink-muted)}
+.price-question{font-size:var(--fs-body-sm);color:var(--folio-ink-muted);margin-top:-4px}
+.price-hint{font-size:var(--fs-meta);font-weight:var(--fw-normal);color:var(--folio-ink-muted);margin-left:6px}
+.price-lead{font-size:var(--fs-body)}
+.price-lead strong{font-variant-numeric:tabular-nums}
+.price-calc{display:flex;gap:12px;align-items:baseline;padding:10px 14px;border-radius:var(--r-group);background:var(--surface-control);font-size:var(--fs-body-sm);line-height:1.65;font-variant-numeric:tabular-nums}
+.price-calc b,.price-read b{flex:none;font-size:var(--fs-meta);font-weight:var(--fw-bold);color:var(--folio-ink-muted);margin-right:6px}
+.price-read{font-size:var(--fs-body-sm);line-height:1.65}
+.price-explain,.price-rev-explain{padding:10px 14px;border-left:3px solid var(--folio-gold);font-size:var(--fs-body-sm);line-height:1.65}
+.price-explain{margin-top:2px;background:var(--surface-control);border-radius:0 var(--r-control) var(--r-control) 0}
+.price-rev-explain{margin-bottom:6px;color:var(--folio-ink-soft)}
+.price-rev--toggle{cursor:pointer;padding-left:12px;padding-right:12px;border-radius:var(--r-control)}
+.price-rev--toggle:hover,.price-rev--toggle[aria-expanded="true"]{background:var(--surface-control)}
+.price-rev--toggle:focus-visible{outline:2px solid var(--folio-focus);outline-offset:2px}
+.price-glance{display:grid;gap:10px;padding:20px 22px}
+.price-glance h3{font-size:var(--fs-title);font-weight:var(--fw-bold);margin:0}
+.price-glance ol{display:grid;gap:8px;margin:0;padding-left:22px;font-size:var(--fs-body);line-height:1.6}
+.price-glance b{font-variant-numeric:tabular-nums}
+/* 문장 끝 섹션 링크: 글 속 링크라 버튼 프리미티브 대신 밑줄 글자로 둔다(해시 라우터라 a#id 대신 scrollIntoView). */
+.price-glance__link{display:inline;padding:0;margin-left:6px;border:0;background:none;font:inherit;font-size:var(--fs-meta);color:var(--folio-ink-muted);text-decoration:underline;text-underline-offset:3px;white-space:nowrap;cursor:pointer}
+.price-glance__link:hover{color:var(--folio-ink)}
+.price-glance__link:focus-visible{outline:2px solid var(--folio-focus);outline-offset:2px;border-radius:var(--r-control)}
+.price-dec__cards--two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.price-dec__card--static{cursor:default}
+.price-dec__card--static:hover{box-shadow:none}
+.price-dec__sub{display:block;word-break:keep-all;font-style:normal;font-size:var(--fs-xs);color:var(--folio-ink-muted);margin-top:2px}
+.price-dec__card .price-swatch-cut{background:repeating-linear-gradient(135deg,var(--folio-ink-muted) 0 3px,transparent 3px 6px)}
+.price-dec__card .price-swatch-grey{background:var(--folio-ink-subtle)}
+.price-parts-bar{position:relative}
+.price-cutseg{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--surface-page) 0 4px,transparent 4px 8px);opacity:.9;transition:opacity .15s}
+.price-cutseg.is-dim{opacity:.22}
+.price-bar-legend{position:relative;height:18px;font-size:var(--fs-xs);color:var(--folio-ink-muted);font-variant-numeric:tabular-nums}
+.price-bar-legend--two{height:36px}
+.price-bar-legend span{position:absolute;top:0;white-space:nowrap;transform:translateX(-50%)}
+.price-bar-legend .is-l{left:0;transform:none}
+.price-bar-legend .is-r{right:0;left:auto;transform:none}
+.price-bar-legend .is-row2{top:18px}
+.price-folds{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;margin-top:-40px;border-top:1px solid var(--folio-border)}
+.price-folds>.price-details{min-width:0;gap:0;border-bottom:1px solid var(--folio-border)}
+.price-folds>.price-details summary{padding:14px 0}
+.price-folds>.price-details[open] summary{margin-bottom:4px}
+.price-folds>.price-details[open]{padding-bottom:16px}
+.price-folds>.price-details>:not(summary)+:not(summary){margin-top:12px}
+.price-folds .price-details form{display:grid;gap:12px}
 .price-dialog h2{font-size:var(--fs-title);margin:0 0 12px}
 .price-dialog .price-row{margin-top:20px;justify-content:flex-end}
 @media (max-width: 640px) {
@@ -18000,6 +18050,9 @@ select { min-height: 36px; padding: 0 12px; }
   .price-card strong { font-size: var(--fs-title-sm); }
   .price-form { grid-template-columns: 1fr; gap: 12px; }
   .price-rev { grid-template-columns: 1fr; gap: 10px; }
+  .price-part h3 { font-size: var(--fs-title); }
+  .price-calc { display: grid; gap: 4px; }
+  .price-glance { padding: 16px; }
   .price-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .price-table tbody { display: grid; gap: 4px; }
   .price-table tr { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0 14px; border-bottom: 1px solid var(--folio-border); padding: 10px 0; }
@@ -18012,5 +18065,5 @@ select { min-height: 36px; padding: 0 12px; }
   .price-dialog { padding: 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .price-card, .price-dec__card, .price-dec__bar span, .price-hr__pt, .price-hr__t { transition: none; }
+  .price-card, .price-dec__card, .price-dec__bar span, .price-cutseg, .price-hr__pt, .price-hr__t { transition: none; }
 }

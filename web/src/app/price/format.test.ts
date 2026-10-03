@@ -4,7 +4,7 @@ import {
   atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
 } from "./format";
 import type { Projection, ScenarioRow } from "./types";
-import { cashPerHundred } from "./format";
+import { cashPerHundred, cashSpan, moneyShort, percentOne, plainOne, signedOne } from "./format";
 import { instrumentIdFor } from "./PriceTab";
 
 describe("spec-4 display", () => {
@@ -64,22 +64,32 @@ describe("number words", () => {
   });
 });
 
-describe("headline (A form)", () => {
+describe("headline (conditional, history first)", () => {
   const rowOf = (irr: string | null, irrRange: string | null = null, horizon = 10) =>
-    ({ label: "base", horizon, status: "available", irr, irrRange }) as unknown as ScenarioRow;
+    ({ label: "base", horizon, status: "available", irr, irrRange, g: "0.19", exitPE: "25.4", payout: "0.19" }) as unknown as ScenarioRow;
   const base = { horizon: 10 as const, base: rowOf("0.0661"), holdingYears: 10, baseHolding: rowOf("0.0661") };
-  it("compares only when the horizon is the chosen holding period", () => {
-    expect(heroText({ ...base, required: "6" }).title).toBe("10년간 연 6.6%로, 내 기준 연 6%보다 높습니다.");
-    expect(heroText({ ...base, required: "7" }).title).toBe("10년간 연 6.6%로, 내 기준 연 7%보다 낮습니다.");
-    expect(heroText({ ...base, required: "6.5" }).title).toContain("연 6.6%");
+  it("states the condition and compares only on the chosen holding period", () => {
+    const hero = heroText({ ...base, required: "6" });
+    expect(hero.title).toBe("과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 6.6%입니다.");
+    expect(hero.title2).toBe("내가 정한 최소 수익률(연 6%)보다 높습니다.");
+    expect(hero.sub).toContain("주당이익이 보통 연 19.0% 늘었고, 주가는 보통 이익의 25.4배");
+    expect(hero.sub).toContain("보장된 수익이 아닙니다");
+    expect(hero.sub).toContain("6%는 ‘투자 기준’에서 내가 정한 최소 수익률");
+    expect(heroText({ ...base, required: "7" }).title2).toBe("내가 정한 최소 수익률(연 7%)보다 낮습니다.");
+    expect(heroText({ ...base, required: "6.5" }).title2).toContain("연 6.5%");
     const other = heroText({ ...base, horizon: 5, base: rowOf("0.03", null, 5), required: "6" });
-    expect(other.title).toBe("5년간 연 3.0%입니다.");
-    expect(other.sub).toContain("기본 보유 10년(연 6.6%)");
+    expect(other.title).toBe("과거 10년 흐름이 이어진다면, 지금 사서 5년 보유할 때 연평균 3.0%입니다.");
+    expect(other.title2).toBe("내 기준 비교는 기본 보유 기간(10년)으로 합니다. 10년 연평균 6.6%로, 최소 수익률(연 6%)보다 높습니다.");
+    expect(other.sub).toContain("앞으로 5년도 비슷하다고");
+  });
+  it("never words the result as a certainty", () => {
+    const hero = heroText({ ...base, required: "6" });
+    expect(`${hero.title}${hero.title2}${hero.sub}`).not.toMatch(/버는 셈|벌 수 있습니다|보장됩니다/);
   });
   it("compares exactly like the server: 0.29 is not below 29%", () => {
     const exact = { ...base, base: rowOf("0.29"), baseHolding: rowOf("0.29") };
     expect(0.29 * 100 >= 29).toBe(false); // the float trap this guards against
-    expect(heroText({ ...exact, required: "29" }).title).toContain("보다 높습니다");
+    expect(heroText({ ...exact, required: "29" }).title2).toContain("보다 높습니다");
     expect(atLeastRequired(rowOf("0.29"), "29")).toBe(true);
     expect(atLeastRequired(rowOf("0.2899"), "29")).toBe(false);
     expect(atLeastRequired(rowOf("-0.05"), "-5")).toBe(true);
@@ -89,14 +99,37 @@ describe("headline (A form)", () => {
   });
   it("names an out-of-range base return and still compares it", () => {
     const above = { ...base, base: rowOf(null, "above_range"), baseHolding: rowOf(null, "above_range") };
-    expect(heroText({ ...above, required: "20" }).title).toBe("10년간 연 100% 초과로, 내 기준 연 20%보다 높습니다.");
+    const hero = heroText({ ...above, required: "20" });
+    expect(hero.title).toBe("과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 100% 초과입니다.");
+    expect(hero.title2).toBe("내가 정한 최소 수익률(연 20%)보다 높습니다.");
     expect(atLeastRequired(rowOf(null, "below_range"), "-50")).toBe(false);
   });
   it("never invents a comparison without a criterion or a number", () => {
-    expect(heroText({ ...base, required: null, holdingYears: null }).title).toBe("10년간 연 6.6%입니다.");
-    expect(heroText({ ...base, required: null, holdingYears: null }).sub).toContain("내 기준을 정하면 비교");
+    const none = heroText({ ...base, required: null, holdingYears: null });
+    expect(none.title).toBe("과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 6.6%입니다.");
+    expect(none.title2).toBe("");
+    expect(none.sub).toContain("내 기준(원하는 최소 수익률)을 정하면 비교");
     expect(heroText({ ...base, base: undefined, required: "6" }).title).toContain("계산하지 못했습니다");
     expect(atLeastRequired(rowOf("0.1"), null)).toBeNull();
+  });
+});
+
+describe("short money and cash span", () => {
+  it("shortens large amounts per currency", () => {
+    expect(moneyShort("763460000000", "USD")).toBe("7,634.6억 달러");
+    expect(moneyShort("12300000000000", "KRW")).toBe("12.3조 원");
+    expect(moneyShort("450000000000", "KRW")).toBe("4,500억 원");
+    expect(moneyShort("12.5", "USD")).toBe("$12.50");
+  });
+  it("names contiguous and gapped fiscal years differently", () => {
+    expect(cashSpan([{ fiscalYear: 2016 }, { fiscalYear: 2017 }, { fiscalYear: 2018 }])).toBe("지난 3년(FY2016–FY2018)");
+    expect(cashSpan([{ fiscalYear: 2016 }, { fiscalYear: 2018 }])).toBe("2개 회계연도(FY2016–FY2018)");
+  });
+  it("rounds to one decimal and signs with a real minus", () => {
+    expect(percentOne("0.0661")).toBe(6.6);
+    expect(signedOne(-6.4)).toBe("−6.4%");
+    expect(signedOne(19)).toBe("+19.0%");
+    expect(plainOne(13.1)).toBe("13.1%");
   });
 });
 

@@ -134,8 +134,6 @@ export function irrValue(row: ScenarioRow | undefined): number | null {
   return row && row.status === "available" && row.irr !== null ? toNumber(row.irr) : null;
 }
 
-const ASSUMPTION = "회사가 과거 보통 수준으로 성장하고, 주가 수준(PER)도 과거 보통일 때를 가정한 계산입니다.";
-
 /** 소수 문자열 둘의 크기 비교(부동소수 없이). 평범한 소수가 아니면 null. */
 export function compareDecimal(left: string, right: string): -1 | 0 | 1 | null {
   const parse = (text: string) => {
@@ -165,25 +163,80 @@ export function atLeastRequired(row: ScenarioRow | undefined, required: string |
   return order === null ? null : order >= 0;
 }
 
-const valueText = (row: ScenarioRow | undefined): string | null => (row && row.status === "available" && (row.irr !== null || row.irrRange) ? `연 ${irrText(row)}` : null);
+const valueText = (row: ScenarioRow | undefined): string | null => (row && row.status === "available" && (row.irr !== null || row.irrRange) ? `연평균 ${irrText(row)}` : null);
 
-/** 결론 제목(A안). 판정은 기본 보유 기간의 기본 시나리오로만 한다. 값과 비교는 서버가 준 문자열에서 바로 만든다. */
-export function heroText(input: { horizon: number; base: ScenarioRow | undefined; required: string | null; holdingYears: number | null; baseHolding: ScenarioRow | undefined }): { title: string; sub: string } {
+/** 내 기준(% 문자열)을 "연 6%"처럼. 정수면 소수 없이. */
+export function goalText(required: string): string {
+  return `연 ${pctPlain(required, Number(required) % 1 === 0 ? 0 : 1)}`;
+}
+
+/** 기준(% 문자열)이 비교 가능한 값인지. */
+export function usableGoal(required: string | null | undefined): string | null {
+  return required !== null && required !== undefined && required !== "" && compareDecimal(required, "0") !== null ? required : null;
+}
+
+/**
+ * 결론 문장. 확정적으로 말하지 않고, 과거 기록에서 출발해 조건을 붙인다("과거 10년 흐름이 이어진다면").
+ * 판정은 기본 보유 기간의 기본 시나리오로만 한다. 값과 비교는 서버가 준 문자열에서 바로 만든다.
+ */
+export function heroText(input: { horizon: number; base: ScenarioRow | undefined; required: string | null; holdingYears: number | null; baseHolding: ScenarioRow | undefined }): { title: string; title2: string; sub: string } {
   const { horizon, base, required, holdingYears, baseHolding } = input;
   const value = valueText(base);
-  if (value === null) return { title: "이 기간의 수익률은 계산하지 못했습니다.", sub: "아래 사유를 확인해 주세요." };
-  const goal = required !== null && required !== "" && compareDecimal(required, "0") !== null ? required : null;
+  if (value === null || !base || base.status !== "available") return { title: "이 기간의 수익률은 계산하지 못했습니다.", title2: "", sub: "아래 사유를 확인해 주세요." };
+  const history = `이 회사는 지난 10년 동안 주당이익이 보통 연 ${pct(base.g)} 늘었고, 주가는 보통 이익의 ${multiple(base.exitPE)}에서 거래됐습니다. 이 흐름이 앞으로 ${horizon}년도 비슷하다고 보고 계산한 값이며, 보장된 수익이 아닙니다.`;
+  const title = `과거 10년 흐름이 이어진다면, 지금 사서 ${horizon}년 보유할 때 ${value}입니다.`;
+  const plain = irrText(base);
+  const goal = usableGoal(required);
   if (goal === null || holdingYears === null) {
-    return { title: `${horizon}년간 ${value}입니다.`, sub: `${ASSUMPTION} 내 기준을 정하면 비교해 드립니다.` };
+    return { title, title2: "", sub: `${history} ${plain}는 주가 상승과 배당을 합친 1년 평균입니다. 내 기준(원하는 최소 수익률)을 정하면 비교해 드립니다.` };
   }
-  const goalText = `연 ${pctPlain(goal, Number(goal) % 1 === 0 ? 0 : 1)}`;
+  const goalLabel = goalText(goal);
+  const sub = `${history} ${plain}는 주가 상승과 배당을 합친 1년 평균이고, ${pctPlain(goal, Number(goal) % 1 === 0 ? 0 : 1)}는 ‘투자 기준’에서 내가 정한 최소 수익률입니다.`;
   const word = (row: ScenarioRow | undefined) => (atLeastRequired(row, goal) ? "높습니다" : "낮습니다");
+  if (horizon === holdingYears) return { title, title2: `내가 정한 최소 수익률(${goalLabel})보다 ${word(base)}.`, sub };
   const holdingValue = valueText(baseHolding);
-  if (horizon !== holdingYears || holdingValue === null) {
-    const compare = holdingValue === null ? "" : ` 내 기준 비교는 기본 보유 ${holdingYears}년(${holdingValue})으로 하며, 내 기준보다 ${word(baseHolding)}.`;
-    return { title: `${horizon}년간 ${value}입니다.`, sub: `${ASSUMPTION}${compare}` };
-  }
-  return { title: `${horizon}년간 ${value}로, 내 기준 ${goalText}보다 ${word(base)}.`, sub: ASSUMPTION };
+  const title2 = holdingValue === null
+    ? `내 기준 비교는 기본 보유 기간(${holdingYears}년)으로 하며, 그 기간의 수익률은 계산하지 못했습니다.`
+    : `내 기준 비교는 기본 보유 기간(${holdingYears}년)으로 합니다. ${holdingYears}년 ${holdingValue}로, 최소 수익률(${goalLabel})보다 ${word(baseHolding)}.`;
+  return { title, title2, sub };
+}
+
+/** 큰 금액을 짧게(예: 7,634.6억 달러, 12.3조 원). 1억 미만은 그대로 둔다. */
+export function moneyShort(value: string | number | null | undefined, currency: string): string {
+  const parsed = toNumber(value);
+  if (parsed === null) return "—";
+  const abs = Math.abs(parsed);
+  const sign = parsed < 0 ? MINUS : "";
+  const unit = currency === "USD" ? "달러" : currency === "KRW" ? "원" : currency;
+  const fmt = (v: number, places: number) => v.toLocaleString("ko-KR", { minimumFractionDigits: places, maximumFractionDigits: places });
+  if (currency === "KRW" && abs >= 1e12) return `${sign}${fmt(abs / 1e12, 1)}조 ${unit}`;
+  if (abs >= 1e8) return `${sign}${fmt(abs / 1e8, currency === "KRW" ? 0 : 1)}억 ${unit}`;
+  return money(value, currency);
+}
+
+/** 현금 비교의 대상 기간: 연속이면 "지난 N년(FYa–FYb)", 떨어져 있으면 "N개 회계연도(FYa–FYb)". */
+export function cashSpan(years: { fiscalYear: number }[]): string {
+  if (!years.length) return "";
+  const contiguous = years.every((row, index) => index === 0 || row.fiscalYear === years[index - 1].fiscalYear + 1);
+  return `${contiguous ? `지난 ${years.length}년` : `${years.length}개 회계연도`}(FY${years[0].fiscalYear}–FY${years[years.length - 1].fiscalYear})`;
+}
+
+/** 저장된 소수(4자리) 비율 → 소수 1자리 퍼센트 숫자. 화면 표시용. */
+export function percentOne(fraction: string | number | null | undefined): number | null {
+  const value = toNumber(fraction);
+  return value === null ? null : Math.round(value * 1000) / 10;
+}
+
+/** 소수 1자리 퍼센트 숫자를 부호와 함께. */
+export function signedOne(percent: number): string {
+  const text = Math.abs(percent).toFixed(1);
+  return `${percent > 0 && Number(text) !== 0 ? "+" : percent < 0 && Number(text) !== 0 ? MINUS : ""}${text}%`;
+}
+
+/** 소수 1자리 퍼센트 숫자(음수는 −). */
+export function plainOne(percent: number): string {
+  const text = Math.abs(percent).toFixed(1);
+  return `${percent < 0 && Number(text) !== 0 ? MINUS : ""}${text}%`;
 }
 
 export type ScalePoint = { key: string; label: string; value: number; left: number; row: number };

@@ -67,24 +67,53 @@ for (const theme of ['light', 'dark']) {
     const writes = await mockApi(page, { view: V4, projection: projection({ noGrowth: NOGROWTH }) });
     await openPrice(page, theme);
     const tab = page.locator('[data-price-tab]');
-    await expect(tab.locator('.price-return-parts')).toContainText('기본 10년: 이익 성장 +6.00% + 배당 +1.50% + PER 변화 −0.90% = 연 6.60%');
+    // 읽는 순서: 결론 → 한눈에 보기 → ①②③ 묶음.
+    await expect(tab.getByRole('heading', { level: 3, name: '한눈에 보기' })).toBeVisible();
+    for (const name of ['얼마를 벌 수 있나', '지금 가격이 무엇을 가정하나', '과거 기록은 어땠나']) await expect(tab.getByRole('heading', { level: 3, name })).toBeVisible();
+    await expect(tab.locator('.price-glance')).toContainText('사고팔라는 의견이나 판정이 아닙니다');
+
+    // A: 결론 카드·보유 기간을 따라가고, 조각 카드를 누르면 그 조각만 남기고 설명한다.
+    const parts = tab.locator('.price-section:has(#price-parts-title)');
+    await expect(parts).toContainText('연 6.6%를 나눠 보면');
+    await expect(parts.locator('.price-dec__card')).toHaveText([/이익 성장\s*\+6\.0%/, /배당\s*\+1\.5%/, /PER 변화.*−0\.9%/]);
+    await expect(parts).toContainText('PER이 지금 20.0배 그대로라면 연 7.5%');
+    await parts.locator('.price-dec__card').nth(2).click();
+    await expect(parts.locator('.price-dec__card').nth(2)).toHaveAttribute('aria-pressed', 'true');
+    await expect(parts.locator('.price-explain')).toContainText('PER 변화 −0.9%');
+    await expect(parts.locator('.price-dec__bar .is-dim')).toHaveCount(2);
     await tab.locator('.price-card').nth(2).focus();
     await page.keyboard.press('Enter');
-    await expect(tab.locator('.price-return-parts')).toContainText('낙관 10년');
+    await expect(parts).toContainText('낙관 · 10년 보유');
     await tab.getByRole('button', { name: '5년', exact: true }).click();
-    await expect(tab.locator('.price-return-parts')).toContainText('낙관 5년');
-    await expect(tab.locator('.price-no-growth')).toContainText('성장이 없다면, 이 가격의 약 50%');
-    await expect(tab.locator('.price-no-growth')).toContainText('성장 없는 가치 $50.00');
-    await expect(tab.locator('.price-no-growth')).toContainText('최근 주당이익 $5.00');
-    const cash = tab.getByRole('heading', { name: '이익이 현금으로 남았나' }).locator('..').locator('..');
+    await expect(parts).toContainText('낙관 · 5년 보유');
+
+    // B: 카드는 보기만 한다(버튼 아님).
+    const noGrowth = tab.locator('.price-section:has(#price-no-growth-title)');
+    await expect(noGrowth).toContainText('지금 가격의 약 50%는 앞으로의 성장에 거는 몫입니다.');
+    await expect(noGrowth).toContainText('$50.00');
+    await expect(noGrowth).toContainText('최근 주당이익은 $5.00');
+    await expect(noGrowth.getByRole('button')).toHaveCount(0);
+
+    // C: 섹션은 문장·카드·막대, 연도별 표는 아래 접기 목록에 있다.
+    const cash = tab.locator('.price-section:has(#price-cash-title)');
     await expect(cash).toContainText('순이익 100당 현금이 약 90');
     await expect(cash).toContainText('지난 5년(FY2020–FY2024)');
-    await expect(cash.getByRole('table')).not.toBeVisible();
-    await cash.getByText('연도별 현금 근거 (5개 회계연도)', { exact: true }).focus();
+    await expect(cash.getByRole('button')).toHaveCount(0);
+    const folds = tab.locator('.price-folds');
+    await expect(folds.getByRole('table')).not.toBeVisible();
+    await folds.getByText('연도별 현금 근거 (5개 회계연도)', { exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(cash.getByRole('table')).toBeVisible();
-    await expect(cash.getByRole('table')).toContainText('TWD');
-    await expect(cash.getByRole('table').locator('tbody tr')).toHaveCount(5);
+    await expect(folds.getByRole('table')).toBeVisible();
+    await expect(folds.getByRole('table')).toContainText('TWD');
+    await expect(folds.getByRole('table').locator('tbody tr')).toHaveCount(5);
+    // 펼친 표는 자기 상자 안에서만 옆으로 넘긴다: 가격 탭 전체가 옆으로 밀리지 않는다.
+    expect(await tab.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+
+    // 한눈에 보기의 링크는 해시 주소를 바꾸지 않고 해당 섹션으로 옮겨 준다.
+    const hash = await page.evaluate(() => location.hash);
+    await tab.locator('.price-glance').getByRole('button', { name: '③ 이익이 현금으로 남았나' }).click();
+    await expect(page.locator('#price-cash-title')).toBeInViewport();
+    expect(await page.evaluate(() => location.hash)).toBe(hash);
     expect(writes).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     const viewportWidth = page.viewportSize()!.width;
@@ -92,13 +121,13 @@ for (const theme of ['light', 'dark']) {
     expect((await cash.boundingBox())!.x + (await cash.boundingBox())!.width).toBeLessThanOrEqual(viewportWidth + 1);
     await page.locator('.price-cash-table').focus();
     await page.keyboard.press('ArrowRight');
-    await page.locator('.price-return-parts').scrollIntoViewIfNeeded();
+    await parts.scrollIntoViewIfNeeded();
     const a11y = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
     expect(a11y.violations.map(v => `${v.id}: ${v.nodes.map(n => n.target.join(' ')).join(' | ')}`)).toEqual([]);
     if (process.env.PRICE_CAPTURE_DIR) {
       await page.locator('.price-hero').scrollIntoViewIfNeeded();
       await page.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/crosschecks-${theme}-${test.info().project.name}.png` });
-      await page.locator('.price-no-growth').scrollIntoViewIfNeeded();
+      await noGrowth.scrollIntoViewIfNeeded();
       await page.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/no-growth-${theme}-${test.info().project.name}.png` });
       await cash.scrollIntoViewIfNeeded();
       await page.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/cash-${theme}-${test.info().project.name}.png` });
@@ -122,7 +151,7 @@ test('0.9.1 no-growth sentence uses the pre-rounding branch and cash handles los
   const view = { ...V4, results: { ...V4.results, cashConversion: { ...CASH, ratio: '-0.2050', class: 'cash_below_earnings', years: CASH.years.map(r => ({ ...r, fiscalYear: r.fiscalYear === 2022 ? 2018 : r.fiscalYear })).sort((a,b) => a.fiscalYear-b.fiscalYear) } } };
   await mockApi(page, { view, projection: projection({ noGrowth: { ...NOGROWTH, value: '100.00', growthShare: '-0.0000', priceCoverage: '1.0000', hasGrowthShare: false } }) });
   await openPrice(page, 'light');
-  await expect(page.locator('.price-no-growth')).toContainText('성장이 없어도 지금 가격이 설명됩니다(성장 없는 가치가 가격의 1.0배)');
+  await expect(page.locator('.price-section:has(#price-no-growth-title)')).toContainText('성장이 없어도 지금 가격이 설명됩니다(성장 없는 가치가 가격의 1.0배)');
   await expect(page.locator('[data-price-tab]')).toContainText('같은 기간 순이익은 플러스였지만 설비투자를 뺀 현금은 마이너스였습니다.');
   await expect(page.locator('[data-price-tab]')).toContainText('5개 회계연도(FY2018–FY2024)');
 });
@@ -186,7 +215,7 @@ test('0.9.1 loading and read failure recover without rewriting saved results', a
   await expect(page.getByRole('alert')).toContainText('이전 기록은 지워지지 않았습니다.');
   await page.unroute(pattern);
   await page.getByRole('button', { name: '다시 읽기', exact: true }).click();
-  await expect(page.locator('.price-return-parts')).toContainText('기본 10년');
+  await expect(page.locator('.price-section:has(#price-parts-title)')).toContainText('기본 · 10년 보유');
   expect(writes).toEqual([]);
 });
 
@@ -196,8 +225,8 @@ for (const theme of ['light', 'dark']) {
     await openPrice(page, theme);
     const tab = page.locator('[data-price-tab]');
     if (process.env.PRICE_CAPTURE_DIR) await page.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/${theme}-${test.info().project.name}.png`, fullPage: true });
-    await expect(tab.getByRole('heading', { level: 3, name: '10년간 연 6.6%로, 내 기준 연 6%보다 높습니다.' })).toBeVisible();
-    await expect(tab.getByText('회사가 과거 보통 수준으로 성장하고')).toBeVisible();
+    await expect(tab.getByRole('heading', { level: 3, name: /^과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 6\.6%입니다\.\s*내가 정한 최소 수익률\(연 6%\)보다 높습니다\.$/ })).toBeVisible();
+    await expect(tab.getByText('이 흐름이 앞으로 10년도 비슷하다고 보고 계산한 값이며, 보장된 수익이 아닙니다.')).toBeVisible();
 
     // 카드 세 장: 기본이 처음부터 선택돼 있고, 같은 카드를 다시 누르면 기본으로 돌아간다. 강조는 보기용이다.
     const cards = tab.locator('.price-card');
@@ -208,12 +237,12 @@ for (const theme of ['light', 'dark']) {
     await cards.nth(2).click();
     await expect(cards.nth(1)).toHaveAttribute('aria-pressed', 'true');
     await expect(tab.getByRole('img', { name: /^10년 보유 시 연 수익률: 보수 4\.5%, 기본 6\.6%, 낙관 9\.8%\. 내 기준 연 6%/ })).toBeVisible();
-    await expect(tab.getByRole('heading', { level: 3, name: '10년간 연 6.6%로, 내 기준 연 6%보다 높습니다.' })).toBeVisible();
+    await expect(tab.getByRole('heading', { level: 3, name: /^과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 6\.6%입니다\.\s*내가 정한 최소 수익률\(연 6%\)보다 높습니다\.$/ })).toBeVisible();
 
     // 판정은 기본 보유 기간으로만 한다: 5년으로 바꿔도 비교 문장은 기본 보유 10년을 말한다.
     await tab.getByRole('button', { name: '5년', exact: true }).click();
-    await expect(tab.getByRole('heading', { level: 3, name: '5년간 연 5.9%입니다.' })).toBeVisible();
-    await expect(tab.getByText('내 기준 비교는 기본 보유 10년(연 6.6%)')).toBeVisible();
+    await expect(tab.getByRole('heading', { level: 3, name: /^과거 10년 흐름이 이어진다면, 지금 사서 5년 보유할 때 연평균 5\.9%입니다\./ })).toBeVisible();
+    await expect(tab.locator('.price-hero__title2')).toHaveText('내 기준 비교는 기본 보유 기간(10년)으로 합니다. 10년 연평균 6.6%로, 최소 수익률(연 6%)보다 높습니다.');
     await expect(tab.locator('.price-verdict .chip').first()).toHaveText('수익률 기준 충족 · 10년');
     await expect(tab.locator('.price-verdict')).toContainText('안전마진 판정 보류');
 
@@ -226,6 +255,18 @@ for (const theme of ['light', 'dark']) {
     await tab.locator('.price-dec__card').first().click();
     await expect(tab.locator('.price-dec__card').first()).toHaveAttribute('aria-pressed', 'true');
     await expect(tab.locator('.price-dec__bar span.is-dim')).toHaveCount(2);
+
+    // 전제 줄을 누르면(키보드 포함) 계산 방법이 펼쳐지고, 보유 기간을 바꾸면 그 기간 설명으로 바뀐다.
+    const premise = tab.locator('.price-rev--toggle').first();
+    await premise.click();
+    await expect(premise).toHaveAttribute('aria-expanded', 'true');
+    await expect(tab.locator('.price-rev-explain')).toContainText('5년 뒤 PER을 바꿔 가며 연 수익률이 정확히 0%가 되는 지점');
+    await tab.getByRole('button', { name: '10년', exact: true }).click();
+    await expect(tab.locator('.price-rev-explain')).toContainText('10년 뒤 PER을 바꿔 가며');
+    await premise.focus();
+    await page.keyboard.press('Enter');
+    await expect(premise).toHaveAttribute('aria-expanded', 'false');
+    await expect(tab.locator('.price-rev-explain')).toHaveCount(0);
 
     // 확률·목표가·매수매도 표현이 없다.
     for (const word of ['확률', '목표가', '적정가', '매수', '매도', '고평가', '저평가', '상승여력']) await expect(tab).not.toContainText(word);
@@ -252,7 +293,7 @@ test('0.9 first run, criteria dialog saves exact decimal text, previous result i
   const next = await mockApi(page, { criteria: null, projection: projection({ criteria: null, verdict: { return: { state: 'unknown', reason: 'criteria_not_set' }, marginOfSafety: { state: 'unknown', reason: 'criteria_not_set' } }, requirement: { status: 'unavailable', reason: { code: 'criteria_not_set' } } }) });
   await page.reload();
   await page.getByRole('button', { name: '가격', exact: true }).click();
-  await expect(tab.getByRole('heading', { level: 3, name: '10년간 연 6.6%입니다.' })).toBeVisible();
+  await expect(tab.getByRole('heading', { level: 3, name: '과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 6.6%입니다.', exact: true })).toBeVisible();
   await expect(tab.locator('.price-verdict .chip')).toHaveText('내 기준 없음');
   await tab.getByRole('button', { name: '기준 정하기' }).first().click();
   const dialog = page.getByRole('dialog', { name: '투자 기준' });

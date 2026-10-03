@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   NOTICE_TEXT, SCENARIO_NAMES, SCENARIO_ORDER, atLeastRequired, decompositionCards, irrText, irrValue, money, multiple, pct, pctPlain, pctSigned,
   rangePosition, reasonText, rowFor, scaleLayout, toNumber,
@@ -129,6 +129,21 @@ function rangeOf(view: SnapshotView, key: "growth" | "pe" | "netMargin") {
 }
 
 /** 지금 가격이 전제하는 것. 문장 + 과거 범위 위의 위치. 달성 가능성은 판정하지 않는다. */
+/** 전제 한 줄. 누르면(Enter·Space 포함) 그 값을 어떻게 찾았는지 줄 아래에 펼친다. 보유 기간을 바꾸면 설명도 그 기간 값으로 바뀐다. */
+function RevToggle({ how, children }: { how: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const toggle = () => setOpen(current => !current);
+  return (
+    <>
+      <div className="price-rev price-rev--toggle" role="button" tabIndex={0} aria-expanded={open}
+        onClick={toggle} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } }}>
+        {children}
+      </div>
+      {open && <p className="price-rev-explain">{how}</p>}
+    </>
+  );
+}
+
 export function RequirementSection({ view, projection, horizon, onSetCriteria }: { view: SnapshotView; projection: Projection | null; horizon: number; onSetCriteria: () => void }) {
   const key = String(horizon);
   const reverse = view.results.reverse;
@@ -140,13 +155,23 @@ export function RequirementSection({ view, projection, horizon, onSetCriteria }:
   const required = projection?.criteria?.requiredReturn ?? null;
   const need = projection?.requirement;
   const needGrowth = need?.growth?.[key];
+  const base = rowFor(view.results.scenarios, "base", horizon);
+  const known = base && base.status === "available" ? base : null;
+  const rpsGrowth = view.results.ranges.rpsGrowth?.p50;
+  const goal = required !== null ? `연 ${pctPlain(required, Number(required) % 1 === 0 ? 0 : 1)}` : "";
+  const howPE = pe && pe.status === "available" && pe.exitPE
+    ? `${known ? `기본 가정(이익 연 ${pct(known.g)} 성장, 배당성향 ${pct(known.payout, 0)})은 그대로 두고, ` : "다른 가정은 기본값으로 두고, "}${horizon}년 뒤 PER을 바꿔 가며 연 수익률이 정확히 0%가 되는 지점을 찾았습니다. 그 PER이 ${multiple(pe.exitPE)}입니다.` : "";
+  const howGrowth = needGrowth && needGrowth.status === "available" && needGrowth.value
+    ? `${known ? `PER ${multiple(known.exitPE)}와 배당성향 ${pct(known.payout, 0)}는 그대로 두고, ` : "다른 가정은 기본값으로 두고, "}이익 성장률을 바꿔 가며 ${horizon}년 보유 시 연 수익률이 ${goal}가 되는 성장률을 찾았습니다. 그 값이 ${pct(needGrowth.value)}입니다.` : "";
+  const howMargin = margin && margin.status === "available" && margin.margin !== null
+    ? `주당 매출은 과거 보통 속도${rpsGrowth ? `(연 ${pct(rpsGrowth)})` : ""}로 자라고, 순이익률이 지금(${pct(margin.currentMargin, 0)})에서 ${horizon}년 뒤 값까지 고르게 바뀐다고 보고, 연 수익률이 0%가 되는 ${horizon}년 뒤 순이익률을 찾았습니다. 그 값이 ${pct(margin.margin)}입니다.` : "";
   return (
     <div className="price-reverse">
       {pe && pe.status === "available" && pe.state === "needed" && pe.exitPE && (
-        <div className="price-rev">
+        <RevToggle how={howPE}>
           <p>손실이 나지 않으려면(손익분기) {horizon}년 뒤 주가가 그해 이익의 <strong>{multiple(pe.exitPE)}</strong>(PER) 이상이어야 합니다.</p>
           {peRange && <MiniRange label="손익분기 PER" value={Number(pe.exitPE)} valueText={multiple(pe.exitPE)} min={peRange.min} max={peRange.max} median={peRange.median} unit={v => multiple(v)} />}
-        </div>
+        </RevToggle>
       )}
       {pe && pe.status === "available" && pe.state === "not_needed" && (
         <div className="price-rev"><p>배당만으로 지금 가격을 회수할 수 있어, 손실이 나지 않기 위한 PER 조건이 필요 없습니다.</p></div>
@@ -154,10 +179,10 @@ export function RequirementSection({ view, projection, horizon, onSetCriteria }:
       {pe && pe.status === "unavailable" && <div className="price-rev"><p>손익분기 PER은 계산하지 못했습니다 — {reasonText(pe.reason.code)}.</p></div>}
       {required !== null ? (
         needGrowth && needGrowth.status === "available" && needGrowth.value ? (
-          <div className="price-rev">
+          <RevToggle how={howGrowth}>
             <p>내 기준 연 {pctPlain(required, Number(required) % 1 === 0 ? 0 : 1)}를 얻으려면 이익이 매년 <strong>{pct(needGrowth.value)}</strong> 자라야 합니다.</p>
             {growthRange && <MiniRange label="필요 성장률" value={Number(needGrowth.value)} valueText={pct(needGrowth.value)} min={growthRange.min} max={growthRange.max} median={growthRange.median} unit={v => pct(v)} />}
-          </div>
+          </RevToggle>
         ) : needGrowth && needGrowth.status === "available" && needGrowth.range ? (
           <div className="price-rev"><p>내 기준을 얻는 데 필요한 이익 성장률이 계산 범위({needGrowth.range === "above_range" ? "연 100% 초과" : "연 −50% 미만"})를 벗어납니다.</p></div>
         ) : (
@@ -170,10 +195,10 @@ export function RequirementSection({ view, projection, horizon, onSetCriteria }:
         </div>
       )}
       {margin && margin.status === "available" && margin.margin !== null && (
-        <div className="price-rev">
+        <RevToggle how={howMargin}>
           <p>손실이 나지 않으려면(손익분기) {horizon}년 뒤 매출에서 남는 이익(순이익률)이 <strong>{pct(margin.margin)}</strong> 이상이어야 합니다. <span className="price-meta">(지금 {pct(margin.currentMargin, 0)})</span></p>
           {marginRange && <MiniRange label="손익분기 순이익률" value={Number(margin.margin)} valueText={pct(margin.margin)} min={marginRange.min} max={marginRange.max} median={marginRange.median} unit={v => pct(v)} />}
-        </div>
+        </RevToggle>
       )}
     </div>
   );
