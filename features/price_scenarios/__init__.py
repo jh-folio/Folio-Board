@@ -2,7 +2,9 @@
 
 METHOD_VERSION = "price-scenario-4"
 SPEC_VERSION = "price-scenario-spec-4"
-SPEC_SHA256 = "67cea9237874e56cc5d86d1702b2f958dca0d536d312e5bbd9e15d6ba060d6aa"
+SPEC_SHA256 = "9e88a0ab26a66981e753bff3f834ff874a2dcfe00c2de3aed042c36692e88f1a"
+SPEC_REVISION = 1
+SPEC4_REVISION0_SHA256 = "67cea9237874e56cc5d86d1702b2f958dca0d536d312e5bbd9e15d6ba060d6aa"
 
 # Earlier frozen versions stay readable. Their results are never rewritten.
 SPEC3_METHOD_VERSION = "price-scenario-3"
