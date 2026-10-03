@@ -6,6 +6,7 @@ import {
 import type { Criteria, HistoryRow, MyAssumptions, Projection, ScenarioRow, SnapshotView } from "./types";
 
 const at = (left: number): CSSProperties => ({ left: `${left.toFixed(2)}%` });
+const ROW_STEP = 22;
 const align = (left: number): CSSProperties => ({ transform: left < 8 ? "none" : left > 92 ? "translateX(-100%)" : "translateX(-50%)" });
 
 /** 한 숫자 줄: 말이 아니라 숫자 자체를 읽는 사람을 위해 카드와 같은 값을 글자로 함께 둔다. */
@@ -16,11 +17,12 @@ export function ScaleBar({ rows, horizon, selected, goal }: { rows: ScenarioRow[
   if (values.length < 3) return null;
   const layout = scaleLayout(values, goal);
   const summary = `${horizon}년 보유 시 연 수익률: ${values.map(item => `${item.label} ${pct(item.value / 100)}`).join(", ")}${goal === null ? "" : `. 내 기준 연 ${pct(goal / 100, 0)}`}`;
+  const maxRow = Math.max(...layout.points.map(point => point.row));
   return (
-    <div className="price-hr" role="img" aria-label={summary}>
+    <div className="price-hr" role="img" aria-label={summary} style={{ marginTop: `${6 + maxRow * ROW_STEP}px` }}>
       <div className="price-hr__base" />
       <div className="price-hr__span" style={{ left: `${layout.spanLeft.toFixed(2)}%`, width: `${(layout.spanRight - layout.spanLeft).toFixed(2)}%` }} />
-      {layout.ticks.map(tick => (
+      {layout.ticks.filter(tick => layout.goalLeft === null || Math.abs(tick.left - layout.goalLeft) >= 12).map(tick => (
         <span key={tick.value}>
           <div className="price-hr__tick" style={at(tick.left)} />
           <span className="price-hr__t price-hr__t--tick" style={at(tick.left)}>{tick.value}%</span>
@@ -35,7 +37,8 @@ export function ScaleBar({ rows, horizon, selected, goal }: { rows: ScenarioRow[
       {layout.points.map((point, index) => (
         <span key={point.key}>
           <div className={`price-hr__pt${index === selected ? " price-hr__pt--base" : ""}`} style={at(point.left)} />
-          <span className={`price-hr__t ${index === selected ? "price-hr__t--base" : "price-hr__t--sc"}`} style={{ ...at(point.left), ...align(point.left) }}>
+          {point.row > 0 && <div className="price-hr__lead" style={{ ...at(point.left), top: `${14 - point.row * ROW_STEP}px`, height: `${10 + point.row * ROW_STEP}px` }} />}
+          <span className={`price-hr__t ${index === selected ? "price-hr__t--base" : "price-hr__t--sc"}`} style={{ ...at(point.left), ...align(point.left), top: `${(index === selected ? -2 : 0) - point.row * ROW_STEP}px` }}>
             {point.label} {pct(point.value / 100)}
           </span>
         </span>

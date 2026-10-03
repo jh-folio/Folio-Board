@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attemptBanner, bannerFor, decompositionCards, fractionToPercent, heroText, irrText, money, multiple, pct, pctPlain, pctSigned,
-  atLeastRequired, compareDecimal, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
+  atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
 } from "./format";
 import type { Projection, ScenarioRow } from "./types";
 
@@ -123,5 +123,14 @@ describe("one banner at a time", () => {
     expect(attemptBanner({ status: "failed", reason: { code: "company_not_found" } }, null)?.detail).toContain("공식 자료에서 이 종목을 찾지 못했습니다");
     expect(attemptBanner({ status: "saved", snapshotId: "x" }, null)).toBeNull();
     expect(attemptBanner(null, null)).toBeNull();
+  });
+});
+
+describe("scale labels", () => {
+  it("puts close points on different rows and leaves spread points on one row", () => {
+    expect(labelRows([10, 15, 20])).toEqual([0, 1, 2]);
+    expect(labelRows([10, 50, 90])).toEqual([0, 0, 0]);
+    expect(labelRows([60, 10, 15])).toEqual([1, 0, 0].map((_, i) => labelRows([60, 10, 15])[i])); // order of input does not matter
+    expect(labelRows([60, 10, 15])[0]).toBe(0);
   });
 });

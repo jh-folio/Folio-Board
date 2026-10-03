@@ -69,6 +69,7 @@ export const REASON_TEXT: Record<string, string> = {
   source_credential_missing: "필요한 공시 조회 키가 설정되어 있지 않습니다",
   instrument_not_supported: "지원하지 않는 종목 형식입니다",
   criteria_not_set: "내 기준이 정해지지 않았습니다",
+  calculation_failed: "예상하지 못한 오류로 계산하지 못했습니다",
   dcf_fallback: "내재가치 계산에 자료 부족으로 채운 값이 있어 판정하지 않았습니다",
 };
 
@@ -167,7 +168,21 @@ export function heroText(input: { horizon: number; base: ScenarioRow | undefined
   return { title: `${horizon}년간 ${value}로, 내 기준 ${goalText}보다 ${word(base)}.`, sub: ASSUMPTION };
 }
 
-export type ScalePoint = { key: string; label: string; value: number; left: number };
+export type ScalePoint = { key: string; label: string; value: number; left: number; row: number };
+
+/** 가까운 점의 글자가 겹치지 않게 줄을 나눈다(왼쪽부터, 서로 gap(%) 안에 있으면 다른 줄). */
+export function labelRows(lefts: number[], gap = 26): number[] {
+  const order = lefts.map((left, index) => ({ left, index })).sort((a, b) => a.left - b.left);
+  const rows: number[] = new Array(lefts.length).fill(0);
+  const placed: { left: number; row: number }[] = [];
+  for (const item of order) {
+    let row = 0;
+    while (placed.some(other => other.row === row && Math.abs(other.left - item.left) < gap)) row += 1;
+    rows[item.index] = row;
+    placed.push({ left: item.left, row });
+  }
+  return rows;
+}
 /** 범위 막대 눈금: 세 점과 내 기준을 한 줄 위에 놓는 좌표(%)와 눈금 값. */
 export function scaleLayout(values: { key: string; label: string; value: number }[], goal: number | null) {
   const all = values.map(v => v.value).concat(goal === null ? [] : [goal]);
@@ -184,7 +199,11 @@ export function scaleLayout(values: { key: string; label: string; value: number 
     ticks.push({ value: rounded, left: at(rounded) });
   }
   return {
-    points: values.map(v => ({ ...v, left: at(v.value) })),
+    points: (() => {
+      const lefts = values.map(v => at(v.value));
+      const rows = labelRows(lefts);
+      return values.map((v, index) => ({ ...v, left: lefts[index], row: rows[index] }));
+    })(),
     goalLeft: goal === null ? null : at(goal),
     ticks,
     spanLeft: at(Math.min(...values.map(v => v.value))),

@@ -120,6 +120,14 @@ def calculate(root, instrument_id: str, *, job_id=None, progress=None, collector
         except PriceStoreError as error:
             _write_attempt(root, instrument_id, {"status": "failed", "reason": {"code": error.code}, "startedAt": started, "finishedAt": clock().isoformat()})
             raise CalculationNotStored(error.code) from None
+        except RuntimeError as error:
+            if str(error) == "price_calculation_cancelled":
+                raise  # a cancelled job is not a failed calculation
+            _write_attempt(root, instrument_id, {"status": "failed", "reason": {"code": "calculation_failed"}, "startedAt": started, "finishedAt": clock().isoformat()})
+            raise CalculationNotStored("calculation_failed") from None
+        except Exception:  # noqa: BLE001 - an unexpected source shape or database error must still leave a visible last attempt
+            _write_attempt(root, instrument_id, {"status": "failed", "reason": {"code": "calculation_failed"}, "startedAt": started, "finishedAt": clock().isoformat()})
+            raise CalculationNotStored("calculation_failed") from None
         _write_attempt(root, instrument_id, {"status": "saved", "snapshotId": saved["snapshotId"] if isinstance(saved, dict) else new_id,
                                              "startedAt": started, "finishedAt": clock().isoformat()})
         return {"snapshotId": new_id, "savedCount": 1, "instrumentId": instrument_id, "created": bool(saved.get("created", True)) if isinstance(saved, dict) else True}

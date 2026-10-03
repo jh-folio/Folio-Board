@@ -191,3 +191,18 @@ def test_calculations_for_one_instrument_never_interleave(tmp_path, assembled):
     assert state["peak"] == 1 and len(results) == 4
     assert len({row["snapshotId"] for row in results}) == 1 and sum(row["created"] for row in results) == 1
     assert len(service.overview(tmp_path, "US:ACME")["history"]) == 1
+
+
+def test_an_unexpected_error_still_leaves_a_visible_failed_attempt_and_a_cancel_does_not(tmp_path, assembled):
+    saved = service.calculate(tmp_path, "US:ACME", collector=FakeCollector())
+    with pytest.raises(service.CalculationNotStored) as error:
+        service.calculate(tmp_path, "US:ACME", collector=FakeCollector(KeyError("filings")))
+    assert error.value.code == "calculation_failed"
+    view = service.overview(tmp_path, "US:ACME")
+    assert view["lastAttempt"]["status"] == "failed" and view["lastAttempt"]["reason"] == {"code": "calculation_failed"}
+    assert view["latest"]["snapshotId"] == saved["snapshotId"]
+    service.calculate(tmp_path, "US:ACME", collector=FakeCollector())           # a later success replaces the failure record
+    assert service.overview(tmp_path, "US:ACME")["lastAttempt"]["status"] == "saved"
+    with pytest.raises(RuntimeError, match="price_calculation_cancelled"):
+        service.calculate(tmp_path, "US:ACME", collector=FakeCollector(RuntimeError("price_calculation_cancelled")))
+    assert service.overview(tmp_path, "US:ACME")["lastAttempt"]["status"] == "saved"   # cancelling is not a failure

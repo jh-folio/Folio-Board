@@ -38,6 +38,7 @@ REASONS = {
     "source_credential_missing": "필요한 공시 조회 키가 설정되어 있지 않아 계산하지 않았습니다",
     "instrument_not_supported": "지원하지 않는 종목 형식이라 계산하지 않았습니다",
     "price_snapshot_failed": "가격 시나리오 계산 결과를 저장하지 못해 쓰지 않았습니다",
+    "calculation_failed": "예상하지 못한 오류로 계산하지 못했습니다",
     "price_snapshot_unavailable": "가격 시나리오를 계산하지 못했습니다",
 }
 NOTICES = {

@@ -174,3 +174,21 @@ test('0.9 correction banner and old-basis assumptions are shown without rewritin
   await expect(tab.locator('.price-mine')).not.toContainText('기준 충족');
   expect(writes).toEqual([]);
 });
+
+test('0.9 scale labels never overlap, even when the personal goal sits far from the three cases', async ({ page }) => {
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 }]) {
+    await page.setViewportSize(viewport);
+    await mockApi(page, { criteria: { ...CRITERIA, requiredReturn: '30' }, projection: projection({ criteria: { revisionId: 1, holdingYears: 10, requiredReturn: '30', minMarginOfSafety: '20' } }) });
+    await openPrice(page, 'light');
+    const bar = page.locator('[data-price-tab] .price-hr');
+    await expect(bar).toBeVisible();
+    const boxes = await bar.locator('.price-hr__t').evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { text: node.textContent, x: r.x, y: r.y, w: r.width, h: r.height }; }));
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i]; const b = boxes[j];
+        const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+        expect(overlap, `${a.text} overlaps ${b.text} at ${viewport.width}px`).toBe(false);
+      }
+    }
+  }
+});
