@@ -13,7 +13,7 @@ def return_parts(results, quartiles, reference):
     for row in results['scenarios']:
         head = {'label': row['label'], 'horizon': row['horizon']}
         if row['status'] != 'available':
-            parts.append({**head, **unavailable(row['reason']['code'], row['reason'].get('subCode'))})
+            parts.append({**head, **unavailable(row['reason'])})
             continue
         if row.get('irrRange'):
             parts.append({**head, **unavailable('irr_'+row['irrRange'])})
@@ -48,7 +48,7 @@ def no_growth(history, price, ranges, quartiles):
     if revenue and _stale(revenue, price['sessionDate']):
         return unavailable('stale_financials')
     if ranges['netMargin']['status'] != 'available':
-        return unavailable(ranges['netMargin']['reason']['code'])
+        return unavailable(ranges['netMargin']['reason'])
     if not revenue or not shares or number(revenue['value']) <= 0 or number(shares['value']) <= 0:
         return unavailable('non_positive_revenue')
     with localcontext() as context:

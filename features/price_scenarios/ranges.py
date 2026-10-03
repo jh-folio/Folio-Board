@@ -10,6 +10,7 @@ ever filled in.
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+from collections import Counter
 
 from .blocks import unavailable
 from .decimal_ops import number, rounded
@@ -17,6 +18,27 @@ from .stats import percentile
 
 MIN_WINDOWS, MIN_YEARS = 3, 5
 WINDOW_YEARS = 5
+
+
+def explain_short_history(block: dict, name: str, history: dict) -> dict:
+    """Explain the existing minimum without changing eligibility or the fiscal domain."""
+    if (block.get("reason") or {}).get("code") != "history_too_short":
+        return block
+    excluded = {int(r["fiscalYear"]) for r in history.get("excludedYears", [])}
+    years = sorted({int(r["fiscalYear"]) for r in history["rows"]} - excluded)
+    width = years[-1] - years[0] + 1 if years else 0
+    required = block["required"]
+    reason = {"code": "history_too_short", "range": name, "n": block["n"],
+              "required": required, "historyYears": len(years)}
+    if width < (WINDOW_YEARS + MIN_WINDOWS if name in {"growth", "rpsGrowth"} else required):
+        reason["subCode"] = "years_too_few"
+    else:
+        counts = Counter(item["reason"] for item in block.get("excluded", []))
+        loss, missing = counts["non_positive_eps"], counts["missing_value"]
+        other = max((n for code, n in counts.items() if code not in {"non_positive_eps", "missing_value"}), default=0)
+        if max(loss, missing) > other:
+            reason["subCode"] = "loss_years" if loss >= missing else "missing_years"
+    return {**block, "reason": reason}
 
 
 def metric_by_year(rows: list[dict], metric: str) -> dict[int, Decimal]:

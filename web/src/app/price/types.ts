@@ -1,7 +1,9 @@
 // 가격 탭이 읽는 응답 형태. 서버(features/price_scenarios)의 계약을 그대로 옮긴 것이며,
 // 숫자는 전부 문자열(Decimal)로 온다 — 화면에서 계산하지 않고 형식만 바꾼다.
 
-export type Unavailable = { status: "unavailable"; reason: { code: string; subCode?: string } };
+export type Reason = { code: string; subCode?: string; range?: string; n?: number; required?: number; historyYears?: number };
+export type Notice = string | { code: string; years?: number[]; class?: string };
+export type Unavailable = { status: "unavailable"; reason: Reason };
 export type PreviousMethod = { status: "not_applicable"; reason: { code: string } };
 export type ReturnPart = ({ label: ScenarioRow["label"]; horizon: 5 | 10 } & Unavailable)
   | { label: ScenarioRow["label"]; horizon: 5 | 10; status: "available"; peNow: string; exitPE: string;
@@ -15,6 +17,13 @@ export type CashConversion = (Unavailable | { status: "available"; ratio: string
     notices?: { code: string; years?: number[] }[];
   } | PreviousMethod;
 
+export type ReferenceYear = { fiscalYear: number; revenue: string | null; revenueGrowth: string | null;
+  netMargin: string | null; fcf: string | null; fcfMargin: string | null; reasons: Partial<Record<"revenue" | "revenueGrowth" | "netMargin" | "fcf" | "fcfMargin", Reason>> };
+export type ReferenceFacts = Unavailable | PreviousMethod | { status: "available"; currency: string;
+  peNow: Unavailable | { status: "available"; state: "multiple" | "loss" | "zero"; value: string | null };
+  psNow: Unavailable | { status: "available"; value: string }; years: ReferenceYear[];
+  sbcBasis: string | null; notices: { code: string; years?: number[] }[] };
+
 export type ScenarioRow =
   | ({ label: "conservative" | "base" | "optimistic"; horizon: 5 | 10; status: "available";
       g: string; exitPE: string; payout: string; irr: string | null; irrRange: "above_range" | "below_range" | null;
@@ -22,7 +31,7 @@ export type ScenarioRow =
   | ({ label: "conservative" | "base" | "optimistic"; horizon: 5 | 10 } & Unavailable);
 
 export type RangeBlock = {
-  status: "available" | "unavailable"; reason?: { code: string };
+  status: "available" | "unavailable"; reason?: Reason;
   p25?: string; p50?: string; p75?: string; n?: number; values?: { fiscalYear: number; value: string }[];
 };
 
@@ -41,15 +50,16 @@ export type SnapshotResults = {
   returnParts?: ReturnPart[] | PreviousMethod;
   noGrowth?: Unavailable | { status: "available"; rps0: string; marginP50: string; marginN: number; normEps: string; recentEps: string | null };
   cashConversion?: CashConversion;
-  support: { status: "supported" | "limited" | "unsupported"; reasons: { code: string; subCode?: string }[]; notices: string[] };
+  referenceFacts?: ReferenceFacts;
+  support: { status: "supported" | "limited" | "unsupported"; reasons: Reason[]; notices: string[] };
   shareEvents?: { state: string };
   ranges: Record<"growth" | "pe" | "payout" | "rpsGrowth" | "netMargin", RangeBlock>;
   base: { status: "available"; fiscalYear: number; periodEnd: string; monthsBeforeSession: number; eps0: string } | Unavailable;
   scenarios: ScenarioRow[];
   decomposition: ({ status: "available"; windows: DecompositionWindow[]; notes: { code: string }[]; recentWindow: [number, number] } | Unavailable);
   reverse: { breakEvenPE: Record<string, BreakEvenPE>; breakEvenMargin: Record<string, BreakEvenMargin> };
-  notices: string[];
-  dcf?: { status: string; marginOfSafetyJudgment?: string; reason?: { code: string } };
+  notices: Notice[];
+  dcf?: { status: string; marginOfSafetyJudgment?: string; reason?: Reason };
 };
 
 export type SnapshotView = {
@@ -60,7 +70,7 @@ export type SnapshotView = {
 
 export type ChangeReason = { code: string; [key: string]: unknown };
 export type HistoryRow = { snapshotId: string; asOf: string; computedAt: string; method: string; supersedes: string | null; reviewCount: number; changeReasons: ChangeReason[] };
-export type Attempt = { status: "saved" | "failed"; reason?: { code: string; subCode?: string }; snapshotId?: string; finishedAt?: string };
+export type Attempt = { status: "saved" | "failed"; reason?: Reason; snapshotId?: string; finishedAt?: string };
 export type Overview = {
   instrumentId: string; latest: { snapshotId: string; asOf: string; computedAt: string; supportStatus: string } | null;
   history: HistoryRow[]; lastAttempt: Attempt | null;
@@ -68,7 +78,7 @@ export type Overview = {
 
 export type Verdict = { state: "met" | "unmet" | "unknown"; reason?: string; horizon?: number; irr?: string; irrRange?: string; margin?: string; intrinsicValue?: string };
 export type Requirement = {
-  status: "available" | "unavailable"; reason?: { code: string };
+  status: "available" | "unavailable"; reason?: Reason;
   exitPE?: Record<string, { status: string; state?: string; value?: string }>;
   growth?: Record<string, { status: string; value?: string; range?: string; percentile?: string | null }>;
   netMargin?: Record<string, { status: string; value?: string; range?: string; currentMargin?: string; percentile?: string | null }>;

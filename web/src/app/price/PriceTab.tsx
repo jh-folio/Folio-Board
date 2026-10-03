@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { ApiRequestError, getJson, postJson } from "../../api";
 import { pollAgentJobBounded, type PollableAgentJob } from "../agentPolling";
 import { CriteriaForm, loadCriteria } from "./CriteriaForm";
-import { CashConversionSection, CashTableDetails, NoGrowthSection, ReturnPartsSection, ReturnPartsSummary } from "./Crosschecks";
+import { CashConversionSection, CashTableDetails, NoGrowthSection, ReturnPartsSection, ReturnPartsSummary, ReferenceFactsSection } from "./Crosschecks";
 import { GlanceSection, GuideSection, PartHeader, SECTION_IDS, glanceItems } from "./Guide";
 import {
   CriteriaLine, DecompositionSection, HistoryList, MyAssumptionsResult, RequirementSection, ScaleBar, ScenarioCards, ScenarioTable, SourcesDetails,
@@ -155,7 +155,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
   const heroTitle = calculating ? "계산하고 있습니다…" : noResult ? "아직 이 종목의 가격을 계산하지 않았습니다." : !supported
     ? "이 종목은 지금 계산하지 않았습니다." : hero.title;
   const heroSub = calculating ? message : noResult ? "가장 최근 거래일 종가와 공시 실적으로 계산합니다. 내 관심 이유를 쓰지 않아도 됩니다."
-    : !supported ? `${reasonText(view?.results.support.reasons[0]?.code)}. 틀린 숫자를 보여 드리지 않으려고 계산을 멈췄습니다.` : hero.sub;
+    : !supported ? `${reasonText(view?.results.support.reasons[0])}. 틀린 숫자를 보여 드리지 않으려고 계산을 멈췄습니다.` : hero.sub;
 
   return (
     <div className="price-stack" data-price-tab>
@@ -192,6 +192,8 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
           {view && !calculating && <span className="price-meta">계산 시각 {view.computedAt.replace("T", " ").replace("Z", "").slice(0, 16)}</span>}
         </div>
       </section>
+
+      {view && !calculating && <ReferenceFactsSection view={view} />}
 
       {banner && <div className="surface surface--group price-banner" role="status"><strong>{banner.title}</strong><p className="price-meta">{banner.detail}</p></div>}
 

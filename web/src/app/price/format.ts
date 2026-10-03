@@ -1,4 +1,4 @@
-import type { Attempt, Overview, Projection, ScenarioRow, SnapshotView } from "./types";
+import type { Attempt, Notice, Overview, Projection, Reason, ScenarioRow, SnapshotView } from "./types";
 
 // 서버가 준 Decimal 문자열을 화면 글자로 바꾼다. 여기서 값을 새로 계산하지 않는다.
 
@@ -44,40 +44,43 @@ export function money(value: string | number | null | undefined, currency: strin
 }
 
 export const REASON_TEXT: Record<string, string> = {
-  previous_method: "이 계산 기록에는 없는 항목입니다. 다시 계산하면 볼 수 있습니다",
-  non_positive_normalized_earnings: "과거 보통 이익률로 계산한 주당이익이 0 이하입니다",
-  required_return_not_positive: "내 요구수익률이 0 이하라 성장 없는 가치를 계산하지 않았습니다",
-  net_income_sum_not_positive: "대상 연도의 순이익 합이 0 이하라 현금 비율을 계산하지 않았습니다",
-  irr_above_range: "수익률이 계산 구간 상한을 넘어 세 조각으로 나누지 않았습니다",
-  irr_below_range: "수익률이 계산 구간 하한을 넘어 세 조각으로 나누지 않았습니다",
-  flat_irr_out_of_range: "PER이 그대로일 때 수익률이 계산 구간을 벗어납니다",
-  history_too_short: "과거 자료가 부족해 계산하지 않았습니다",
-  share_event_unknown: "주식 수가 바뀐 사건을 확인하지 못했습니다",
-  price_event_unverified: "가격에 주식 수 변화가 반영됐는지 확인하지 못했습니다",
-  negative_base_eps: "최근 연도 주당이익이 0 이하입니다",
-  base_eps_missing: "최근 회계연도의 희석 주당이익이 없습니다",
-  stale_financials: "최근 재무제표가 15개월보다 오래됐습니다",
-  non_positive_revenue: "최근 매출이 0 이하입니다",
-  adr_ratio_unverified: "ADR 비율을 공시에서 확인하지 못했습니다",
-  currency_mismatch: "재무제표 통화와 주가 통화가 달라 비교하지 않았습니다",
-  currency_unknown: "통화를 확인하지 못했습니다",
-  share_unit_unknown: "주식 수 단위를 확인하지 못했습니다",
-  share_unit_mismatch: "주식 수 단위가 맞지 않습니다",
-  non_common_listing: "보통주가 아닌 종목입니다",
-  class_eps_differs: "주식 종류별 주당이익이 다릅니다",
-  industry_not_supported: "이 업종은 이 계산 방식이 맞지 않아 지원하지 않습니다",
-  financial_holding: "금융지주는 이 계산 방식이 맞지 않아 지원하지 않습니다",
-  fund_not_supported: "펀드·ETF는 이 계산 방식이 맞지 않아 지원하지 않습니다",
-  dcf_not_computable: "현금흐름 할인 계산에 필요한 입력이 부족합니다",
-  price_stale: "최근 종가가 10거래일 넘게 갱신되지 않았습니다",
-  price_unavailable: "종가를 가져오지 못했습니다",
-  financial_history_unavailable: "공시 재무 자료를 가져오지 못했습니다",
-  company_not_found: "공식 자료에서 이 종목을 찾지 못했습니다",
-  source_credential_missing: "필요한 공시 조회 키가 설정되어 있지 않습니다",
-  instrument_not_supported: "지원하지 않는 종목 형식입니다",
-  criteria_not_set: "내 기준이 정해지지 않았습니다",
-  calculation_failed: "예상하지 못한 오류로 계산하지 못했습니다",
-  dcf_fallback: "내재가치 계산에 자료 부족으로 채운 값이 있어 판정하지 않았습니다",
+  "missing_value": "해당 연도의 공시 값이 없어 표시하지 않았습니다",
+  "previous_method": "이 계산 기록에는 없는 항목입니다. 다시 계산하면 볼 수 있습니다",
+  "non_positive_normalized_earnings": "과거 보통 이익률로 계산한 주당이익이 0 이하입니다",
+  "required_return_not_positive": "내 요구수익률이 0 이하라 성장 없는 가치를 계산하지 않았습니다",
+  "net_income_sum_not_positive": "대상 연도의 순이익 합이 0 이하라 현금 비율을 계산하지 않았습니다",
+  "irr_above_range": "수익률이 계산 구간 상한을 넘어 세 조각으로 나누지 않았습니다",
+  "irr_below_range": "수익률이 계산 구간 하한을 넘어 세 조각으로 나누지 않았습니다",
+  "flat_irr_out_of_range": "PER이 그대로일 때 수익률이 계산 구간을 벗어납니다",
+  "history_too_short": "과거 자료가 부족해 계산하지 않았습니다",
+  "share_event_unknown": "주식 수가 바뀐 사건을 확인하지 못해 주당 계산을 하지 않았습니다",
+  "price_event_unverified": "가격에 주식 수 변화가 반영됐는지 확인하지 못해 연말 PER을 쓰는 계산을 하지 않았습니다",
+  "negative_base_eps": "최근 연도 주당이익이 0 이하라 수익률 계산을 하지 않았습니다",
+  "base_eps_missing": "최근 회계연도의 희석 주당이익이 없어 계산하지 않았습니다",
+  "stale_financials": "최근 재무제표가 15개월보다 오래돼 계산하지 않았습니다",
+  "non_positive_revenue": "최근 매출이 0 이하라 계산하지 않았습니다",
+  "adr_ratio_unverified": "ADR 비율을 공시에서 확인하지 못해 주당 계산을 하지 않았습니다",
+  "currency_mismatch": "재무제표 통화와 주가 통화가 달라 환산 없이 비교하는 계산을 하지 않았습니다",
+  "currency_unknown": "통화를 확인하지 못해 주당 계산을 하지 않았습니다",
+  "share_unit_unknown": "주식 수 단위를 확인하지 못해 주당 계산을 하지 않았습니다",
+  "share_unit_mismatch": "주식 수 단위가 맞지 않아 주당 계산을 하지 않았습니다",
+  "non_common_listing": "보통주가 아닌 종목이라 주당 계산을 하지 않았습니다",
+  "class_eps_differs": "주식 종류별 주당이익이 달라 주당 계산을 하지 않았습니다",
+  "industry_not_supported": "이 업종은 이 계산 방식이 맞지 않아 지원하지 않습니다",
+  "financial_holding": "금융지주는 이 계산 방식이 맞지 않아 지원하지 않습니다",
+  "fund_not_supported": "ETF·펀드는 회사 이익으로 계산하는 이 방식의 대상이 아닙니다",
+  "dcf_not_computable": "현금흐름 할인 계산에 필요한 입력이 부족해 계산하지 않았습니다",
+  "price_stale": "최근 종가가 10거래일 넘게 갱신되지 않아 계산하지 않았습니다",
+  "price_unavailable": "종가를 가져오지 못해 계산하지 않았습니다",
+  "financial_history_unavailable": "공시 재무 자료를 가져오지 못해 계산하지 않았습니다",
+  "company_not_found": "공식 자료에서 이 종목을 찾지 못해 계산하지 않았습니다",
+  "source_credential_missing": "필요한 공시 조회 키가 설정되어 있지 않아 계산하지 않았습니다",
+  "instrument_not_supported": "지원하지 않는 종목 형식이라 계산하지 않았습니다",
+  "criteria_not_set": "내 기준이 정해지지 않았습니다",
+  "calculation_failed": "예상하지 못한 오류로 계산하지 못했습니다",
+  "dcf_fallback": "내재가치 계산에 자료 부족으로 채운 값이 있어 판정하지 않았습니다",
+  "price_snapshot_failed": "가격 시나리오 계산 결과를 저장하지 못해 쓰지 않았습니다",
+  "price_snapshot_unavailable": "가격 시나리오를 계산하지 못했습니다"
 };
 
 /** Stored four-place ratio ×100, rounded half-even as specified for the cash sentence. */
@@ -91,8 +94,21 @@ export function cashPerHundred(ratio: string): string {
   return `${match[1] && rounded !== 0n ? "−" : ""}${rounded}`;
 }
 
-export function reasonText(code: string | undefined | null): string {
-  return (code && REASON_TEXT[code]) || (code ? `계산할 수 없습니다(${code})` : "계산할 수 없습니다");
+export function reasonText(reason: string | Reason | undefined | null): string {
+  const detail: Partial<Reason> = typeof reason === "string" ? { code: reason } : reason ?? {};
+  const { code, subCode, range, n, required, historyYears } = detail;
+  if (code === "price_unavailable" && subCode === "provider_error") return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
+  if (code === "history_too_short" && range !== undefined && n !== undefined && required !== undefined && historyYears !== undefined) {
+    const windows = range === "growth" || range === "rpsGrowth";
+    if (subCode === "years_too_few") {
+      if (windows) return `재무 기록이 ${historyYears}년뿐이라 비교할 5년 구간이 ${n}개입니다(필요 ${required}개). 연속 기록이라면 최소 8년이 필요합니다`;
+      const name = ({ pe: "연말 PER", payout: "배당성향", netMargin: "순이익률" } as Record<string, string>)[range] ?? "비교";
+      return `재무 기록이 ${historyYears}년뿐이라 ${name}에 쓸 해가 ${n}개입니다(필요 ${required}개)`;
+    }
+    const cause = subCode === "loss_years" ? "주당이익이 0 이하인 해가 있어" : subCode === "missing_years" ? "일부 연도의 공시 값이 비어" : null;
+    if (cause) return `${cause} 비교할 ${windows ? "5년 구간" : "연도"}이 ${n}개입니다(필요 ${required}개)`;
+  }
+  return (code && REASON_TEXT[code]) || `계산할 수 없습니다(사유 코드: ${code || "unknown"})`;
 }
 
 export const NOTICE_TEXT: Record<string, string> = {
@@ -106,6 +122,22 @@ export const NOTICE_TEXT: Record<string, string> = {
   excluded_growth_windows: "과거 5년 구간 일부는 값이 없거나 0 이하라 빼고 계산했습니다. 범위가 위로 치우칠 수 있습니다.",
   snapshot_old: "계산 시점이 오래됐습니다. 다시 계산하면 최신 가격·공시로 바뀝니다.",
 };
+
+export function noticeText(notice: Notice): string {
+  const detail = typeof notice === "string" ? { code: notice } : notice;
+  if (detail.code === "derived_eps_years") return `${(detail.years ?? []).map(year => `FY${year}`).join("·")} 주당이익은 공시 정리 자료에 없어 같은 해 순이익 ÷ 희석 주식 수로 계산했습니다.`;
+  if (detail.code === "listed_class_eps") return `주식 종류가 여러 개라, 상장된 ${detail.class ?? ""} 기준 주당이익을 공시 원문에서 읽었습니다.`;
+  return NOTICE_TEXT[detail.code] ?? "";
+}
+
+/** Six canonical rows must all be blocked for one of the two permitted reasons. */
+export function showReferenceFacts(view: SnapshotView): boolean {
+  const rows = view.results.scenarios;
+  const keys = new Set(rows.map(row => `${row.label}:${row.horizon}`));
+  return view.results.referenceFacts?.status === "available" && rows.length === 6 && keys.size === 6
+    && ([5, 10] as const).every(h => (["conservative", "base", "optimistic"] as const).every(label => keys.has(`${label}:${h}`)))
+    && rows.every(row => row.status === "unavailable" && ["negative_base_eps", "history_too_short"].includes(row.reason.code));
+}
 
 export const METRIC_TEXT: Record<string, string> = {
   "EPS Diluted": "희석 주당이익", "Net Income": "순이익", Revenue: "매출", DPS: "주당 배당금", "Shares Diluted": "희석 주식 수",
@@ -182,7 +214,7 @@ export function usableGoal(required: string | null | undefined): string | null {
 export function heroText(input: { horizon: number; base: ScenarioRow | undefined; required: string | null; holdingYears: number | null; baseHolding: ScenarioRow | undefined }): { title: string; title2: string; sub: string } {
   const { horizon, base, required, holdingYears, baseHolding } = input;
   const value = valueText(base);
-  if (value === null || !base || base.status !== "available") return { title: "이 기간의 수익률은 계산하지 못했습니다.", title2: "", sub: "아래 사유를 확인해 주세요." };
+  if (value === null || !base || base.status !== "available") return { title: "이 기간의 수익률은 계산하지 못했습니다.", title2: "", sub: base && base.status !== "available" ? `${reasonText(base.reason)}.` : "아래 사유를 확인해 주세요." };
   const history = `이 회사는 지난 10년 동안 주당이익이 보통 연 ${pct(base.g)} 늘었고, 주가는 보통 이익의 ${multiple(base.exitPE)}에서 거래됐습니다. 이 흐름이 앞으로 ${horizon}년도 비슷하다고 보고 계산한 값이며, 보장된 수익이 아닙니다.`;
   const title = `과거 10년 흐름이 이어진다면, 지금 사서 ${horizon}년 보유할 때 ${value}입니다.`;
   const plain = irrText(base);
@@ -320,7 +352,7 @@ export function attemptBanner(attempt: Attempt | null, latestAsOf: string | null
   const code = attempt.reason?.code;
   const tail = latestAsOf ? ` ${latestAsOf} 계산은 아래 기록에서 볼 수 있습니다.` : "";
   if (code === "price_stale") return { tone: "warn", title: "최근 종가가 오래돼 새로 계산하지 않았습니다.", detail: `마지막 종가가 10거래일 넘게 갱신되지 않았습니다.${tail}` };
-  return { tone: "warn", title: "이번에는 계산하지 못했습니다.", detail: `${reasonText(code)}. 틀린 숫자를 보여 드리지 않으려고 멈췄습니다.${tail}` };
+  return { tone: "warn", title: "이번에는 계산하지 못했습니다.", detail: `${reasonText(attempt.reason)}. 틀린 숫자를 보여 드리지 않으려고 멈췄습니다.${tail}` };
 }
 
 export function overviewHasResult(overview: Overview | null): boolean {

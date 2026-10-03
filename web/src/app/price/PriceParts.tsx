@@ -1,7 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
-  NOTICE_TEXT, SCENARIO_NAMES, SCENARIO_ORDER, atLeastRequired, decompositionCards, irrText, irrValue, money, multiple, pct, pctPlain, pctSigned,
-  rangePosition, reasonText, rowFor, scaleLayout, toNumber,
+  SCENARIO_NAMES, SCENARIO_ORDER, atLeastRequired, decompositionCards, irrText, irrValue, money, multiple, pct, pctPlain, pctSigned,
+  rangePosition, reasonText, noticeText, rowFor, scaleLayout, toNumber,
 } from "./format";
 import type { Criteria, HistoryRow, MyAssumptions, Projection, ScenarioRow, SnapshotView } from "./types";
 
@@ -176,7 +176,7 @@ export function RequirementSection({ view, projection, horizon, onSetCriteria }:
       {pe && pe.status === "available" && pe.state === "not_needed" && (
         <div className="price-rev"><p>배당만으로 지금 가격을 회수할 수 있어, 손실이 나지 않기 위한 PER 조건이 필요 없습니다.</p></div>
       )}
-      {pe && pe.status === "unavailable" && <div className="price-rev"><p>손익분기 PER은 계산하지 못했습니다 — {reasonText(pe.reason.code)}.</p></div>}
+      {pe && pe.status === "unavailable" && <div className="price-rev"><p>손익분기 PER은 계산하지 못했습니다 — {reasonText(pe.reason)}.</p></div>}
       {required !== null ? (
         needGrowth && needGrowth.status === "available" && needGrowth.value ? (
           <RevToggle how={howGrowth}>
@@ -208,7 +208,7 @@ const DEC_COLOR: Record<string, string> = { R: "price-c1", M: "price-c3", S: "pr
 
 export function DecompositionSection({ view, selected, onSelect }: { view: SnapshotView; selected: string | null; onSelect: (key: string | null) => void }) {
   const block = view.results.decomposition;
-  if (block.status !== "available") return <p className="price-note">과거 이익 성장의 출처는 계산하지 못했습니다 — {reasonText(block.reason.code)}.</p>;
+  if (block.status !== "available") return <p className="price-note">과거 이익 성장의 출처는 계산하지 못했습니다 — {reasonText(block.reason)}.</p>;
   const recent = block.windows[block.windows.length - 1];
   const cards = decompositionCards(recent.annual);
   const total = cards.reduce((sum, card) => sum + card.weight, 0) || 1;
@@ -254,11 +254,11 @@ export function SourcesDetails({ view }: { view: SnapshotView }) {
       {(["growth", "pe", "payout", "netMargin"] as const).map(key => {
         const block = results.ranges[key];
         const names = { growth: "이익 성장", pe: "끝날 때 PER", payout: "배당성향", netMargin: "순이익률" }[key];
-        if (block.status !== "available") return <p key={key}>{names}: 과거 범위를 만들지 못했습니다 — {reasonText(block.reason?.code)}.</p>;
+        if (block.status !== "available") return <p key={key}>{names}: 과거 범위를 만들지 못했습니다 — {reasonText(block.reason)}.</p>;
         const fmt = key === "pe" ? (v?: string) => multiple(v) : (v?: string) => pct(v);
         return <p key={key}>{names} 과거 범위(표본 {block.n}개): 낮은 편 {fmt(block.p25)} · 중간값 {fmt(block.p50)} · 높은 편 {fmt(block.p75)}</p>;
       })}
-      {notices.map(code => NOTICE_TEXT[code] && <p key={code}>{NOTICE_TEXT[code]}</p>)}
+      {notices.map(noticeText).filter(Boolean).map((text, index) => <p key={index}>{text}</p>)}
     </>
   );
 }

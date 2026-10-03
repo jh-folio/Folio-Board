@@ -1,9 +1,48 @@
 import { useState } from "react";
 import { GuideSection, SECTION_IDS } from "./Guide";
 import {
-  cashPerHundred, cashSpan, irrValue, money, moneyShort, multiple, pct, percentOne, plainOne, reasonText, rowFor, signedOne, toNumber,
+  cashPerHundred, cashSpan, irrValue, money, moneyShort, multiple, pct, percentOne, plainOne, reasonText, rowFor, signedOne, toNumber, showReferenceFacts,
 } from "./format";
 import type { CashConversion, Projection, SnapshotView } from "./types";
+
+export function ReferenceFactsSection({ view }: { view: SnapshotView }) {
+  const block = view.results.referenceFacts;
+  if (!showReferenceFacts(view) || !block || block.status !== "available") return null;
+  const latest = block.years[block.years.length - 1];
+  const pe = block.peNow;
+  const peText = pe.status === "unavailable" ? reasonText(pe.reason) : pe.state === "loss" ? "최근 연도 적자"
+    : pe.state === "zero" ? "최근 연도 주당이익 0" : multiple(pe.value);
+  const psText = block.psNow.status === "available" ? multiple(block.psNow.value) : reasonText(block.psNow.reason);
+  const cashText = latest?.fcfMargin != null ? pct(latest.fcfMargin) : reasonText(latest?.reasons.fcfMargin ?? "missing_value");
+  const cell = (value: string | null, reason: Parameters<typeof reasonText>[0], amount = false) => value === null
+    ? <span className="price-meta">{reasonText(reason)}</span> : amount ? moneyShort(value, block.currency) : pct(value);
+  return (
+    <GuideSection id="price-reference-title" title="수익률 대신 볼 수 있는 숫자" meta={latest ? `FY${latest.fiscalYear} · ${block.currency}` : block.currency}
+      question="수익률을 계산할 수 없을 때, 지금 가격과 회사의 기록을 사실 그대로 봅니다."
+      calc="지금 PER은 종가 ÷ 최근 주당이익, 매출 대비 주가는 종가 ÷ 최근 주당 매출입니다. 남은 현금 비율은 남은 현금 ÷ 매출입니다."
+      read="공시에서 읽거나 계산한 참고 숫자입니다. 적자 회사는 순이익률과 남은 현금이 어느 방향으로 움직이는지 함께 보세요.">
+      <div className="price-dec__cards">
+        {[["지금 PER", peText], ["매출 대비 주가 (PSR)", psText], ["최근 연도 남은 현금 비율", cashText]].map(([label, text]) => (
+          <div className="price-dec__card price-dec__card--static" key={label}><i className="price-swatch-grey" /><span>{label}</span><strong>{text}</strong></div>
+        ))}
+      </div>
+      {block.notices.map(n => <p className="price-meta" key={n.code}>{n.code === "sbc_missing_years"
+        ? `일부 연도(${n.years?.map(y => `FY${y}`).join("·")})에 주식 보상 비용 공시가 없어, 모든 연도에서 빼지 않고 계산했습니다.`
+        : n.code === "stale_financials" ? "최근 재무제표가 15개월 넘게 지난 자료입니다."
+          : "한국 공시는 주식 보상 비용을 같은 방식으로 읽을 수 없어 빼지 않고 계산했습니다."}</p>)}
+      <details className="price-details price-cash-details"><summary>연도별 참고 숫자 ({block.years.length}개 회계연도)</summary>
+        <div className="price-cash-table" tabIndex={0} role="region" aria-label={`연도별 참고 숫자, ${block.currency}`}>
+          <table className="price-table"><caption>연도별 참고 숫자 · {block.currency}</caption>
+            <thead><tr><th scope="col">회계연도</th><th scope="col">매출 성장</th><th scope="col">순이익률</th><th scope="col">남은 현금</th></tr></thead>
+            <tbody>{block.years.map(y => <tr key={y.fiscalYear}><th scope="row">FY{y.fiscalYear}</th>
+              <td>{cell(y.revenueGrowth, y.reasons.revenueGrowth)}</td><td>{cell(y.netMargin, y.reasons.netMargin)}</td><td>{cell(y.fcf, y.reasons.fcf, true)}</td></tr>)}</tbody>
+          </table>
+        </div>
+        <p className="price-meta">남은 현금은 영업현금 − 설비투자{block.sbcBasis === "deducted" ? " − 주식 보상 비용" : ""}이며, 아래 현금 비교와 같은 기준입니다.</p>
+      </details>
+    </GuideSection>
+  );
+}
 
 // spec-4 교차 확인 세 섹션(A 수익률 세 조각 · B 성장이 없다면 · C 이익이 현금으로 남았나).
 // 계산은 서버가 했다. 여기서는 저장된 값을 글·카드·막대로 옮긴다.
@@ -25,7 +64,7 @@ export function ReturnPartsSection({ view, horizon, selected }: { view: Snapshot
   const meta = `${NAMES[label]} · ${horizon}년 보유`;
   const irr = irrValue(scenario);
   if (!parts || !part || part.status !== "available" || irr === null) {
-    const code = !parts ? "previous_method" : part && part.status !== "available" ? part.reason.code : scenario && scenario.status !== "available" ? scenario.reason.code : "irr_above_range";
+    const code = !parts ? "previous_method" : part && part.status !== "available" ? part.reason : scenario && scenario.status !== "available" ? scenario.reason : "irr_above_range";
     return <GuideSection id={SECTION_IDS.parts} title="수익률은 어디서 나오나" meta={meta} question={question}><p className="price-note">{reasonText(code)}.</p></GuideSection>;
   }
   // 화면 숫자(소수 1자리)끼리 합이 맞도록 PER 변화는 표시 수익률에서 표시 성장·배당을 뺀 값으로 보인다(spec-4 §2 저장 규칙과 같은 생각).
@@ -89,7 +128,7 @@ export function ReturnPartsSummary({ view, horizon }: { view: SnapshotView; hori
   const part = parts?.find(row => row.label === "base" && row.horizon === horizon);
   const irr = irrValue(rowFor(view.results.scenarios, "base", horizon));
   if (!parts) return <p className="price-meta">수익률의 세 조각: {reasonText("previous_method")}.</p>;
-  if (!part || part.status !== "available" || irr === null) return <p className="price-meta">기본 {horizon}년 수익률의 세 조각: {reasonText(part && part.status !== "available" ? part.reason.code : undefined)}.</p>;
+  if (!part || part.status !== "available" || irr === null) return <p className="price-meta">기본 {horizon}년 수익률의 세 조각: {reasonText(part && part.status !== "available" ? part.reason : undefined)}.</p>;
   const I = percentOne(irr) ?? 0, G = percentOne(part.growth) ?? 0, D = percentOne(part.dividend) ?? 0;
   return <p className="price-meta">기본 {horizon}년: 이익 성장 {signedOne(G)} · 배당 {signedOne(D)} · PER 변화 {signedOne(Math.round((I - G - D) * 10) / 10)} = 연 {plainOne(I)}</p>;
 }
@@ -108,7 +147,7 @@ export function NoGrowthSection({ view, projection, onSetCriteria }: { view: Sna
       <GuideSection id={SECTION_IDS.noGrowth} title="성장이 없다면" question={question}>
         {code === "criteria_not_set"
           ? <div className="price-row"><p className="price-note">원하는 수익률(내 기준)을 정하면, 지금 가격 중 성장에 거는 몫을 계산해 보여 드립니다.</p><button className="btn btn--sm" type="button" onClick={onSetCriteria}>기준 정하기</button></div>
-          : <p className="price-note">{reasonText(code)}.</p>}
+          : <p className="price-note">{reasonText(block?.reason ?? code)}.</p>}
       </GuideSection>
     );
   }
@@ -166,7 +205,7 @@ export function CashConversionSection({ block, id = SECTION_IDS.cash, tableInsid
         : "한국 공시는 주식 보상 비용을 같은 방식으로 읽을 수 없어 빼지 않고 계산했습니다."}</p>
   ));
   if (!block || block.status !== "available") {
-    const text = block?.status === "unavailable" && block.reason.code === "currency_unknown" ? "재무제표 통화를 확인하지 못해 현금 비교를 하지 않았습니다" : reasonText(block?.reason.code ?? "previous_method");
+    const text = block?.status === "unavailable" && block.reason.code === "currency_unknown" ? "재무제표 통화를 확인하지 못해 현금 비교를 하지 않았습니다" : reasonText(block?.reason ?? "previous_method");
     return (
       <GuideSection id={id} title="이익이 현금으로 남았나" meta={meta} question={question}>
         <p className="price-note">{text}.</p>

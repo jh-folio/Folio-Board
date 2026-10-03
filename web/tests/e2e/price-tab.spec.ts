@@ -62,6 +62,55 @@ const V4 = { ...VIEW, methodVersion: 'price-scenario-4', results: { ...VIEW.resu
 }};
 const NOGROWTH = { status: 'available', value: '50.00', growthShare: '0.5000', priceCoverage: '0.5000', requiredReturn: '0.0600', criteriaRevisionId: 1, hasGrowthShare: true };
 
+const REFERENCE = { status: 'available', currency: 'USD', peNow: { status: 'available', state: 'loss', value: null },
+  psNow: { status: 'available', value: '10.5000' }, sbcBasis: 'not_deducted', notices: [{ code: 'sbc_missing_years', years: [2023] }],
+  years: [2023, 2024, 2025].map(fiscalYear => ({ fiscalYear, revenue: '100', revenueGrowth: fiscalYear === 2023 ? null : '0.1000',
+    netMargin: '-0.2500', fcf: fiscalYear === 2025 ? null : '0', fcfMargin: fiscalYear === 2025 ? null : '0.0000',
+    reasons: { revenueGrowth: { code: 'missing_value' }, fcf: { code: 'missing_value' }, fcfMargin: { code: 'missing_value' } } })) };
+const BLOCKED = { ...V4, results: { ...V4.results, referenceFacts: REFERENCE,
+  scenarios: SCENARIOS.map(r => ({ label: r.label, horizon: r.horizon, status: 'unavailable', reason: { code: 'negative_base_eps' } })) } };
+
+for (const theme of ['light', 'dark']) {
+  test(`0.9.1 reference facts loss, missing latest cash, keyboard and axe ${theme}`, async ({ page }) => {
+    const writes = await mockApi(page, { view: BLOCKED });
+    await openPrice(page, theme);
+    const section = page.locator('.price-section:has(#price-reference-title)');
+    await expect(section.getByRole('heading', { name: '수익률 대신 볼 수 있는 숫자' })).toBeVisible();
+    await expect(page.locator('.price-hero')).toContainText('최근 연도 주당이익이 0 이하라 수익률 계산을 하지 않았습니다');
+    await expect(section.locator('.price-dec__card')).toHaveText([/지금 PER.*최근 연도 적자/, /매출 대비 주가.*10\.5배/, /최근 연도 남은 현금 비율.*해당 연도의 공시 값이 없어 표시하지 않았습니다/]);
+    await expect(section.getByRole('table')).not.toBeVisible();
+    await section.getByText('연도별 참고 숫자 (3개 회계연도)', { exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(section.getByRole('table')).toBeVisible();
+    await expect(section.getByRole('table')).toContainText('−25.0%');
+    await expect(section.getByRole('table').locator('tbody tr').nth(1)).toContainText('$0');
+    expect(await page.locator('[data-price-tab]').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await expect(section).not.toContainText(/판정|매수|매도|목표가/);
+    expect((await new AxeBuilder({ page }).include('[data-price-tab]').analyze()).violations).toEqual([]);
+    if (process.env.PRICE_CAPTURE_DIR) {
+      await section.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/reference-${theme}-${test.info().project.name}.png` });
+    }
+    expect(writes).toEqual([]);
+  });
+}
+
+test('0.9.1 reference facts zero and short records; other blocks stay hidden', async ({ page }) => {
+  const short = { code: 'history_too_short', subCode: 'years_too_few', range: 'growth', n: 0, required: 3, historyYears: 3 };
+  const view = { ...BLOCKED, results: { ...BLOCKED.results, referenceFacts: { ...REFERENCE, peNow: { status: 'available', state: 'zero', value: null } },
+    scenarios: BLOCKED.results.scenarios.map(r => ({ ...r, reason: short })) } };
+  await mockApi(page, { view });
+  await openPrice(page, 'light');
+  await expect(page.locator('.price-section:has(#price-reference-title)')).toContainText('최근 연도 주당이익 0');
+  await expect(page.locator('.price-hero')).toContainText('재무 기록이 3년뿐이라');
+  // A single other reason closes this section even though values are stored.
+  await page.unroute('**/api/**');
+  await mockApi(page, { view: { ...BLOCKED, results: { ...BLOCKED.results,
+    scenarios: BLOCKED.results.scenarios.map((r, i) => i ? r : { ...r, reason: { code: 'share_event_unknown' } }) } } });
+  await page.reload();
+  await expect(page.locator('#price-reference-title')).toHaveCount(0);
+});
+
 for (const theme of ['light', 'dark']) {
   test(`0.9.1 crosschecks card selection, cash table and keyboard ${theme}`, async ({ page }) => {
     const writes = await mockApi(page, { view: V4, projection: projection({ noGrowth: NOGROWTH }) });

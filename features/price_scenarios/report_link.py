@@ -51,7 +51,7 @@ def _price(view: dict | None) -> tuple[float | None, str]:
 
 
 def unavailable_lines(reason: dict | None) -> list[str]:
-    return [f"가격 시나리오는 계산하지 못했습니다 — {report.reason_text((reason or {}).get('code'))}."]
+    return [f"가격 시나리오는 계산하지 못했습니다 — {report.reason_text(reason)}."]
 
 
 def apply_price_snapshot(charts, materials: dict, snapshot: dict | None):

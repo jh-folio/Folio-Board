@@ -175,6 +175,7 @@ def snapshot_view(root, snapshot_id_: str, *, include_inputs: bool = False) -> d
     from . import method_at_least
     from .blocks import not_applicable
     results = deepcopy(snapshot["results"])
+    results.setdefault("referenceFacts", not_applicable("previous_method"))
     if not method_at_least(snapshot["inputs"]["methodVersion"], 4):
         results.update(returnParts=not_applicable("previous_method"), cashConversion=not_applicable("previous_method"))
     view = {**_summary(snapshot), "results": results,
@@ -238,4 +239,5 @@ def snapshot_for_report(root, company: dict, *, calculator=None, progress=None, 
     view = snapshot_view(root, out["snapshotId"])
     if view is None:
         return {"status": "unavailable", "reason": {"code": "snapshot_not_readable"}}
+    view["results"].pop("referenceFacts", None)
     return {"status": "saved", "snapshotId": out["snapshotId"], "view": view}

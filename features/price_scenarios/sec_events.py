@@ -19,6 +19,8 @@ def _observations(history: dict) -> list[dict]:
     for row in history.get("rows", []):
         if row["metric"] not in {"EPS Diluted", "Shares Diluted"}:
             continue
+        if row.get("derived"):
+            continue  # a quotient is never independent filing evidence of a split
         period = (row["period"].get("start"), row["period"]["end"])
         for fact in [*row.get("priorValues", []), row]:
             key = (*period, fact["filed"], fact.get("accession", ""))

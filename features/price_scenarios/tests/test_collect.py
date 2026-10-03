@@ -26,7 +26,7 @@ def collector(tmp_path, **kwargs):
         return {"price": {"value": "100", "sessionDate": "2026-10-01", "currency": "USD", "provider": "yfinance", "providerSymbol": ticker},
                 "closes": [], "events": [], "eventSourceState": "received", "exchangeSource": "sec_submissions", "fetchedAt": now.isoformat()}
     made = Collector(tmp_path, now=NOW, sec_bytes=lambda url: b'{"facts": {}}', fetch_daily=daily,
-                     beta_of=lambda symbol: {"beta": {"value": "1.1", "source": "yfinance_info_beta"}, "fetchedAt": "x"},
+                     instrument_type=lambda symbol: None, beta_of=lambda symbol: {"beta": {"value": "1.1", "source": "yfinance_info_beta"}, "fetchedAt": "x"},
                      risk_free_of=lambda session, currency: {"rate": "0.04", "source": "constant"}, **kwargs)
     return made, seen
 

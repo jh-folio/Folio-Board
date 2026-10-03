@@ -2,9 +2,19 @@
 
 METHOD_VERSION = "price-scenario-4"
 SPEC_VERSION = "price-scenario-spec-4"
-SPEC_SHA256 = "9e88a0ab26a66981e753bff3f834ff874a2dcfe00c2de3aed042c36692e88f1a"
+SPEC_SHA256 = "b249c6dcffd1db4da41cb0ea891e8ea76860d16ccfd9cbbb3e1bb4f857cbc567"
+SPEC4_REVISION1_INITIAL_SHA256 = "9e88a0ab26a66981e753bff3f834ff874a2dcfe00c2de3aed042c36692e88f1a"
 SPEC_REVISION = 1
 SPEC4_REVISION0_SHA256 = "67cea9237874e56cc5d86d1702b2f958dca0d536d312e5bbd9e15d6ba060d6aa"
+
+
+def spec4_revision(inputs: dict) -> int | None:
+    if inputs.get("methodVersion") != METHOD_VERSION or inputs.get("specVersion") != SPEC_VERSION:
+        return None
+    sha = inputs.get("specSha256")
+    if sha in {None, SPEC4_REVISION0_SHA256}:
+        return 0
+    return 1 if sha in {SPEC_SHA256, SPEC4_REVISION1_INITIAL_SHA256} else None
 
 # Earlier frozen versions stay readable. Their results are never rewritten.
 SPEC3_METHOD_VERSION = "price-scenario-3"

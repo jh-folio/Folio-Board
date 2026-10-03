@@ -13,6 +13,7 @@ from decimal import Decimal
 from .decimal_ops import number
 
 REASONS = {
+    "missing_value": "해당 연도의 공시 값이 없어 표시하지 않았습니다",
     "irr_above_range": "수익률이 계산 구간 상한을 넘어 세 조각으로 나누지 않았습니다",
     "irr_below_range": "수익률이 계산 구간 하한을 넘어 세 조각으로 나누지 않았습니다",
     "flat_irr_out_of_range": "PER이 그대로일 때 수익률이 계산 구간을 벗어납니다",
@@ -36,7 +37,7 @@ REASONS = {
     "class_eps_differs": "주식 종류별 주당이익이 달라 주당 계산을 하지 않았습니다",
     "industry_not_supported": "이 업종은 이 계산 방식이 맞지 않아 지원하지 않습니다",
     "financial_holding": "금융지주는 이 계산 방식이 맞지 않아 지원하지 않습니다",
-    "fund_not_supported": "펀드·ETF는 이 계산 방식이 맞지 않아 지원하지 않습니다",
+    "fund_not_supported": "ETF·펀드는 회사 이익으로 계산하는 이 방식의 대상이 아닙니다",
     "dcf_not_computable": "현금흐름 할인 계산에 필요한 입력이 부족해 계산하지 않았습니다",
     "price_stale": "최근 종가가 10거래일 넘게 갱신되지 않아 계산하지 않았습니다",
     "price_unavailable": "종가를 가져오지 못해 계산하지 않았습니다",
@@ -63,8 +64,34 @@ ASSUMPTION_SENTENCE = ("이 표는 과거 이 회사의 5년 성장률·연말 P
                        "하위 25%는 과거 값을 줄 세웠을 때 아래쪽 4분의 1 위치입니다. 예측이 아니며 각 가정이 일어날 가능성을 뜻하지 않습니다.")
 
 
-def reason_text(code: str | None) -> str:
+def reason_text(reason: str | dict | None) -> str:
+    detail = reason if isinstance(reason, dict) else {"code": reason}
+    code, sub = detail.get("code"), detail.get("subCode")
+    if code == "price_unavailable" and sub == "provider_error":
+        return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요"
+    if code == "history_too_short" and all(k in detail for k in ("range", "n", "required", "historyYears")):
+        n, required, years = detail["n"], detail["required"], detail["historyYears"]
+        windows = detail["range"] in {"growth", "rpsGrowth"}
+        if sub == "years_too_few":
+            if windows:
+                return f"재무 기록이 {years}년뿐이라 비교할 5년 구간이 {n}개입니다(필요 {required}개). 연속 기록이라면 최소 8년이 필요합니다"
+            name = {"pe": "연말 PER", "payout": "배당성향", "netMargin": "순이익률"}.get(detail["range"], "비교")
+            return f"재무 기록이 {years}년뿐이라 {name}에 쓸 해가 {n}개입니다(필요 {required}개)"
+        cause = {"loss_years": "주당이익이 0 이하인 해가 있어", "missing_years": "일부 연도의 공시 값이 비어"}.get(sub)
+        if cause:
+            unit = "5년 구간" if windows else "연도"
+            return f"{cause} 비교할 {unit}이 {n}개입니다(필요 {required}개)"
     return REASONS.get(code or "", f"계산할 수 없습니다(사유 코드: {code or 'unknown'})")
+
+
+def notice_text(notice: str | dict) -> str:
+    detail = notice if isinstance(notice, dict) else {"code": notice}
+    if detail["code"] == "derived_eps_years":
+        years = "·".join(f"FY{year}" for year in detail.get("years", []))
+        return f"{years} 주당이익은 공시 정리 자료에 없어 같은 해 순이익 ÷ 희석 주식 수로 계산했습니다."
+    if detail["code"] == "listed_class_eps":
+        return f"주식 종류가 여러 개라, 상장된 {detail.get('class', '')} 기준 주당이익을 공시 원문에서 읽었습니다."
+    return NOTICES.get(detail["code"], "")
 
 
 def pct(value, places: int = 1) -> str:
@@ -102,7 +129,7 @@ def _scenario_table(results: dict) -> list[str]:
     rows = {(row["label"], row["horizon"]): row for row in results["scenarios"]}
     if all(row.get("status") != "available" for row in rows.values()):
         first = next(iter(rows.values()), {})
-        return [f"가정별 연환산 수익률은 계산하지 못했습니다 — {reason_text((first.get('reason') or {}).get('code'))}."]
+        return [f"가정별 연환산 수익률은 계산하지 못했습니다 — {reason_text(first.get('reason'))}."]
     lines = ["| 가정 | EPS 연 성장률 | 끝날 때 PER | 배당성향 | 5년 연환산 | 10년 연환산 |", "|---|---|---|---|---|---|"]
     for label, name in ROWS:
         five, ten = rows.get((label, 5)), rows.get((label, 10))
@@ -118,7 +145,7 @@ def _scenario_table(results: dict) -> list[str]:
 def _decomposition(results: dict) -> list[str]:
     block = results.get("decomposition") or {}
     if block.get("status") != "available":
-        return [f"과거 이익 성장의 출처는 계산하지 못했습니다 — {reason_text((block.get('reason') or {}).get('code'))}."]
+        return [f"과거 이익 성장의 출처는 계산하지 못했습니다 — {reason_text(block.get('reason'))}."]
     recent = block["windows"][-1]
     annual = recent["annual"]
     approx = lambda text: f"{(math.exp(float(text)) - 1) * 100:+.1f}%"
@@ -156,7 +183,7 @@ def _requirements(results: dict) -> list[str]:
 def _dcf_table(results: dict, price_currency: str) -> list[str]:
     block = results.get("dcf") or {}
     if block.get("status") != "available":
-        return [f"현금흐름 할인(DCF) 계산은 하지 않았습니다 — {reason_text((block.get('reason') or {}).get('code'))}."]
+        return [f"현금흐름 할인(DCF) 계산은 하지 않았습니다 — {reason_text(block.get('reason'))}."]
     result, lines = block["result"], []
     currency = result.get("currency") or price_currency
     rows = [row for row in result.get("scenarios", []) if row.get("ok")]
@@ -178,7 +205,7 @@ def _dcf_table(results: dict, price_currency: str) -> list[str]:
 
 def _notes(results: dict) -> list[str]:
     notices = [*(results.get("support") or {}).get("notices", []), *results.get("notices", [])]
-    return [NOTICES[code] for code in dict.fromkeys(notices) if code in NOTICES]
+    return list(dict.fromkeys(text for text in map(notice_text, notices) if text))
 
 
 def _return_parts(results: dict) -> list[str]:
@@ -190,7 +217,7 @@ def _return_parts(results: dict) -> list[str]:
         if row["label"] != "base":
             continue
         if row["status"] != "available":
-            lines.append(f"- 기본 {row['horizon']}년: {reason_text(row['reason']['code'])}.")
+            lines.append(f"- 기본 {row['horizon']}년: {reason_text(row['reason'])}.")
         else:
             signed = lambda x: f"{number(x)*100:+.2f}%"
             lines.append(f"- 기본 {row['horizon']}년: 이익 성장 {signed(row['growth'])} · 배당 {signed(row['dividend'])} · "
@@ -248,7 +275,7 @@ def lines(view: dict) -> list[str]:
     cash_section = ["", "### 이익이 현금으로 남았나", "", *cash] if cash else []
     if support["status"] != "supported":
         reason = support["reasons"][0]
-        return [*head, "", f"이 종목은 가격 시나리오를 계산하지 않았습니다 — {reason_text(reason['code'])}.", *cash_section]
+        return [*head, "", f"이 종목은 가격 시나리오를 계산하지 않았습니다 — {reason_text(reason)}.", *cash_section]
     return [*head, "", "### 가정별 연환산 수익률", "", *_scenario_table(results), "", *_return_parts(results), *cash_section, "", "### 과거 이익 성장은 어디서 왔나", "",
             *_decomposition(results), "", "### 지금 가격이 전제하는 것", "", *_requirements(results), "",
             "### 현금흐름 할인(DCF) 시나리오", "", *_dcf_table(results, currency), *(["", *_notes(results)] if _notes(results) else [])]

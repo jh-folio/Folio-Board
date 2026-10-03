@@ -10,10 +10,10 @@ def classify(identity: dict, classification: dict, *, reporting_currency: str, q
         return {"status": "unsupported", "reasons": [{"code": "market_not_supported"}], "notices": []}
     code = str(classification.get("code") or "")
     holding = code == ("6719" if market == "US" else "64992")
-    if holding and classification.get("financialHolding"):
-        reasons.append({"code": "financial_holding"})
-    elif classification.get("quoteType") in {"ETF", "MUTUALFUND"}:
+    if classification.get("quoteType") in {"ETF", "MUTUALFUND"}:
         reasons.append({"code": "fund_not_supported"})
+    elif holding and classification.get("financialHolding"):
+        reasons.append({"code": "financial_holding"})
     elif market == "US" and code.isdigit():
         sic = int(code)
         if (6000 <= sic <= 6411 or 6500 <= sic <= 6553 or sic in {6722, 6726, 6770, 6798}):
@@ -44,7 +44,9 @@ def classify(identity: dict, classification: dict, *, reporting_currency: str, q
         reasons.append({"code": "class_eps_differs"})
     elif classification.get("shareClassesSameEps"):
         notices.append("share_classes_same_eps")
-    if share_unit_status in {"unknown", "mismatch"}:
+    if classification.get("classHistoryReason"):
+        reasons.append({"code": "share_unit_unknown", "subCode": classification["classHistoryReason"]})
+    elif share_unit_status in {"unknown", "mismatch"}:
         reasons.append({"code": "share_unit_" + share_unit_status})
     if not reporting_currency or not quote_currency:
         reasons.append({"code": "currency_unknown"})

@@ -1,13 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
   attemptBanner, bannerFor, decompositionCards, fractionToPercent, heroText, irrText, money, multiple, pct, pctPlain, pctSigned,
-  atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal,
+  atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal, showReferenceFacts, noticeText,
 } from "./format";
-import type { Projection, ScenarioRow } from "./types";
+import type { Projection, ScenarioRow, SnapshotView } from "./types";
 import { cashPerHundred, cashSpan, moneyShort, percentOne, plainOne, signedOne } from "./format";
 import { instrumentIdFor } from "./PriceTab";
 
 describe("spec-4 display", () => {
+  it("preserves reason parameters and supplement notices", () => {
+    expect(reasonText({ code: "history_too_short", subCode: "loss_years", range: "growth", n: 2, required: 3, historyYears: 8 }))
+      .toBe("주당이익이 0 이하인 해가 있어 비교할 5년 구간이 2개입니다(필요 3개)");
+    expect(reasonText({ code: "price_unavailable", subCode: "provider_error" })).toBe("가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요");
+    expect(noticeText({ code: "listed_class_eps", class: "Class A" })).toContain("Class A");
+    expect(noticeText({ code: "derived_eps_years", years: [2020] })).toContain("FY2020");
+  });
+  it("opens reference facts only for six distinct permitted canonical rows", () => {
+    const scenarios = ([5, 10] as const).flatMap(horizon => (["conservative", "base", "optimistic"] as const)
+      .map(label => ({ label, horizon, status: "unavailable" as const, reason: { code: "negative_base_eps" } })));
+    const view = { results: { scenarios, referenceFacts: { status: "available" } } } as SnapshotView;
+    expect(showReferenceFacts(view)).toBe(true);
+    for (const bad of [scenarios.slice(1), [...scenarios.slice(1), scenarios[1]],
+      scenarios.map((row, i) => i ? row : { ...row, reason: { code: "share_event_unknown" } })]) {
+      expect(showReferenceFacts({ ...view, results: { ...view.results, scenarios: bad } })).toBe(false);
+    }
+    expect(showReferenceFacts({ ...view, results: { ...view.results, referenceFacts: undefined } })).toBe(false);
+  });
   it("rounds stored cash ratios half-even without binary float ties", () => {
     expect(cashPerHundred("0.7950")).toBe("80");
     expect(cashPerHundred("0.8050")).toBe("80");
@@ -170,7 +188,7 @@ describe("one banner at a time", () => {
   });
   it("explains a failed attempt in plain words and points to earlier results", () => {
     expect(attemptBanner({ status: "failed", reason: { code: "price_stale" } }, "2026-09-01")?.detail).toContain("2026-09-01 계산은 아래 기록에서");
-    expect(attemptBanner({ status: "failed", reason: { code: "company_not_found" } }, null)?.detail).toContain("공식 자료에서 이 종목을 찾지 못했습니다");
+    expect(attemptBanner({ status: "failed", reason: { code: "company_not_found" } }, null)?.detail).toContain("공식 자료에서 이 종목을 찾지 못해 계산하지 않았습니다");
     expect(attemptBanner({ status: "saved", snapshotId: "x" }, null)).toBeNull();
     expect(attemptBanner(null, null)).toBeNull();
   });

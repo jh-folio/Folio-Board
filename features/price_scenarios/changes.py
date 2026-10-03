@@ -56,21 +56,48 @@ def _by_key(inputs: dict) -> dict:
     return {(row["metric"], int(row["fiscalYear"])): row for row in inputs["history"]["rows"]}
 
 
+def _actual_sources(inputs):
+    """Compare real issuer facts by scope; a calculated EPS is never a restatement."""
+    history = inputs['history']
+    candidates = list(history['rows']) + list(history.get('existingSourceRows', []))
+    for row in history['rows']:
+        candidates.extend(row.get('sourceRows', []))
+        validation = row.get('classValidation') or {}
+        candidates.extend(validation[k] for k in ('netIncome', 'shares', 'eps') if validation.get(k))
+    output = {}
+    for row in candidates:
+        if row.get('derived') or row.get('fiscalYear') is None or row.get('value') is None:
+            continue
+        period = row.get('period') or {}
+        key = (row['metric'], int(row['fiscalYear']), period.get('start'), period.get('end'),
+               row.get('unit'), row.get('scope') or 'company_consolidated', row.get('classBasis'))
+        if key not in output or (row.get('filed', ''), row.get('accession', '')) > (output[key].get('filed', ''), output[key].get('accession', '')):
+            output[key] = row
+    return output
+
+
+def _lineage(inputs, years):
+    return sorted((r['metric'], int(r['fiscalYear']), r.get('derived', ''), r.get('source', 'companyfacts'), r.get('classBasis') or '')
+                  for r in inputs['history']['rows'] if int(r['fiscalYear']) in years)
+
+
 def restated_items(old: dict, new: dict) -> list[dict]:
     """Values for the same metric and fiscal year that really changed between two snapshots."""
     events, session, ads = _events(new), new["inputs"]["asOf"], _ads(new)
-    before, after = _by_key(old["inputs"]), _by_key(new["inputs"])
+    before, after = _actual_sources(old["inputs"]), _actual_sources(new["inputs"])
     out = []
     with localcontext() as context:
         context.prec, context.rounding = 28, ROUND_HALF_EVEN
-        for key in sorted(set(before) & set(after)):
-            if key[0] == "Stock-Based Compensation" and old["inputs"]["methodVersion"] != new["inputs"]["methodVersion"]:
+        for key in sorted(set(before) & set(after), key=repr):
+            if key[0] == "Stock-Based Compensation" and {old["inputs"]["methodVersion"], new["inputs"]["methodVersion"]} == {"price-scenario-3", "price-scenario-4"}:
                 continue  # IFRS tag precedence changed, not necessarily the issuer's disclosed value.
             old_value, old_res = _adjusted(before[key], events, session, ads)
             new_value, new_res = _adjusted(after[key], events, session, ads)
             tolerance = max(abs(new_value) * RELATIVE_TOLERANCE, old_res, new_res)
             if abs(old_value - new_value) > tolerance:
-                out.append({"metric": key[0], "fiscalYear": key[1], "from": str(old_value), "to": str(new_value)})
+                item = {"metric": key[0], "fiscalYear": key[1], "from": str(old_value), "to": str(new_value)}
+                if item not in out:
+                    out.append(item)
     return out
 
 
@@ -81,8 +108,12 @@ def _event_keys(snapshot: dict) -> set:
 def change_reasons(previous: dict, new: dict) -> list[dict]:
     """Ordered, deterministic reasons; a method change makes direct comparison unavailable."""
     old_in, new_in = previous["inputs"], new["inputs"]
-    if (old_in["methodVersion"], old_in["specVersion"]) != (new_in["methodVersion"], new_in["specVersion"]):
-        return [{"code": "method_changed", "from": old_in["methodVersion"], "to": new_in["methodVersion"]}]
+    from . import SPEC4_REVISION0_SHA256
+    def sha(inputs):
+        return inputs.get("specSha256") or (SPEC4_REVISION0_SHA256 if inputs["methodVersion"] == "price-scenario-4" else None)
+    if (old_in["methodVersion"], old_in["specVersion"], sha(old_in)) != (new_in["methodVersion"], new_in["specVersion"], sha(new_in)):
+        return [{"code": "method_changed", "from": old_in["methodVersion"], "to": new_in["methodVersion"],
+                 "fromSpecSha256": sha(old_in), "toSpecSha256": sha(new_in)}]
     reasons = []
     if any(old_in["price"].get(key) != new_in["price"].get(key) for key in PRICE_KEYS):
         reasons.append({"code": "price_moved"})
@@ -91,6 +122,8 @@ def change_reasons(previous: dict, new: dict) -> list[dict]:
         reasons.append({"code": "new_fiscal_year", "fiscalYear": year})
     for item in restated_items(previous, new):
         reasons.append({"code": "restated", **item})
+    if _lineage(old_in, old_years) != _lineage(new_in, old_years):
+        reasons.append({"code": "input_changed", "path": "history"})
     added = _event_keys(new) - _event_keys(previous)
     for date, ratio in sorted(added):
         reasons.append({"code": "share_event_added", "date": date, "ratio": ratio})
