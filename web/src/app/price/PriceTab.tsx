@@ -7,7 +7,7 @@ import { GlanceSection, GuideSection, PartHeader, SECTION_IDS, glanceItems } fro
 import {
   CriteriaLine, DecompositionSection, HistoryList, MyAssumptionsResult, RequirementSection, ScaleBar, ScenarioCards, ScenarioTable, SourcesDetails,
 } from "./PriceParts";
-import { attemptBanner, bannerFor, heroText, irrText, money, pct, percentToFraction, fractionToPercent, reasonText, rowFor, toNumber, type Banner } from "./format";
+import { attemptBanner, bannerFor, heroText, noReturns, notApplicableAttempt, showReferenceFacts, irrText, money, pct, percentToFraction, fractionToPercent, reasonText, rowFor, toNumber, type Banner } from "./format";
 import type { Criteria, Override, Overview, Projection, SnapshotView } from "./types";
 
 const CALCULATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -147,15 +147,23 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
   const requiredText = criteria?.requiredReturn ?? null;
   const goal = requiredText !== null && toNumber(requiredText) !== null ? Number(requiredText) : null;
   const hero = heroText({ horizon, base: baseRow, required: requiredText, holdingYears: holding, baseHolding });
-  const banner: Banner = bannerFor({ projection, view, saveFailed: false }) || attemptBanner(overview.lastAttempt, overview.latest?.asOf ?? null);
+  const notApplicable = !view && notApplicableAttempt(overview.lastAttempt);
+  const banner: Banner = bannerFor({ projection, view, saveFailed: false }) || (notApplicable ? null : attemptBanner(overview.lastAttempt, overview.latest?.asOf ?? null));
   const marginNote = view && criteria?.minMarginOfSafety !== null && criteria?.minMarginOfSafety !== undefined && projection?.verdict.marginOfSafety.state === "unknown"
     ? `안전마진 판정 보류: ${reasonText(projection.verdict.marginOfSafety.reason)}. 수익률 비교도 계산상 비교일 뿐 투자 판단을 대신하지 않습니다.` : "";
   const noResult = !view;
-  const showTitle2 = !calculating && !noResult && supported && Boolean(hero.title2);
-  const heroTitle = calculating ? "계산하고 있습니다…" : noResult ? "아직 이 종목의 가격을 계산하지 않았습니다." : !supported
-    ? "이 종목은 지금 계산하지 않았습니다." : hero.title;
-  const heroSub = calculating ? message : noResult ? "가장 최근 거래일 종가와 공시 실적으로 계산합니다. 내 관심 이유를 쓰지 않아도 됩니다."
-    : !supported ? `${reasonText(view?.results.support.reasons[0])}. 틀린 숫자를 보여 드리지 않으려고 계산을 멈췄습니다.` : hero.sub;
+  // 수익률이 한 칸도 없으면 결론 카드·막대·보유 기간·①②를 그리지 않는다. 비어 있는 칸만 길게 이어지기 때문이다.
+  const blocked = Boolean(view && supported && noReturns(view));
+  const showTitle2 = !calculating && !noResult && supported && !blocked && Boolean(hero.title2);
+  const heroTitle = calculating ? "계산하고 있습니다…" : notApplicable ? "이 종목은 이 계산의 대상이 아닙니다."
+    : noResult ? "아직 이 종목의 가격을 계산하지 않았습니다." : !supported
+    ? "이 종목은 지금 계산하지 않았습니다." : blocked ? "이 종목은 수익률을 계산하지 못했습니다." : hero.title;
+  const heroSub = calculating ? message : notApplicable ? `${reasonText(overview.lastAttempt?.reason)}.`
+    : noResult ? "가장 최근 거래일 종가와 공시 실적으로 계산합니다. 내 관심 이유를 쓰지 않아도 됩니다."
+    : !supported ? `${reasonText(view?.results.support.reasons[0])}. 틀린 숫자를 보여 드리지 않으려고 계산을 멈췄습니다.`
+    : blocked ? `${hero.sub}${view && showReferenceFacts(view) ? " 아래에서 지금 가격과 회사의 기록을 사실 그대로 볼 수 있습니다." : ""}` : hero.sub;
+  const decompositionReady = view?.results.decomposition.status === "available";
+  const cashReady = view?.results.cashConversion?.status === "available";
 
   return (
     <div className="price-stack" data-price-tab>
@@ -163,7 +171,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
         {view && !calculating && (
           <div className="price-row price-row--between">
             <p className="price-meta">종가 <strong>{money(view.inputSummary.price.value, currency)}</strong> · {view.inputSummary.price.sessionDate} 기준</p>
-            {supported && (
+            {supported && !blocked && (
               <div className="price-horizon"><span id="price-horizon-label">보유 기간</span>
                 <div className="segment" role="group" aria-labelledby="price-horizon-label">
                   {([5, 10] as const).map(years => <button key={years} type="button" aria-pressed={horizon === years} onClick={() => setHorizon(years)}>{years}년</button>)}
@@ -176,7 +184,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
           <h3 className="price-hero__title" id="price-hero-title">{heroTitle}{showTitle2 && <span className="price-hero__title2">{hero.title2}</span>}</h3>
           <p className="price-note" role={calculating ? "status" : undefined}>{heroSub}</p>
         </div>
-        {view && supported && !calculating && (
+        {view && supported && !blocked && !calculating && (
           <>
             <div className="price-hchart">
               <p className="price-note">{horizon}년 보유 시 연 수익률 <span className="price-meta">· 카드를 누르면 막대에서 위치를 보여 줍니다</span></p>
@@ -188,7 +196,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
           </>
         )}
         <div className="price-row">
-          <button className="btn btn--primary" type="button" disabled={calculating} onClick={() => void calculate()}>{calculating ? "계산 중" : noResult ? "계산하기" : "다시 계산"}</button>
+          <button className={notApplicable ? "btn" : "btn btn--primary"} type="button" disabled={calculating} onClick={() => void calculate()}>{calculating ? "계산 중" : notApplicable ? "다시 확인" : noResult ? "계산하기" : "다시 계산"}</button>
           {view && !calculating && <span className="price-meta">계산 시각 {view.computedAt.replace("T", " ").replace("Z", "").slice(0, 16)}</span>}
         </div>
       </section>
@@ -197,7 +205,26 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
 
       {banner && <div className="surface surface--group price-banner" role="status"><strong>{banner.title}</strong><p className="price-meta">{banner.detail}</p></div>}
 
-      {view && supported && (
+      {view && supported && blocked && !calculating && (
+        <>
+          {decompositionReady && (
+            <GuideSection id="price-decomp-title" title="지난 5년 이익 성장은 어디서 왔나"
+              meta={view.results.decomposition.status === "available" ? `FY${view.results.decomposition.recentWindow[0]} → FY${view.results.decomposition.recentWindow[1]}` : undefined}
+              question="지난 5년 주당이익 성장이 무엇에서 왔는지 나눠 봅니다."
+              calc="주당이익 = 매출 × 이익률 ÷ 주식 수이므로, 5년 동안의 변화를 매출·이익률·주식 수 세 가지로 나눴습니다."
+              read="이익률 개선이나 주식 수 감소가 큰 몫이면, 같은 속도의 성장이 계속되기 어려울 수 있습니다.">
+              <DecompositionSection view={view} selected={decSelected} onSelect={setDecSelected} />
+            </GuideSection>
+          )}
+          {cashReady && <CashConversionSection block={view.results.cashConversion} tableInside={false} />}
+          <div className="price-folds">
+            {cashReady && <CashTableDetails block={view.results.cashConversion} />}
+            <details className="price-details"><summary>숫자의 근거와 출처</summary><SourcesDetails view={view} /></details>
+          </div>
+        </>
+      )}
+
+      {view && supported && !blocked && (
         <>
           <GlanceSection items={glanceItems({ view, projection, criteria, horizon })} />
 

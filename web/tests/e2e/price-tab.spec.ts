@@ -77,6 +77,15 @@ for (const theme of ['light', 'dark']) {
     const section = page.locator('.price-section:has(#price-reference-title)');
     await expect(section.getByRole('heading', { name: '수익률 대신 볼 수 있는 숫자' })).toBeVisible();
     await expect(page.locator('.price-hero')).toContainText('최근 연도 주당이익이 0 이하라 수익률 계산을 하지 않았습니다');
+    // 수익률이 한 칸도 없으면 빈 카드·보유 기간·①② 묶음을 그리지 않는다.
+    const tab = page.locator('[data-price-tab]');
+    await expect(tab.getByRole('heading', { level: 3, name: '이 종목은 수익률을 계산하지 못했습니다.' })).toBeVisible();
+    await expect(tab.locator('.price-card')).toHaveCount(0);
+    await expect(tab.getByRole('button', { name: '5년', exact: true })).toHaveCount(0);
+    await expect(tab.locator('.price-part')).toHaveCount(0);
+    await expect(tab.locator('.price-glance')).toHaveCount(0);
+    await expect(tab.getByText('계산 불가')).toHaveCount(0);
+    await expect(tab.getByRole('button', { name: '다시 계산' })).toBeVisible();
     await expect(section.locator('.price-dec__card')).toHaveText([/지금 PER.*최근 연도 적자/, /매출 대비 주가.*10\.5배/, /최근 연도 남은 현금 비율.*해당 연도의 공시 값이 없어 표시하지 않았습니다/]);
     await expect(section.getByRole('table')).not.toBeVisible();
     await section.getByText('연도별 참고 숫자 (3개 회계연도)', { exact: true }).focus();
@@ -94,6 +103,19 @@ for (const theme of ['light', 'dark']) {
     expect(writes).toEqual([]);
   });
 }
+
+test('0.9.1 a fund is told in the headline, not as a first-run prompt with a contradicting banner', async ({ page }) => {
+  const writes = await mockApi(page, { overview: { instrumentId: 'US:ABC', latest: null, history: [],
+    lastAttempt: { status: 'failed', reason: { code: 'fund_not_supported' }, finishedAt: '2026-10-04T01:00:00Z' } } });
+  await openPrice(page, 'light');
+  const tab = page.locator('[data-price-tab]');
+  await expect(tab.getByRole('heading', { level: 3, name: '이 종목은 이 계산의 대상이 아닙니다.' })).toBeVisible();
+  await expect(tab.locator('.price-hero')).toContainText('ETF·펀드는');
+  await expect(tab.getByText('아직 이 종목의 가격을 계산하지 않았습니다.')).toHaveCount(0);
+  await expect(tab.getByText('이번에는 계산하지 못했습니다.')).toHaveCount(0);
+  await expect(tab.getByRole('button', { name: '다시 확인' })).toBeVisible();
+  expect(writes).toEqual([]);
+});
 
 test('0.9.1 reference facts zero and short records; other blocks stay hidden', async ({ page }) => {
   const short = { code: 'history_too_short', subCode: 'years_too_few', range: 'growth', n: 0, required: 3, historyYears: 3 };

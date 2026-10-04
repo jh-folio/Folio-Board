@@ -4,7 +4,7 @@ import {
   atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal, showReferenceFacts, noticeText,
 } from "./format";
 import type { Projection, ScenarioRow, SnapshotView } from "./types";
-import { cashPerHundred, cashSpan, moneyShort, percentOne, plainOne, signedOne } from "./format";
+import { cashPerHundred, cashSpan, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, signedOne } from "./format";
 import { instrumentIdFor } from "./PriceTab";
 
 describe("spec-4 display", () => {
@@ -70,6 +70,9 @@ describe("number words", () => {
     expect(multiple("18.04")).toBe("18.0배");
     expect(money("250.123", "USD")).toBe("$250.12");
     expect(money("276000", "KRW")).toBe("276,000원");
+    expect(money("-0.29", "USD")).toBe("−$0.29");
+    expect(money("-1500", "KRW")).toBe("−1,500원");
+    expect(money("-0.001", "USD")).toBe("$0.00");
     expect(reasonText("history_too_short")).toContain("과거 자료가 부족");
     expect(reasonText("zzz")).toContain("zzz");
   });
@@ -200,5 +203,21 @@ describe("scale labels", () => {
     expect(labelRows([10, 50, 90])).toEqual([0, 0, 0]);
     expect(labelRows([60, 10, 15])).toEqual([1, 0, 0].map((_, i) => labelRows([60, 10, 15])[i])); // order of input does not matter
     expect(labelRows([60, 10, 15])[0]).toBe(0);
+  });
+});
+
+describe("whole-tab states", () => {
+  const unavailable = (label: string, horizon: number) => ({ label, horizon, status: "unavailable", reason: { code: "negative_base_eps" } });
+  const viewOf = (rows: unknown[]) => ({ results: { scenarios: rows } }) as unknown as SnapshotView;
+  it("treats only a tab with no calculated cell as blocked; out-of-range cells still count", () => {
+    const all = [5, 10].flatMap(h => ["conservative", "base", "optimistic"].map(l => unavailable(l, h)));
+    expect(noReturns(viewOf(all))).toBe(true);
+    expect(noReturns(viewOf([...all.slice(1), { label: "conservative", horizon: 5, status: "available", irr: null, irrRange: "above_range" }]))).toBe(false);
+    expect(noReturns(viewOf([]))).toBe(false);
+  });
+  it("names a fund attempt as not applicable, but not a passing failure", () => {
+    expect(notApplicableAttempt({ status: "failed", reason: { code: "fund_not_supported" } })).toBe(true);
+    expect(notApplicableAttempt({ status: "failed", reason: { code: "price_unavailable", subCode: "provider_error" } })).toBe(false);
+    expect(notApplicableAttempt(null)).toBe(false);
   });
 });

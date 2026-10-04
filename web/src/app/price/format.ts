@@ -39,8 +39,10 @@ export function money(value: string | number | null | undefined, currency: strin
   const parsed = toNumber(value);
   if (parsed === null) return "—";
   const digits = Math.abs(parsed) >= 1000 ? 0 : 2;
-  const text = parsed.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-  return currency === "KRW" ? `${text}원` : currency === "USD" ? `$${text}` : `${text} ${currency}`;
+  const text = Math.abs(parsed).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  // 음수는 기호를 통화 앞에 둔다("$-0.29"가 아니라 "−$0.29").
+  const sign = parsed < 0 && Number(text.replace(/,/g, "")) !== 0 ? MINUS : "";
+  return currency === "KRW" ? `${sign}${text}원` : currency === "USD" ? `${sign}$${text}` : `${sign}${text} ${currency}`;
 }
 
 export const REASON_TEXT: Record<string, string> = {
@@ -131,6 +133,18 @@ export function noticeText(notice: Notice): string {
 }
 
 /** Six canonical rows must all be blocked for one of the two permitted reasons. */
+/** 지원 종목인데 시나리오 여섯 칸이 모두 계산되지 않았다(범위 밖 수익률은 계산된 것으로 본다). 결론·①②의 빈 칸을 숨기는 기준. */
+export function noReturns(view: SnapshotView): boolean {
+  const rows = view.results.scenarios;
+  return rows.length > 0 && rows.every(row => row.status !== "available");
+}
+
+/** 스냅샷 없이 끝난 계산 중, 다시 눌러도 같은 결과가 나오는 "대상 아님". 결론 영역이 직접 말한다. */
+const NOT_APPLICABLE = new Set(["fund_not_supported"]);
+export function notApplicableAttempt(attempt: Attempt | null): boolean {
+  return Boolean(attempt && attempt.status === "failed" && attempt.reason && NOT_APPLICABLE.has(attempt.reason.code));
+}
+
 export function showReferenceFacts(view: SnapshotView): boolean {
   const rows = view.results.scenarios;
   const keys = new Set(rows.map(row => `${row.label}:${row.horizon}`));
