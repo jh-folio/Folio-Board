@@ -16,7 +16,7 @@ def test_machine_versions_derive_release_version() -> None:
     lock = json.loads((ROOT / "web" / "package-lock.json").read_text(encoding="utf-8"))
     app_source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert version == "0.9.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
     assert package["version"] == version
     assert lock["version"] == version
     assert lock["packages"][""]["version"] == version
@@ -25,6 +25,7 @@ def test_machine_versions_derive_release_version() -> None:
 
 
 def test_release_cli_defaults_to_version_file() -> None:
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     result = subprocess.run(
         [sys.executable, "scripts/package_release.py", "--dry-run"],
         cwd=ROOT,
@@ -35,7 +36,7 @@ def test_release_cli_defaults_to_version_file() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "FolioBoard-v0.9.0" in result.stdout
+    assert f"FolioBoard-v{version}" in result.stdout
 
 
 def test_public_research_navigation_is_exposed_for_043() -> None:
