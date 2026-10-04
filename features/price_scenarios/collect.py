@@ -26,7 +26,7 @@ from features.common.atomic_replace import write_bytes_atomic
 
 from .beta import measure_beta
 from .decimal_ops import load_source_json
-from .prices import fetch_daily_history, fetch_instrument_type, provider_failure
+from .prices import fetch_benchmark, fetch_daily_history, fetch_instrument_type, provider_failure
 
 SEC_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 SEC_FUNDS_URL = "https://www.sec.gov/files/company_tickers_mf.json"
@@ -39,9 +39,16 @@ DECISION_LOOKBACK_YEARS = 11
 class CollectionError(Exception):
     """A required source could not be obtained; `.code` is a stable enum for the job and the API."""
 
-    def __init__(self, code: str, sub_code: str | None = None):
+    def __init__(self, code: str, sub_code: str | None = None, *, source_diagnostic: dict | None = None):
         super().__init__(code)
         self.code, self.sub_code = code, sub_code
+        self.source_diagnostic = source_diagnostic or {}
+
+
+def _source_error(error):
+    return CollectionError('financial_history_unavailable', getattr(error, 'code', 'source_request_failed'),
+        source_diagnostic={"httpStatus": getattr(error, 'http_status', None),
+                           "sourceFailureVerified": isinstance(error, sec_filings.SourceFetchError) and getattr(error, 'code', '') != 'source_request_failed'})
 
 
 def _sec_bytes(url: str) -> bytes:
@@ -61,7 +68,7 @@ def _dart_get(endpoint: str, params: dict) -> dict:
 class Collector:
     def __init__(self, data_root, *, now: Callable[[], dt.datetime] | None = None, sec_bytes=None, dart_get=None,
                  fetch_daily=None, instrument_type=None, beta_of=None, risk_free_of=None, cancel: Callable[[], None] = lambda: None,
-                 progress: Callable[..., None] | None = None):
+                 progress: Callable[..., None] | None = None, benchmark_of=None):
         self.root = Path(data_root)
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
         self.sec_bytes, self.dart_get = sec_bytes or _sec_bytes, dart_get or _dart_get
@@ -70,6 +77,7 @@ class Collector:
         self.risk_free_of = risk_free_of or (lambda session, currency: risk_free_as_of(
             session, currency, api_key=os.environ.get("FRED_API_KEY", "").strip()))
         self.cancel, self.progress = cancel, progress or (lambda **_: None)
+        self.benchmark_of = benchmark_of or fetch_benchmark
 
     @property
     def cache(self) -> Path:
@@ -134,6 +142,14 @@ class Collector:
 
     def _tail(self, raw: dict, currency: str) -> dict:
         self.cancel()
+        self.progress(message="같은 기간의 시장지수 기록을 읽고 있습니다.")
+        try:
+            raw["benchmarkDaily"] = self.benchmark_of(raw["market"], raw["daily"]["request"], now=self.now())
+        except CancelledError:
+            raise
+        except Exception:
+            raw["benchmarkDaily"] = {"sourceState": "unavailable", "reason": {"code": "benchmark_source_failed"}}
+        self.cancel()
         session = raw["daily"]["price"]["sessionDate"]
         self.progress(message="무위험수익률과 베타를 확인하고 있습니다.")
         observed = self.risk_free_of(session, currency)
@@ -153,10 +169,11 @@ class Collector:
         except Exception as error:
             if not provider_failure(error):
                 raise
-            raise CollectionError('financial_history_unavailable', 'provider_error') from None
+            diagnostic = sec_filings.source_failure(error)
+            raise CollectionError('financial_history_unavailable', diagnostic["code"], source_diagnostic={**diagnostic, "sourceFailureVerified": True}) from None
         self.cancel()
         if error:
-            raise CollectionError('financial_history_unavailable', 'provider_error')
+            raise _source_error(error)
         return text
 
     def _class_filings(self, facts, submissions, annual, markup, daily, cik, ticker, *, source_errors=()):
@@ -170,7 +187,8 @@ class Collector:
                 or any(r["metric"] == "EPS Diluted" and r["fiscalYear"] == max(years) for r in history["rows"])):
             return None
         if any(source_errors):
-            raise CollectionError('financial_history_unavailable', 'provider_error')
+            source_error = next(error for error in source_errors if error)
+            raise _source_error(source_error)
         security = listed_security(markup, ticker, accession=annual["accession"])
         if not listed_class(security):
             return None
@@ -284,12 +302,12 @@ class Collector:
             years = {r['fiscalYear'] for r in h['rows']}
             return bool(years) and not any(r['metric'] == 'EPS Diluted' and r['fiscalYear'] == max(years) for r in h['rows'])
         if candidate and missing_eps(candidate) and any(e and 'parse failed' not in e for e in (submissions_error, annual.get('error'))):
-            raise CollectionError('financial_history_unavailable', 'provider_error')
+            raise _source_error(next(e for e in (submissions_error, annual.get('error')) if e))
         if not submissions or not annual.get("ok"):
             raise CollectionError("financial_history_unavailable", "annual_report_not_found")
         markup, error = sec_filings.fetch_text(annual["url"], self.cache / "filings" / f"{cik}-{annual['accession'].replace('-', '')}.json")
         if error and annual['form'] in {'10-K', '10-K/A'} and missing_eps(sec_history(facts, as_of=self.now().date().isoformat())):
-            raise CollectionError('financial_history_unavailable', 'provider_error')
+            raise _source_error(error)
         if not markup:
             raise CollectionError("financial_history_unavailable", "annual_report_text_unavailable")
         self.cancel()

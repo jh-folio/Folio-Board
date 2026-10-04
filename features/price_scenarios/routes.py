@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 
 from .service import calculate, overview, parse_instrument, projection_view, snapshot_view, store_for
+from .service import movement_view
 from .store import PriceStoreError
 
 STATUS = {"invalid_number": 422, "out_of_range": 422, "invalid_holding_years": 422, "holding_years_required": 422,
@@ -66,6 +67,17 @@ def create_price_router(data_root):
     lock = threading.Lock()
     root = Path(data_root)
 
+    @router.get("/api/price-movement")
+    def read_movement(instrumentId: str, startDate: str, endDate: str, snapshotId: str | None = None):
+        try:
+            return movement_view(root, _instrument(instrumentId), startDate, endDate, snapshotId)
+        except ValueError:
+            raise HTTPException(422, detail={"code": "invalid_comparison_dates"}) from None
+        except PriceStoreError as error:
+            raise _error(error) from None
+        except (OSError, sqlite3.Error):
+            raise _unavailable() from None
+
     @router.post("/api/price-snapshots/calculate")
     def start_calculation(body: CalculateBody):
         from features.common.jobs import get_job, submit_job
@@ -86,9 +98,11 @@ def create_price_router(data_root):
             raise _unavailable() from None
 
     @router.get("/api/price-snapshots/{snapshot_id}")
-    def snapshot(snapshot_id: str, include: str = ""):
+    def snapshot(snapshot_id: str, include: str = "", attributionYears: int = 5):
         try:
-            view = snapshot_view(root, snapshot_id, include_inputs=include == "inputs")
+            view = snapshot_view(root, snapshot_id, include_inputs=include == "inputs", attribution_years=attributionYears)
+        except ValueError:
+            raise HTTPException(422, detail={"code": "invalid_attribution_years"}) from None
         except (OSError, sqlite3.Error):
             raise _unavailable() from None
         if view is None:

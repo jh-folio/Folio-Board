@@ -215,6 +215,8 @@ def test_cross_version_review_compares_spec3_onward_and_skips_only_sbc(old_versi
     i["history"]["rows"].append({"fiscalYear": 2024, "metric": "Stock-Based Compensation", "value": "10", "filed": "2025-02-01", "precision": 0})
     old = {"snapshotId": "old", "inputs": deepcopy(i), "results": r}
     old["inputs"].update(methodVersion=f"price-scenario-{old_version}", specVersion=f"price-scenario-spec-{old_version}")
+    from features.price_scenarios import SPEC2_SHA256, SPEC3_SHA256, SPEC4_SHA256
+    old["inputs"]["specSha256"] = {2: SPEC2_SHA256, 3: SPEC3_SHA256, 4: SPEC4_SHA256}[old_version]
     new = {"snapshotId": "new", "inputs": deepcopy(i), "results": r}
     for row in new["inputs"]["history"]["rows"]:
         if row["metric"] == metric and row["fiscalYear"] == 2024:
@@ -311,11 +313,14 @@ def test_cross_version_review_reaches_old_report_marker_without_mutating_body(tm
     i, r = make()
     old_i, old_r = deepcopy(i), deepcopy(r)
     old_i.update(methodVersion="price-scenario-3", specVersion="price-scenario-spec-3")
+    from features.price_scenarios import SPEC3_SHA256
+    old_i['specSha256'] = SPEC3_SHA256
     for key in ("returnParts", "noGrowth", "cashConversion"):
         old_r.pop(key, None)
     with monkeypatch.context() as m:
         m.setattr(store_module,"METHOD_VERSION","price-scenario-3")
         m.setattr(store_module,"SPEC_VERSION","price-scenario-spec-3")
+        m.setattr(store_module,"SPEC_SHA256",SPEC3_SHA256)
         old = store.save_snapshot(old_i,old_r)
     before = deepcopy(store.get(old["snapshotId"]))
     for row in i["history"]["rows"]:

@@ -3,6 +3,7 @@ import { getJson } from "../../api";
 import { ChartDataTable } from "../charts/ChartDataTable";
 import { KIND_KO, STATUS_KO, timeLabelKST } from "./MarketCalendar";
 import { barReadout, barTimeText, chartSummaryLabel, isCandleView, nextBarIndex } from "./marketChartA11y";
+import { ChartReturnActions } from "../price/ChartReturnActions";
 
 /** 네이티브 시장 차트의 **그림 한 장**.
  *
@@ -23,6 +24,7 @@ type ChartApi = {
   addSeries: (definition: unknown, options?: object) => SeriesApi;
   timeScale: () => { fitContent: () => void; timeToCoordinate?: (time: unknown) => number | null };
   subscribeCrosshairMove: (handler: (param: CrosshairParam) => void) => void;
+  subscribeClick?: (handler: (param: CrosshairParam) => void) => void;
   /** 키보드로 고른 봉에 십자선을 얹는다 — 눈으로 보는 키보드 사용자도 툴팁을 본다. */
   setCrosshairPosition?: (price: number, horzScaleItem: unknown, series: SeriesApi) => void;
   clearCrosshairPosition?: () => void;
@@ -183,6 +185,8 @@ type MarketChartFigureProps = {
   onRange: (value: string) => void;
   onStyle: (value: "candle" | "line") => void;
   showEvent?: boolean;
+  movementInstrumentId?: string;
+  onOpenPrice?: () => void;
 };
 
 export function chartSessionKey(symbol: string, range: string): string {
@@ -199,7 +203,7 @@ export function MarketChartFigure(props: MarketChartFigureProps) {
 }
 
 function MarketChartFigureSession({
-  symbol, label, range, style, onRange, onStyle, showEvent = true, showMa, onShowMa,
+  symbol, label, range, style, onRange, onStyle, showEvent = true, movementInstrumentId, onOpenPrice, showMa, onShowMa,
 }: MarketChartFigureProps & { showMa: boolean; onShowMa: () => void }) {
   const [payload, setPayload] = useState<ChartPayload | null>(null);
   const [nextEvent, setNextEvent] = useState<CalendarEvent | null>(null);
@@ -225,6 +229,12 @@ function MarketChartFigureSession({
   // 키보드로 고른 봉. 그림은 canvas라 화면 읽기 프로그램이 못 읽으므로 판독값을 따로 알린다.
   const [cursor, setCursor] = useState<number | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const selectDate = (time: string) => {
+    if (!movementInstrumentId) return;
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(time) ? time : new Date(time).toLocaleDateString("en-CA", { timeZone: movementInstrumentId.startsWith("KR:") ? "Asia/Seoul" : "America/New_York" });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) setSelectedDate(day);
+  };
 
   useEffect(() => { styleRef.current = style; }, [style]);
 
@@ -443,6 +453,11 @@ function MarketChartFigureSession({
       keyboardTipRef.current = false;
       renderTooltip(point, String(seriesPoint.time), seriesPoint.close ?? seriesPoint.value ?? null);
     });
+    chart.subscribeClick?.((param) => {
+      const point = param.seriesData?.get(series);
+      const row = currentRowsRef.current.find(r => String(chartTime(r.time, intraday)) === String(point?.time));
+      if (row) selectDate(row.time);
+    });
     showBarTipRef.current = (row: Point) => {
       const time = chartTime(row.time, intraday);
       const x = chart.timeScale().timeToCoordinate?.(time);
@@ -582,6 +597,7 @@ function MarketChartFigureSession({
     const row = rows[index];
     if (!row) return;
     setCursor(index);
+    selectDate(row.time);
     setAnnouncement(barReadout({ rows, index, intraday: intradayHeadline, candle: candleView }));
     // 십자선과 툴팁은 눈으로 보는 키보드 사용자를 위한 것이다. 라이브러리가 못 받으면 조용히 넘어간다.
     chartRef.current?.setCrosshairPosition?.(row.close, chartTime(row.time, intradayHeadline), primarySeriesRef.current as SeriesApi);
@@ -678,6 +694,7 @@ function MarketChartFigureSession({
       </div>
       <p className="sr-only" role="status">{announcement}</p>
       <ChartDataTable title={`${chartName} 가격`} unit="봉" columns={tableColumns} rows={tableRows} />
+      {movementInstrumentId && <ChartReturnActions instrumentId={movementInstrumentId} startDate={series[0]?.time.slice(0, 10) ?? ""} endDate={series[series.length - 1]?.time.slice(0, 10) ?? ""} selectedDate={selectedDate} intraday={range === "1d"} chartStartClose={series.find(row => row.time.slice(0, 10) === (selectedDate ?? series[0]?.time.slice(0, 10)))?.close} chartEndClose={series[series.length - 1]?.close} onOpenPrice={onOpenPrice} />}
       {showEvent && nextEvent && (
         <p className="chart-next">
           <span className={`chip certainty-badge--${nextEvent.status}`}>{STATUS_KO[nextEvent.status] || nextEvent.status}</span>

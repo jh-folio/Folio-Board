@@ -141,7 +141,7 @@ def test_initial_transport_failure_is_retryable_before_class_identification(monk
     monkeypatch.setattr('features.price_scenarios.securities.listed_security', lambda *a, **k: {'kind': 'unknown'})
     with pytest.raises(collect.CollectionError) as e:
         made._collect_us('ABC')
-    assert (e.value.code, e.value.sub_code) == ('financial_history_unavailable', 'provider_error')
+    assert (e.value.code, e.value.sub_code) == ('financial_history_unavailable', 'source_request_failed')
 
 
 @pytest.mark.parametrize('error_text', ['SEC request failed', 'using cached SEC filing after fetch error'])
@@ -161,11 +161,11 @@ def test_middle_transport_failure_fails_whole_calculation_and_preserves_previous
     previous = deepcopy(service.store_for(tmp_path).get(saved['snapshotId']))
     with pytest.raises(service.CalculationNotStored) as error:
         service.calculate(tmp_path, inputs['instrumentId'], collector=ReplayCollector())
-    assert (error.value.code, error.value.sub_code) == ('financial_history_unavailable', 'provider_error')
+    assert (error.value.code, error.value.sub_code) == ('financial_history_unavailable', 'source_request_failed')
     assert service.store_for(tmp_path).latest(inputs['instrumentId']) == previous
     assert len(service.store_for(tmp_path).history(inputs['instrumentId'])) == 1
-    assert service.read_attempt(tmp_path, inputs['instrumentId'])['reason'] == {'code': 'financial_history_unavailable', 'subCode': 'provider_error'}
-    assert '잠시 뒤 다시 계산' in reason_text(service.read_attempt(tmp_path, inputs['instrumentId'])['reason'])
+    assert service.read_attempt(tmp_path, inputs['instrumentId'])['reason'] == {'code': 'financial_history_unavailable', 'subCode': 'source_request_failed', 'httpStatus': None, 'sourceFailureVerified': False}
+    assert '오류가 일시적인지는 확인하지 못했습니다' in reason_text(service.read_attempt(tmp_path, inputs['instrumentId'])['reason'])
 
 
 def packets_url(args, index):
@@ -180,7 +180,7 @@ def test_required_source_archive_schema_label_and_cancel(monkeypatch, tmp_path):
         for name in ('submissions.json', 'report.htm', 'schema.xsd', 'labels.xml'):
             with pytest.raises(collect.CollectionError) as e:
                 made._class_source('https://www.sec.gov/' + name, tmp_path/name)
-            assert e.value.sub_code == 'provider_error'
+            assert e.value.sub_code == 'source_request_failed'
     for errors in [('cached submissions error',), ('cached latest cover error',)]:
         with pytest.raises(collect.CollectionError): made._class_filings(*args, source_errors=errors)
     def cancel(*a): raise CancelledError()

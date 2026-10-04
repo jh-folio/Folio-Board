@@ -141,8 +141,8 @@ def _my_assumptions(results: dict, price, eps0, override: dict | None, current_s
 def project(snapshot: dict, criteria: dict | None = None, override: dict | None = None, reviews=(), *, today: dt.date) -> dict:
     """Pure read: judgement, required-return inversions, my assumptions, re-check flags, age."""
     results, inputs = snapshot["results"], snapshot["inputs"]
-    from . import METHOD_VERSION, spec4_revision
-    if inputs.get("methodVersion") == METHOD_VERSION and spec4_revision(inputs) is None:
+    from . import known_spec
+    if inputs.get("methodVersion") in {"price-scenario-4", "price-scenario-5"} and not known_spec(inputs):
         return {"status": "unavailable", "reason": {"code": "previous_method"},
                 "snapshotId": snapshot["snapshotId"], "asOf": inputs["asOf"],
                 "ageDays": (today - dt.date.fromisoformat(inputs["asOf"])).days, "notices": [], "criteria": None,

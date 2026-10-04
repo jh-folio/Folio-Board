@@ -691,7 +691,8 @@ export function ReactAgentDock({ surface, open, onOpen, onClose }: ReactAgentDoc
     const handleAgentRequest = (event: Event) => {
       const detail = ((event as CustomEvent<AgentRequestDetail>).detail || {}) as AgentRequestDetail;
       const { message, prompt, autoSubmit, ...contextPatch } = detail;
-      contextRef.current = patchDockContextForSurface(contextRef.current, surface, contextPatch);
+      const { chartMovement: _chartMovement, ...screenPatch } = contextPatch;
+      contextRef.current = patchDockContextForSurface(contextRef.current, surface, screenPatch);
       const text = String(message || prompt || "");
       if (!text) return;
       if (autoSubmit) {

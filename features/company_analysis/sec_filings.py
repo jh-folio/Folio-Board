@@ -6,7 +6,9 @@ import json
 import os
 import re
 import urllib.request
+import urllib.error
 from pathlib import Path
+from concurrent.futures import CancelledError
 
 from features.common.utils import strip_html_text
 from features.company_analysis.sec_companyfacts import normalize_cik, sec_user_agent
@@ -74,13 +76,38 @@ def write_json(path: Path, data) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+class SourceFetchError(str):
+    """String-compatible public diagnostic; no URL, secret or exception text."""
+    def __new__(cls, message, code="source_request_failed", http_status=None):
+        instance = super().__new__(cls, message)
+        instance.code, instance.http_status = code, http_status
+        return instance
+
+
+def source_failure(error: Exception) -> dict:
+    status = error.code if isinstance(error, urllib.error.HTTPError) else None
+    if status in {404, 410}:
+        code = "source_not_found"
+    elif status in {401, 403}:
+        code = "source_access_denied"
+    elif status in {408, 429} or status is not None and 500 <= status <= 599:
+        code = "provider_error"
+    elif isinstance(error, (TimeoutError, ConnectionError, urllib.error.URLError)) and status is None:
+        code = "provider_error"
+    else:
+        code = "source_request_failed"
+    return {"code": code, "httpStatus": status}
+
+
 def fetch_text(url: str, cache_path: Path, ttl_hours: int = 24) -> tuple[str, str]:
     cached = read_json(cache_path, None)
     if cached and cached.get("text") and cached.get("fetchedAt"):
         try:
             fetched = dt.datetime.fromisoformat(cached["fetchedAt"])
             if dt.datetime.now(dt.timezone.utc) - fetched < dt.timedelta(hours=ttl_hours):
-                return cached["text"], cached.get("error", "")
+                error = cached.get("error", "")
+                diagnostic = cached.get("diagnostic") or {}
+                return cached["text"], SourceFetchError(error, diagnostic.get("code", "source_request_failed"), diagnostic.get("httpStatus")) if error else ""
         except Exception:
             pass
     req = urllib.request.Request(url, headers={"User-Agent": sec_user_agent(), "Accept": "text/html,application/json"})
@@ -90,14 +117,17 @@ def fetch_text(url: str, cache_path: Path, ttl_hours: int = 24) -> tuple[str, st
         text = raw.decode("utf-8", errors="replace")
         write_json(cache_path, {"fetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "url": url, "text": text, "error": ""})
         return text, ""
-    except Exception:
+    except CancelledError:
+        raise
+    except Exception as error:
+        diagnostic = source_failure(error)
         public_error = "SEC request failed"
         if cached and cached.get("text"):
-            return cached["text"], "using cached SEC filing after fetch error"
+            return cached["text"], SourceFetchError("using cached SEC filing after fetch error", diagnostic["code"], diagnostic["httpStatus"])
         # Only public SEC content and a stable failure code are cached.
         # codeql[py/clear-text-storage-sensitive-data]
-        write_json(cache_path, {"fetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "url": url, "text": "", "error": public_error})
-        return "", public_error
+        write_json(cache_path, {"fetchedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "url": url, "text": "", "error": public_error, "diagnostic": diagnostic})
+        return "", SourceFetchError(public_error, diagnostic["code"], diagnostic["httpStatus"])
 
 
 def get_company_submissions(cik: str, cache_dir: Path) -> tuple[dict, str]:

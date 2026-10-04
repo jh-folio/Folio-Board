@@ -100,7 +100,11 @@ export function reasonText(reason: string | Reason | undefined | null): string {
   const detail: Partial<Reason> = typeof reason === "string" ? { code: reason } : reason ?? {};
   const { code, subCode, range, n, required, historyYears } = detail;
   if (code === "price_unavailable" && subCode === "provider_error") return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
-  if (code === "financial_history_unavailable" && subCode === "provider_error") return "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
+  if (code === "financial_history_unavailable" && subCode === "provider_error") return detail.sourceFailureVerified ? "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요" : "공시 원문을 읽지 못했습니다. 오류가 일시적인지는 확인하지 못했습니다";
+  const http = Number.isInteger(detail.httpStatus) && Number(detail.httpStatus) >= 100 && Number(detail.httpStatus) <= 599 ? `(HTTP ${detail.httpStatus})` : "";
+  if (code === "financial_history_unavailable" && subCode === "source_not_found") return `공시 원문 주소에서 자료를 찾을 수 없습니다${http}. 이번 계산은 중단했고 이전 저장 결과를 유지합니다`;
+  if (code === "financial_history_unavailable" && subCode === "source_access_denied") return `공시 원문 제공처가 접근을 허용하지 않았습니다${http}. 이번 계산은 중단했고 이전 저장 결과를 유지합니다`;
+  if (code === "financial_history_unavailable" && subCode === "source_request_failed") return "공시 원문을 읽지 못했습니다. 오류가 일시적인지는 확인하지 못했습니다";
   if (code === "history_too_short" && range !== undefined && n !== undefined && required !== undefined && historyYears !== undefined) {
     const windows = range === "growth" || range === "rpsGrowth";
     if (subCode === "years_too_few") {

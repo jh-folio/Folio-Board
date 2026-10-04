@@ -90,6 +90,10 @@ def normalize_agent_context(raw: dict | None) -> dict:
     if identity.collectionId is not None:
         normalized["collectionId"] = identity.collectionId
         normalized["collectionRevision"] = identity.collectionRevision
+    from features.price_scenarios.movement_context import normalize_movement
+    movement = normalize_movement(raw.get("chartMovement"))
+    if movement is not None:
+        normalized["chartMovement"] = movement
     return normalized
 
 

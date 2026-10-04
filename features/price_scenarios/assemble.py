@@ -265,6 +265,8 @@ def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
               "specVersion": SPEC_VERSION, "specSha256": SPEC_SHA256, "identity": identity, "classificationInputs": classification, "price": price,
               "fiscalYearPrices": fiscal, "eventPriceChecks": price_checks, "history": history,
               "shareEventSources": share_sources, "dcfInputs": dcf_inputs}
+    from .attribution import capture
+    inputs["returnAttributionInputs"] = capture(raw, inputs, support, shares_block)
     meta = {"priceFetchedAt": daily.get("fetchedAt"), "riskFreeFetchedAt": (raw.get("riskFree") or {}).get("fetchedAt"),
             "betaFetchedAt": (raw.get("beta") or {}).get("fetchedAt")}
     return {"status": "available", "inputs": inputs, "results": results, "meta": meta}
