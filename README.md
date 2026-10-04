@@ -128,7 +128,7 @@ The return breakdown separates earnings growth, dividends, and changes in P/E. T
 
 When a calculation is unavailable, the explanation distinguishes losses, short records, and missing filing figures. For US companies with missing historical earnings per share or separate figures for each share class, the tab supplements only what it can confirm by checking other filing figures. When every return is unavailable because of losses or short records, a reference section shows P/E, price relative to sales, sales growth, net profit margins, and remaining cash. Companies the method does not fit (such as banks) or whose share counts cannot be confirmed show the reason instead of a number. ETFs and funds have a separate explanation that they are outside this calculation's scope.
 
-Earlier calculations are kept, and a calculation that used a filing figure later corrected is marked `Needs another look`. Records made with an earlier method carry an earlier-method notice; press `Recalculate` yourself to see the new calculation details. These are calculations from past data, not predictions, and not advice to buy, sell, or hold.
+Earlier calculations are kept, and a calculation that used a filing figure later corrected is marked `Needs another look`. Details absent from an earlier calculation are marked as available after recalculating; press `Recalculate` yourself to see the new calculation details. These are calculations from past data, not predictions, and not advice to buy, sell, or hold.
 
 Cards and detail views show the next earnings date with a countdown. When the date is a third-party estimate rather than something the company announced, it says so — check the company's own IR notice in that case.
 
