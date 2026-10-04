@@ -145,7 +145,7 @@ function isWatchlistHash() {
   return window.location.hash.replace(/^#\/?/, "").split("/")[0] === "watchlist";
 }
 
-export function WatchlistRoute() {
+export function WatchlistRoute({ active = true }: { active?: boolean }) {
   const [items, setItems] = useState<string[]>([]);
   const [cards, setCards] = useState<WatchlistOverviewItem[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -435,7 +435,7 @@ export function WatchlistRoute() {
               </div>
               {priceOpened && (
                 <div className="watchlist-detail-price" hidden={detailTab !== "price"}>
-                  <PriceTab ticker={detailTicker} />
+                  <PriceTab ticker={detailTicker} market={detail?.company?.market} active={active && detailTab === "price"} />
                 </div>
               )}
               {detailTab === "company" && (

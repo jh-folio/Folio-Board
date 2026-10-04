@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
+import { renderToStaticMarkup } from "react-dom/server";
 
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -10,6 +11,17 @@ async function load(t) {
   t.after(() => vite.close());
   return vite.ssrLoadModule("/src/app/reportReader/CompanyAnalysisBody.tsx");
 }
+
+test("본문 섹션이 없어도 가격 계산의 공시 정정 안내는 남는다", async (t) => {
+  const mod = await load(t);
+  const priceReview = { asOf: "2026-09-01", reviewNeeded: [{ metric: "EPS Diluted", fiscalYear: 2024 }] };
+  const html = renderToStaticMarkup(mod.CompanyAnalysisBody({ markdown: "", priceReview }));
+  assert.match(html, /role="status"/);
+  assert.match(html, /공시 숫자가 정정됐습니다/);
+  assert.match(html, /2024년/);
+  assert.match(html, /이 보고서는 자동으로 바뀌지 않습니다/);
+  assert.doesNotMatch(renderToStaticMarkup(mod.CompanyAnalysisBody({ markdown: "" })), /공시 숫자가 정정됐습니다/);
+});
 
 const CHARTS = {
   available: true,

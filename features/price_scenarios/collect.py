@@ -17,16 +17,19 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable
+from concurrent.futures import CancelledError
 
 from features.company_analysis import dart_client, sec_filings, sec_companyfacts
 from features.company_analysis.market_identity import market_identity
 from features.company_analysis.risk_free import risk_free_as_of
+from features.common.atomic_replace import write_bytes_atomic
 
 from .beta import measure_beta
 from .decimal_ops import load_source_json
-from .prices import fetch_daily_history
+from .prices import fetch_daily_history, fetch_instrument_type, provider_failure
 
 SEC_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+SEC_FUNDS_URL = "https://www.sec.gov/files/company_tickers_mf.json"
 DART_API = "https://opendart.fss.or.kr/api/{endpoint}.json"
 DART_YEAR_ENDPOINTS = ("fnlttSinglAcntAll", "stockTotqySttus", "alotMatter", "irdsSttus")
 KR_REPORT_YEARS = 8
@@ -57,12 +60,13 @@ def _dart_get(endpoint: str, params: dict) -> dict:
 
 class Collector:
     def __init__(self, data_root, *, now: Callable[[], dt.datetime] | None = None, sec_bytes=None, dart_get=None,
-                 fetch_daily=None, beta_of=None, risk_free_of=None, cancel: Callable[[], None] = lambda: None,
+                 fetch_daily=None, instrument_type=None, beta_of=None, risk_free_of=None, cancel: Callable[[], None] = lambda: None,
                  progress: Callable[..., None] | None = None):
         self.root = Path(data_root)
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
         self.sec_bytes, self.dart_get = sec_bytes or _sec_bytes, dart_get or _dart_get
         self.fetch_daily, self.beta_of = fetch_daily or fetch_daily_history, beta_of or measure_beta
+        self.instrument_type = instrument_type or fetch_instrument_type
         self.risk_free_of = risk_free_of or (lambda session, currency: risk_free_as_of(
             session, currency, api_key=os.environ.get("FRED_API_KEY", "").strip()))
         self.cancel, self.progress = cancel, progress or (lambda **_: None)
@@ -79,11 +83,54 @@ class Collector:
         ticker = str(ticker or "").strip().upper()
         if market == "US" and re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
             return self._collect_us(ticker)
-        if market == "KR" and re.fullmatch(r"\d{6}", ticker):
+        if market == "KR" and re.fullmatch(r"[0-9][A-Z0-9]{5}", ticker):
             return self._collect_kr(ticker)
         raise CollectionError("instrument_not_supported")
 
     # --- shared tail: price, rates, beta ---------------------------------------
+
+    def _is_fund(self, ticker: str, market: str) -> bool:
+        kinds = []
+        for symbol in ([ticker] if market == "US" else [ticker + ".KS", ticker + ".KQ"]):
+            self.cancel()
+            try:
+                kinds.append(self.instrument_type(symbol))
+            except CancelledError:
+                raise
+            except Exception:  # a failed type lookup keeps the official identification failure
+                kinds.append(None)
+        found = {str(kind).upper() for kind in kinds if kind}
+        if bool(found) and found <= {"ETF", "MUTUALFUND"}:
+            return True
+        return self._sec_fund(ticker) if market == "US" else False
+
+    def _sec_fund(self, ticker: str) -> bool:
+        """Exact official fund symbol, only after the missing-company type probe."""
+        self.cancel()
+        path = self.cache / "company_tickers_mf.json"
+        try:
+            cached = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            fetched = dt.datetime.fromisoformat(cached.get("fetchedAt", ""))
+            fresh = dt.timedelta(0) <= self.now() - fetched < dt.timedelta(days=7)
+        except (ValueError, TypeError, OSError):
+            cached, fresh = {}, False
+        packet = cached.get("data") if fresh else None
+        if packet is None:
+            try:
+                packet = json.loads(self.sec_bytes(SEC_FUNDS_URL))
+                self.cancel()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                write_bytes_atomic(path, json.dumps({"fetchedAt": self.now().isoformat(), "data": packet}).encode("utf-8"))
+            except CancelledError:
+                raise
+            except Exception:
+                return False  # no stale fallback or retries after an unsuccessful lookup
+        if (not isinstance(packet, dict) or not isinstance(packet.get("fields"), list)
+                or not isinstance(packet.get("data"), list) or "symbol" not in packet["fields"]):
+            return False
+        index = packet["fields"].index("symbol")
+        return any(isinstance(row, list) and len(row) > index and row[index] == ticker
+                   for row in packet.get("data", []))
 
     def _tail(self, raw: dict, currency: str) -> dict:
         self.cancel()
@@ -96,11 +143,130 @@ class Collector:
 
     # --- US --------------------------------------------------------------------
 
+    def _class_source(self, url, path):
+        """A failed fetch cannot become a shorter, successfully stored history."""
+        self.cancel()
+        try:
+            text, error = sec_filings.fetch_text(url, path)
+        except CancelledError:
+            raise
+        except Exception as error:
+            if not provider_failure(error):
+                raise
+            raise CollectionError('financial_history_unavailable', 'provider_error') from None
+        self.cancel()
+        if error:
+            raise CollectionError('financial_history_unavailable', 'provider_error')
+        return text
+
+    def _class_filings(self, facts, submissions, annual, markup, daily, cik, ticker, *, source_errors=()):
+        from .class_history import MAX_CLASS_FILINGS, covered_class_years, listed_class, read_class_filing
+        from .history import sec_history
+        from .securities import listed_security
+        session = daily["price"]["sessionDate"]
+        history = sec_history(facts, as_of=session)
+        years = {r["fiscalYear"] for r in history["rows"]}
+        if (annual["form"] not in {"10-K", "10-K/A"} or not years
+                or any(r["metric"] == "EPS Diluted" and r["fiscalYear"] == max(years) for r in history["rows"])):
+            return None
+        if any(source_errors):
+            raise CollectionError('financial_history_unavailable', 'provider_error')
+        security = listed_security(markup, ticker, accession=annual["accession"])
+        if not listed_class(security):
+            return None
+        metadata = []
+        def add(recent):
+            for i, form in enumerate(recent.get("form", [])):
+                if form not in {"10-K", "10-K/A"}:
+                    continue
+                try:
+                    filed, accession, doc = (recent[k][i] for k in ("filingDate", "accessionNumber", "primaryDocument"))
+                except (KeyError, IndexError):
+                    continue
+                if filed <= session and re.fullmatch(r"[0-9-]+", accession) and re.fullmatch(r"[A-Za-z0-9_.-]+", doc):
+                    metadata.append({"form": form, "filed": filed, "accession": accession,
+                                     "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{doc}"})
+        add(submissions.get("filings", {}).get("recent", {}))
+        archives = sorted(submissions.get('filings', {}).get('files', []), key=lambda f: f.get('filingTo', ''), reverse=True)
+        packets, rows, seen = [], [], set()
+        while len(packets) < MAX_CLASS_FILINGS:
+            selected = sorted({m['accession']: m for m in metadata if m['accession'] not in seen}.values(),
+                              key=lambda m: (m['filed'], m['accession']), reverse=True)
+            # SEC archive ranges precede the recent list. Load older metadata only
+            # when needed; an overlapping range must be read before choosing next.
+            if archives and (not selected or archives[0].get('filingTo', '') >= selected[0]['filed']):
+                archive = archives.pop(0)
+                name = archive.get('name', '')
+                if not re.fullmatch(r'CIK[0-9]+-submissions-[0-9]+\.json', name):
+                    continue
+                text = self._class_source('https://data.sec.gov/submissions/' + name, self.cache / 'submissions' / name)
+                try:
+                    data = json.loads(text)
+                    if not isinstance(data, dict):
+                        raise ValueError('invalid_submissions')
+                    add(data)
+                except (ValueError, TypeError):
+                    packets.append({'form': '10-K', 'filed': '0000-01-01', 'accession': name, 'markup': ''})
+                    break
+                continue
+            if not selected:
+                break
+            item = selected[0]
+            seen.add(item['accession'])
+            self.cancel()
+            text = markup if item["accession"] == annual["accession"] else self._class_source(
+                item["url"], self.cache / "filings" / f"{cik}-{item['accession'].replace('-', '')}.json")
+            packet = {**item, "markup": text}
+            self._class_labels(packet, security)
+            packets.append(packet)
+            parsed = read_class_filing(packet, security, cik=cik, currency=history.get('currency', ''))
+            if parsed.get('skip'):
+                continue
+            if parsed['reason']:
+                break
+            rows.extend(parsed['rows'])
+            if years <= covered_class_years(rows, session):
+                break
+        return packets
+
+    def _class_labels(self, packet, security):
+        """Resolve an issuer extension only through its official label linkbase."""
+        from bs4 import BeautifulSoup
+        from .class_history import read_class_filing
+        # Standard members need no extra taxonomy requests.
+        parsed = read_class_filing(packet, security, cik=packet["url"].split("/")[-3], currency="USD")
+        if parsed["reason"] != 'listed_class_eps_not_found':
+            return
+        soup = BeautifulSoup(packet.get("markup", ""), "html.parser")
+        schemas = {t.get("xlink:href") for t in soup.find_all("link:schemaref") if t.get("xlink:href")}
+        base = packet["url"].rsplit("/", 1)[0] + "/"
+        schema_urls = {urllib.parse.urljoin(packet["url"], href) for href in schemas}
+        schema_urls = {url for url in schema_urls if url.startswith(base) and url.endswith(".xsd")}
+        if len(schema_urls) != 1:
+            return
+        schema_url = next(iter(schema_urls))
+        self.cancel()
+        xsd = self._class_source(schema_url, self.cache / "filings" / (packet["accession"].replace("-", "") + "-schema.json"))
+        xml = BeautifulSoup(xsd, "xml")
+        label_urls = {urllib.parse.urljoin(schema_url, t.get("xlink:href", "")) for t in xml.find_all("linkbaseRef")
+                      if t.get("xlink:role") == "http://www.xbrl.org/2003/role/labelLinkbaseRef"}
+        label_urls = {url for url in label_urls if url.startswith(base)}
+        if len(label_urls) != 1:
+            return
+        url = next(iter(label_urls))
+        self.cancel()
+        labels = self._class_source(url, self.cache / "filings" / (packet["accession"].replace("-", "") + "-labels.json"))
+        from .class_labels import official_labels
+        packet["labels"] = official_labels(packet["markup"], xsd, labels)
+        packet["labelSources"] = [{"schemaUrl": schema_url, "labelUrl": url}]
+
     def _collect_us(self, ticker: str) -> dict:
         self.cancel()
         company = {"ticker": ticker, "market": "US"}
         cik = sec_companyfacts.resolve_cik(company, self.cache)
         if not cik:
+            if self._is_fund(ticker, "US"):
+                raise CollectionError("fund_not_supported")
             raise CollectionError("company_not_found", "no_cik")
         self.progress(message="SEC 공시 원자료를 읽고 있습니다.")
         try:
@@ -108,11 +274,22 @@ class Collector:
         except Exception:  # noqa: BLE001 - provider failure is a stable code, never a message
             raise CollectionError("financial_history_unavailable", "sec_companyfacts_failed") from None
         self.cancel()
-        submissions, _ = sec_filings.get_company_submissions(cik, self.cache)
+        submissions, submissions_error = sec_filings.get_company_submissions(cik, self.cache)
         annual = sec_filings.latest_annual_report_metadata(cik, self.cache)
+        # If the cover/list is unavailable we cannot identify the listed class.
+        # Missing latest dimensionless EPS is the conservative candidate gate.
+        from .history import sec_history
+        candidate = sec_history(facts, as_of=self.now().date().isoformat()) if (submissions_error or annual.get('error')) else None
+        def missing_eps(h):
+            years = {r['fiscalYear'] for r in h['rows']}
+            return bool(years) and not any(r['metric'] == 'EPS Diluted' and r['fiscalYear'] == max(years) for r in h['rows'])
+        if candidate and missing_eps(candidate) and any(e and 'parse failed' not in e for e in (submissions_error, annual.get('error'))):
+            raise CollectionError('financial_history_unavailable', 'provider_error')
         if not submissions or not annual.get("ok"):
             raise CollectionError("financial_history_unavailable", "annual_report_not_found")
         markup, error = sec_filings.fetch_text(annual["url"], self.cache / "filings" / f"{cik}-{annual['accession'].replace('-', '')}.json")
+        if error and annual['form'] in {'10-K', '10-K/A'} and missing_eps(sec_history(facts, as_of=self.now().date().isoformat())):
+            raise CollectionError('financial_history_unavailable', 'provider_error')
         if not markup:
             raise CollectionError("financial_history_unavailable", "annual_report_text_unavailable")
         self.cancel()
@@ -122,14 +299,20 @@ class Collector:
             daily = self.fetch_daily(ticker, "US", submissions, now=self.now())
         except ValueError as error:
             raise CollectionError("price_unavailable", str(error) if str(error) in {"exchange_unknown", "instrument_not_in_submissions", "price_unavailable"} else None) from None
-        except Exception:  # noqa: BLE001
-            raise CollectionError("price_unavailable") from None
+        except CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001
+            raise CollectionError("price_unavailable", "provider_error" if provider_failure(error) else None) from None
         exchanges = submissions.get("exchanges") or []
         raw = {"market": "US", "ticker": ticker, "now": self.now().isoformat(),
                "identity": {"providerSymbol": daily["price"]["providerSymbol"], "exchangeSource": daily["exchangeSource"],
                             "exchange": exchanges[0] if exchanges else None, "cik": cik},
                "daily": daily, "companyfacts": facts, "submissions": submissions, "annualMarkup": markup,
                "annualAccession": annual["accession"], "annualForm": annual["form"]}
+        filings = self._class_filings(facts, submissions, annual, markup, daily, cik, ticker,
+                                     source_errors=(submissions_error, annual.get('error'), error))
+        if filings is not None:
+            raw["annualFilings"] = filings
         return self._tail(raw, "USD")
 
     # --- KR --------------------------------------------------------------------
@@ -162,6 +345,8 @@ class Collector:
             raise CollectionError("source_credential_missing", "dart")
         identity = market_identity({"ticker": ticker, "market": "KR"}, self.dart_cache)
         if not identity.get("ok"):
+            if self._is_fund(ticker, "KR"):
+                raise CollectionError("fund_not_supported")
             raise CollectionError("company_not_found", identity.get("reason"))
         corp_code, profile = identity["corpCode"], identity["profile"]
         self.cancel()
@@ -170,8 +355,10 @@ class Collector:
             daily = self.fetch_daily(ticker, "KR", profile, now=self.now())
         except ValueError as error:
             raise CollectionError("price_unavailable", str(error) if str(error) in {"exchange_not_supported", "price_unavailable"} else None) from None
-        except Exception:  # noqa: BLE001
-            raise CollectionError("price_unavailable") from None
+        except CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001
+            raise CollectionError("price_unavailable", "provider_error" if provider_failure(error) else None) from None
         today = self.now().date()
         years = range(today.year - KR_REPORT_YEARS + 1, today.year + 1)
         packets: dict[str, dict[int, dict]] = {name: {} for name in DART_YEAR_ENDPOINTS}

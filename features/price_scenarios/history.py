@@ -54,13 +54,17 @@ def _limit(rows, exclusions, *, currency, basis, shares_basis, years):
             "currency": currency, "basis": basis, "sharesBasis": shares_basis}
 
 
-def sec_history(data: dict, *, as_of: str | None = None, years=10) -> dict:
+def sec_history(data: dict, *, as_of: str | None = None, years=10, _spec4_sbc=True) -> dict:
     cutoff = _date(as_of) if as_of is not None else None
     if as_of is not None and cutoff is None:
         raise ValueError("invalid_as_of")
     taxonomy, concepts, original_table = sec.select_taxonomy(data)
     table = dict(original_table)
     if taxonomy == "ifrs-full":
+        # Capture the old fiscal-year domain BEFORE adding a new metric. SBC cannot
+        # extend the ten-year selection, annual-period filter, or excludedYears.
+        if _spec4_sbc:
+            table["Stock-Based Compensation"] = ["AdjustmentsForSharebasedPayments", *table.get("Stock-Based Compensation", [])]
         table["Net Income"] = ["ProfitLossAttributableToOwnersOfParent", "ProfitLoss"]
         # Measured in the NVS 20-F EPS table: basic weighted shares + dilution.
         table["Shares Diluted"] = ["AdjustedWeightedAverageShares", *table["Shares Diluted"]]
@@ -113,6 +117,25 @@ def sec_history(data: dict, *, as_of: str | None = None, years=10) -> dict:
     # Filing form alone does not make an instant a fiscal-year-end observation.
     annual_ends = {row["period"]["end"] for row in output if row["period"].get("start")}
     output = [row for row in output if row["period"].get("start") or row["period"]["end"] in annual_ends]
+    if taxonomy == "ifrs-full" and _spec4_sbc:
+        baseline = sec_history(data, as_of=as_of, years=years, _spec4_sbc=False)
+        # Use the original extraction for every other row and all exclusions.
+        # A newly discovered annual SBC fact must not admit extra balance rows.
+        existing_periods = {(r["fiscalYear"], r["period"]["end"]) for r in baseline["rows"] if r["period"].get("start")}
+        sbc = [r for r in output if r["metric"] == "Stock-Based Compensation"
+               and (r["fiscalYear"], r["period"]["end"]) in existing_periods]
+        old_sbc = [r for r in baseline["rows"] if r["metric"] == "Stock-Based Compensation"]
+        retained = []
+        for year in sorted({r["fiscalYear"] for r in [*old_sbc, *sbc]}):
+            candidates = [r for r in sbc if r["fiscalYear"] == year]
+            prior = [r for r in old_sbc if r["fiscalYear"] == year]
+            # Keep pre-existing SBC-only years and any already ambiguous periods.
+            # A new tag can replace an existing singleton, never add a second row.
+            retained.extend(candidates if len(candidates) == 1 and len(prior) <= 1 else prior)
+        baseline["rows"] = sorted([r for r in baseline["rows"] if r["metric"] != "Stock-Based Compensation"]
+                                  + retained,
+                                  key=lambda r: (r["fiscalYear"], r["metric"], r["period"]["end"]))
+        return baseline
     return _limit(output, exclusions, currency=currency, basis=taxonomy, shares_basis="diluted_weighted_average", years=years)
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 from copy import deepcopy
 
-from . import METHOD_VERSION, SPEC_VERSION
+from . import METHOD_VERSION, SPEC_VERSION, SPEC_SHA256
 from .blocks import unavailable
 from .dart_events import bonus_decisions, dated_share_changes
 from .dcf_runtime import capture_dcf_inputs, replay_dcf
@@ -51,9 +51,19 @@ def _us_history(raw: dict, session: str):
     latest_annual = max((day for form, day in zip(recent.get("form", []), recent.get("filingDate", []))
                          if form in {"10-K", "10-K/A", "20-F", "20-F/A"} and day <= session), default=None)
     security = listed_security(raw["annualMarkup"], raw["ticker"], accession=raw["annualAccession"])
+    from .coverage_history import derive_missing_eps
+    from .class_history import listed_class, supplement_class_history
+    pending = bool(listed_class(security) and not any(r["metric"] == "EPS Diluted" and
+                   r["fiscalYear"] == max(x["fiscalYear"] for x in history["rows"]) for r in history["rows"])) if history["rows"] else False
+    if pending:
+        history = supplement_class_history(history, raw.get("annualFilings") or [], security, cik=raw["identity"].get("cik"), as_of=session)
+    history = derive_missing_eps(history, listed_class_pending=pending)
     classification = {"code": str((raw.get("submissions") or {}).get("sic") or ""), "source": "sec_submissions",
                       "listedSecurity": security, "adsRatio": security.get("adsRatio"),
                       "is20F": str(raw.get("annualForm") or "").startswith("20-F")}
+    classification["quoteType"] = (raw.get("daily") or {}).get("quoteType")
+    if pending and not history.get("listedClass"):
+        classification["classHistoryReason"] = (history.get("classDiagnostics") or {}).get("reason", "listed_class_source_unavailable")
     if security.get("kind") == "ads":
         classification["adsBasisVerified"] = verify_ads_basis(history, security.get("adsRatio"))
     debt = sec_debt_inputs(raw["companyfacts"], history, as_of=session, borrowings_definition=raw.get("borrowingsDefinition"))
@@ -67,6 +77,7 @@ def _kr_history(raw: dict, session: str):
     history["rows"].sort(key=lambda row: (row["fiscalYear"], row["metric"]))
     history["dividendCoverage"] = dividend_coverage(dart["dividends"])
     classification = dart_classification(dart["profile"], dart["latestFinancialRows"], ticker=raw["ticker"])
+    classification["quoteType"] = (raw.get("daily") or {}).get("quoteType")
     debt = dart_debt_inputs(dart["batches"], history, as_of=session)
     return history, classification, None, debt
 
@@ -143,7 +154,8 @@ def unreadable_dividend_years(history: dict) -> set[int]:
 
 
 def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
-    spec3 = METHOD_VERSION.endswith("-3") if spec3 is None else spec3
+    from . import method_at_least
+    spec3 = method_at_least(METHOD_VERSION, 3) if spec3 is None else spec3
     now = dt.datetime.fromisoformat(raw["now"])
     market, daily = raw["market"], raw.get("daily")
     if market not in {"US", "KR"} or not daily:
@@ -170,6 +182,7 @@ def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
 
     shares_block, evidence = {"state": "unknown", "reason": "support_limited", "events": [], "evidence": []}, []
     results: dict
+    adjusted = None
     dcf_inputs = {"status": "unavailable", "reason": {"code": "support_limited"}}
     price_checks: list[dict] = []
     share_sources: dict = {"providerEvents": deepcopy(daily["events"]), "eventSourceState": daily["eventSourceState"]}
@@ -241,9 +254,15 @@ def assemble(raw: dict, *, spec3: bool | None = None) -> dict:
                 dcf_inputs = {"status": "unavailable", "reason": captured["reason"]}
                 results["dcf"] = captured
     results = {"support": support, "shareEvents": shares_block, **results}
+    from .crosschecks import cash_conversion
+    results["cashConversion"] = cash_conversion(history, support, market, session)
+    from .reference_facts import reference_facts
+    results["referenceFacts"] = reference_facts(history, adjusted, price, support, shares_block, results["cashConversion"])
+    from .coverage_history import history_notices
+    results["notices"] = [*results.get("notices", []), *history_notices(history)]
     identity = dict(raw["identity"], ticker=raw["ticker"], market=market)
     inputs = {"instrumentId": f"{market}:{raw['ticker']}", "asOf": session, "methodVersion": METHOD_VERSION,
-              "specVersion": SPEC_VERSION, "identity": identity, "classificationInputs": classification, "price": price,
+              "specVersion": SPEC_VERSION, "specSha256": SPEC_SHA256, "identity": identity, "classificationInputs": classification, "price": price,
               "fiscalYearPrices": fiscal, "eventPriceChecks": price_checks, "history": history,
               "shareEventSources": share_sources, "dcfInputs": dcf_inputs}
     meta = {"priceFetchedAt": daily.get("fetchedAt"), "riskFreeFetchedAt": (raw.get("riskFree") or {}).get("fetchedAt"),

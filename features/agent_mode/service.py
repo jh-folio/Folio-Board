@@ -1186,7 +1186,7 @@ def write_briefing_from_markdown(
     return {"result": result, "reports": saved_reports, "visuals": visuals}
 
 
-def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", web_search=False, analysis_style="beginner", owner_job_id: str | None = None) -> tuple[dict, Path]:
+def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", web_search=False, analysis_style="beginner", owner_job_id: str | None = None, cancel=None) -> tuple[dict, Path]:
     """CLI용 컨텍스트 팩. 자료 수집과 계약 블록은 **API 경로와 같은 조립기**가 만든다.
 
     예전에는 이 함수가 자료 수집과 컨텍스트 조립을 따로 했고, 그래서 두 경로가 갈렸다 —
@@ -1196,6 +1196,7 @@ def prepare_company_analysis_pack(query: str, *, quality_mode="diagnose_only", w
     analysis_style = normalize_analysis_style(analysis_style)
     inputs = build_generation_inputs(
         query, analysis_style=analysis_style, web_search=bool(web_search),
+        cancel=cancel,
     )
     prompt = read_company_analysis_prompt(analysis_style)
     draft = {
@@ -1978,6 +1979,7 @@ def prepare_pack(task_type: str, **kwargs) -> tuple[dict, Path]:
             web_search=bool(kwargs.get("web_search")),
             analysis_style=kwargs.get("analysis_style", "beginner"),
             owner_job_id=owner_job_id,
+            cancel=kwargs.get("cancel"),
         )
     if task_type == "topic_report":
         return prepare_topic_report_pack(

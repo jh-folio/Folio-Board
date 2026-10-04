@@ -83,7 +83,7 @@ def _requirement(results: dict, price, eps0, required: Decimal | None) -> dict:
         key = str(years)
         row, margin_entry = base.get(years), ((results.get("reverse") or {}).get("breakEvenMargin") or {}).get(key) or {}
         if row is None or row.get("status") != "available" or eps0 is None or eps0 <= 0:
-            reason = ((row or {}).get("reason") or {}).get("code", "negative_base_eps" if eps0 is not None and eps0 <= 0 else "scenario_unavailable")
+            reason = (row or {}).get("reason") or {"code": "negative_base_eps" if eps0 is not None and eps0 <= 0 else "scenario_unavailable"}
             out["exitPE"][key] = out["growth"][key] = unavailable(reason)
         else:
             growth, pe, payout = _median(row, "g"), _median(row, "exitPE"), _median(row, "payout")
@@ -97,7 +97,7 @@ def _requirement(results: dict, price, eps0, required: Decimal | None) -> dict:
             else:
                 out["growth"][key] = {"status": "available", "range": need_g}
         if margin_entry.get("status") != "available" or row is None or row.get("status") != "available":
-            out["netMargin"][key] = unavailable(((margin_entry.get("reason") or {}).get("code")) or "scenario_unavailable")
+            out["netMargin"][key] = unavailable(margin_entry.get("reason") or "scenario_unavailable")
             continue
         ranges = results["ranges"]
         need_m = required_margin(price, margin_entry["revenuePerShare"], ranges["rpsGrowth"]["p50"], margin_entry["currentMargin"],
@@ -123,7 +123,7 @@ def _my_assumptions(results: dict, price, eps0, override: dict | None, current_s
     for years in (5, 10):
         row = base.get(years)
         if row is None or row.get("status") != "available" or eps0 is None or eps0 <= 0:
-            rows.append({"horizon": years, **unavailable((row or {}).get("reason", {}).get("code", "scenario_unavailable"))})
+            rows.append({"horizon": years, **unavailable((row or {}).get("reason") or "scenario_unavailable")})
             continue
         growth = number(override["growth"]) if override.get("growth") is not None else _median(row, "g")
         pe = number(override["exitPE"]) if override.get("exitPE") is not None else _median(row, "exitPE")
@@ -141,6 +141,15 @@ def _my_assumptions(results: dict, price, eps0, override: dict | None, current_s
 def project(snapshot: dict, criteria: dict | None = None, override: dict | None = None, reviews=(), *, today: dt.date) -> dict:
     """Pure read: judgement, required-return inversions, my assumptions, re-check flags, age."""
     results, inputs = snapshot["results"], snapshot["inputs"]
+    from . import METHOD_VERSION, spec4_revision
+    if inputs.get("methodVersion") == METHOD_VERSION and spec4_revision(inputs) is None:
+        return {"status": "unavailable", "reason": {"code": "previous_method"},
+                "snapshotId": snapshot["snapshotId"], "asOf": inputs["asOf"],
+                "ageDays": (today - dt.date.fromisoformat(inputs["asOf"])).days, "notices": [], "criteria": None,
+                "verdict": {"return": _verdict("unknown", reason="previous_method"),
+                            "marginOfSafety": _verdict("unknown", reason="previous_method")},
+                "requirement": unavailable("previous_method"), "myAssumptions": None,
+                "reviewNeeded": [dict(row) for row in reviews], "noGrowth": unavailable("previous_method")}
     price = inputs["price"]["value"]
     eps0 = number(results["base"]["eps0"]) if (results.get("base") or {}).get("status") == "available" else None
     required = _percent_to_fraction(criteria.get("requiredReturn")) if criteria else None
@@ -148,6 +157,7 @@ def project(snapshot: dict, criteria: dict | None = None, override: dict | None 
     years = criteria.get("holdingYears") if criteria else None
     age = (today - dt.date.fromisoformat(inputs["asOf"])).days
     notices = (["snapshot_old"] if age > SNAPSHOT_OLD_DAYS else [])
+    from .crosschecks import project_no_growth
     return {
         "snapshotId": snapshot["snapshotId"], "asOf": inputs["asOf"], "ageDays": age, "notices": notices,
         "criteria": None if criteria is None else {"revisionId": criteria["revisionId"], "holdingYears": years,
@@ -157,4 +167,5 @@ def project(snapshot: dict, criteria: dict | None = None, override: dict | None 
         "requirement": _requirement(results, price, eps0, required),
         "myAssumptions": _my_assumptions(results, price, eps0, override, snapshot["snapshotId"]),
         "reviewNeeded": [dict(row) for row in reviews],
+        "noGrowth": project_no_growth(snapshot, required, criteria),
     }

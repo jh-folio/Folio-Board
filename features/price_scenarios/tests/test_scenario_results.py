@@ -200,7 +200,8 @@ class ComputeTests(unittest.TestCase):
 
     def test_unverified_price_event_blocks_only_what_uses_year_end_closes(self):
         out = self.run_compute(prices=[])  # empty list is a real (empty) series: PER needs 5 years
-        self.assertEqual(out["ranges"]["pe"]["reason"], {"code": "history_too_short"})
+        self.assertEqual(out["ranges"]["pe"]["reason"], {"code": "history_too_short", "subCode": "missing_years",
+                         "range": "pe", "n": 0, "required": 5, "historyYears": 10})
         out = compute(steady()[0], self.PRICE, fiscal_prices=None, prices_reason={"code": "price_event_unverified"})
         self.assertEqual({row["reason"]["code"] for row in out["scenarios"]}, {"price_event_unverified"})
         self.assertEqual(out["reverse"]["sensitivity"]["reason"]["code"], "price_event_unverified")

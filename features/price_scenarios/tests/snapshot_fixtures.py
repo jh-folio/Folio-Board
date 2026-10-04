@@ -2,7 +2,7 @@
 from copy import deepcopy
 from decimal import Decimal as D
 
-from features.price_scenarios import METHOD_VERSION, SPEC_VERSION
+from features.price_scenarios import METHOD_VERSION, SPEC_VERSION, SPEC_SHA256
 from features.price_scenarios.scenarios import compute
 
 FILED = "2025-02-01"
@@ -31,7 +31,7 @@ def make(price=PRICE, rows=None, events=(), as_of=None, extra_inputs=None, resul
     results = compute(history, price, fiscal_prices=closes)
     results["support"] = {"status": "supported", "reasons": [], "notices": []}
     results["shareEvents"] = {"state": "none_confirmed" if not events else "present", "events": list(events)}
-    inputs = {"instrumentId": "US:ACME", "asOf": price["sessionDate"], "methodVersion": METHOD_VERSION, "specVersion": SPEC_VERSION,
+    inputs = {"instrumentId": "US:ACME", "asOf": price["sessionDate"], "methodVersion": METHOD_VERSION, "specVersion": SPEC_VERSION, "specSha256": SPEC_SHA256,
               "identity": {"ticker": "ACME", "exchange": "NASDAQ"}, "classificationInputs": {}, "price": dict(price),
               "fiscalYearPrices": closes, "eventPriceChecks": [], "history": {"rows": rows, "excludedYears": []},
               "shareEventSources": {}, "dcfInputs": {"beta": {"value": "1.1", "source": "yfinance_info_beta"}}, **(extra_inputs or {})}

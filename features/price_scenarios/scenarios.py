@@ -53,26 +53,32 @@ def _irr_cell(value):
     return {"irr": rounded(value, 4), "irrRange": None} if isinstance(value, Decimal) else {"irr": None, "irrRange": value}
 
 
-def _blocked(ranges: dict, names) -> str | None:
+def _blocked(ranges: dict, names) -> dict | None:
     """Reason code of the first required range that could not be built."""
     # The frozen spec blocks every calculation that uses the year-end PER range with that range's reason
     # (price_event_unverified), whatever else is also too short.
     if "pe" in names and (ranges["pe"].get("reason") or {}).get("code") == "price_event_unverified":
-        return "price_event_unverified"
+        return ranges["pe"]["reason"]
     for name in names:
         if ranges[name]["status"] != "available":
-            return ranges[name]["reason"]["code"]
+            return ranges[name]["reason"]
     return None
+
+
+def _eps_block(base, ranges, names):
+    if base["status"] != "available":
+        return base["reason"]
+    if number(base["eps0"]) <= 0:
+        return {"code": "negative_base_eps"}
+    return _blocked(ranges, names)
 
 
 def _scenario_rows(price, base, quartiles, ranges):
     out = []
-    block = base["reason"]["code"] if base["status"] != "available" else _blocked(ranges, ("growth", "pe", "payout"))
+    block = _eps_block(base, ranges, ("growth", "pe", "payout"))
     for horizon in HORIZONS:
         for label, name, percent in SCENARIO_PERCENTILES:
             head = {"label": label, "horizon": horizon}
-            if block is None and number(base["eps0"]) <= 0:
-                block = "negative_base_eps"
             if block is not None:
                 out.append({**head, **unavailable(block)})
                 continue
@@ -87,9 +93,7 @@ def _scenario_rows(price, base, quartiles, ranges):
 
 def _break_even_pe(price, base, quartiles, ranges):
     """Exit PER at which the median growth/payout path just returns 0%."""
-    block = base["reason"]["code"] if base["status"] != "available" else _blocked(ranges, ("growth", "payout"))
-    if block is None and number(base["eps0"]) <= 0:
-        block = "negative_base_eps"
+    block = _eps_block(base, ranges, ("growth", "payout"))
     out = {}
     for horizon in HORIZONS:
         if block is not None:
@@ -147,9 +151,7 @@ def _break_even_margin(history, price, session_date, quartiles, ranges):
 
 def _sensitivity(price, base, quartiles, ranges):
     """Move each median assumption one step to p25 / p75; largest return change first."""
-    block = base["reason"]["code"] if base["status"] != "available" else _blocked(ranges, ("growth", "pe", "payout"))
-    if block is None and number(base["eps0"]) <= 0:
-        block = "negative_base_eps"
+    block = _eps_block(base, ranges, ("growth", "pe", "payout"))
     if block is not None:
         return unavailable(block)
     eps0, rows = number(base["eps0"]), []
@@ -182,19 +184,23 @@ def compute(history: dict, price: dict, *, fiscal_prices: list[dict] | None, pri
                        ("rpsGrowth", lambda: rng.rps_growth_range(history)),
                        ("netMargin", lambda: rng.margin_range(history))):
         ranges[key], quartiles[key] = build()
+        ranges[key] = rng.explain_short_history(ranges[key], key, history)
     base = base_year(history, session_date)
-    return {"ranges": ranges, "base": base, "scenarios": _scenario_rows(reference, base, quartiles, ranges),
+    results = {"ranges": ranges, "base": base, "scenarios": _scenario_rows(reference, base, quartiles, ranges),
             "decomposition": decompose(history),
             "reverse": {"breakEvenPE": _break_even_pe(reference, base, quartiles, ranges),
                         "breakEvenMargin": _break_even_margin(history, reference, session_date, quartiles, ranges),
                         "sensitivity": _sensitivity(reference, base, quartiles, ranges)},
             "notices": ["excluded_growth_windows"] if any(ranges[key].get("excluded") for key in ("growth", "rpsGrowth")) else []}
+    from .crosschecks import no_growth, return_parts
+    results.update(returnParts=return_parts(results, quartiles, reference), noGrowth=no_growth(history, price, ranges, quartiles))
+    return results
 
 
 def unavailable_results(code: str, sub_code: str | None = None) -> dict:
     """The same block shapes as `compute`, every one carrying the same reason."""
     block = unavailable(code, sub_code)
-    return {"ranges": {name: dict(block) for name in ("growth", "pe", "payout", "rpsGrowth", "netMargin")},
+    results = {"ranges": {name: dict(block) for name in ("growth", "pe", "payout", "rpsGrowth", "netMargin")},
             "base": dict(block),
             "scenarios": [{"label": label, "horizon": horizon, **block}
                           for horizon in HORIZONS for label, _, _ in SCENARIO_PERCENTILES],
@@ -202,3 +208,5 @@ def unavailable_results(code: str, sub_code: str | None = None) -> dict:
             "reverse": {"breakEvenPE": {str(h): dict(block) for h in HORIZONS},
                         "breakEvenMargin": {str(h): dict(block) for h in HORIZONS}, "sensitivity": dict(block)},
             "notices": []}
+    results.update(returnParts=[{"label": r["label"], "horizon": r["horizon"], **block} for r in results["scenarios"]], noGrowth=dict(block))
+    return results

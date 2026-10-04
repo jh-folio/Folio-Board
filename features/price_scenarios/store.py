@@ -18,7 +18,7 @@ from pathlib import Path
 
 from features.common.macro_data.store import _SCHEMA_LOCK, backup_database
 
-from . import METHOD_VERSION, SPEC_VERSION
+from . import METHOD_VERSION, SPEC_VERSION, SPEC_SHA256
 from .changes import change_reasons, review_rows
 from .decimal_ops import canonical, fingerprint, number
 
@@ -155,7 +155,8 @@ class PriceStore:
             if not isinstance(inputs.get(key), str) or not inputs[key]:
                 raise PriceStoreError("invalid_snapshot_identity", key)
         dt.date.fromisoformat(inputs["asOf"])
-        if inputs["methodVersion"] != METHOD_VERSION or inputs["specVersion"] != SPEC_VERSION:
+        if (inputs["methodVersion"] != METHOD_VERSION or inputs["specVersion"] != SPEC_VERSION
+                or inputs.get("specSha256") != SPEC_SHA256):
             raise PriceStoreError("method_version_not_writable")
         digest = fingerprint(inputs)  # also rejects float numbers in inputs
         identity = (inputs["instrumentId"], inputs["asOf"], inputs["methodVersion"], digest)

@@ -132,6 +132,7 @@ def build_generation_inputs(
     analysis_style: str = "beginner",
     web_search: bool = False,
     runtime: dict | None = None,
+    cancel=None,
 ) -> GenerationInputs:
     """자료를 모으고 계약 블록까지 붙인 생성 입력을 만든다.
 
@@ -144,6 +145,7 @@ def build_generation_inputs(
             analysis_style=analysis_style,
             web_search=web_search,
             runtime=runtime,
+            cancel=cancel,
             context_recorder=context_recorder,
             context_stage=context_stage,
         )
@@ -164,6 +166,7 @@ def _build_generation_inputs(
     analysis_style: str,
     web_search: bool,
     runtime: dict | None,
+    cancel,
     context_recorder,
     context_stage: str | None,
 ) -> GenerationInputs:
@@ -189,8 +192,15 @@ def _build_generation_inputs(
     snapshot_fn = runtime.get("price_snapshot_for_report", _PRICE_SNAPSHOT_PROVIDER)
     if snapshot_fn is not None:
         try:
-            snapshot = snapshot_fn(materials.get("company") or company)
+            if cancel:
+                cancel()
+            snapshot = snapshot_fn(materials.get("company") or company, **({"cancel": cancel} if cancel else {}))
         except Exception as error:  # noqa: BLE001 - 스냅샷 계산 실패가 보고서를 죽이지 않는다
+            from concurrent.futures import CancelledError
+            if isinstance(error, CancelledError) or str(error) == "price_calculation_cancelled":
+                raise
+            if cancel:
+                cancel()  # caller cancellation must escape the optional-price failure fallback
             diagnostic_stage_failure(
                 context_recorder or current_diagnostic_recorder(), error, stage_id=context_stage,
                 stage_code="context" if context_stage is not None else None, boundary="generic",

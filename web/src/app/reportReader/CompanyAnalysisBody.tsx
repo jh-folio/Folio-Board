@@ -130,7 +130,7 @@ export function PriceReviewNote({ review }: { review?: PriceReview }) {
 
 export function CompanyAnalysisBody({ markdown, charts, priceReview }: { markdown: string; charts?: AnalysisChartsPayload; priceReview?: PriceReview }) {
   const sections = splitAnalysisSections(markdown);
-  if (!sections.length) return <AnalysisCharts payload={charts} />;
+  if (!sections.length) return <><PriceReviewNote review={priceReview} /><AnalysisCharts payload={charts} /></>;
 
   const { bySection, used: usedChartIds } = assignSectionCharts(sections, charts);
 

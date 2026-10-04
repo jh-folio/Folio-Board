@@ -2,15 +2,38 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
+import urllib.error
+from http.client import HTTPException
 from zoneinfo import ZoneInfo
 
 from .decimal_ops import source_number, number
 
 
+def provider_failure(error: Exception) -> bool:
+    """Only transport/provider failures, never an internal shape or input error."""
+    if isinstance(error, (TimeoutError, ConnectionError, urllib.error.URLError, HTTPException)):
+        return True
+    module, name = type(error).__module__, type(error).__name__
+    return (module.startswith(("requests.exceptions", "curl_cffi.requests.exceptions", "curl_cffi.curl"))
+            and name in {"Timeout", "ConnectTimeout", "ReadTimeout", "ConnectionError", "HTTPError", "CurlError", "RequestsError"}) or (
+                module == "yfinance.exceptions" and name == "YFRateLimitError")
+
+
+def fetch_instrument_type(symbol: str, *, timeout=5.0) -> str | None:
+    """One short chart request, only after official company identification failed."""
+    import yfinance as yf
+    stock = yf.Ticker(symbol)
+    stock.history(period="5d", interval="1d", auto_adjust=False, timeout=timeout, raise_errors=True)
+    metadata = stock.get_history_metadata() or {}
+    value = metadata.get("instrumentType") or metadata.get("quoteType")
+    return str(value).upper() if value else None
+
+
 def provider_symbol(ticker: str, market: str, metadata: dict) -> tuple[str, str]:
     if market == "KR":
         suffix = {"Y": ".KS", "K": ".KQ"}.get(metadata.get("corp_cls"))
-        if not suffix or len(ticker) != 6 or not ticker.isdigit():
+        if not suffix or not re.fullmatch(r"[0-9][A-Z0-9]{5}", ticker):
             raise ValueError("exchange_not_supported")
         return ticker + suffix, "dart_corp_cls"
     if market == "US" and metadata.get("exchanges"):
@@ -111,6 +134,7 @@ def fetch_daily_history(ticker: str, market: str, metadata: dict, *, now: dt.dat
     price = reference_price(raw_bars, market, now=now, currency=currency, symbol=symbol)
     events = [event for event in events if event["eventDate"] <= price["sessionDate"]]
     return {"price": price, "closes": closes, "rawBars": raw_bars, "events": events,
+            "quoteType": quote_metadata.get("instrumentType") or quote_metadata.get("quoteType"),
             "eventSourceState": "received" if event_source_complete else "unknown",
             "exchangeSource": exchange_source,
             "request": {"provider": "yfinance", "providerSymbol": symbol, "start": start.isoformat(),
