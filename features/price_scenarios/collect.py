@@ -143,16 +143,36 @@ class Collector:
 
     # --- US --------------------------------------------------------------------
 
-    def _class_filings(self, facts, submissions, annual, markup, daily, cik, ticker):
-        from .class_history import listed_class
+    def _class_source(self, url, path):
+        """A failed fetch cannot become a shorter, successfully stored history."""
+        self.cancel()
+        try:
+            text, error = sec_filings.fetch_text(url, path)
+        except CancelledError:
+            raise
+        except Exception as error:
+            if not provider_failure(error):
+                raise
+            raise CollectionError('financial_history_unavailable', 'provider_error') from None
+        self.cancel()
+        if error:
+            raise CollectionError('financial_history_unavailable', 'provider_error')
+        return text
+
+    def _class_filings(self, facts, submissions, annual, markup, daily, cik, ticker, *, source_errors=()):
+        from .class_history import MAX_CLASS_FILINGS, covered_class_years, listed_class, read_class_filing
         from .history import sec_history
         from .securities import listed_security
-        security = listed_security(markup, ticker, accession=annual["accession"])
         session = daily["price"]["sessionDate"]
         history = sec_history(facts, as_of=session)
         years = {r["fiscalYear"] for r in history["rows"]}
-        if (annual["form"] not in {"10-K", "10-K/A"} or not listed_class(security) or not years
+        if (annual["form"] not in {"10-K", "10-K/A"} or not years
                 or any(r["metric"] == "EPS Diluted" and r["fiscalYear"] == max(years) for r in history["rows"])):
+            return None
+        if any(source_errors):
+            raise CollectionError('financial_history_unavailable', 'provider_error')
+        security = listed_security(markup, ticker, accession=annual["accession"])
+        if not listed_class(security):
             return None
         metadata = []
         def add(recent):
@@ -167,27 +187,46 @@ class Collector:
                     metadata.append({"form": form, "filed": filed, "accession": accession,
                                      "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{doc}"})
         add(submissions.get("filings", {}).get("recent", {}))
-        for archive in sorted(submissions.get("filings", {}).get("files", []), key=lambda f: f.get("filingTo", ""), reverse=True):
-            if len({m["accession"] for m in metadata}) >= 4:
-                break
-            self.cancel()
-            name = archive.get("name", "")
-            if not re.fullmatch(r"CIK[0-9]+-submissions-[0-9]+\.json", name):
+        archives = sorted(submissions.get('filings', {}).get('files', []), key=lambda f: f.get('filingTo', ''), reverse=True)
+        packets, rows, seen = [], [], set()
+        while len(packets) < MAX_CLASS_FILINGS:
+            selected = sorted({m['accession']: m for m in metadata if m['accession'] not in seen}.values(),
+                              key=lambda m: (m['filed'], m['accession']), reverse=True)
+            # SEC archive ranges precede the recent list. Load older metadata only
+            # when needed; an overlapping range must be read before choosing next.
+            if archives and (not selected or archives[0].get('filingTo', '') >= selected[0]['filed']):
+                archive = archives.pop(0)
+                name = archive.get('name', '')
+                if not re.fullmatch(r'CIK[0-9]+-submissions-[0-9]+\.json', name):
+                    continue
+                text = self._class_source('https://data.sec.gov/submissions/' + name, self.cache / 'submissions' / name)
+                try:
+                    data = json.loads(text)
+                    if not isinstance(data, dict):
+                        raise ValueError('invalid_submissions')
+                    add(data)
+                except (ValueError, TypeError):
+                    packets.append({'form': '10-K', 'filed': '0000-01-01', 'accession': name, 'markup': ''})
+                    break
                 continue
-            text, _ = sec_filings.fetch_text("https://data.sec.gov/submissions/" + name, self.cache / "submissions" / name)
-            try:
-                add(json.loads(text))
-            except (ValueError, TypeError):
-                return [{"form": "10-K", "filed": session, "accession": "unavailable", "markup": ""}]
-        selected = sorted({m["accession"]: m for m in metadata}.values(), key=lambda m: (m["filed"], m["accession"]), reverse=True)[:4]
-        packets = []
-        for item in selected:
+            if not selected:
+                break
+            item = selected[0]
+            seen.add(item['accession'])
             self.cancel()
-            text = markup if item["accession"] == annual["accession"] else sec_filings.fetch_text(
-                item["url"], self.cache / "filings" / f"{cik}-{item['accession'].replace('-', '')}.json")[0]
+            text = markup if item["accession"] == annual["accession"] else self._class_source(
+                item["url"], self.cache / "filings" / f"{cik}-{item['accession'].replace('-', '')}.json")
             packet = {**item, "markup": text}
             self._class_labels(packet, security)
             packets.append(packet)
+            parsed = read_class_filing(packet, security, cik=cik, currency=history.get('currency', ''))
+            if parsed.get('skip'):
+                continue
+            if parsed['reason']:
+                break
+            rows.extend(parsed['rows'])
+            if years <= covered_class_years(rows, session):
+                break
         return packets
 
     def _class_labels(self, packet, security):
@@ -196,7 +235,7 @@ class Collector:
         from .class_history import read_class_filing
         # Standard members need no extra taxonomy requests.
         parsed = read_class_filing(packet, security, cik=packet["url"].split("/")[-3], currency="USD")
-        if parsed["reason"] is None:
+        if parsed["reason"] != 'listed_class_eps_not_found':
             return
         soup = BeautifulSoup(packet.get("markup", ""), "html.parser")
         schemas = {t.get("xlink:href") for t in soup.find_all("link:schemaref") if t.get("xlink:href")}
@@ -207,7 +246,7 @@ class Collector:
             return
         schema_url = next(iter(schema_urls))
         self.cancel()
-        xsd, _ = sec_filings.fetch_text(schema_url, self.cache / "filings" / (packet["accession"].replace("-", "") + "-schema.json"))
+        xsd = self._class_source(schema_url, self.cache / "filings" / (packet["accession"].replace("-", "") + "-schema.json"))
         xml = BeautifulSoup(xsd, "xml")
         label_urls = {urllib.parse.urljoin(schema_url, t.get("xlink:href", "")) for t in xml.find_all("linkbaseRef")
                       if t.get("xlink:role") == "http://www.xbrl.org/2003/role/labelLinkbaseRef"}
@@ -216,7 +255,7 @@ class Collector:
             return
         url = next(iter(label_urls))
         self.cancel()
-        labels, _ = sec_filings.fetch_text(url, self.cache / "filings" / (packet["accession"].replace("-", "") + "-labels.json"))
+        labels = self._class_source(url, self.cache / "filings" / (packet["accession"].replace("-", "") + "-labels.json"))
         from .class_labels import official_labels
         packet["labels"] = official_labels(packet["markup"], xsd, labels)
         packet["labelSources"] = [{"schemaUrl": schema_url, "labelUrl": url}]
@@ -235,11 +274,22 @@ class Collector:
         except Exception:  # noqa: BLE001 - provider failure is a stable code, never a message
             raise CollectionError("financial_history_unavailable", "sec_companyfacts_failed") from None
         self.cancel()
-        submissions, _ = sec_filings.get_company_submissions(cik, self.cache)
+        submissions, submissions_error = sec_filings.get_company_submissions(cik, self.cache)
         annual = sec_filings.latest_annual_report_metadata(cik, self.cache)
+        # If the cover/list is unavailable we cannot identify the listed class.
+        # Missing latest dimensionless EPS is the conservative candidate gate.
+        from .history import sec_history
+        candidate = sec_history(facts, as_of=self.now().date().isoformat()) if (submissions_error or annual.get('error')) else None
+        def missing_eps(h):
+            years = {r['fiscalYear'] for r in h['rows']}
+            return bool(years) and not any(r['metric'] == 'EPS Diluted' and r['fiscalYear'] == max(years) for r in h['rows'])
+        if candidate and missing_eps(candidate) and any(e and 'parse failed' not in e for e in (submissions_error, annual.get('error'))):
+            raise CollectionError('financial_history_unavailable', 'provider_error')
         if not submissions or not annual.get("ok"):
             raise CollectionError("financial_history_unavailable", "annual_report_not_found")
         markup, error = sec_filings.fetch_text(annual["url"], self.cache / "filings" / f"{cik}-{annual['accession'].replace('-', '')}.json")
+        if error and annual['form'] in {'10-K', '10-K/A'} and missing_eps(sec_history(facts, as_of=self.now().date().isoformat())):
+            raise CollectionError('financial_history_unavailable', 'provider_error')
         if not markup:
             raise CollectionError("financial_history_unavailable", "annual_report_text_unavailable")
         self.cancel()
@@ -259,7 +309,8 @@ class Collector:
                             "exchange": exchanges[0] if exchanges else None, "cik": cik},
                "daily": daily, "companyfacts": facts, "submissions": submissions, "annualMarkup": markup,
                "annualAccession": annual["accession"], "annualForm": annual["form"]}
-        filings = self._class_filings(facts, submissions, annual, markup, daily, cik, ticker)
+        filings = self._class_filings(facts, submissions, annual, markup, daily, cik, ticker,
+                                     source_errors=(submissions_error, annual.get('error'), error))
         if filings is not None:
             raw["annualFilings"] = filings
         return self._tail(raw, "USD")

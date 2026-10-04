@@ -1,6 +1,7 @@
 """Annual listed-class inline XBRL facts. Pure parsing and conservative validation."""
 from copy import deepcopy
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+import hashlib
 import re
 import unicodedata
 from bs4 import BeautifulSoup
@@ -11,6 +12,44 @@ from .history import _annual_period
 
 METRICS = {"EarningsPerShareDiluted": EPS, "WeightedAverageNumberOfDilutedSharesOutstanding": SHARES,
            "CommonStockDividendsPerShareDeclared": "DPS"}
+MAX_CLASS_FILINGS = 8
+
+
+def _empty_amendment(packet, soup, ns):
+    """Positive amendment-only evidence; absence of inline alone proves nothing."""
+    if packet.get('form') != '10-K/A' or not soup.find('html') or not soup.find('body'):
+        return False
+    for fact in soup.find_all(['ix:nonfraction', 'ix:fraction']):
+        prefix = fact.get('name', '').split(':')[0]
+        namespace = str(ns.get(prefix, ''))
+        if not namespace.startswith('http://xbrl.sec.gov/dei/'):
+            return False  # unknown or malformed financial facts are not absent
+        unit = soup.find('xbrli:unit', id=fact.get('unitref')) if fact.get('unitref') else None
+        if unit and unit.find('xbrli:measure', string=re.compile(r'^iso4217:')) and 'dei' not in namespace:
+            return False
+    text = soup.get_text(' ', strip=True)
+    if re.search(r'\b(?:consolidated\s+)?(?:balance\s+sheets?|statements?\s+of\s+(?:income|earnings|equity|comprehensive\s+income|operations|cash\s+flows|financial\s+position))\b', text, re.I):
+        return False
+    for table in soup.find_all('table'):
+        remaining = deepcopy(table)
+        for fact in remaining.find_all(['ix:nonfraction', 'ix:fraction', 'ix:nonnumeric']):
+            if str(ns.get(fact.get('name', '').split(':')[0], '')).startswith('http://xbrl.sec.gov/dei/'):
+                fact.decompose()  # confirmed cover/company facts are not financials
+        if re.search(r'\d', remaining.get_text()):
+            return False  # unclassified plain numeric tables are not proof of absence
+    # Explicit limited-scope disclosure is required even for DEI-only inline.
+    return bool(re.search(r'\b(?:sole(?:ly)?|only|exclusively)\b.{0,300}\bPart\s+III\b', text, re.I | re.S)
+                or re.search(r'\b(?:does\s+not|no)\b.{0,100}\b(?:amend|change|revise|updated?|financial\s+statements)\b.{0,100}\bfinancial\s+statements\b', text, re.I | re.S))
+
+
+def covered_class_years(rows, as_of):
+    pairs = {}
+    for row in rows:
+        if row.get('error') or row['period']['end'] > as_of or row['metric'] not in {EPS, SHARES}:
+            continue
+        key = (row['fiscalYear'], row['filed'], row['accession'], row['period']['start'], row['period']['end'], row['member'])
+        pairs.setdefault(key, set()).add(row['metric'])
+    return {key[0] for key, metrics in pairs.items() if metrics == {EPS, SHARES}}
 
 
 def listed_class(security):
@@ -90,6 +129,10 @@ def read_class_filing(packet, security, *, cik, currency):
         return {"reason": "listed_class_eps_not_found", "rows": []}
     soup = BeautifulSoup(packet.get("markup", ""), "html.parser")
     ns = _namespaces(soup)
+    if _empty_amendment(packet, soup, ns):
+        return {'reason': None, 'rows': [], 'skip': True}
+    if not soup.find('ix:nonfraction'):
+        return {'reason': 'listed_class_source_unavailable', 'rows': []}
     contexts, members = {}, set()
     for ctx in soup.find_all("xbrli:context"):
         entity = ctx.find("xbrli:identifier")
@@ -135,7 +178,8 @@ def read_class_filing(packet, security, *, cik, currency):
         except (ValueError, TypeError, ArithmeticError):
             row["error"] = "listed_class_source_unavailable"
         rows.append(row)
-    return {"rows": rows, "identity": identity, "reason": None}
+    return {"rows": rows, "identity": identity,
+            "reason": "listed_class_source_unavailable" if any(r.get('error') for r in rows) else None}
 
 
 def supplement_class_history(history, filings, security, *, cik, as_of):
@@ -147,23 +191,37 @@ def supplement_class_history(history, filings, security, *, cik, as_of):
     diagnostic = {"status": "unavailable", "reason": "listed_class_source_unavailable", "years": []}
     out["classDiagnostics"] = diagnostic
     chosen = sorted([p for p in filings if p.get("filed", "") <= as_of and p.get("form") in {"10-K", "10-K/A"}],
-                    key=lambda p: (p["filed"], p["accession"]), reverse=True)[:4]
+                    key=lambda p: (p["filed"], p["accession"]), reverse=True)
+    chosen = list({p['accession']: p for p in reversed(chosen)}.values())
+    chosen = sorted(chosen, key=lambda p: (p['filed'], p['accession']), reverse=True)[:MAX_CLASS_FILINGS]
     if not chosen:
         return out
     by_year, parsed_all = {}, []
     for packet in chosen:
+        entry = {'accession': packet['accession'], 'filed': packet['filed'], 'form': packet['form'],
+                 'sourceSha256': hashlib.sha256(packet.get('markup', '').encode('utf-8')).hexdigest()}
+        diagnostic.setdefault('filings', []).append(entry)
         if not packet.get("markup"):
-            diagnostic.setdefault('filings', []).append({'accession': packet['accession'], 'reason': 'listed_class_source_unavailable'})
+            entry.update(action='stop', reason='listed_class_source_unavailable')
             break  # keep verified newer years; never fall through to an older substitute
         parsed = read_class_filing(packet, security, cik=cik, currency=history.get("currency", ""))
+        if parsed.get('skip'):
+            entry.update(action='skip', reason='amendment_without_financials')
+            continue
         if parsed["reason"]:
             diagnostic["reason"] = parsed["reason"]
-            diagnostic.setdefault('filings', []).append({'accession': packet['accession'], 'reason': parsed['reason']})
+            entry.update(action='stop', reason=parsed['reason'])
             break
+        entry.update(action='read', reason=None)
         parsed_all.extend(parsed["rows"])
         for row in parsed["rows"]:
             if row["fiscalYear"] in years and row["period"]["end"] <= as_of:
                 by_year.setdefault(row["fiscalYear"], packet["accession"])
+        if set(years) <= covered_class_years(parsed_all, as_of):
+            diagnostic['stopReason'] = 'window_covered'
+            break
+    diagnostic.setdefault('stopReason', 'format_stop' if diagnostic['filings'][-1]['action'] == 'stop'
+                          else 'filing_limit' if len(chosen) == MAX_CLASS_FILINGS else 'no_more_filings')
     accepted, preserved = [], []
     with localcontext() as context:
         context.prec, context.rounding = 28, ROUND_HALF_EVEN
@@ -243,7 +301,7 @@ def supplement_class_history(history, filings, security, *, cik, as_of):
     valid = {r["fiscalYear"] for r in accepted if r["metric"] == EPS}
     if len(valid) < 3 or years[-1] not in valid:
         failures = [d["reason"] for d in diagnostic["years"] if d["reason"] and d["fiscalYear"] == years[-1]]
-        diagnostic["reason"] = failures[0] if failures else "listed_class_eps_not_found"
+        diagnostic["reason"] = failures[0] if failures else diagnostic['reason']
         return out
     keys = {(r["metric"], r["fiscalYear"]) for r in accepted}
     rejected = {d['fiscalYear'] for d in diagnostic['years'] if d['reason']}

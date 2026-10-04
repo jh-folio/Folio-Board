@@ -69,6 +69,8 @@ def reason_text(reason: str | dict | None) -> str:
     code, sub = detail.get("code"), detail.get("subCode")
     if code == "price_unavailable" and sub == "provider_error":
         return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요"
+    if code == "financial_history_unavailable" and sub == "provider_error":
+        return "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요"
     if code == "history_too_short" and all(k in detail for k in ("range", "n", "required", "historyYears")):
         n, required, years = detail["n"], detail["required"], detail["historyYears"]
         windows = detail["range"] in {"growth", "rpsGrowth"}

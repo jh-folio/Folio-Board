@@ -14824,6 +14824,7 @@ function Ns(e) {
 function Ps(e) {
 	let { code: t, subCode: n, range: r, n: i, required: a, historyYears: o } = typeof e == "string" ? { code: e } : e ?? {};
 	if (t === "price_unavailable" && n === "provider_error") return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
+	if (t === "financial_history_unavailable" && n === "provider_error") return "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
 	if (t === "history_too_short" && r !== void 0 && i !== void 0 && a !== void 0 && o !== void 0) {
 		let e = r === "growth" || r === "rpsGrowth";
 		if (n === "years_too_few") return e ? `재무 기록이 ${o}년뿐이라 비교할 5년 구간이 ${i}개입니다(필요 ${a}개). 연속 기록이라면 최소 8년이 필요합니다` : `재무 기록이 ${o}년뿐이라 ${{

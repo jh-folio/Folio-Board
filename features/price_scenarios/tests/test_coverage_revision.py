@@ -3,7 +3,7 @@ import json
 import re
 from pathlib import Path
 import pytest
-from features.price_scenarios import SPEC_SHA256, SPEC4_REVISION0_SHA256, SPEC4_REVISION1_INITIAL_SHA256
+from features.price_scenarios import SPEC_SHA256, SPEC4_REVISION0_SHA256, SPEC4_REVISION1_INITIAL_SHA256, SPEC4_REVISION1_FUND_SOURCE_SHA256
 from features.price_scenarios import store as sm, service
 from features.price_scenarios.store import PriceStoreError
 from features.price_scenarios.changes import restated_items, change_reasons
@@ -19,7 +19,7 @@ def seed(root, inputs, results, monkeypatch):
         return service.store_for(root).save_snapshot(inputs, results)['snapshotId']
 
 
-@pytest.mark.parametrize('sha', [None, SPEC4_REVISION0_SHA256, SPEC4_REVISION1_INITIAL_SHA256, 'f' * 64])
+@pytest.mark.parametrize('sha', [None, SPEC4_REVISION0_SHA256, SPEC4_REVISION1_INITIAL_SHA256, SPEC4_REVISION1_FUND_SOURCE_SHA256, 'f' * 64])
 def test_old_and_future_sha_reads_do_not_rewrite_and_only_current_can_write(tmp_path, monkeypatch, sha):
     i, r = make()
     if sha is None:
@@ -38,6 +38,9 @@ def test_old_and_future_sha_reads_do_not_rewrite_and_only_current_can_write(tmp_
     if sha == 'f' * 64:
         projection = service.projection_view(tmp_path, sid)
         assert projection['noGrowth']['reason']['code'] == 'previous_method'
+    else:
+        projection = service.projection_view(tmp_path, sid)
+        assert projection['noGrowth'].get('reason', {}).get('code') != 'previous_method'
 
 
 def test_same_sources_different_revision_fingerprint_method_reason_and_report_exclusion(tmp_path, monkeypatch):

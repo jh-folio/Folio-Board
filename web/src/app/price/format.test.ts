@@ -12,6 +12,7 @@ describe("spec-4 display", () => {
     expect(reasonText({ code: "history_too_short", subCode: "loss_years", range: "growth", n: 2, required: 3, historyYears: 8 }))
       .toBe("주당이익이 0 이하인 해가 있어 비교할 5년 구간이 2개입니다(필요 3개)");
     expect(reasonText({ code: "price_unavailable", subCode: "provider_error" })).toBe("가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요");
+    expect(reasonText({ code: "financial_history_unavailable", subCode: "provider_error" })).toBe("공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요");
     expect(noticeText({ code: "listed_class_eps", class: "Class A" })).toContain("Class A");
     expect(noticeText({ code: "derived_eps_years", years: [2020] })).toContain("FY2020");
   });

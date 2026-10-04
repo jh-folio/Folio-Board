@@ -100,6 +100,7 @@ export function reasonText(reason: string | Reason | undefined | null): string {
   const detail: Partial<Reason> = typeof reason === "string" ? { code: reason } : reason ?? {};
   const { code, subCode, range, n, required, historyYears } = detail;
   if (code === "price_unavailable" && subCode === "provider_error") return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
+  if (code === "financial_history_unavailable" && subCode === "provider_error") return "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
   if (code === "history_too_short" && range !== undefined && n !== undefined && required !== undefined && historyYears !== undefined) {
     const windows = range === "growth" || range === "rpsGrowth";
     if (subCode === "years_too_few") {

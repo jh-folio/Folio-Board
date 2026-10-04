@@ -74,13 +74,16 @@ def test_scale_sign_decimals_unit_period_entity_cutoff():
     assert not row_at(supplement(packets=[filing(filed='2027-02-01')]), EPS, 2025)
 
 
-def test_latest_bad_values_do_not_fall_back_to_older_and_four_filing_limit():
+def test_latest_bad_values_do_not_fall_back_and_read_prior_values_are_preserved():
     old = filing(filed='2026-01-01', accession='old')
     bad = filing(eps='3')
     assert not row_at(supplement(packets=[old, bad]), EPS, 2025)
     packets = [filing(filed=f'2026-0{m}-01', accession=str(m), eps='3') for m in range(2, 6)] + [old]
     assert not row_at(supplement(packets=packets), EPS, 2025)
-    result = supplement(packets=[old, filing()])
+    # Read an older source only while the ten-year fiscal domain is uncovered.
+    h = history()
+    h['rows'].append({**deepcopy(h['rows'][0]), 'fiscalYear': 2022, 'period': {'start': '2022-01-01', 'end': '2022-12-31'}})
+    result = supplement(h, packets=[old, filing()])
     assert row_at(result, EPS, 2025)['priorValues'][0]['accession'] == 'old'
 
 
