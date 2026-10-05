@@ -14,6 +14,19 @@ from .events import adjust_history, event_price_checks
 ZERO, ONE = Decimal(0), Decimal(1)
 
 
+def _price_failure(error: ValueError) -> dict:
+    """Return only fixed public reason codes, never arbitrary exception text."""
+    if error.args == ("invalid_period",):
+        return unavailable("invalid_period")
+    if error.args == ("share_event_unknown",):
+        return unavailable("share_event_unknown")
+    if error.args == ("price_event_unverified",):
+        return unavailable("price_event_unverified")
+    if error.args == ("endpoint_price_missing",):
+        return unavailable("endpoint_price_missing")
+    return unavailable("invalid_number")
+
+
 def capture(raw: dict, inputs: dict, support: dict, shares: dict) -> dict:
     """Add only new inputs; never change fiscal prices, history or old result blocks."""
     daily, session = raw["daily"], inputs["asOf"]
@@ -234,7 +247,7 @@ def movement(inputs: dict, start: str, end: str) -> dict:
                 else: end = chosen
             p0, p1, _ = _prices(packet, start, end)
         except ValueError as error:
-            return unavailable(str(error))
+            return _price_failure(error)
         rp = p1/p0-ONE
         return {"status": "available", "instrumentId": inputs["instrumentId"], "asOf": inputs["asOf"],
                 "requestedStartDate": requested_start, "requestedEndDate": requested_end,
@@ -279,7 +292,7 @@ def historical_attribution(inputs: dict, years: int = 5) -> dict:
                 else: end = chosen
             p0, p1, events = _prices(packet, start, end)
         except ValueError as error:
-            return unavailable(str(error))
+            return _price_failure(error)
         rp = p1/p0-ONE; rp4 = number(rounded(rp, 4))
         earnings = unavailable({"code": "attribution_history_too_short", "subCode": "missing_endpoint_eps", "startFiscalYear": start_year, "endFiscalYear": end_year})
         history = adjust_history(inputs["history"], packet["shareEvents"]["events"], session_date=inputs["asOf"],

@@ -116,6 +116,41 @@ def test_uncertain_split_price_is_not_a_comparison(check):
     assert movement(inputs, '2019-12-31', '2024-12-31')['status'] == 'unavailable'
 
 
+@pytest.mark.parametrize('reason', ['invalid_period', 'share_event_unknown', 'price_event_unverified', 'endpoint_price_missing', 'invalid_number'])
+def test_price_failure_preserves_fixed_reason_codes(monkeypatch, reason):
+    inputs, _ = comparison_inputs()
+    def fail(*args, **kwargs):
+        raise ValueError(reason)
+    monkeypatch.setattr('features.price_scenarios.attribution._prices', fail)
+    for result in (historical_attribution(inputs), movement(inputs, '2019-12-31', '2024-12-31')):
+        assert result['reason']['code'] == reason
+
+
+def test_price_failure_does_not_expose_exception_text_in_http(monkeypatch, tmp_path):
+    inputs, results = comparison_inputs()
+    store = store_for(tmp_path)
+    saved = store.save_snapshot(inputs, results)
+    before = store.path.read_bytes()
+    def fail(*args, **kwargs):
+        raise ValueError('private provider message: /private/internal/file.sqlite')
+    monkeypatch.setattr('features.price_scenarios.attribution._prices', fail)
+    app = FastAPI()
+    app.include_router(create_price_router(tmp_path))
+    with LiveHttpClient(app) as client:
+        snapshot = client.get('/api/price-snapshots/' + saved['snapshotId'])
+        movement_response = client.get('/api/price-movement', params={
+            'instrumentId': 'US:ACME', 'snapshotId': saved['snapshotId'],
+            'startDate': '2019-12-31', 'endDate': '2024-12-31'})
+        for response in (snapshot, movement_response):
+            assert response.status_code == 200
+            body = json.dumps(response.json(), ensure_ascii=False)
+            assert 'private provider' not in body
+            assert '/private/internal' not in body
+        assert snapshot.json()['historicalReturnAttribution']['reason']['code'] == 'invalid_number'
+        assert movement_response.json()['reason']['code'] == 'invalid_number'
+    assert store.path.read_bytes() == before
+
+
 def test_index_holiday_and_failure_keep_stock_values():
     inputs, _ = comparison_inputs()
     benchmark = inputs['returnAttributionInputs']['benchmarkDaily']
