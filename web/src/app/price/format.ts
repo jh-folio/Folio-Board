@@ -399,3 +399,12 @@ export function shiftDecimal(text: string, shift: number): string {
 
 export const percentToFraction = (text: string): string => shiftDecimal(text, -2);
 export const fractionToPercent = (text: string | null | undefined): string => (text === null || text === undefined ? "" : shiftDecimal(text, 2));
+
+/** 비율(0.5 = 50%)을 부호와 천 단위 구분이 있는 %로. */
+export function ratioText(fraction: number, places = 1): string {
+  const text = Math.abs(fraction * 100).toLocaleString("en-US", { minimumFractionDigits: places, maximumFractionDigits: places });
+  const zero = Number(text.replace(/,/g, "")) === 0;
+  return `${fraction > 0 && !zero ? "+" : fraction < 0 && !zero ? "−" : ""}${text}%`;
+}
+/** 배수(1.25 → ×1.25, 28.82 → ×28.8). 10 미만은 소수 둘째 자리까지 보여 ×1.2와 ×1.25를 구별한다. */
+export const timesText = (factor: number) => `×${factor < 10 ? factor.toFixed(2) : factor.toFixed(1)}`;

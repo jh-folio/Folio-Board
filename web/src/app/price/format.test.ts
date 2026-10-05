@@ -4,7 +4,7 @@ import {
   atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal, showReferenceFacts, noticeText,
 } from "./format";
 import type { Projection, ScenarioRow, SnapshotView } from "./types";
-import { cashPerHundred, cashSpan, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, signedOne } from "./format";
+import { cashPerHundred, cashSpan, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, ratioText, signedOne, timesText } from "./format";
 import { instrumentIdFor } from "./PriceTab";
 
 describe("spec-4 display", () => {
@@ -225,5 +225,17 @@ describe("whole-tab states", () => {
     expect(notApplicableAttempt({ status: "failed", reason: { code: "fund_not_supported" } })).toBe(true);
     expect(notApplicableAttempt({ status: "failed", reason: { code: "price_unavailable", subCode: "provider_error" } })).toBe(false);
     expect(notApplicableAttempt(null)).toBe(false);
+  });
+});
+
+describe("0.9.2 multiplier display", () => {
+  it("formats ratios with thousands separators and a real minus", () => {
+    expect(ratioText(27.8235)).toBe("+2,782.4%");
+    expect(ratioText(-0.6802, 0)).toBe("−68%");
+    expect(ratioText(-0.0001)).toBe("0.0%");
+    expect(timesText(28.8235)).toBe("×28.8");
+    expect(timesText(0.3197)).toBe("×0.32");
+    expect(timesText(1.25)).toBe("×1.25");
+    expect(timesText(9.2153)).toBe("×9.22");
   });
 });

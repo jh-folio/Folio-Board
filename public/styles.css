@@ -18025,12 +18025,28 @@ select { min-height: 36px; padding: 0 12px; }
 .price-dec__card .price-swatch-cut{background:repeating-linear-gradient(135deg,var(--folio-ink-muted) 0 3px,transparent 3px 6px)}
 .price-dec__card .price-swatch-grey{background:var(--folio-ink-subtle)}
 .price-parts-bar{position:relative}
-.price-attribution-bars{display:grid;gap:8px;margin-block:12px}
-.price-attribution-bar{display:grid;grid-template-columns:5em minmax(0,1fr) 6em;gap:10px;align-items:center;font-size:var(--fs-meta)}
-.price-attribution-bar>div{height:14px;position:relative;background:var(--surface-control);border-radius:var(--r-pill);overflow:hidden}
-.price-attribution-bar>div:after{content:"";position:absolute;left:50%;top:0;height:100%;width:1px;background:var(--folio-ink-subtle)}
-.price-attribution-bar i{position:absolute;height:100%;border-radius:var(--r-pill)}
-.price-attribution-bar b{text-align:right;font-weight:var(--fw-medium);font-variant-numeric:tabular-nums}
+/* 0.9.2 지난 주가 수익: 배수 막대. ×1 기준선을 가운데 두고 로그 눈금, 기준선 쪽은 직각·바깥 끝만 둥글게.
+   색 의미는 ① 수익률 세 조각과 같다(이익 price-c1·배당 price-c3·PER 빗금). 결과(주가)는 구분선 아래 본문색, 시장지수는 회색. */
+.price-xbars{display:grid;gap:8px;margin-top:4px}
+.price-xbar{display:grid;grid-template-columns:76px minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:var(--fs-meta)}
+.price-xbar>span{color:var(--folio-ink-muted)}
+.price-xbar>strong{text-align:right;font-weight:var(--fw-medium);font-variant-numeric:tabular-nums;color:var(--folio-ink-soft)}
+.price-xbar__track{position:relative;height:14px;border-radius:var(--r-pill);background:var(--surface-control)}
+.price-xbar__one{position:absolute;left:50%;top:-3px;bottom:-3px;width:0;border-left:2px solid var(--folio-ink-subtle);transform:translateX(-1px);z-index:1}
+.price-xbar__fill{position:absolute;top:0;bottom:0;transition:opacity .15s}
+.price-xbar__fill.is-right{border-radius:0 var(--r-pill) var(--r-pill) 0}
+.price-xbar__fill.is-left{border-radius:var(--r-pill) 0 0 var(--r-pill)}
+.price-xbar__fill.is-hatch{background:repeating-linear-gradient(135deg,var(--folio-ink-soft) 0 3px,var(--folio-border-strong) 3px 6px)}
+.price-xbar__fill.is-dim{opacity:.22}
+.price-xbar.is-result{padding-top:8px;border-top:1px solid var(--folio-border)}
+.price-xbar.is-result:first-child{padding-top:0;border-top:0}
+.price-xbar.is-result>span,.price-xbar.is-result>strong{color:var(--folio-ink);font-weight:var(--fw-bold)}
+.price-xbar.is-result .price-xbar__fill{background:var(--folio-ink)}
+.price-xbar.is-bench .price-xbar__fill{background:var(--folio-ink-subtle)}
+.price-xbars__axis{position:relative;height:16px;margin:0 74px 0 86px;font-size:var(--fs-xs);color:var(--folio-ink-muted);font-variant-numeric:tabular-nums}
+.price-xbars__axis span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+.price-attribution-basis{padding-top:4px;border-top:1px solid var(--folio-border)}
+.price-attribution-basis summary{padding:14px 0}
 .price-cutseg{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--surface-page) 0 4px,transparent 4px 8px);opacity:.9;transition:opacity .15s}
 .price-cutseg.is-dim{opacity:.22}
 .price-bar-legend{position:relative;height:18px;font-size:var(--fs-xs);color:var(--folio-ink-muted);font-variant-numeric:tabular-nums}
@@ -18049,6 +18065,9 @@ select { min-height: 36px; padding: 0 12px; }
 .price-dialog h2{font-size:var(--fs-title);margin:0 0 12px}
 .price-dialog .price-row{margin-top:20px;justify-content:flex-end}
 @media (max-width: 640px) {
+  .price-xbar { grid-template-columns: 64px minmax(0, 1fr) 56px; }
+  .price-xbars__axis { margin: 0 66px 0 74px; }
+  .price-xbars__axis .is-minor { display: none; }
   .price-hero { padding: 16px; }
   .price-hr { margin: 0 10px; }
   .price-cards, .price-dec__cards { gap: 6px; }
@@ -18071,5 +18090,5 @@ select { min-height: 36px; padding: 0 12px; }
   .price-dialog { padding: 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .price-card, .price-dec__card, .price-dec__bar span, .price-cutseg, .price-hr__pt, .price-hr__t { transition: none; }
+  .price-card, .price-dec__card, .price-dec__bar span, .price-cutseg, .price-xbar__fill, .price-hr__pt, .price-hr__t { transition: none; }
 }

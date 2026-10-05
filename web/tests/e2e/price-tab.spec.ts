@@ -18,15 +18,22 @@ for (const theme of ['light', 'dark']) {
         display: { ...ATTRIBUTION.display, rerating: '-25.0', total: '0.0' } } } }));
     await openPrice(page, theme);
     const section = page.locator('.price-section:has(#price-historical-return-title)');
-    await expect(section).toContainText('배당 포함 전체 수익 +55.0%');
-    await expect(section).toContainText('종목 +50.0% / S&P 500 +25.0%');
-    await section.getByRole('button', { name: /PER 변화/ }).click();
-    await expect(section.locator('.price-explain')).toContainText('함께 변한 효과');
+    // 첫 문장은 주가 수익과 사실 결론, 카드는 각 요인 자체의 변화율, 덧셈 %p와 지수 비교는 계산 상자.
+    await expect(section.locator('.price-lead')).toHaveText('이 기간 주가는 +50.0%(×1.50) 올랐습니다. 주당이익 증가와 PER 상승이 함께 끌어올렸고, PER 쪽 몫이 더 컸습니다.');
+    await expect(section.locator('.price-dec__card')).toHaveText([/주당이익\s*\+20%/, /PER\s*\+25%\s*10\.0배 → 12\.5배/, /받은 배당\s*\+5\.0%/]);
+    await expect(section.locator('.price-calc')).toContainText('받은 배당까지 더하면 전체 +55.0%');
+    await expect(section.locator('.price-calc')).toContainText('이익 +20.0%p, PER +30.0%p, 배당 +5.0%p');
+    await expect(section.locator('.price-calc')).toContainText('종목 +50.0% / S&P 500 +25.0%, 차이 +25.0%p');
+    await expect(section.getByRole('img', { name: '주당이익 ×1.20, PER ×1.25, 주가 ×1.50, S&P 500 ×1.25' })).toBeVisible();
+    await expect(page.locator('.price-glance')).toContainText('지난 5년(FY2020–FY2025) 주가 +50.0%: 주당이익 +20%, PER +25%.');
+    await section.getByRole('button', { name: /^PER/ }).click();
+    await expect(section.locator('.price-explain')).toContainText('10.0배에서 12.5배로 +25% 바뀌었습니다');
+    await expect(section.locator('.price-xbar__fill.is-dim')).toHaveCount(1);
     if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/attribution-${theme}-${test.info().project.name}.png` });
     await section.getByRole('button', { name: '3년', exact: true }).click();
-    await expect(section).toContainText('전체 수익 0.0%');
-    await expect(section.getByRole('button', { name: /PER 변화/ })).toContainText('−25.0%p');
-    await expect(section).toContainText('별도의 5년 이익 성장 구간');
+    await expect(section.locator('.price-calc')).toContainText('전체 0.0%');
+    await expect(section.locator('.price-calc')).toContainText('PER −25.0%p');
+    await expect(section).toContainText('별도의 5년 구간');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     const result = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
     expect(result.violations.map(v => v.id)).toEqual([]);
@@ -40,9 +47,11 @@ test('0.9.2 missing dividend and loss retain price comparison, and legacy inputs
     dividend: { status: 'unavailable', reason: { code: 'dividend_unit_unverified' } }, total: { status: 'unavailable' } } };
   await mockApi(page, { view }); await openPrice(page, 'light');
   const section = page.locator('.price-section:has(#price-historical-return-title)');
-  await expect(section).toContainText('끝 연도 FY2025 주당이익이 0 이하');
-  await expect(section).toContainText('배당 금액의 주식 단위를 확인하지 못해');
-  await expect(section).toContainText('종목 +50.0% / S&P 500 +25.0%');
+  await expect(section.locator('.price-lead')).toContainText('끝 연도 FY2025 주당이익이 0 이하');
+  // 나누지 못하면 빈 카드·빈 막대를 그리지 않고 주가와 지수만 남긴다.
+  await expect(section.locator('.price-dec__card')).toHaveCount(0);
+  await expect(section.getByRole('img', { name: '주가 ×1.50, S&P 500 ×1.25' })).toBeVisible();
+  await expect(section.locator('.price-calc')).toContainText('종목 +50.0% / S&P 500 +25.0%');
 });
 
 for (const theme of ['light', 'dark']) {

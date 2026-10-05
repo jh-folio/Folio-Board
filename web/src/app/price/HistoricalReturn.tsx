@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getJson } from "../../api";
 import { GuideSection } from "./Guide";
-import { multiple, reasonText } from "./format";
+import { money, multiple, ratioText, reasonText, timesText } from "./format";
 import type { AttributionBlock, Reason, SnapshotView } from "./types";
 
 export function attributionReason(reason?: Reason): string {
@@ -33,7 +33,57 @@ export function attributionReason(reason?: Reason): string {
   return texts[code] ?? reasonText(reason);
 }
 
-const signed = (s?: string, unit = "%p") => s === undefined ? "—" : `${Number(s) > 0 ? "+" : Number(s) < 0 ? "−" : ""}${Math.abs(Number(s)).toFixed(1)}${unit}`;
+// 이미 % 단위로 반올림된 표시값(예: "1345.7")에 부호·천 단위 구분을 붙인다.
+const signed = (s?: string, unit = "%p") => s === undefined ? "—" : `${Number(s) > 0 ? "+" : Number(s) < 0 ? "−" : ""}${Math.abs(Number(s)).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
+
+/**
+ * 첫 문장의 결론. 사실만 말하고 원인은 단정하지 않는다. "거의 그대로"는 변화 10% 미만.
+ * 어느 쪽 몫이 더 컸는지는 배수의 로그 크기로 비교한다(주가 = 주당이익 × PER).
+ */
+export function attributionConclusion(epsFactor: number, peFactor: number, priceUp: boolean): string {
+  const small = (f: number) => Math.abs(f - 1) < 0.1, up = (f: number) => f > 1;
+  if (small(epsFactor) && small(peFactor)) return "주당이익과 PER 모두 크게 변하지 않았습니다.";
+  if (small(peFactor)) return `거의 주당이익이 ${up(epsFactor) ? "늘어난" : "줄어든"} 만큼 움직였고, PER은 거의 그대로였습니다.`;
+  if (small(epsFactor)) return `주당이익은 거의 그대로였고, 대부분 PER이 ${up(peFactor) ? "오른" : "내린"} 몫입니다.`;
+  const bigger = Math.abs(Math.log(epsFactor)) >= Math.abs(Math.log(peFactor)) ? "주당이익" : "PER";
+  if (up(epsFactor) && up(peFactor)) return `주당이익 증가와 PER 상승이 함께 끌어올렸고, ${bigger} 쪽 몫이 더 컸습니다.`;
+  if (!up(epsFactor) && !up(peFactor)) return `주당이익 감소와 PER 하락이 함께 끌어내렸고, ${bigger} 쪽 몫이 더 컸습니다.`;
+  if (up(epsFactor)) return `주당이익은 늘었지만 PER이 낮아져, 이익이 늘어난 만큼 ${priceUp ? "오르지는" : "버티지"} 못했습니다.`;
+  return "주당이익은 줄었지만 PER이 올라, 이익이 줄어든 만큼 내리지는 않았습니다.";
+}
+
+type FactorRow = { key: string; label: string; factor: number; className?: string; kind?: "result" | "bench" };
+const TICKS = [0.01, 0.03, 0.1, 0.3, 0.5, 1, 2, 3, 10, 30, 100];
+const MAJOR = new Set([0.01, 0.1, 1, 10, 100]);
+
+/** 배수 막대: ×1 기준선을 가운데 두고 로그 눈금. 기준선 쪽은 직각, 뻗어 나간 끝만 둥글다. 결과(주가)는 구분선 아래. */
+function FactorBars({ rows, picked }: { rows: FactorRow[]; picked: string | null }) {
+  const factors = rows.map(r => r.factor).concat([1]);
+  const span = Math.max(Math.log10(Math.max(...factors)), -Math.log10(Math.min(...factors)), Math.log10(2)) * 1.06;
+  const at = (f: number) => 50 + (Math.log10(f) / span) * 46;
+  // 좁은 화면에서는 10배 단위 눈금만 남긴다. 배수 폭이 작아 그런 눈금이 셋 미만이면 ×0.5·×1·×2를 남긴다.
+  const visible = TICKS.filter(t => Math.abs(Math.log10(t)) <= span + 1e-9);
+  const decades = visible.filter(t => MAJOR.has(t));
+  const major = new Set(decades.length >= 3 ? decades : visible.filter(t => t === 0.5 || t === 1 || t === 2));
+  return (
+    <div className="price-xbars" role="img" aria-label={rows.map(r => `${r.label} ${timesText(r.factor)}`).join(", ")}>
+      {rows.map(r => {
+        const a = at(Math.min(1, r.factor)), b = at(Math.max(1, r.factor));
+        const dim = picked !== null && picked !== r.key && !r.kind ? " is-dim" : "";
+        return (
+          <div key={r.key} className={`price-xbar${r.kind ? ` is-${r.kind}` : ""}`}>
+            <span>{r.label}</span>
+            <div className="price-xbar__track"><i className="price-xbar__one" /><i className={`price-xbar__fill ${r.factor >= 1 ? "is-right" : "is-left"} ${r.className ?? ""}${dim}`} style={{ left: `${a.toFixed(2)}%`, width: `${(b - a).toFixed(2)}%` }} /></div>
+            <strong>{timesText(r.factor)}</strong>
+          </div>
+        );
+      })}
+      <div className="price-xbars__axis" aria-hidden="true">
+        {visible.map(t => <span key={t} className={major.has(t) ? undefined : "is-minor"} style={{ left: `${at(t).toFixed(2)}%` }}>×{t}</span>)}
+      </div>
+    </div>
+  );
+}
 
 function EpsSource({ label, eps }: { label: string; eps: Record<string, unknown> | null }) {
   const period = eps?.period as { start?: string; end?: string } | undefined;
@@ -47,12 +97,15 @@ function PriceSource({ source }: { source: Record<string, unknown> }) {
   return <p>가격 출처: {request?.provider ?? "저장된 가격 제공자"} · 종목 {request?.providerSymbol ?? "—"} · 제공자 프로그램 버전 {String(source.sourceVersion ?? "—")} · 요청 일봉 기간 {request?.start ?? "—"} → {request?.endExclusive ?? "—"}(끝 날짜 제외) · 배당 미조정 종가 · {String(source.currency ?? "통화 미확인")}</p>;
 }
 
+type Movement = { status: string; startDate?: string; endDate?: string; priceReturn?: string };
+
 export function HistoricalReturnSection({ view }: { view: SnapshotView }) {
   const [years, setYears] = useState<1 | 3 | 5>(5);
   const [block, setBlock] = useState<AttributionBlock | undefined>(view.historicalReturnAttribution);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
+  const [after, setAfter] = useState<Movement | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     setPicked(null); setError("");
@@ -64,61 +117,90 @@ export function HistoricalReturnSection({ view }: { view: SnapshotView }) {
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [view, years]);
+  // 기간 끝(회계연도 말) 뒤 계산 기준일까지의 주가. 저장된 입력만 읽고(분할 반영), 나누지 않는다.
+  const endDate = block?.status === "available" ? block.endDate : undefined;
+  useEffect(() => {
+    setAfter(null);
+    if (!endDate || endDate >= view.asOf) return;
+    const controller = new AbortController();
+    getJson<Movement>(`/api/price-movement?instrumentId=${encodeURIComponent(view.instrumentId)}&startDate=${endDate}&endDate=${view.asOf}&snapshotId=${encodeURIComponent(view.snapshotId)}`, { signal: controller.signal })
+      .then(next => { if (!controller.signal.aborted && next.status === "available") setAfter(next); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [view, endDate]);
+
   const ready = block?.status === "available", display = block?.display ?? {};
-  const parts = [["growth", "이익 성장", "price-c1"], ["rerating", "PER 변화", "price-c5"], ["dividend", "배당", "price-c3"]] as const;
-  const max = Math.max(1, ...parts.map(([key]) => Math.abs(Number(display[key] ?? 0))));
+  const currency = view.inputSummary.price.currency;
+  const earn = block?.earnings, bench = block?.benchmark;
+  const priceFactor = 1 + Number(block?.priceReturn ?? 0);
+  const word = priceFactor >= 1 ? "올랐습니다" : "내렸습니다";
+  const epsFactor = earn?.status === "available" ? Number(earn.endEps) / Number(earn.startEps) : null;
+  const peFactor = earn?.status === "available" ? Number(earn.endPE) / Number(earn.startPE) : null;
+  const split = epsFactor !== null && peFactor !== null;
+  const benchRow: FactorRow[] = bench?.status === "available" && bench.display?.index !== undefined
+    ? [{ key: "bench", label: bench.id ?? "시장지수", factor: 1 + Number(bench.display.index) / 100, kind: "bench" }] : [];
+  const dividendReady = block?.dividend?.status === "available";
   const explanations: Record<string, string> = {
-    growth: "양 끝 연간 주당이익의 증가율을 먼저 반영했습니다. 아래의 매출·이익률·주식 수 변화와 이어 읽을 수 있습니다.",
-    rerating: "주가 수익에서 이익 성장 기여를 뺀 차액입니다. 이익과 PER이 함께 변한 효과도 여기에 포함됩니다. PER 변화의 원인은 단정하지 않습니다.",
-    dividend: "기간 안 배당락일의 현금배당을 세전·재투자 없이 합산했습니다. 실제 계좌에 입금된 날짜나 세금은 반영하지 않습니다.",
+    growth: split ? `주당이익이 ${money(earn?.startEps, currency)}에서 ${money(earn?.endEps, currency)}로 ${ratioText(epsFactor - 1, 0)} 바뀌었습니다. PER이 그대로였다면 주가도 같은 비율로 움직였을 것입니다. 아래 '지난 5년 이익 성장은 어디서 왔나'에서 매출·이익률·주식 수로 이어 볼 수 있습니다.` : "",
+    rerating: split ? `PER(주가 ÷ 주당이익)이 ${multiple(earn?.startPE)}에서 ${multiple(earn?.endPE)}로 ${ratioText(peFactor - 1, 0)} 바뀌었습니다. 같은 이익을 시장이 더 비싸게(또는 싸게) 쳐준 정도입니다. 왜 바뀌었는지는 이 숫자만으로 알 수 없습니다.` : "",
+    dividend: `기간 안 배당락일의 현금배당 ${block?.dividend?.amount ?? "—"}을 세전·재투자 없이 더해 시작 주가로 나눈 값입니다. 실제 입금 날짜나 세금은 반영하지 않습니다.`,
   };
+  // 지수 비교용 종목 주가 수익은 독립 표시값(spec-5 §4.3). 지수가 없어도 종목 값은 남긴다.
+  const benchSentence = bench?.status === "available"
+    ? ` 시장 비교(배당 제외): 종목 ${signed(bench.display?.stock, "%")} / ${bench.id} ${signed(bench.display?.index, "%")}, 차이 ${signed(bench.display?.difference)}.`
+    : ` 배당 제외 주가 수익: 종목 ${signed(display.price, "%")}.`;
+  const additive = `덧셈으로 나누면 이익 ${signed(display.growth)}, PER ${signed(display.rerating)}${display.dividend !== undefined ? `, 배당 ${signed(display.dividend)}` : ""}입니다(두 변화가 겹치는 몫은 PER 쪽에 넣음).`;
+  const calc = !ready ? undefined : split
+    ? `주가 = 주당이익 × PER(주가 ÷ 주당이익)이므로, 주가 변화 = 주당이익 변화 × PER 변화입니다. (${money(earn?.endEps, currency)} ÷ ${money(earn?.startEps, currency)}) × (${multiple(earn?.endPE)} ÷ ${multiple(earn?.startPE)}) = ${timesText(epsFactor)} × ${timesText(peFactor)} = ${timesText(priceFactor)}.${block?.total?.status === "available" ? ` 받은 배당까지 더하면 전체 ${signed(display.total, "%")}입니다.` : ""} ${additive}${benchSentence}`
+    : `주가 변화 = 끝 종가 ÷ 시작 종가 − 1 = ${signed(display.price, "%")}.${bench?.status === "available" ? benchSentence : ""}`;
+  const read = !ready ? undefined : split
+    ? "주당이익 쪽이 크면 회사가 실제로 더 벌어서 오른 것이고, PER 쪽이 크면 같은 이익을 더 비싸게(또는 싸게) 쳐준 것입니다. PER이 왜 바뀌었는지는 이 숫자만으로 알 수 없습니다. 회계연도 말 종가끼리 비교했습니다."
+    : "적자 구간에서는 PER(주가 ÷ 주당이익)이 의미를 잃어 나누지 않습니다. 주가와 시장지수의 움직임만 사실로 보여 줍니다.";
+  const cards = split ? [
+    { key: "growth", label: "주당이익", swatch: "price-c1", value: ratioText(epsFactor - 1, 0), sub: `${money(earn?.startEps, currency)} → ${money(earn?.endEps, currency)}` },
+    { key: "rerating", label: "PER", swatch: "price-swatch-cut", value: ratioText(peFactor - 1, 0), sub: `${multiple(earn?.startPE)} → ${multiple(earn?.endPE)}` },
+    { key: "dividend", label: "받은 배당", swatch: "price-c3", value: dividendReady ? ratioText(Number(block?.dividend?.contribution)) : "—", sub: dividendReady ? "시작 주가 대비" : "배당 기록 확인 불가" },
+  ] : [];
+
+  const basis = ready && <details className="price-details price-attribution-basis"><summary>이 기간의 계산 원값과 출처</summary>
+      <p>실제 종가 날짜 {block.startDate} → {block.endDate} · 기간 전체 누적 수익 · 배당은 배당락일 기준, 세전·재투자 없음</p>
+      <p>시작 가격 {block.startClose} → 끝 가격 {block.endClose} {currency} · 시작 주당이익 {String(block.basis?.start.eps?.value ?? earn?.startEps ?? "—")} → 끝 주당이익 {String(block.basis?.end.eps?.value ?? earn?.endEps ?? "—")}</p>
+      <p>기간 배당 합계 {block.dividend?.amount ?? "—"} · 저장 기준일 {view.asOf}{block.dividend?.basis === "provider_record_no_dividend" ? " · 제공자 기록상 배당 없음" : ""}</p>
+      <p>가격 수익 = {block.endClose} ÷ {block.startClose} − 1. 이익 기여 = 끝 주당이익 ÷ 시작 주당이익 − 1. PER 기여 = 가격 수익 − 이익 기여. 배당 기여 = 기간 배당 ÷ 시작 가격.</p>
+      {block.calculation && <>
+        <p>반올림 전 비율: 가격 {block.calculation.rawPriceReturn} · 이익 {block.calculation.rawGrowth ?? "—"} · PER {block.calculation.rawRerating ?? "—"} · 배당 {block.calculation.rawDividend ?? "—"} · 전체 {block.calculation.rawTotal ?? "—"}</p>
+        <p>응답 4자리 비율: 이익 {block.calculation.response.growth ?? "—"} + PER {block.calculation.response.rerating ?? "—"} + 배당 {block.calculation.response.dividend ?? "—"} = 전체 {block.calculation.response.total ?? "—"}</p>
+        <p>화면 %p 조정: 이익 {display.growth ?? "—"} + PER {display.rerating ?? "—"} + 배당 {display.dividend ?? "—"} = 전체 {display.total ?? "—"}%</p>
+      </>}
+      {block.basis && <><EpsSource label="시작" eps={block.basis.start.eps} /><EpsSource label="끝" eps={block.basis.end.eps} /><PriceSource source={block.basis.priceSource} /></>}
+      <p>{years === 5 && view.results.decomposition.status === "available" && view.results.decomposition.recentWindow[0] === block.startFiscalYear && view.results.decomposition.recentWindow[1] === block.endFiscalYear
+        ? "아래 '지난 5년 이익 성장은 어디서 왔나'는 같은 회계연도 구간입니다. 공시 주당이익과 순이익÷주식 수의 차이는 그 섹션의 계산 안내에 남깁니다."
+        : view.results.decomposition.status === "available" ? `아래 이익 성장 섹션은 별도의 5년 구간(FY${view.results.decomposition.recentWindow[0]}~FY${view.results.decomposition.recentWindow[1]})입니다.` : ""}</p>
+    </details>;
+
   return <GuideSection id="price-historical-return-title" title="지난 주가 수익은 어디서 왔나"
     meta={ready ? `FY${block.startFiscalYear} 말 → FY${block.endFiscalYear} 말` : "회계연도 말끼리 비교"}
-    question="선택한 기간의 가격·이익·배당 기록을 같은 주식 한 주 기준으로 나눠 봅니다. 지금 가격까지의 수익은 아닙니다."
-    calc="배당 포함 전체 수익 = 이익 성장 기여 + PER 변화 기여 + 배당 기여입니다. 이익을 먼저 반영하고 남은 주가 변화는 PER에 넣습니다. 화면 반올림 차액도 PER에 반영해 합계를 맞췄습니다."
-    read="확인된 과거 기록을 이 규칙으로 나눈 값입니다. PER 변화의 이유나 앞으로 같은 수익이 이어질지는 이 숫자만으로 알 수 없습니다.">
-    {view.methodVersion === "price-scenario-5" && <div className="price-row"><span id="historical-period-label">과거 비교 기간</span><div className="segment" role="group" aria-labelledby="historical-period-label">
+    question="회사가 돈을 더 벌어서 올랐는지, 시장이 더 비싸게 쳐줘서 올랐는지 나눠 봅니다."
+    hint={ready && split ? "카드를 누르면 설명이 나옵니다" : undefined}
+    calc={calc} read={read} footer={basis}>
+    {view.methodVersion === "price-scenario-5" && <div className="price-horizon"><span id="historical-period-label">과거 기간</span><div className="segment" role="group" aria-labelledby="historical-period-label">
       {([1, 3, 5] as const).map(n => <button key={n} type="button" aria-pressed={years === n} onClick={() => setYears(n)}>{n}년</button>)}
     </div></div>}
     {loading ? <div className="macro-skeleton" role="status" aria-label="과거 수익 기록을 읽고 있습니다"><span className="macro-skeleton__line" /></div>
-      : error ? <p role="alert">{error}</p> : !ready ? <p className="price-meta">{attributionReason(block?.reason)}</p> : <>
-        <p className="price-lead">이 기록의 배당 포함 전체 수익 <strong>{signed(display.total, "%")}</strong></p>
-        <p className="price-meta">실제 종가 날짜 {block.startDate} → {block.endDate} · 기간 전체 누적 수익 · 배당락일 기준, 세전·재투자 없음</p>
-        <div className="price-dec__cards" role="group" aria-label="과거 수익 조각 선택">
-          {parts.map(([key, label, color]) => <button className="price-dec__card" key={key} type="button" aria-pressed={picked === key} onClick={() => setPicked(p => p === key ? null : key)}>
-            <i className={color} /><span>{label}</span><strong>{signed(display[key])}</strong>
-            {key === "rerating" && block.earnings?.status === "available" && <span>{multiple(block.earnings.startPE)} → {multiple(block.earnings.endPE)}</span>}
-          </button>)}
-        </div>
-        <div className="price-attribution-bars" role="img" aria-label={parts.map(([k, l]) => `${l} ${signed(display[k])}`).join(", ")}>
-          {parts.map(([key, label, color]) => <div className="price-attribution-bar" key={key}><span>{label}</span><div>
-            <i className={color} style={{ left: Number(display[key]) < 0 ? `${50-Math.abs(Number(display[key]))/max*50}%` : "50%", width: `${Math.abs(Number(display[key] ?? 0))/max*50}%` }} />
-          </div><b>{signed(display[key])}</b></div>)}
-        </div>
-        <p className="price-meta">막대 중앙은 0%p이며 왼쪽은 음수, 오른쪽은 양수입니다. 수익 원인의 점유율이 아닙니다.</p>
-        {picked && <p className="price-explain" aria-live="polite">{explanations[picked]}</p>}
-        {block.earnings?.status !== "available" && <p className="price-meta">{attributionReason(block.earnings?.reason)}</p>}
-        {block.dividend?.status !== "available" && <p className="price-meta">{attributionReason(block.dividend?.reason)}</p>}
-        {block.dividend?.basis === "provider_record_no_dividend" && <p className="price-meta">제공자 기록상 배당 없음</p>}
-        <div className="surface surface--inset price-calc">
-          {block.benchmark?.status === "available" ? <p>배당 제외 주가 수익: 종목 {signed(block.benchmark.display?.stock, "%")} / {block.benchmark.id} {signed(block.benchmark.display?.index, "%")} · 차이 {signed(block.benchmark.display?.difference)}</p>
-            : <><p>배당 제외 주가 수익: 종목 {signed(display.price, "%")}</p><p>{attributionReason(block.benchmark?.reason)}</p></>}
-          <p className="price-meta">시장 비교는 종목·지수 모두 배당 제외입니다. 한국 종목의 비교 지수는 KOSPI입니다.</p>
-        </div>
-        <details className="price-details"><summary>이 기간의 계산 원값과 출처</summary>
-          <p>시작 가격 {block.startClose} → 끝 가격 {block.endClose} {view.inputSummary.price.currency} · 시작 주당이익 {String(block.basis?.start.eps?.value ?? block.earnings?.startEps ?? "—")} → 끝 주당이익 {String(block.basis?.end.eps?.value ?? block.earnings?.endEps ?? "—")}</p>
-          <p>기간 배당 합계 {block.dividend?.amount ?? "—"} · 저장 기준일 {view.asOf}</p>
-          <p>가격 수익 = {block.endClose} ÷ {block.startClose} − 1. 이익 기여 = 끝 주당이익 ÷ 시작 주당이익 − 1. PER 기여 = 가격 수익 − 이익 기여. 배당 기여 = 기간 배당 ÷ 시작 가격.</p>
-          {block.calculation && <>
-            <p>반올림 전 비율: 가격 {block.calculation.rawPriceReturn} · 이익 {block.calculation.rawGrowth ?? "—"} · PER {block.calculation.rawRerating ?? "—"} · 배당 {block.calculation.rawDividend ?? "—"} · 전체 {block.calculation.rawTotal ?? "—"}</p>
-            <p>응답 4자리 비율: 이익 {block.calculation.response.growth ?? "—"} + PER {block.calculation.response.rerating ?? "—"} + 배당 {block.calculation.response.dividend ?? "—"} = 전체 {block.calculation.response.total ?? "—"}</p>
-            <p>화면 %p 조정: 이익 {display.growth ?? "—"} + PER {display.rerating ?? "—"} + 배당 {display.dividend ?? "—"} = 전체 {display.total ?? "—"}%</p>
-          </>}
-          {block.basis && <><EpsSource label="시작" eps={block.basis.start.eps} /><EpsSource label="끝" eps={block.basis.end.eps} /><PriceSource source={block.basis.priceSource} /></>}
-        </details>
-        <p className="price-meta">{years === 5 && view.results.decomposition.status === "available" && view.results.decomposition.recentWindow[0] === block.startFiscalYear && view.results.decomposition.recentWindow[1] === block.endFiscalYear
-          ? "같은 회계연도 구간의 이익 성장 기록을 아래에서 이어 보세요. 공시 주당이익과 순이익÷주식 수의 차이는 아래 계산 안내에 남깁니다."
-          : view.results.decomposition.status === "available" ? `아래는 별도의 5년 이익 성장 구간(FY${view.results.decomposition.recentWindow[0]}~FY${view.results.decomposition.recentWindow[1]})입니다.` : "아래 이익 성장 구간은 별도 계산입니다."}</p>
+      : error ? <p role="alert">{error}</p> : !ready ? <p className="price-lead">{attributionReason(block?.reason)}</p> : <>
+        <p className="price-lead">이 기간 주가는 <strong>{ratioText(priceFactor - 1)}</strong>({timesText(priceFactor)}) {word}. {split ? attributionConclusion(epsFactor, peFactor, priceFactor >= 1) : attributionReason(earn?.reason)}</p>
+        {split ? <div className="price-dec">
+          <div className="price-dec__cards" role="group" aria-label="주가 수익 요인 선택: 누르면 설명합니다">
+            {cards.map(c => <button key={c.key} type="button" className="price-dec__card" aria-pressed={picked === c.key} onClick={() => setPicked(current => current === c.key ? null : c.key)}>
+              <i className={c.swatch} /><span>{c.label}</span><strong>{c.value}</strong><em className="price-dec__sub">{c.sub}</em>
+            </button>)}
+          </div>
+          <FactorBars picked={picked} rows={[{ key: "growth", label: "주당이익", factor: epsFactor, className: "price-c1" }, { key: "rerating", label: "PER", factor: peFactor, className: "is-hatch" }, { key: "price", label: "주가", factor: priceFactor, kind: "result" }, ...benchRow]} />
+          {picked && <p className="price-explain" aria-live="polite">{explanations[picked]}</p>}
+        </div> : <FactorBars picked={null} rows={[{ key: "price", label: "주가", factor: priceFactor, kind: "result" }, ...benchRow]} />}
+        {bench?.status !== "available" && <p className="price-meta">{attributionReason(bench?.reason)}</p>}
+        {!dividendReady && split && <p className="price-meta">{attributionReason(block.dividend?.reason)}</p>}
+        {after?.priceReturn !== undefined && <p className="price-meta">그 뒤 계산 기준일({view.asOf})까지 주가는 {ratioText(Number(after.priceReturn))} 움직였습니다. 이 구간은 아직 연간 실적이 없어 나누지 않았습니다.</p>}
       </>}
   </GuideSection>;
 }
