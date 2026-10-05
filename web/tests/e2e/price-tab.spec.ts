@@ -9,6 +9,16 @@ const ATTRIBUTION = { status: 'available', requestedYears: 5, startFiscalYear: 2
   benchmark: { status: 'available', id: 'S&P 500', startClose: '100', endClose: '125', display: { stock: '50.0', index: '25.0', difference: '25.0' } },
 };
 
+async function expectReadableFactorAxis(page: Page) {
+  const axis = page.locator('.price-section:has(#price-historical-return-title) .price-xbars__axis');
+  await expect(axis.locator('[data-tick="1"]')).toBeVisible();
+  await expect.poll(async () => axis.locator('span').evaluateAll(nodes => {
+    const boxes = nodes.filter(n => getComputedStyle(n).display !== 'none')
+      .map(n => n.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    return boxes.every((box, i) => i === 0 || box.left >= boxes[i - 1].right + 5);
+  })).toBe(true);
+}
+
 for (const theme of ['light', 'dark']) {
   test(`0.9.2 historical attribution selection signed bars and exact visible sum ${theme}`, async ({ page }) => {
     const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: ATTRIBUTION };
@@ -34,6 +44,8 @@ for (const theme of ['light', 'dark']) {
     await page.keyboard.press('Space');
     await expect(section.locator('.price-explain')).toContainText('10.0배에서 12.5배로 +25% 바뀌었습니다');
     await expect(section.locator('.price-xbar__fill.is-dim')).toHaveCount(1);
+    await expectReadableFactorAxis(page);
+    await expect(section.locator('.price-xbars__axis span:visible')).toHaveText(['×0.5', '×1', '×2']);
     if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/attribution-${theme}-${test.info().project.name}.png` });
     await section.getByRole('button', { name: '3년', exact: true }).click();
     await expect(section.locator('.price-calc')).toContainText('전체 0.0%');
@@ -111,10 +123,26 @@ for (const theme of ['light', 'dark']) {
     expect(fills).toHaveLength(4);
     for (const fill of fills) { expect(fill.style).not.toMatch(/NaN|Infinity/); expect(fill.width).toBeGreaterThan(0); }
     expect(writes).toEqual([]);
+    await expectReadableFactorAxis(page);
     if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/tiny-factor-${theme}-${test.info().project.name}.png` });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     const axe = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
     expect(axe.violations.map(v => v.id)).toEqual([]);
+  });
+  test(`0.9.2 extreme axis remains readable when resized ${theme}`, async ({ page }) => {
+    const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: { ...ATTRIBUTION,
+      endClose: '1e-40', priceReturn: '-1.0000', earnings: { ...ATTRIBUTION.earnings, endPE: '8.333333333333333e-42' },
+      dividend: { status: 'available', amount: '0', contribution: '.0000' }, total: { status: 'available', value: '-1.0000' },
+      display: { growth: '20.0', rerating: '-120.0', dividend: '0.0', total: '-100.0', price: '-100.0' },
+      benchmark: { ...ATTRIBUTION.benchmark, endClose: '1e-40', display: { stock: '-100.0', index: '-100.0', difference: '0.0' } } } };
+    const writes = await mockApi(page, { view }); await openPrice(page, theme);
+    for (const width of [1440, 390, 320, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expectReadableFactorAxis(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    }
+    expect(writes).toEqual([]);
+    if (process.env.PRICE_CAPTURE_DIR) await page.locator('.price-section:has(#price-historical-return-title)').screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/extreme-axis-${theme}-${test.info().project.name}.png` });
   });
 }
 

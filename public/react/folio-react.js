@@ -17184,8 +17184,28 @@ var au = [
 	100
 ]);
 function su({ rows: e, picked: t }) {
-	let n = (e) => Number.isFinite(e) && e > 0, r = e.map((e) => e.factor).filter(n).concat([1]), i = Math.max(Math.log10(Math.max(...r)), -Math.log10(Math.min(...r)), Math.log10(2)) * 1.06, a = (e) => 50 + Math.log10(e) / i * 46, o = au.filter((e) => Math.abs(Math.log10(e)) <= i + 1e-9), s = o.filter((e) => ou.has(e)), c = new Set(s.length >= 3 ? s : o.filter((e) => e === .5 || e === 1 || e === 2));
-	return /* @__PURE__ */ (0, Q.jsxs)("div", {
+	let n = (e) => Number.isFinite(e) && e > 0, r = e.map((e) => e.factor).filter(n).concat([1]), i = Math.max(Math.log10(Math.max(...r)), -Math.log10(Math.min(...r)), Math.log10(2)) * 1.06, a = (e) => 50 + Math.log10(e) / i * 46, o = au.filter((e) => Math.abs(Math.log10(e)) <= i + 1e-9), s = o.filter((e) => ou.has(e)), c = new Set(s.length >= 3 ? s : o.filter((e) => e === .5 || e === 1 || e === 2)), u = (0, l.useRef)(null);
+	return (0, l.useLayoutEffect)(() => {
+		let e = u.current;
+		if (!e) return;
+		let t = () => {
+			let t = Array.from(e.querySelectorAll("span"));
+			if (t.forEach((e) => {
+				e.hidden = !1;
+			}), !e.getBoundingClientRect().width) return;
+			let n = t.filter((e) => getComputedStyle(e).display !== "none").map((e) => ({
+				label: e,
+				box: e.getBoundingClientRect(),
+				tick: Number(e.dataset.tick)
+			}));
+			n.sort((e, t) => Number(t.tick === 1) - Number(e.tick === 1) || Number(e.label.classList.contains("is-minor")) - Number(t.label.classList.contains("is-minor")) || Math.abs(Math.log10(t.tick)) - Math.abs(Math.log10(e.tick)));
+			let r = [];
+			for (let { label: e, box: t } of n) e.hidden = r.some((e) => t.left < e.right + 6 && t.right > e.left - 6), e.hidden || r.push(t);
+		};
+		t();
+		let n = new ResizeObserver(t);
+		return n.observe(e), () => n.disconnect();
+	}, [i]), /* @__PURE__ */ (0, Q.jsxs)("div", {
 		className: "price-xbars",
 		role: "img",
 		"aria-label": e.map((e) => `${e.label} ${mc(e.factor)}`).join(", "),
@@ -17209,9 +17229,11 @@ function su({ rows: e, picked: t }) {
 				]
 			}, e.key);
 		}), /* @__PURE__ */ (0, Q.jsx)("div", {
+			ref: u,
 			className: "price-xbars__axis",
 			"aria-hidden": "true",
 			children: o.map((e) => /* @__PURE__ */ (0, Q.jsxs)("span", {
+				"data-tick": e,
 				className: c.has(e) ? void 0 : "is-minor",
 				style: { left: `${a(e).toFixed(2)}%` },
 				children: ["×", e]

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getJson } from "../../api";
 import { GuideSection } from "./Guide";
 import { displayPercent, money, multiple, ratioText, reasonText, timesText } from "./format";
@@ -66,6 +66,32 @@ function FactorBars({ rows, picked }: { rows: FactorRow[]; picked: string | null
   const visible = TICKS.filter(t => Math.abs(Math.log10(t)) <= span + 1e-9);
   const decades = visible.filter(t => MAJOR.has(t));
   const major = new Set(decades.length >= 3 ? decades : visible.filter(t => t === 0.5 || t === 1 || t === 2));
+  const axisRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const axis = axisRef.current;
+    if (!axis) return;
+    // 실제 글자 폭으로 겹침만 피한다. ×1, 주요 바깥 눈금, 작은 눈금 순으로 남긴다.
+    const fitLabels = () => {
+      const labels = Array.from(axis.querySelectorAll<HTMLSpanElement>("span"));
+      labels.forEach(label => { label.hidden = false; });
+      if (!axis.getBoundingClientRect().width) return;
+      const candidates = labels.filter(label => getComputedStyle(label).display !== "none").map(label => ({
+        label, box: label.getBoundingClientRect(), tick: Number(label.dataset.tick),
+      }));
+      candidates.sort((a, b) => Number(b.tick === 1) - Number(a.tick === 1)
+        || Number(a.label.classList.contains("is-minor")) - Number(b.label.classList.contains("is-minor"))
+        || Math.abs(Math.log10(b.tick)) - Math.abs(Math.log10(a.tick)));
+      const kept: DOMRect[] = [];
+      for (const { label, box } of candidates) {
+        label.hidden = kept.some(other => box.left < other.right + 6 && box.right > other.left - 6);
+        if (!label.hidden) kept.push(box);
+      }
+    };
+    fitLabels();
+    const observer = new ResizeObserver(fitLabels);
+    observer.observe(axis);
+    return () => observer.disconnect();
+  }, [span]);
   return (
     <div className="price-xbars" role="img" aria-label={rows.map(r => `${r.label} ${timesText(r.factor)}`).join(", ")}>
       {rows.map(r => {
@@ -80,8 +106,8 @@ function FactorBars({ rows, picked }: { rows: FactorRow[]; picked: string | null
           </div>
         );
       })}
-      <div className="price-xbars__axis" aria-hidden="true">
-        {visible.map(t => <span key={t} className={major.has(t) ? undefined : "is-minor"} style={{ left: `${at(t).toFixed(2)}%` }}>×{t}</span>)}
+      <div ref={axisRef} className="price-xbars__axis" aria-hidden="true">
+        {visible.map(t => <span key={t} data-tick={t} className={major.has(t) ? undefined : "is-minor"} style={{ left: `${at(t).toFixed(2)}%` }}>×{t}</span>)}
       </div>
     </div>
   );
