@@ -4,7 +4,7 @@ import {
   atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal, showReferenceFacts, noticeText,
 } from "./format";
 import type { Projection, ScenarioRow, SnapshotView } from "./types";
-import { cashPerHundred, cashSpan, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, signedOne } from "./format";
+import { cashPerHundred, cashSpan, displayPercent, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, ratioText, signedOne, timesText } from "./format";
 import { instrumentIdFor } from "./PriceTab";
 
 describe("spec-4 display", () => {
@@ -12,7 +12,7 @@ describe("spec-4 display", () => {
     expect(reasonText({ code: "history_too_short", subCode: "loss_years", range: "growth", n: 2, required: 3, historyYears: 8 }))
       .toBe("주당이익이 0 이하인 해가 있어 비교할 5년 구간이 2개입니다(필요 3개)");
     expect(reasonText({ code: "price_unavailable", subCode: "provider_error" })).toBe("가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요");
-    expect(reasonText({ code: "financial_history_unavailable", subCode: "provider_error" })).toBe("공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요");
+    expect(reasonText({ code: "financial_history_unavailable", subCode: "provider_error", sourceFailureVerified: true })).toBe("공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요");
     expect(noticeText({ code: "listed_class_eps", class: "Class A" })).toContain("Class A");
     expect(noticeText({ code: "derived_eps_years", years: [2020] })).toContain("FY2020");
   });
@@ -208,6 +208,11 @@ describe("scale labels", () => {
 });
 
 describe("whole-tab states", () => {
+  it("shows verified permanent HTTP status and keeps unverified legacy failures neutral", () => {
+    expect(reasonText({code:"financial_history_unavailable",subCode:"source_not_found",httpStatus:404,sourceFailureVerified:true})).toContain("HTTP 404");
+    expect(reasonText({code:"financial_history_unavailable",subCode:"source_access_denied",httpStatus:403,sourceFailureVerified:true})).toContain("HTTP 403");
+    expect(reasonText({code:"financial_history_unavailable",subCode:"provider_error"})).toContain("일시적인지는 확인하지 못했습니다");
+  });
   const unavailable = (label: string, horizon: number) => ({ label, horizon, status: "unavailable", reason: { code: "negative_base_eps" } });
   const viewOf = (rows: unknown[]) => ({ results: { scenarios: rows } }) as unknown as SnapshotView;
   it("treats only a tab with no calculated cell as blocked; out-of-range cells still count", () => {
@@ -220,5 +225,28 @@ describe("whole-tab states", () => {
     expect(notApplicableAttempt({ status: "failed", reason: { code: "fund_not_supported" } })).toBe(true);
     expect(notApplicableAttempt({ status: "failed", reason: { code: "price_unavailable", subCode: "provider_error" } })).toBe(false);
     expect(notApplicableAttempt(null)).toBe(false);
+  });
+});
+
+describe("0.9.2 multiplier display", () => {
+  it("keeps the server's half-even display without floating-point rounding", () => {
+    expect(displayPercent("10.0")).toBe("+10.0%");
+    expect(displayPercent("-10.0", "%p")).toBe("−10.0%p");
+    expect(displayPercent("-0.0")).toBe("0.0%");
+    expect(displayPercent("9007199254740993.1")).toBe("+9,007,199,254,740,993.1%");
+    expect(displayPercent(undefined)).toBe("—");
+  });
+  it("does not turn a positive tiny multiplier into zero or emit non-finite text", () => {
+    expect(timesText(0.00004)).toBe("×0.00004");
+    for (const value of [0, -1, Infinity, NaN]) expect(timesText(value)).toBe("—");
+  });
+  it("formats ratios with thousands separators and a real minus", () => {
+    expect(ratioText(27.8235)).toBe("+2,782.4%");
+    expect(ratioText(-0.6802, 0)).toBe("−68%");
+    expect(ratioText(-0.0001)).toBe("0.0%");
+    expect(timesText(28.8235)).toBe("×28.8");
+    expect(timesText(0.3197)).toBe("×0.32");
+    expect(timesText(1.25)).toBe("×1.25");
+    expect(timesText(9.2153)).toBe("×9.22");
   });
 });

@@ -165,6 +165,8 @@ def build_chat_prompt(message: str, context: dict, options: dict, markdown: str 
     effort = EFFORT_HINTS.get(options.get("effort", "medium"), EFFORT_HINTS["medium"])
     attachments = _attachment_block(options)
     exact_review_challenge = context.get("exactReviewChallenge") is True
+    from features.price_scenarios.movement_context import render_movement_context
+    movement_context = "" if exact_review_challenge else render_movement_context(DATA_DIR, context.get("chartMovement"))
     raw_scope = str(context.get("marketScope") or "").strip()
     saved_scope = normalize_saved_market_scope(raw_scope)
     regions = tuple(code.value for code in market_keys_for_scope(saved_scope, saved=True)) if saved_scope else ()
@@ -179,6 +181,7 @@ def build_chat_prompt(message: str, context: dict, options: dict, markdown: str 
         "사용자 메모·첨부는 hypothesis(가설)이며 객관적 근거처럼 단정하지 않는다. 저장된 파일을 수정하라는 요청이라도 이 응답에서는 수정하지 말고 답변만 한다. "
         "사용자의 현재 질문에 먼저 직접 답한다. 정해진 절차나 질문지를 강요하지 않는다.",
         market_memory,
+        movement_context,
         "" if exact_review_challenge else render_collection_projection(context),
         "정확한 저장 투자 리뷰 반박 범위입니다. 제공된 review date/revision/roster 이외의 현재 Portfolio·시장·보고서 정보를 추론하거나 주입하지 마세요." if exact_review_challenge else "",
         f"현재 화면 컨텍스트:\n{_context_block(context, '' if exact_review_challenge else markdown)}",

@@ -9,6 +9,7 @@ import {
 } from "./PriceParts";
 import { attemptBanner, bannerFor, heroText, noReturns, notApplicableAttempt, showReferenceFacts, irrText, money, pct, percentToFraction, fractionToPercent, reasonText, rowFor, toNumber, type Banner } from "./format";
 import type { Criteria, Override, Overview, Projection, SnapshotView } from "./types";
+import { HistoricalReturnSection } from "./HistoricalReturn";
 
 const CALCULATION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -207,6 +208,8 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
 
       {view && supported && blocked && !calculating && (
         <>
+          {/* 수익률이 없는 종목은 ①②가 없으므로 ③ 번호 머리만 홀로 두지 않는다(0.9.1 정리 원칙). */}
+          {view.methodVersion === "price-scenario-5" && <HistoricalReturnSection key={view.snapshotId} view={view} />}
           {decompositionReady && (
             <GuideSection id="price-decomp-title" title="지난 5년 이익 성장은 어디서 왔나"
               meta={view.results.decomposition.status === "available" ? `FY${view.results.decomposition.recentWindow[0]} → FY${view.results.decomposition.recentWindow[1]}` : undefined}
@@ -246,7 +249,8 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
           </GuideSection>
           <NoGrowthSection view={view} projection={projection} onSetCriteria={() => openCriteria(document.activeElement as HTMLElement | null)} />
 
-          <PartHeader number={3} title="과거 기록은 어땠나" sub="이익이 무엇으로 늘었고, 현금으로 얼마나 남았는지" />
+          <PartHeader number={3} title="과거 기록은 어땠나" sub="주가와 이익이 무엇으로 늘었고, 현금으로 얼마나 남았는지" />
+          <HistoricalReturnSection key={view.snapshotId} view={view} />
           <GuideSection id="price-decomp-title" title="지난 5년 이익 성장은 어디서 왔나"
             meta={view.results.decomposition.status === "available" ? `FY${view.results.decomposition.recentWindow[0]} → FY${view.results.decomposition.recentWindow[1]}` : undefined}
             question="지난 5년 주당이익 성장이 무엇에서 왔는지 나눠 봅니다."

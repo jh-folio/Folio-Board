@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { atLeastRequired, cashPerHundred, cashSpan, goalText, irrText, multiple, percentOne, plainOne, rowFor, toNumber, usableGoal } from "./format";
+import { atLeastRequired, cashPerHundred, cashSpan, displayPercent, goalText, irrText, multiple, percentOne, plainOne, ratioText, rowFor, toNumber, usableGoal } from "./format";
 import type { Criteria, Projection, SnapshotView } from "./types";
 
 // 가격 탭을 읽는 순서를 화면에 드러내는 틀: ①②③ 묶음, 섹션마다 같은 틀(질문·계산·이렇게 보세요), 한눈에 보기.
@@ -10,6 +10,7 @@ export const SECTION_IDS = {
   reverse: "price-reverse-title",
   noGrowth: "price-no-growth-title",
   cash: "price-cash-title",
+  historical: "price-historical-return-title",
 } as const;
 
 export function scrollToSection(id: string) {
@@ -28,8 +29,8 @@ export function PartHeader({ number, title, sub }: { number: number; title: stri
 }
 
 /** 섹션마다 같은 틀: 제목 → 이 섹션이 답하는 질문 → 내용 → 계산 → 이렇게 보세요. */
-export function GuideSection({ id, title, meta, question, hint, calc, read, children }: {
-  id: string; title: string; meta?: ReactNode; question?: ReactNode; hint?: string; calc?: ReactNode; read?: ReactNode; children: ReactNode;
+export function GuideSection({ id, title, meta, question, hint, calc, read, footer, children }: {
+  id: string; title: string; meta?: ReactNode; question?: ReactNode; hint?: string; calc?: ReactNode; read?: ReactNode; footer?: ReactNode; children: ReactNode;
 }) {
   return (
     <section className="price-section" aria-labelledby={id}>
@@ -38,6 +39,7 @@ export function GuideSection({ id, title, meta, question, hint, calc, read, chil
       {children}
       {calc && <div className="price-calc"><b>계산</b><span>{calc}</span></div>}
       {read && <p className="price-read"><b>이렇게 보세요</b>{read}</p>}
+      {footer}
     </section>
   );
 }
@@ -105,6 +107,16 @@ export function glanceItems({ view, projection, criteria, horizon }: { view: Sna
       : <>성장이 없어도 지금 가격이 설명됩니다({basis}).</>, target: SECTION_IDS.noGrowth, label: "② 성장이 없다면" });
   } else if (noGrowth && noGrowth.status === "unavailable" && noGrowth.reason.code === "criteria_not_set") {
     items.push({ key: "noGrowth", body: <>내 기준(원하는 최소 수익률)을 정하면, 지금 가격 중 성장에 거는 몫을 보여 드립니다.</>, target: SECTION_IDS.noGrowth, label: "② 성장이 없다면" });
+  }
+  // ③ 지난 주가 수익(기본 5년). 다른 줄처럼 사실만 적고 섹션으로 옮겨 준다.
+  const past = view.historicalReturnAttribution;
+  if (past && past.status === "available" && past.priceReturn !== undefined) {
+    const span = `지난 ${past.requestedYears ?? 5}년(FY${past.startFiscalYear}–FY${past.endFiscalYear})`;
+    const priceText = displayPercent(past.display?.price);
+    const e = past.earnings;
+    items.push({ key: "historical", body: e?.status === "available"
+      ? <>{span} 주가 <b>{priceText}</b>: 주당이익 {ratioText(Number(e.endEps) / Number(e.startEps) - 1, 0)}, PER {ratioText(Number(e.endPE) / Number(e.startPE) - 1, 0)}.</>
+      : <>{span} 주가 <b>{priceText}</b>. 이 기간은 이익과 PER로 나누지 않았습니다.</>, target: SECTION_IDS.historical, label: "③ 지난 주가 수익은 어디서 왔나" });
   }
   const cash = view.results.cashConversion;
   if (cash && cash.status === "available") {

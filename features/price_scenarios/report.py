@@ -70,7 +70,14 @@ def reason_text(reason: str | dict | None) -> str:
     if code == "price_unavailable" and sub == "provider_error":
         return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요"
     if code == "financial_history_unavailable" and sub == "provider_error":
-        return "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요"
+        return ("공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요" if detail.get("sourceFailureVerified")
+                else "공시 원문을 읽지 못했습니다. 오류가 일시적인지는 확인하지 못했습니다")
+    if code == "financial_history_unavailable" and sub in {"source_not_found", "source_access_denied", "source_request_failed"}:
+        status = detail.get("httpStatus")
+        suffix = f"(HTTP {status})" if type(status) is int and 100 <= status <= 599 else ""
+        return {"source_not_found": f"공시 원문 주소에서 자료를 찾을 수 없습니다{suffix}. 이번 계산은 중단했고 이전 저장 결과를 유지합니다",
+                "source_access_denied": f"공시 원문 제공처가 접근을 허용하지 않았습니다{suffix}. 이번 계산은 중단했고 이전 저장 결과를 유지합니다",
+                "source_request_failed": "공시 원문을 읽지 못했습니다. 오류가 일시적인지는 확인하지 못했습니다"}[sub]
     if code == "history_too_short" and all(k in detail for k in ("range", "n", "required", "historyYears")):
         n, required, years = detail["n"], detail["required"], detail["historyYears"]
         windows = detail["range"] in {"growth", "rpsGrowth"}

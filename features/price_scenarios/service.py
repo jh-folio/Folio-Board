@@ -40,9 +40,10 @@ def _instrument_lock(instrument_id: str) -> threading.Lock:
 class CalculationNotStored(RuntimeError):
     """No valid snapshot could be built; `.code` is the stable reason."""
 
-    def __init__(self, code: str, sub_code: str | None = None):
+    def __init__(self, code: str, sub_code: str | None = None, source_diagnostic: dict | None = None):
         super().__init__(code)
         self.code, self.sub_code = code, sub_code
+        self.source_diagnostic = source_diagnostic or {}
 
 
 def parse_instrument(value) -> tuple[str, str]:
@@ -128,9 +129,9 @@ def calculate(root, instrument_id: str, *, job_id=None, progress=None, collector
         except CancelledError:
             raise
         except CollectionError as error:
-            _write_attempt(root, instrument_id, {"status": "failed", "reason": {"code": error.code, **({"subCode": error.sub_code} if error.sub_code else {})},
+            _write_attempt(root, instrument_id, {"status": "failed", "reason": {**error.source_diagnostic, "code": error.code, **({"subCode": error.sub_code} if error.sub_code else {})},
                                                  "startedAt": started, "finishedAt": clock().isoformat()})
-            raise CalculationNotStored(error.code, error.sub_code) from None
+            raise CalculationNotStored(error.code, error.sub_code, error.source_diagnostic) from None
         except CalculationNotStored as error:
             _write_attempt(root, instrument_id, {"status": "failed", "reason": {"code": error.code, **({"subCode": error.sub_code} if error.sub_code else {})},
                                                  "startedAt": started, "finishedAt": clock().isoformat()})
@@ -168,7 +169,7 @@ def overview(root, instrument_id: str) -> dict:
             "history": store.history(instrument_id), "lastAttempt": read_attempt(root, instrument_id)}
 
 
-def snapshot_view(root, snapshot_id_: str, *, include_inputs: bool = False) -> dict | None:
+def snapshot_view(root, snapshot_id_: str, *, include_inputs: bool = False, attribution_years: int = 5) -> dict | None:
     snapshot = store_for(root).get(snapshot_id_)
     if snapshot is None:
         return None
@@ -183,7 +184,22 @@ def snapshot_view(root, snapshot_id_: str, *, include_inputs: bool = False) -> d
             "meta": snapshot["meta"]}
     if include_inputs:
         view["inputs"] = snapshot["inputs"]
+    from .attribution import historical_attribution
+    view["historicalReturnAttribution"] = historical_attribution(snapshot["inputs"], attribution_years)
     return view
+
+
+def movement_view(root, instrument_id: str, start: str, end: str, snapshot_id_: str | None = None) -> dict:
+    parse_instrument(instrument_id)
+    store = store_for(root)
+    snapshot = store.get(snapshot_id_) if snapshot_id_ else store.latest(instrument_id)
+    if snapshot is None:
+        return {"status": "not_applicable", "reason": {"code": "comparison_inputs_missing"}}
+    if snapshot["instrumentId"] != instrument_id:
+        raise PriceStoreError("snapshot_instrument_mismatch")
+    from .attribution import movement
+    return {**movement(snapshot["inputs"], start, end), "snapshotId": snapshot["snapshotId"],
+            "inputFingerprint": snapshot["inputFingerprint"]}
 
 
 def projection_view(root, snapshot_id_: str, *, criteria_revision_id: int | None = None, override_id: int | None = None,
@@ -235,9 +251,10 @@ def snapshot_for_report(root, company: dict, *, calculator=None, progress=None, 
     except ValueError:
         return {"status": "unavailable", "reason": {"code": "instrument_not_supported"}}
     except CalculationNotStored as error:
-        return {"status": "unavailable", "reason": {"code": error.code, **({"subCode": error.sub_code} if error.sub_code else {})}}
+        return {"status": "unavailable", "reason": {**error.source_diagnostic, "code": error.code, **({"subCode": error.sub_code} if error.sub_code else {})}}
     view = snapshot_view(root, out["snapshotId"])
     if view is None:
         return {"status": "unavailable", "reason": {"code": "snapshot_not_readable"}}
     view["results"].pop("referenceFacts", None)
+    view.pop("historicalReturnAttribution", None)
     return {"status": "saved", "snapshotId": out["snapshotId"], "view": view}

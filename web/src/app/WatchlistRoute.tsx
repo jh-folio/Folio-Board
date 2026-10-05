@@ -7,7 +7,7 @@ import { ConsultationEntry } from "./watchlist/ConsultationEntry";
 import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { ExposurePanel } from "./macro/ExposurePanel";
-import { PriceTab } from "./price/PriceTab";
+import { PriceTab, instrumentIdFor } from "./price/PriceTab";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
@@ -456,6 +456,8 @@ export function WatchlistRoute({ active = true }: { active?: boolean }) {
                     // 머리에도 올려 봤지만 차트 종가와 신선도가 갈려 두 숫자가 모순처럼
                     // 읽혔다(2026-08-22 사용자 결정: 차트 하나만 남긴다).
                     showEvent={false}
+                    movementInstrumentId={instrumentIdFor(detailTicker, detail?.company?.market)}
+                    onOpenPrice={() => { setPriceOpened(true); setDetailTab("price"); }}
                   />
                 </section>
                 <section id="watchlist-earnings" className="watchlist-detail-section watchlist-detail-section--earnings">

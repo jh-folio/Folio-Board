@@ -1,6 +1,19 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
+test('0.9.2 chart comparison link opens the same monthly-record reader with exact market and date', async ({page})=>{
+  const {stateUrls,writes}=await mockApi(page);
+  await page.goto('/#/macro/state?market=KR&compareDate=2025-01-02');
+  await expect(page.getByRole('heading',{name:'한국 현재 상태'})).toBeVisible();
+  await expect(page.locator('input[type="date"]')).toHaveValue('2025-01-02');
+  await expect.poll(()=>stateUrls.includes('?market=KR&date=2025-01-02')).toBe(true);
+  await expect(page.locator('.macro-notice').filter({hasText:'이전에 저장된 기록이 없습니다.'})).toBeVisible();
+  expect(writes).toEqual([]);
+  await page.goto('/#/macro/state?market=KR&compareDate=2099-01-01');
+  await expect(page.getByText('기준일 또는 시장이 올바르지 않습니다. 미래 날짜는 비교할 수 없습니다.')).toBeVisible();
+  expect(stateUrls.some(s=>s.includes('2099'))).toBe(false);
+});
+
 const snap = (axis: string, level: string, direction: string, extra: Record<string, unknown> = {}) => ({
   snapshotId: `macro-${axis}`, inputFingerprint: 'test', asOf: '2026-09-29T10:00:00Z', axis, level, direction,
   promotion: 'shadow', confidence: 'medium', freshness: 'current', conflicts: [], unknownReason: [], sourceRefs: [], ...extra,

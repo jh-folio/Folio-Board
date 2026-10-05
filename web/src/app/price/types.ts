@@ -1,7 +1,15 @@
 // 가격 탭이 읽는 응답 형태. 서버(features/price_scenarios)의 계약을 그대로 옮긴 것이며,
 // 숫자는 전부 문자열(Decimal)로 온다 — 화면에서 계산하지 않고 형식만 바꾼다.
 
-export type Reason = { code: string; subCode?: string; range?: string; n?: number; required?: number; historyYears?: number };
+export type Reason = { code: string; subCode?: string; range?: string; n?: number; required?: number; historyYears?: number; sourceFailureVerified?: boolean; httpStatus?: number | null; startFiscalYear?: number; endFiscalYear?: number; firstFiscalYear?: number; requestedYears?: number; endpoint?: string; endpoints?: string[]; requestedDate?: string; startDate?: string; endDate?: string };
+
+export type AttributionBlock = { status: string; reason?: Reason; requestedYears?: number; startFiscalYear?: number; endFiscalYear?: number;
+  calculation?: { rawPriceReturn: string; rawGrowth?: string | null; rawRerating?: string | null; rawDividend?: string | null; rawTotal?: string | null; response: Record<string, string | null>; display: Record<string, string> };
+  basis?: { start: { close: string; eps: Record<string, unknown> | null }; end: { close: string; eps: Record<string, unknown> | null }; priceSource: Record<string, unknown> };
+  startDate?: string; endDate?: string; startClose?: string; endClose?: string; priceReturn?: string;
+  display?: Record<string, string>; earnings?: { status: string; reason?: Reason; startEps?: string; endEps?: string; startPE?: string; endPE?: string; growth?: string; rerating?: string };
+  dividend?: { status: string; reason?: Reason; amount?: string; contribution?: string; basis?: string }; total?: { status: string; reason?: Reason; value?: string };
+  benchmark?: { status: string; id?: string; reason?: Reason; display?: Record<string, string>; startClose?: string; endClose?: string } };
 export type Notice = string | { code: string; years?: number[]; class?: string };
 export type Unavailable = { status: "unavailable"; reason: Reason };
 export type PreviousMethod = { status: "not_applicable"; reason: { code: string } };
@@ -65,6 +73,7 @@ export type SnapshotResults = {
 export type SnapshotView = {
   snapshotId: string; instrumentId: string; asOf: string; computedAt: string; methodVersion: string; supportStatus: string;
   results: SnapshotResults;
+  historicalReturnAttribution?: AttributionBlock;
   inputSummary: { asOf: string; identity: { ticker: string; market: string }; price: { value: string; sessionDate: string; currency: string } };
 };
 

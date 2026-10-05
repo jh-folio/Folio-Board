@@ -205,15 +205,30 @@ function nextLine(next: StateResult["nextCheckpoints"]): string {
   return [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, ids]) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))} ${ids.join("·")}`).join(" · ");
 }
 
+function comparisonLink() {
+  const query = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  const rawMarket = query.get("market"), date = query.get("compareDate") || "";
+  const market: Market = rawMarket === "KR" ? "KR" : "US";
+  const valid = !date || (/^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date && date <= new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" }));
+  return { market, date, error: !valid || rawMarket !== null && !["US", "KR"].includes(rawMarket) ? "기준일 또는 시장이 올바르지 않습니다. 미래 날짜는 비교할 수 없습니다." : "" };
+}
+
 export function CurrentState() {
-  const [market, setMarket] = useState<Market>("US");
+  const initial = comparisonLink();
+  const [market, setMarket] = useState<Market>(initial.market);
   const [data, setData] = useState<StateResult | null>(null);
   const [map, setMap] = useState<MacroItem[]>([]);
   const [error, setError] = useState("");
-  const [comparing, setComparing] = useState(false);
-  const [date, setDate] = useState("");
+  const [comparing, setComparing] = useState(Boolean(initial.date));
+  const [date, setDate] = useState(initial.error ? "" : initial.date);
+  const [linkError, setLinkError] = useState(initial.error);
   const [compare, setCompare] = useState<StateResult | null>(null);
   const [compareError, setCompareError] = useState("");
+  useEffect(() => {
+    const sync = () => { const next = comparisonLink(); setMarket(next.market); setDate(next.error ? "" : next.date); setComparing(Boolean(next.date)); setLinkError(next.error); };
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
 
   useEffect(() => {
     let live = true; setData(null); setError(""); setMap([]);
@@ -253,6 +268,7 @@ export function CurrentState() {
       </div>
     </div>
 
+    {linkError && <p role="alert" className="macro-notice">{linkError}</p>}
     {comparing && <div className="macro-now__compare-bar">
       <label className="macro-date">기준일 <input type="date" value={date} max={data?.date} onChange={e => setDate(e.target.value)} /></label>
       <p className="macro-foot">그 날짜 이전의 가장 최근 월말 기록과 지금을 나란히 보여 줍니다. 칸 테두리가 기준일 위치입니다.</p>

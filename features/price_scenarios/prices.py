@@ -120,7 +120,9 @@ def fetch_daily_history(ticker: str, market: str, metadata: dict, *, now: dt.dat
     for index, row in frame.iterrows():
         day = index.date().isoformat()
         raw_bars.append({"date": day, "close": source_number(row.get("Close")),
-                         "dividend": source_number(row.get("Dividends"))})
+                         "adjClose": source_number(row.get("Adj Close")),
+                         "dividend": source_number(row.get("Dividends")),
+                         "capitalGain": source_number(row.get("Capital Gains"))})
         ratio = source_number(row.get("Stock Splits"))
         if ratio is None or number(ratio) < 0:
             event_source_complete = False
@@ -135,8 +137,32 @@ def fetch_daily_history(ticker: str, market: str, metadata: dict, *, now: dt.dat
     events = [event for event in events if event["eventDate"] <= price["sessionDate"]]
     return {"price": price, "closes": closes, "rawBars": raw_bars, "events": events,
             "quoteType": quote_metadata.get("instrumentType") or quote_metadata.get("quoteType"),
+            "sourceVersion": yf.__version__, "dividendColumnPresent": "Dividends" in frame.columns,
+            "quoteMetadata": {key: quote_metadata.get(key) for key in ("symbol", "currency", "exchangeTimezoneName", "instrumentType")},
             "eventSourceState": "received" if event_source_complete else "unknown",
             "exchangeSource": exchange_source,
             "request": {"provider": "yfinance", "providerSymbol": symbol, "start": start.isoformat(),
-                        "endExclusive": (end + dt.timedelta(days=1)).isoformat(), "interval": "1d", "autoAdjust": False},
+                        "endExclusive": (end + dt.timedelta(days=1)).isoformat(), "interval": "1d", "autoAdjust": False,
+                        "backAdjust": False, "actions": True, "repair": False, "rounding": False, "raiseErrors": True,
+                        "timeoutSeconds": source_number(timeout)},
             "fetchedAt": now.isoformat()}
+
+
+def fetch_benchmark(market: str, request: dict, *, now: dt.datetime, timeout=8.0) -> dict:
+    """Explicit collection only. An index failure is a stored data gap, not a stock failure."""
+    import yfinance as yf
+    symbol, currency, zone, label = {"US": ("^GSPC", "USD", "America/New_York", "S&P 500"),
+                                   "KR": ("^KS11", "KRW", "Asia/Seoul", "KOSPI")}[market]
+    stock = yf.Ticker(symbol)
+    frame = stock.history(start=request["start"], end=request["endExclusive"], interval="1d", auto_adjust=False,
+                          back_adjust=False, actions=True, repair=False, rounding=False, timeout=timeout, raise_errors=True)
+    metadata = stock.get_history_metadata() or {}
+    if (frame is None or frame.empty or "Close" not in frame.columns or metadata.get("symbol") != symbol
+            or metadata.get("instrumentType") != "INDEX" or metadata.get("currency") != currency
+            or metadata.get("exchangeTimezoneName") != zone):
+        return {"sourceState": "unavailable", "reason": {"code": "benchmark_identity_unverified"}, "id": label}
+    bars = [{"date": index.date().isoformat(), "close": source_number(row["Close"])} for index, row in frame.iterrows()]
+    return {"id": label, "providerSymbol": symbol, "kind": "price", "market": market,
+            "currency": currency, "exchangeTimezone": zone, "sourceVersion": yf.__version__,
+            "request": {**request, "providerSymbol": symbol, "timeoutSeconds": source_number(timeout)}, "sourceState": "received",
+            "closes": completed_closes(bars, market, now=now)}

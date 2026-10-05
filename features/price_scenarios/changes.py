@@ -83,13 +83,17 @@ def _lineage(inputs, years):
 
 def restated_items(old: dict, new: dict) -> list[dict]:
     """Values for the same metric and fiscal year that really changed between two snapshots."""
+    from . import known_spec
+    if not all(known_spec(s["inputs"]) for s in (old, new)):
+        return []
     events, session, ads = _events(new), new["inputs"]["asOf"], _ads(new)
     before, after = _actual_sources(old["inputs"]), _actual_sources(new["inputs"])
     out = []
     with localcontext() as context:
         context.prec, context.rounding = 28, ROUND_HALF_EVEN
         for key in sorted(set(before) & set(after), key=repr):
-            if key[0] == "Stock-Based Compensation" and {old["inputs"]["methodVersion"], new["inputs"]["methodVersion"]} == {"price-scenario-3", "price-scenario-4"}:
+            versions = {old["inputs"]["methodVersion"], new["inputs"]["methodVersion"]}
+            if key[0] == "Stock-Based Compensation" and "price-scenario-3" in versions and versions & {"price-scenario-4", "price-scenario-5"}:
                 continue  # IFRS tag precedence changed, not necessarily the issuer's disclosed value.
             old_value, old_res = _adjusted(before[key], events, session, ads)
             new_value, new_res = _adjusted(after[key], events, session, ads)

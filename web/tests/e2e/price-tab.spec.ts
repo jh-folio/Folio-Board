@@ -1,6 +1,212 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
+const ATTRIBUTION = { status: 'available', requestedYears: 5, startFiscalYear: 2020, endFiscalYear: 2025,
+  startDate: '2020-12-31', endDate: '2025-12-31', startClose: '100', endClose: '150', priceReturn: '.5000',
+  display: { growth: '20.0', rerating: '30.0', dividend: '5.0', total: '55.0', price: '50.0' },
+  earnings: { status: 'available', startEps: '10', endEps: '12', startPE: '10', endPE: '12.5' },
+  dividend: { status: 'available', amount: '5', contribution: '.0500' }, total: { status: 'available', value: '.5500' },
+  benchmark: { status: 'available', id: 'S&P 500', startClose: '100', endClose: '125', display: { stock: '50.0', index: '25.0', difference: '25.0' } },
+};
+
+async function expectReadableFactorAxis(page: Page) {
+  const axis = page.locator('.price-section:has(#price-historical-return-title) .price-xbars__axis');
+  await expect(axis.locator('[data-tick="1"]')).toBeVisible();
+  await expect.poll(async () => axis.locator('span').evaluateAll(nodes => {
+    const boxes = nodes.filter(n => getComputedStyle(n).display !== 'none')
+      .map(n => n.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    return boxes.every((box, i) => i === 0 || box.left >= boxes[i - 1].right + 5);
+  })).toBe(true);
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`0.9.2 historical attribution selection signed bars and exact visible sum ${theme}`, async ({ page }) => {
+    const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: ATTRIBUTION };
+    const writes = await mockApi(page, { view });
+    await page.route('**/api/price-snapshots/price-now?attributionYears=*', route => route.fulfill({ json: { ...view,
+      historicalReturnAttribution: { ...ATTRIBUTION, requestedYears: 3, startFiscalYear: 2022,
+        display: { ...ATTRIBUTION.display, rerating: '-25.0', total: '0.0' } } } }));
+    await openPrice(page, theme);
+    const section = page.locator('.price-section:has(#price-historical-return-title)');
+    // 첫 문장은 주가 수익과 사실 결론, 카드는 각 요인 자체의 변화율, 덧셈 %p와 지수 비교는 계산 상자.
+    await expect(section.locator('.price-lead')).toHaveText('이 기간 주가는 +50.0%(×1.50) 올랐습니다. 주당이익 증가와 PER 상승이 함께 끌어올렸고, PER 쪽 몫이 더 컸습니다.');
+    await expect(section.locator('.price-dec__card')).toHaveText([/주당이익\s*\+20%/, /PER\s*\+25%\s*10\.0배 → 12\.5배/, /받은 배당\s*\+5\.0%/]);
+    await expect(section.locator('.price-calc')).toContainText('받은 배당까지 더하면 전체 +55.0%');
+    await expect(section.locator('.price-calc')).toContainText('이익 +20.0%p, PER +30.0%p, 배당 +5.0%p');
+    await expect(section.locator('.price-calc')).toContainText('종목 +50.0% / S&P 500 +25.0%, 차이 +25.0%p');
+    await expect(section.getByRole('img', { name: '주당이익 ×1.20, PER ×1.25, 주가 ×1.50, S&P 500 ×1.25' })).toBeVisible();
+    await expect(page.locator('.price-glance')).toContainText('지난 5년(FY2020–FY2025) 주가 +50.0%: 주당이익 +20%, PER +25%.');
+    const perCard = section.getByRole('button', { name: /^PER/ });
+    await perCard.focus(); await page.keyboard.press('Enter');
+    await expect(perCard).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Space');
+    await expect(perCard).toHaveAttribute('aria-pressed', 'false');
+    await page.keyboard.press('Space');
+    await expect(section.locator('.price-explain')).toContainText('10.0배에서 12.5배로 +25% 바뀌었습니다');
+    await expect(section.locator('.price-xbar__fill.is-dim')).toHaveCount(1);
+    await expectReadableFactorAxis(page);
+    await expect(section.locator('.price-xbars__axis span:visible')).toHaveText(['×0.5', '×1', '×2']);
+    if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/attribution-${theme}-${test.info().project.name}.png` });
+    await section.getByRole('button', { name: '3년', exact: true }).click();
+    await expect(section.locator('.price-calc')).toContainText('전체 0.0%');
+    await expect(section.locator('.price-calc')).toContainText('PER −25.0%p');
+    await expect(section).toContainText('별도의 5년 구간');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const result = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+    expect(result.violations.map(v => v.id)).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`0.9.2 review fixes half-even price and saved movement ${theme}`, async ({ page }) => {
+    const attribution = { ...ATTRIBUTION, endClose: '110.05', priceReturn: '.1005',
+      earnings: { ...ATTRIBUTION.earnings, endPE: '9.170833333333333333333333333' },
+      dividend: { status: 'available', amount: '0', contribution: '.0000' }, total: { status: 'available', value: '.1005' },
+      display: { growth: '20.0', rerating: '-10.0', dividend: '0.0', total: '10.0', price: '10.0' },
+      benchmark: { ...ATTRIBUTION.benchmark, display: { stock: '10.0', index: '25.0', difference: '-15.0' } } };
+    const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: attribution };
+    const writes = await mockApi(page, { view });
+    const reads: URL[] = [];
+    await page.route('**/api/price-movement?*', route => {
+      reads.push(new URL(route.request().url()));
+      return route.fulfill({ json: { status: 'available', snapshotId: view.snapshotId, priceReturn: '.1005', displayPriceReturn: '10.0' } });
+    });
+    await openPrice(page, theme);
+    const section = page.locator('.price-section:has(#price-historical-return-title)');
+    await expect(section.locator('.price-lead')).toContainText('+10.0%');
+    await expect(page.locator('.price-glance')).toContainText('주가 +10.0%');
+    await expect(section.locator('.price-calc')).toContainText('전체 +10.0%');
+    await expect(section).toContainText(`그 뒤 계산 기준일(${view.asOf})까지 주가는 +10.0%`);
+    await expect(section).not.toContainText('+10.1%');
+    expect(reads).toHaveLength(1);
+    expect(reads[0].searchParams.get('snapshotId')).toBe(view.snapshotId);
+    expect(reads[0].searchParams.get('startDate')).toBe(attribution.endDate);
+    expect(reads[0].searchParams.get('endDate')).toBe(view.asOf);
+    expect(writes).toEqual([]);
+    if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/half-even-${theme}-${test.info().project.name}.png` });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const axe = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+    expect(axe.violations.map(v => v.id)).toEqual([]);
+  });
+  for (const dividends of ['available', 'unavailable'] as const) {
+    test(`0.9.2 review fixes missing EPS with ${dividends} dividend ${theme}`, async ({ page }) => {
+      const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: { ...ATTRIBUTION,
+        earnings: { status: 'unavailable', reason: { code: 'attribution_history_too_short', subCode: 'missing_endpoint_eps', endFiscalYear: 2025, endpoints: ['end'] } },
+        ...(dividends === 'unavailable' ? { dividend: { status: 'unavailable', reason: { code: 'dividend_history_unavailable' } }, total: { status: 'unavailable' }, display: { price: '50.0' } } : {}) } };
+      const writes = await mockApi(page, { view }); await openPrice(page, theme);
+      const section = page.locator('.price-section:has(#price-historical-return-title)');
+      await expect(section.locator('.price-read')).toContainText('주당이익이 없어');
+      await expect(section.locator('.price-read')).not.toContainText('적자');
+      await expect(section.locator('.price-dec__card')).toHaveCount(0);
+      if (dividends === 'available') {
+        await expect(section.locator('.price-calc')).toContainText('받은 배당은 시작 주가 대비 +5.0%');
+        await expect(section.locator('.price-calc')).toContainText('전체 +55.0%');
+      } else await expect(section).toContainText('배당 포함 전체 수익을 계산하지 않았습니다');
+      expect(writes).toEqual([]);
+      if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/missing-eps-${dividends}-${theme}-${test.info().project.name}.png` });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      const axe = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+      expect(axe.violations.map(v => v.id)).toEqual([]);
+    });
+  }
+  test(`0.9.2 review fixes positive tiny stock and index log bars ${theme}`, async ({ page }) => {
+    const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: { ...ATTRIBUTION,
+      endClose: '.004', priceReturn: '-1.0000', earnings: { ...ATTRIBUTION.earnings, endPE: '.0003333333333333333333333333333' },
+      dividend: { status: 'available', amount: '0', contribution: '.0000' }, total: { status: 'available', value: '-1.0000' },
+      display: { growth: '20.0', rerating: '-120.0', dividend: '0.0', total: '-100.0', price: '-100.0' },
+      benchmark: { ...ATTRIBUTION.benchmark, endClose: '.004', display: { stock: '-100.0', index: '-100.0', difference: '0.0' } } } };
+    const writes = await mockApi(page, { view }); await openPrice(page, theme);
+    const section = page.locator('.price-section:has(#price-historical-return-title)');
+    await expect(section.getByRole('img')).toHaveAttribute('aria-label', /주가 ×0\.00004, S&P 500 ×0\.00004/);
+    const fills = await section.locator('.price-xbar__fill').evaluateAll(nodes => nodes.map(n => ({ style: n.getAttribute('style'), width: n.getBoundingClientRect().width })));
+    expect(fills).toHaveLength(4);
+    for (const fill of fills) { expect(fill.style).not.toMatch(/NaN|Infinity/); expect(fill.width).toBeGreaterThan(0); }
+    expect(writes).toEqual([]);
+    await expectReadableFactorAxis(page);
+    if (process.env.PRICE_CAPTURE_DIR) await section.screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/tiny-factor-${theme}-${test.info().project.name}.png` });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const axe = await new AxeBuilder({ page }).include('[data-price-tab]').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+    expect(axe.violations.map(v => v.id)).toEqual([]);
+  });
+  test(`0.9.2 extreme axis remains readable when resized ${theme}`, async ({ page }) => {
+    const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: { ...ATTRIBUTION,
+      endClose: '1e-40', priceReturn: '-1.0000', earnings: { ...ATTRIBUTION.earnings, endPE: '8.333333333333333e-42' },
+      dividend: { status: 'available', amount: '0', contribution: '.0000' }, total: { status: 'available', value: '-1.0000' },
+      display: { growth: '20.0', rerating: '-120.0', dividend: '0.0', total: '-100.0', price: '-100.0' },
+      benchmark: { ...ATTRIBUTION.benchmark, endClose: '1e-40', display: { stock: '-100.0', index: '-100.0', difference: '0.0' } } } };
+    const writes = await mockApi(page, { view }); await openPrice(page, theme);
+    for (const width of [1440, 390, 320, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expectReadableFactorAxis(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    }
+    expect(writes).toEqual([]);
+    if (process.env.PRICE_CAPTURE_DIR) await page.locator('.price-section:has(#price-historical-return-title)').screenshot({ path: `${process.env.PRICE_CAPTURE_DIR}/extreme-axis-${theme}-${test.info().project.name}.png` });
+  });
+}
+
+test('0.9.2 missing dividend and loss retain price comparison, and legacy inputs explain recalculation', async ({ page }) => {
+  const view = { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: { ...ATTRIBUTION,
+    display: { price: '50.0' }, earnings: { status: 'unavailable', reason: { code: 'non_positive_end_eps', endFiscalYear: 2025 } },
+    dividend: { status: 'unavailable', reason: { code: 'dividend_unit_unverified' } }, total: { status: 'unavailable' } } };
+  await mockApi(page, { view }); await openPrice(page, 'light');
+  const section = page.locator('.price-section:has(#price-historical-return-title)');
+  await expect(section.locator('.price-lead')).toContainText('끝 연도 FY2025 주당이익이 0 이하');
+  // 나누지 못하면 빈 카드·빈 막대를 그리지 않고 주가와 지수만 남긴다.
+  await expect(section.locator('.price-dec__card')).toHaveCount(0);
+  await expect(section.getByRole('img', { name: '주가 ×1.50, S&P 500 ×1.25' })).toBeVisible();
+  await expect(section.locator('.price-calc')).toContainText('종목 +50.0% / S&P 500 +25.0%');
+  await expect(section).toContainText('배당 금액의 주식 단위를 확인하지 못해');
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`0.9.2 chart actions need explicit click and transfer the selected dates ${theme}`, async ({ page }) => {
+    const writes = await mockApi(page);
+    const reads: string[] = [];
+    await page.route('**/api/market/chart?*', route => route.fulfill({ json: { symbol: 'ABC', range: '3m', interval: '1d', provider: 'audit', freshness: 'snapshot',
+      series: ['2025-01-02','2025-01-03','2025-01-06'].map((time,i) => ({time,close:100+i,open:100+i,high:102+i,low:98+i})) } }));
+    await page.route('**/api/price-movement?*', route => {
+      reads.push(route.request().url());
+      return route.fulfill({ json: { status:'available', snapshotId:'fixed-price', asOf:'2025-01-06',startDate:'2025-01-02',endDate:'2025-01-06',startClose:'100',endClose:'103',displayPriceReturn:'3.0',
+        benchmark:{status:'available',id:'S&P 500',display:{index:'1.0'}} } });
+    });
+    await page.addInitScript(value => { localStorage.setItem('folio.themePreference.v1',value);localStorage.setItem('folio.react.agentClosed','1'); },theme);
+    await page.goto('/#/watchlist/ABC');
+    const section = page.locator('.watchlist-detail-section--chart');
+    await expect(section.getByRole('button',{name:'이 움직임 물어보기'})).toBeEnabled();
+    await page.evaluate(() => {
+      (window as unknown as { actionRequests: unknown[] }).actionRequests=[];
+      window.FolioBridge!.openAgentDock = context => { (window as unknown as { actionRequests:unknown[] }).actionRequests.push(context); };
+    });
+    const chart = section.locator('.cockpit-chart-stage');
+    await chart.focus(); await page.keyboard.press('Home');
+    await expect(section.getByRole('link',{name:'기준일 이후 네 축 변화 비교'})).toHaveAttribute('href','#/macro/state?market=US&compareDate=2025-01-02');
+    expect(reads).toEqual([]); expect(writes).toEqual([]);
+    if(process.env.PRICE_CAPTURE_DIR) await section.screenshot({path:`${process.env.PRICE_CAPTURE_DIR}/chart-${theme}-${test.info().project.name}.png`});
+    const axe = await new AxeBuilder({page}).include('.watchlist-detail-section--chart').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+    expect(axe.violations.map(v=>v.id)).toEqual([]);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+    await section.getByRole('button',{name:'이 움직임 물어보기'}).click();
+    await expect.poll(()=>page.evaluate(()=>(window as unknown as {actionRequests:unknown[]}).actionRequests.length)).toBe(1);
+    const action = await page.evaluate(()=>(window as unknown as {actionRequests:Record<string,unknown>[]}).actionRequests[0]);
+    expect(action.chartMovement).toEqual({instrumentId:'US:ABC',snapshotId:'fixed-price',startDate:'2025-01-02',endDate:'2025-01-06'});
+    expect(action.prompt).toContain('배당 제외 +3.0%'); expect(action.autoSubmit).toBe(true);
+    await expect(section).toContainText('차트 종가와 저장 종가가 다릅니다');
+  });
+}
+
+test('0.9.2 failed index and dividend preserve the observed stock return', async ({ page }) => {
+  await mockApi(page, { view: { ...V4, methodVersion: 'price-scenario-5', historicalReturnAttribution: { ...ATTRIBUTION,
+    display: { price: '50.0', growth: '20.0', rerating: '30.0' }, dividend: {status:'unavailable',reason:{code:'dividend_history_unavailable'}},
+    total:{status:'unavailable'}, benchmark:{status:'unavailable',reason:{code:'benchmark_unavailable'}} } } });
+  await openPrice(page, 'dark');
+  const section = page.locator('.price-section:has(#price-historical-return-title)');
+  await expect(section).toContainText('배당 제외 주가 수익: 종목 +50.0%');
+  await expect(section).toContainText('시장지수 자료를 확인하지 못해');
+  await expect(section).toContainText('배당 포함 전체 수익을 계산하지 않았습니다');
+});
+
 const row = (label: string, horizon: number, irr: string, g: string, pe: string, pct: number) => ({
   label, horizon, status: 'available', g, exitPE: pe, payout: '0.3000', irr, irrRange: null,
   percentiles: { g: pct, exitPE: pct, payout: 50 }, n: { g: 5, exitPE: 10, payout: 10 },

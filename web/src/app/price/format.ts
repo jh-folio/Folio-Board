@@ -100,7 +100,11 @@ export function reasonText(reason: string | Reason | undefined | null): string {
   const detail: Partial<Reason> = typeof reason === "string" ? { code: reason } : reason ?? {};
   const { code, subCode, range, n, required, historyYears } = detail;
   if (code === "price_unavailable" && subCode === "provider_error") return "가격 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
-  if (code === "financial_history_unavailable" && subCode === "provider_error") return "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요";
+  if (code === "financial_history_unavailable" && subCode === "provider_error") return detail.sourceFailureVerified ? "공시 제공처가 일시적으로 응답하지 않았습니다. 잠시 뒤 다시 계산해 보세요" : "공시 원문을 읽지 못했습니다. 오류가 일시적인지는 확인하지 못했습니다";
+  const http = Number.isInteger(detail.httpStatus) && Number(detail.httpStatus) >= 100 && Number(detail.httpStatus) <= 599 ? `(HTTP ${detail.httpStatus})` : "";
+  if (code === "financial_history_unavailable" && subCode === "source_not_found") return `공시 원문 주소에서 자료를 찾을 수 없습니다${http}. 이번 계산은 중단했고 이전 저장 결과를 유지합니다`;
+  if (code === "financial_history_unavailable" && subCode === "source_access_denied") return `공시 원문 제공처가 접근을 허용하지 않았습니다${http}. 이번 계산은 중단했고 이전 저장 결과를 유지합니다`;
+  if (code === "financial_history_unavailable" && subCode === "source_request_failed") return "공시 원문을 읽지 못했습니다. 오류가 일시적인지는 확인하지 못했습니다";
   if (code === "history_too_short" && range !== undefined && n !== undefined && required !== undefined && historyYears !== undefined) {
     const windows = range === "growth" || range === "rpsGrowth";
     if (subCode === "years_too_few") {
@@ -395,3 +399,27 @@ export function shiftDecimal(text: string, shift: number): string {
 
 export const percentToFraction = (text: string): string => shiftDecimal(text, -2);
 export const fractionToPercent = (text: string | null | undefined): string => (text === null || text === undefined ? "" : shiftDecimal(text, 2));
+
+/** 비율(0.5 = 50%)을 부호와 천 단위 구분이 있는 %로. */
+export function ratioText(fraction: number, places = 1): string {
+  const text = Math.abs(fraction * 100).toLocaleString("en-US", { minimumFractionDigits: places, maximumFractionDigits: places });
+  const zero = Number(text.replace(/,/g, "")) === 0;
+  return `${fraction > 0 && !zero ? "+" : fraction < 0 && !zero ? "−" : ""}${text}%`;
+}
+/** 배수(1.25 → ×1.25, 28.82 → ×28.8). 10 미만은 소수 둘째 자리까지 보여 ×1.2와 ×1.25를 구별한다. */
+export function timesText(factor: number): string {
+  if (!Number.isFinite(factor) || factor <= 0) return "—";
+  // 작은 양수 배수가 두 자리 반올림으로 0배가 되지 않게 한다.
+  if (factor < 0.005) return `×${Number(factor.toPrecision(2))}`;
+  return `×${factor < 10 ? factor.toFixed(2) : factor.toFixed(1)}`;
+}
+
+/** 서버가 확정한 소수 1자리 % 표시값. 숫자를 다시 반올림하지 않는다. */
+export function displayPercent(percent: string | undefined, unit = "%"): string {
+  const match = /^([+-]?)(\d+)(?:\.(\d))?$/.exec(percent ?? "");
+  if (!match) return "—";
+  const whole = match[2].replace(/^0+(?=\d)/, ""), fraction = match[3] ?? "0";
+  const nonzero = /[1-9]/.test(whole + fraction);
+  const sign = nonzero ? (match[1] === "-" ? MINUS : "+") : "";
+  return `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction}${unit}`;
+}

@@ -16,12 +16,15 @@ def seed(root, inputs, results, monkeypatch):
     # Seed an authentic old-version row using that version's write identity.
     with monkeypatch.context() as m:
         m.setattr(sm, 'SPEC_SHA256', inputs.get('specSha256'))
+        m.setattr(sm, 'METHOD_VERSION', inputs['methodVersion'])
+        m.setattr(sm, 'SPEC_VERSION', inputs['specVersion'])
         return service.store_for(root).save_snapshot(inputs, results)['snapshotId']
 
 
 @pytest.mark.parametrize('sha', [None, SPEC4_REVISION0_SHA256, SPEC4_REVISION1_INITIAL_SHA256, SPEC4_REVISION1_FUND_SOURCE_SHA256, 'f' * 64])
 def test_old_and_future_sha_reads_do_not_rewrite_and_only_current_can_write(tmp_path, monkeypatch, sha):
     i, r = make()
+    i.update(methodVersion='price-scenario-4', specVersion='price-scenario-spec-4')
     if sha is None:
         i.pop('specSha256')
     else:
@@ -47,6 +50,7 @@ def test_same_sources_different_revision_fingerprint_method_reason_and_report_ex
     current, results = make(results_patch={'referenceFacts': {'status': 'available', 'sentinel': 'REFERENCE_FACTS_SECRET_SENTINEL'}})
     old = deepcopy(current)
     old['specSha256'] = SPEC4_REVISION0_SHA256
+    old.update(methodVersion='price-scenario-4', specVersion='price-scenario-spec-4')
     assert fingerprint(old) != fingerprint(current)
     sid = seed(tmp_path, old, results, monkeypatch)
     store = service.store_for(tmp_path)

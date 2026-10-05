@@ -46,7 +46,10 @@ export function activateReactAgentContextScope(scope: string, fallback: AgentCon
 }
 
 export function openReactAgentDock(context: AgentContextPatch = {}) {
-  if (activeScope) patchReactAgentContextScope(activeScope, context);
-  else publish(context);
+  // A chart action belongs to its explicit message, not the whole screen or a
+  // different conversation opened later. The bridge still receives the fact ID.
+  const { chartMovement: _chartMovement, ...screenContext } = context;
+  if (activeScope) patchReactAgentContextScope(activeScope, screenContext);
+  else publish(screenContext);
   window.FolioBridge?.openAgentDock?.(context);
 }
