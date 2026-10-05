@@ -4,7 +4,7 @@ import {
   atLeastRequired, compareDecimal, labelRows, percentToFraction, rangePosition, reasonText, scaleLayout, shiftDecimal, showReferenceFacts, noticeText,
 } from "./format";
 import type { Projection, ScenarioRow, SnapshotView } from "./types";
-import { cashPerHundred, cashSpan, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, ratioText, signedOne, timesText } from "./format";
+import { cashPerHundred, cashSpan, displayPercent, moneyShort, noReturns, notApplicableAttempt, percentOne, plainOne, ratioText, signedOne, timesText } from "./format";
 import { instrumentIdFor } from "./PriceTab";
 
 describe("spec-4 display", () => {
@@ -229,6 +229,17 @@ describe("whole-tab states", () => {
 });
 
 describe("0.9.2 multiplier display", () => {
+  it("keeps the server's half-even display without floating-point rounding", () => {
+    expect(displayPercent("10.0")).toBe("+10.0%");
+    expect(displayPercent("-10.0", "%p")).toBe("−10.0%p");
+    expect(displayPercent("-0.0")).toBe("0.0%");
+    expect(displayPercent("9007199254740993.1")).toBe("+9,007,199,254,740,993.1%");
+    expect(displayPercent(undefined)).toBe("—");
+  });
+  it("does not turn a positive tiny multiplier into zero or emit non-finite text", () => {
+    expect(timesText(0.00004)).toBe("×0.00004");
+    for (const value of [0, -1, Infinity, NaN]) expect(timesText(value)).toBe("—");
+  });
   it("formats ratios with thousands separators and a real minus", () => {
     expect(ratioText(27.8235)).toBe("+2,782.4%");
     expect(ratioText(-0.6802, 0)).toBe("−68%");

@@ -407,4 +407,19 @@ export function ratioText(fraction: number, places = 1): string {
   return `${fraction > 0 && !zero ? "+" : fraction < 0 && !zero ? "−" : ""}${text}%`;
 }
 /** 배수(1.25 → ×1.25, 28.82 → ×28.8). 10 미만은 소수 둘째 자리까지 보여 ×1.2와 ×1.25를 구별한다. */
-export const timesText = (factor: number) => `×${factor < 10 ? factor.toFixed(2) : factor.toFixed(1)}`;
+export function timesText(factor: number): string {
+  if (!Number.isFinite(factor) || factor <= 0) return "—";
+  // 작은 양수 배수가 두 자리 반올림으로 0배가 되지 않게 한다.
+  if (factor < 0.005) return `×${Number(factor.toPrecision(2))}`;
+  return `×${factor < 10 ? factor.toFixed(2) : factor.toFixed(1)}`;
+}
+
+/** 서버가 확정한 소수 1자리 % 표시값. 숫자를 다시 반올림하지 않는다. */
+export function displayPercent(percent: string | undefined, unit = "%"): string {
+  const match = /^([+-]?)(\d+)(?:\.(\d))?$/.exec(percent ?? "");
+  if (!match) return "—";
+  const whole = match[2].replace(/^0+(?=\d)/, ""), fraction = match[3] ?? "0";
+  const nonzero = /[1-9]/.test(whole + fraction);
+  const sign = nonzero ? (match[1] === "-" ? MINUS : "+") : "";
+  return `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction}${unit}`;
+}

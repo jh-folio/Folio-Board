@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { atLeastRequired, cashPerHundred, cashSpan, goalText, irrText, multiple, percentOne, plainOne, ratioText, rowFor, toNumber, usableGoal } from "./format";
+import { atLeastRequired, cashPerHundred, cashSpan, displayPercent, goalText, irrText, multiple, percentOne, plainOne, ratioText, rowFor, toNumber, usableGoal } from "./format";
 import type { Criteria, Projection, SnapshotView } from "./types";
 
 // 가격 탭을 읽는 순서를 화면에 드러내는 틀: ①②③ 묶음, 섹션마다 같은 틀(질문·계산·이렇게 보세요), 한눈에 보기.
@@ -112,7 +112,7 @@ export function glanceItems({ view, projection, criteria, horizon }: { view: Sna
   const past = view.historicalReturnAttribution;
   if (past && past.status === "available" && past.priceReturn !== undefined) {
     const span = `지난 ${past.requestedYears ?? 5}년(FY${past.startFiscalYear}–FY${past.endFiscalYear})`;
-    const priceText = ratioText(Number(past.priceReturn));
+    const priceText = displayPercent(past.display?.price);
     const e = past.earnings;
     items.push({ key: "historical", body: e?.status === "available"
       ? <>{span} 주가 <b>{priceText}</b>: 주당이익 {ratioText(Number(e.endEps) / Number(e.startEps) - 1, 0)}, PER {ratioText(Number(e.endPE) / Number(e.startPE) - 1, 0)}.</>

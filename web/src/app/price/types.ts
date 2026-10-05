@@ -9,7 +9,7 @@ export type AttributionBlock = { status: string; reason?: Reason; requestedYears
   startDate?: string; endDate?: string; startClose?: string; endClose?: string; priceReturn?: string;
   display?: Record<string, string>; earnings?: { status: string; reason?: Reason; startEps?: string; endEps?: string; startPE?: string; endPE?: string; growth?: string; rerating?: string };
   dividend?: { status: string; reason?: Reason; amount?: string; contribution?: string; basis?: string }; total?: { status: string; reason?: Reason; value?: string };
-  benchmark?: { status: string; id?: string; reason?: Reason; display?: Record<string, string> } };
+  benchmark?: { status: string; id?: string; reason?: Reason; display?: Record<string, string>; startClose?: string; endClose?: string } };
 export type Notice = string | { code: string; years?: number[]; class?: string };
 export type Unavailable = { status: "unavailable"; reason: Reason };
 export type PreviousMethod = { status: "not_applicable"; reason: { code: string } };
