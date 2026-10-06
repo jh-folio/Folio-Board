@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from contextlib import closing, contextmanager
@@ -81,14 +82,21 @@ class Files:
         self.observed = {}
         self.catalogs = {}
 
+    def path(self, relative: str):
+        path = os.path.realpath(self.root / relative)
+        # The separator prevents sibling names such as data-other from passing.
+        if not path.startswith(os.path.join(str(self.root), "")):
+            raise DecisionError("source_path_outside_workspace", 503)
+        return Path(path)
+
     def list_reports(self):
-        directory = self.root / "company-analysis"
+        directory = self.path("company-analysis")
         paths = sorted(directory.glob("*.json")) if directory.exists() else []
         self.catalogs["company-analysis"] = tuple(path.name for path in paths)
         return paths
 
     def read(self, relative: str):
-        path = self.root / relative
+        path = self.path(relative)
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
@@ -105,12 +113,12 @@ class Files:
 
     def verify(self):
         for relative, names in self.catalogs.items():
-            directory = self.root / relative
+            directory = self.path(relative)
             current = tuple(sorted(path.name for path in directory.glob("*.json"))) if directory.exists() else ()
             if current != names:
                 raise DecisionError("comparison_inputs_changed", 409)
         for relative, checksum in self.observed.items():
-            path = self.root / relative
+            path = self.path(relative)
             try:
                 current = hashlib.sha256(path.read_bytes()).hexdigest()
             except FileNotFoundError:

@@ -104,6 +104,52 @@ def test_read_fences_reject_concurrent_inputs_and_invalid_json(tmp_path):
     with pytest.raises(DecisionError, match='source_file_invalid'): comparison(tmp_path, [{"instrumentId": "US:ACME"}], at=STAMP)
 
 
+def test_files_never_read_outside_workspace(tmp_path, monkeypatch):
+    from pathlib import Path
+    root = tmp_path / 'workspace'; root.mkdir()
+    outside = tmp_path / 'outside.json'; outside.write_text('{"private":"fixture only"}')
+    sibling = tmp_path / 'workspace-other'; sibling.mkdir()
+    sibling_file = sibling / 'outside.json'; sibling_file.write_text('{}')
+    files = Files(root)
+    original = Path.read_bytes
+    def guarded_read(path):
+        assert path not in (outside, sibling_file), 'outside file must be rejected before reading'
+        return original(path)
+    monkeypatch.setattr(Path, 'read_bytes', guarded_read)
+    for relative in ('../outside.json', str(outside), '../workspace-other/outside.json'):
+        with pytest.raises(DecisionError, match='source_path_outside_workspace'): files.read(relative)
+
+
+def test_file_symlink_escape_is_rejected_before_read_or_verify(tmp_path, monkeypatch):
+    from pathlib import Path
+    root = tmp_path / 'workspace'; root.mkdir()
+    outside = tmp_path / 'outside.json'; outside.write_text('{"private":"fixture only"}')
+    files = Files(root)
+    original = Path.read_bytes
+    def guarded_read(path):
+        assert path != outside, 'outside file must be rejected before reading'
+        return original(path)
+    monkeypatch.setattr(Path, 'read_bytes', guarded_read)
+    link = root / 'escaped.json'
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip('Creating symlinks requires platform permission')
+    with pytest.raises(DecisionError, match='source_path_outside_workspace'): files.read('escaped.json')
+    files.observed['escaped.json'] = 'recorded-before-retargeting'
+    with pytest.raises(DecisionError, match='source_path_outside_workspace'): files.verify()
+
+
+def test_report_catalog_never_lists_outside_workspace(tmp_path):
+    root = tmp_path / 'workspace'; root.mkdir()
+    outside = tmp_path / 'outside'; outside.mkdir()
+    try:
+        (root / 'company-analysis').symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip('Creating symlinks requires platform permission')
+    with pytest.raises(DecisionError, match='source_path_outside_workspace'): Files(root).list_reports()
+
+
 @pytest.mark.parametrize('value', [None, '0', '-1'])
 def test_eligible_dcf_without_positive_value_is_incomplete(value):
     snapshot = ready_snapshot()
