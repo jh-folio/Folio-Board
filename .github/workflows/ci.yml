@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - main
+      - codex/0.10-decision-readiness
   pull_request:
 
 permissions:
