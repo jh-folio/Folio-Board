@@ -3,6 +3,7 @@ import bisect
 import datetime as dt
 import json
 import sqlite3
+from contextlib import nullcontext
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -35,15 +36,15 @@ def evaluation_cutoffs(start_month,end_month,market='US',*,weekly=False):
 
 
 class Replay:
-    def __init__(self,path:Path,series_ids):
+    def __init__(self,path:Path,series_ids,*,connection=None,maximum_id=None):
         self.history={}
         self.metadata={}
         self.facts=[]
-        with sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True) as conn:
+        with (nullcontext(connection) if connection is not None else sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as conn:
             for id,body in conn.execute('SELECT id,body FROM macro_metadata'):
                 self.metadata[id]=json.loads(body)
             for key in series_ids:
-                for row in conn.execute('SELECT id,period,available_at,value,meta_id,basis,vintage,fetched_at FROM macro_observations WHERE series_id=? ORDER BY period,available_at,id',(key,)):
+                for row in conn.execute('SELECT id,period,available_at,value,meta_id,basis,vintage,fetched_at FROM macro_observations WHERE series_id=? AND (? IS NULL OR id<=?) ORDER BY period,available_at,id',(key,maximum_id,maximum_id)):
                     self.history.setdefault((key,row[1]),[]).append(row)
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name='macro_publication_facts'").fetchone():
                 self.facts=[json.loads(r[0]) for r in conn.execute('SELECT body FROM macro_publication_facts')]

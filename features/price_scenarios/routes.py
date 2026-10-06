@@ -9,16 +9,17 @@ import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
 from .service import calculate, overview, parse_instrument, projection_view, snapshot_view, store_for
 from .service import movement_view
-from .store import PriceStoreError
+from .store import PriceStoreError, UNSPECIFIED
 
 STATUS = {"invalid_number": 422, "out_of_range": 422, "invalid_holding_years": 422, "holding_years_required": 422,
           "revision_conflict": 409, "non_reproducible": 409, "snapshot_not_found": 404, "revision_not_found": 404,
           "override_not_found": 404, "snapshot_instrument_mismatch": 422, "method_version_not_writable": 422,
           "invalid_snapshot_identity": 422}
+STATUS.update(invalid_criteria_storage=503)
 
 
 class Strict(BaseModel):
@@ -34,6 +35,7 @@ class CriteriaBody(Strict):
     minMarginOfSafety: StrictStr | None = None
     holdingYears: StrictInt | None = None
     expectedRevisionId: StrictInt | None = None
+    allowAboveHistoricalRange: StrictBool | None = None
 
 
 class AssumptionBody(Strict):
@@ -125,6 +127,8 @@ def create_price_router(data_root):
     def read_criteria():
         try:
             return {"criteria": store_for(root).criteria()}
+        except PriceStoreError as error:
+            raise _error(error) from None
         except (OSError, sqlite3.Error):
             raise _unavailable() from None
 
@@ -133,7 +137,8 @@ def create_price_router(data_root):
         try:
             return {"criteria": store_for(root).save_criteria(
                 required_return=body.requiredReturn, min_margin_of_safety=body.minMarginOfSafety,
-                holding_years=body.holdingYears, expected_revision_id=body.expectedRevisionId)}
+                holding_years=body.holdingYears, expected_revision_id=body.expectedRevisionId,
+                allow_above_historical_range=body.allowAboveHistoricalRange if "allowAboveHistoricalRange" in body.model_fields_set else UNSPECIFIED)}
         except PriceStoreError as error:
             raise _error(error) from None
         except (OSError, sqlite3.Error):

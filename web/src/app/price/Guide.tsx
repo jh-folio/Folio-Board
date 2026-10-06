@@ -29,12 +29,13 @@ export function PartHeader({ number, title, sub }: { number: number; title: stri
 }
 
 /** 섹션마다 같은 틀: 제목 → 이 섹션이 답하는 질문 → 내용 → 계산 → 이렇게 보세요. */
-export function GuideSection({ id, title, meta, question, hint, calc, read, footer, children }: {
-  id: string; title: string; meta?: ReactNode; question?: ReactNode; hint?: string; calc?: ReactNode; read?: ReactNode; footer?: ReactNode; children: ReactNode;
+export function GuideSection({ id, title, meta, question, hint, calc, read, footer, children, headingLevel = 4 }: {
+  id: string; title: string; meta?: ReactNode; question?: ReactNode; hint?: string; calc?: ReactNode; read?: ReactNode; footer?: ReactNode; children: ReactNode; headingLevel?: 3 | 4;
 }) {
+  const Heading = headingLevel === 3 ? "h3" : "h4";
   return (
     <section className="price-section" aria-labelledby={id}>
-      <div className="watchlist-detail-section__head"><h4 id={id}>{title}</h4>{meta && <span className="price-meta">{meta}</span>}</div>
+      <div className="watchlist-detail-section__head"><Heading id={id}>{title}</Heading>{meta && <span className="price-meta">{meta}</span>}</div>
       {question && <p className="price-question">{question}{hint && <span className="price-hint">{hint}</span>}</p>}
       {children}
       {calc && <div className="price-calc"><b>계산</b><span>{calc}</span></div>}

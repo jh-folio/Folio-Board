@@ -134,6 +134,7 @@ from features.macro_policy.routes import create_policy_router
 from features.company_exposure.routes import create_exposure_router
 from features.macro_state.routes import create_state_router
 from features.price_scenarios.routes import create_price_router
+from features.decision_readiness.routes import create_decision_router
 from features.price_scenarios.service import review_marker as price_review_marker, snapshot_for_report
 from features.company_analysis.generation_context import set_price_snapshot_provider
 from features.portfolio.routes import create_portfolio_router
@@ -477,6 +478,7 @@ fastapi_app.include_router(create_policy_router(DATA_DIR))
 fastapi_app.include_router(create_exposure_router(DATA_DIR))
 fastapi_app.include_router(create_state_router(DATA_DIR))
 fastapi_app.include_router(create_price_router(DATA_DIR))
+fastapi_app.include_router(create_decision_router(DATA_DIR))
 fastapi_app.include_router(create_market_data_router(DATA_DIR, realtime_hub=TOSS_REALTIME_HUB))
 fastapi_app.include_router(create_portfolio_router(DATA_DIR))
 

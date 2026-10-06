@@ -569,7 +569,7 @@ export function AppShell() {
     if (route.id === "analysis") return <CompanyAnalysisRoute />;
     if (route.id === "deep-research") return <DeepResearchRoute />;
     if (route.id === "watchlist") return <WatchlistRoute active={active.id === "watchlist"} />;
-    if (route.id === "portfolio") return <PortfolioRoute />;
+    if (route.id === "portfolio") return <PortfolioRoute active={active.id === "portfolio"} />;
     if (route.id === "settings") return <SettingsRoute />;
     return null;
   }

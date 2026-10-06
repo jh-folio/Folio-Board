@@ -16607,6 +16607,35 @@ a.reason-news__row:hover .reason-news__title { text-decoration: underline; }
   .macro-refresh > span { margin-right: 0; flex-basis: 100%; }
 }
 
+
+/* 0.10 comparison/preview: layout only; existing primitives own controls and surfaces. */
+.decision-comparison { padding: var(--sp-4); margin-block: var(--sp-4); }
+.decision-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.decision-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: var(--sp-5); }
+.decision-grid > div, .decision-candidate { min-inline-size: 0; overflow-wrap: anywhere; }
+.decision-options { display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-5); margin-block: var(--sp-4); padding: 0; border: 0; }
+.decision-options label { display: flex; align-items: center; gap: var(--sp-2); min-block-size: var(--touch-min); }
+.decision-options input[type="checkbox"] { inline-size: var(--sp-4); block-size: var(--sp-4); }
+.decision-options legend { margin-block-end: var(--sp-2); }
+.decision-dimension { margin-block-start: var(--sp-6); padding-block-start: var(--sp-5); border-block-start: 1px solid var(--folio-border); }
+.decision-criteria { display: grid; gap: var(--sp-3); }
+.decision-criteria dd { margin: var(--sp-1) 0 0; }
+.decision-gaps, .decision-values { padding-inline-start: var(--sp-5); margin-block: var(--sp-2); }
+.decision-gaps li, .decision-values li { margin-block: var(--sp-1); }
+.decision-excerpt { white-space: pre-wrap; overflow-wrap: anywhere; }
+.decision-source { white-space: pre-wrap; overflow-wrap: anywhere; max-inline-size: 100%; max-block-size: 28rem; overflow: auto; font-size: var(--fs-xs); }
+.decision-limits { margin-block: var(--sp-3); }
+.decision-preview { margin-block: var(--sp-6); }
+.decision-preview input, .decision-preview select { max-inline-size: 100%; }
+.decision-table-scroll { max-inline-size: 100%; overflow-x: auto; }
+@media (max-width: 767px) {
+  .decision-grid { grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); }
+  .decision-options { display: grid; }
+  .decision-table-scroll .price-table tr { grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
+  .decision-table-scroll .price-table td { overflow-wrap: anywhere; }
+  .decision-table-scroll .price-table td::before { display: block; content: attr(data-label); font-size: var(--fs-xs); color: var(--folio-ink-muted); }
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

@@ -1494,6 +1494,14 @@ export function SettingsRoute() {
     const requested = window.location.hash.replace(/^#\/?/, "").split("/")[1] || "";
     return SETTINGS_TABS.some((item) => item.id === requested) ? (requested as SettingsTab) : "ai";
   });
+  useEffect(() => {
+    const readTab = () => {
+      const parts = window.location.hash.replace(/^#\/?/, "").split("/");
+      if (parts[0] === "settings" && SETTINGS_TABS.some(item => item.id === parts[1])) setTab(parts[1] as SettingsTab);
+    };
+    window.addEventListener("hashchange", readTab);
+    return () => window.removeEventListener("hashchange", readTab);
+  }, []);
   const [settings, setSettings] = useState<SettingsPayload | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings | null>(null);
   const [taskPolicies, setTaskPolicies] = useState<TaskPoliciesPayload>(() => emptyTaskPolicies());

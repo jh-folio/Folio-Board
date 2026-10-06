@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiRequestError, getJson, postJson } from "../../api";
 import { pollAgentJobBounded, type PollableAgentJob } from "../agentPolling";
-import { CriteriaForm, loadCriteria } from "./CriteriaForm";
+import { loadCriteria } from "./CriteriaForm";
+import { ReadinessSection, candidateIdFor } from "../decision/DecisionReadiness";
 import { CashConversionSection, CashTableDetails, NoGrowthSection, ReturnPartsSection, ReturnPartsSummary, ReferenceFactsSection } from "./Crosschecks";
 import { GlanceSection, GuideSection, PartHeader, SECTION_IDS, glanceItems } from "./Guide";
 import {
@@ -42,6 +43,12 @@ const ASSUMPTION_FIELDS: Record<string, string> = { growth: "이익 성장", exi
 
 /** 워치리스트 기업 상세의 `가격` 탭. 계산은 서버가 하고 여기는 읽고 보여 준다. */
 export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ticker: string; market?: string; active?: boolean; onOpenSettings?: () => void }) {
+  const id = candidateIdFor(ticker, market);
+  if (id && !id.startsWith("US:") && !id.startsWith("KR:")) return <div className="price-stack" data-price-tab><p>이 시장의 가격 모델은 아직 지원하지 않습니다. 원래 종목 식별을 유지하고 계산하지 않았습니다.</p><ReadinessSection instrumentId={id} active={active} /></div>;
+  return <SupportedPriceTab ticker={ticker} market={market} active={active} onOpenSettings={onOpenSettings} />;
+}
+
+function SupportedPriceTab({ ticker, market, active = true }: { ticker: string; market?: string; active?: boolean; onOpenSettings?: () => void }) {
   const instrument = instrumentIdFor(ticker, market);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
@@ -55,9 +62,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
   const [form, setForm] = useState({ growth: "", exitPE: "", payout: "" });
   const [formError, setFormError] = useState("");
   const [moving, setMoving] = useState(false);
-  const criteriaDialog = useRef<HTMLDialogElement | null>(null);
   const previousDialog = useRef<HTMLDialogElement | null>(null);
-  const criteriaOrigin = useRef<HTMLElement | null>(null);
   const controller = useRef<AbortController | null>(null);
 
   const apply = useCallback((next: Loaded, resetHorizon: boolean) => {
@@ -99,11 +104,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
     } finally { if (!control.signal.aborted) { setCalculating(false); setMessage(""); } }
   }
 
-  function openCriteria(origin: HTMLElement | null) {
-    criteriaOrigin.current = origin;
-    criteriaDialog.current?.showModal();
-  }
-  function closeCriteria() { criteriaDialog.current?.close(); criteriaOrigin.current?.focus(); }
+  function openCriteria(_origin: HTMLElement | null) { window.location.hash = "#/settings/admin"; }
 
   async function openPrevious(id: string) {
     try { setPrevious(await getJson<SnapshotView>(`/api/price-snapshots/${encodeURIComponent(id)}`)); previousDialog.current?.showModal(); }
@@ -168,6 +169,7 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
 
   return (
     <div className="price-stack" data-price-tab>
+      <ReadinessSection instrumentId={instrument} active={active} snapshotId={view?.snapshotId} criteriaRevisionId={criteria?.revisionId} />
       <section className="surface surface--group price-hero" aria-labelledby="price-hero-title">
         {view && !calculating && (
           <div className="price-row price-row--between">
@@ -305,11 +307,6 @@ export function PriceTab({ ticker, market, active = true, onOpenSettings }: { ti
       )}
       <p className="price-meta" role="status" aria-live="polite">{feedback}</p>
 
-      <dialog ref={criteriaDialog} className="surface price-dialog" aria-labelledby="price-criteria-title">
-        <h2 id="price-criteria-title">투자 기준</h2>
-        <p className="price-meta">설정 → 관리 → 투자 기준에서도 바꿀 수 있습니다.{onOpenSettings && <> <button className="btn btn--text btn--sm" type="button" onClick={onOpenSettings}>설정 열기</button></>}</p>
-        <CriteriaForm idPrefix="price-dialog" initial={criteria} onCancel={closeCriteria} onSaved={() => { closeCriteria(); void reload(true); }} />
-      </dialog>
 
       <dialog ref={previousDialog} className="surface price-dialog" aria-labelledby="price-previous-title">
         {previous && <PreviousBody view={previous} />}

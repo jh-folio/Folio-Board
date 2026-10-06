@@ -6,6 +6,7 @@ import { HoldingsTable, SavedHoldingsTable, type PositionDraft, type PositionFie
 import { TossHoldingsImport } from "./portfolio/TossHoldingsImport";
 import { ConsultationEntry } from "./portfolio/ConsultationEntry";
 import { PortfolioAnalysis } from "./portfolio/PortfolioAnalysis";
+import { PortfolioPreview } from "./decision/PortfolioPreview";
 import { PortfolioBacktest } from "./portfolio/PortfolioBacktest";
 import { PortfolioTargets } from "./portfolio/PortfolioTargets";
 import { InvestmentReviewWorkspace, reviewAttentionLabel, type InvestmentReview } from "./portfolio/InvestmentReviewWorkspace";
@@ -37,7 +38,7 @@ function fallbackRows(rows: readonly PositionDraft[]): PositionRow[] {
 }
 
 /** 보유는 저장된 상태를 먼저 읽고, 편집은 명시적으로 연 draft에서만 한다. */
-export function PortfolioRoute() {
+export function PortfolioRoute({ active = true }: { active?: boolean }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [positions, setPositions] = useState<PositionDraft[]>([]);
   const [editing, setEditing] = useState(false);
@@ -167,6 +168,7 @@ export function PortfolioRoute() {
         </> : <>
           <div className="portfolio-actions"><button className="btn" type="button" disabled={mutationBusy} onClick={beginEdit}>보유 편집</button></div>
           <PortfolioAnalysis revision={portfolio.revision}>{(analytics) => <section className="portfolio-block portfolio-saved-holdings"><h3>저장된 보유 종목</h3><SavedHoldingsTable positions={analytics?.positions || fallbackRows(savedPositions)} baseCurrency={analytics?.baseCurrency || "USD"} /></section>}</PortfolioAnalysis>
+          <PortfolioPreview active={active} />
           <TossHoldingsImport portfolio={portfolio} dirty={false} externalBusy={saving || reloading} onBusyChange={setImportBusy} onCommitted={commitImport} />
         </>}
         {status && <p className="react-reader-status" role="status">{status}</p>}

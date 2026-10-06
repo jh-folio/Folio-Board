@@ -14,11 +14,12 @@ export async function loadCriteria(signal?: AbortSignal): Promise<Criteria | nul
   return (await getJson<{ criteria: Criteria | null }>("/api/valuation/criteria", { signal })).criteria;
 }
 
-/** 전역 투자 기준. 설정 → 관리와 가격 탭의 대화 상자가 같은 폼을 쓴다. 빈 칸은 "정하지 않음"이며 0과 다르다. */
+/** 전역 투자 기준의 유일한 편집 위치는 설정 → 관리다. 빈 칸은 "정하지 않음"이며 0과 다르다. */
 export function CriteriaForm({ initial, onSaved, onCancel, idPrefix = "criteria" }: { initial: Criteria | null; onSaved: (criteria: Criteria | null) => void; onCancel?: () => void; idPrefix?: string }) {
   const [required, setRequired] = useState(initial?.requiredReturn ?? "");
   const [margin, setMargin] = useState(initial?.minMarginOfSafety ?? "");
   const [holding, setHolding] = useState(initial?.holdingYears ? String(initial.holdingYears) : "");
+  const [above, setAbove] = useState(initial?.allowAboveHistoricalRange === true ? "allow" : initial?.allowAboveHistoricalRange === false ? "disallow" : "");
   const [current, setCurrent] = useState<Criteria | null>(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -27,16 +28,19 @@ export function CriteriaForm({ initial, onSaved, onCancel, idPrefix = "criteria"
   useEffect(() => {
     setCurrent(initial); setRequired(initial?.requiredReturn ?? ""); setMargin(initial?.minMarginOfSafety ?? "");
     setHolding(initial?.holdingYears ? String(initial.holdingYears) : "");
+    setAbove(initial?.allowAboveHistoricalRange === true ? "allow" : initial?.allowAboveHistoricalRange === false ? "disallow" : "");
   }, [initial]);
 
-  const changed = (required || "") !== (current?.requiredReturn ?? "") || (margin || "") !== (current?.minMarginOfSafety ?? "") || holding !== (current?.holdingYears ? String(current.holdingYears) : "");
+  const savedAbove = current?.allowAboveHistoricalRange === true ? "allow" : current?.allowAboveHistoricalRange === false ? "disallow" : "";
+  const changed = (required || "") !== (current?.requiredReturn ?? "") || (margin || "") !== (current?.minMarginOfSafety ?? "") || holding !== (current?.holdingYears ? String(current.holdingYears) : "") || above !== savedAbove;
 
-  async function save(next: { required: string; margin: string; holding: string }) {
+  async function save(next: { required: string; margin: string; holding: string; above: string }) {
     setBusy(true); setError(""); setStatus("");
     try {
       const response = await postJson<{ criteria: Criteria }>("/api/valuation/criteria", {
         requiredReturn: next.required.trim() || null, minMarginOfSafety: next.margin.trim() || null,
         holdingYears: next.holding ? Number(next.holding) : null, expectedRevisionId: current?.revisionId ?? null,
+        ...(next.above !== savedAbove ? { allowAboveHistoricalRange: next.above === "" ? null : next.above === "allow" } : {}),
       });
       setCurrent(response.criteria); setStatus("저장했습니다."); onSaved(response.criteria);
     } catch (err) {
@@ -51,7 +55,7 @@ export function CriteriaForm({ initial, onSaved, onCancel, idPrefix = "criteria"
     event.preventDefault();
     if (!event.currentTarget.reportValidity()) return;
     if (!changed) { setStatus("변경 사항이 없습니다."); return; }
-    void save({ required, margin, holding });
+    void save({ required, margin, holding, above });
   }
 
   return (
@@ -68,11 +72,14 @@ export function CriteriaForm({ initial, onSaved, onCancel, idPrefix = "criteria"
             <option value="">고르지 않음</option><option value="5">5년</option><option value="10">10년</option>
           </select>
         </label>
+        <label>과거 최고값을 넘는 전제 (선택)
+          <select value={above} onChange={e => setAbove(e.target.value)}><option value="">정하지 않음</option><option value="disallow">허용하지 않음</option><option value="allow">허용함</option></select>
+        </label>
       </div>
       <p className="price-meta">모든 종목에 똑같이 적용됩니다. 빈 칸은 &ldquo;정하지 않음&rdquo;이며 0과 다릅니다. 기준은 이 화면의 비교에만 쓰이고 보고서·이유·포트폴리오를 바꾸지 않습니다.</p>
       <div className="price-row">
-        {onCancel && <button className="btn btn--text" type="button" onClick={() => { setRequired(current?.requiredReturn ?? ""); setMargin(current?.minMarginOfSafety ?? ""); setHolding(current?.holdingYears ? String(current.holdingYears) : ""); setError(""); setStatus(""); onCancel(); }}>취소</button>}
-        <button className="btn" type="button" disabled={busy} onClick={() => { if (!current?.requiredReturn && !current?.minMarginOfSafety) { setStatus("지울 기준이 없습니다."); return; } setRequired(""); setMargin(""); void save({ required: "", margin: "", holding }); }}>기준 지우기</button>
+        {onCancel && <button className="btn btn--text" type="button" onClick={() => { setRequired(current?.requiredReturn ?? ""); setMargin(current?.minMarginOfSafety ?? ""); setHolding(current?.holdingYears ? String(current.holdingYears) : ""); setAbove(savedAbove); setError(""); setStatus(""); onCancel(); }}>취소</button>}
+        <button className="btn" type="button" disabled={busy} onClick={() => { if (!current?.requiredReturn && !current?.minMarginOfSafety && !savedAbove) { setStatus("지울 기준이 없습니다."); return; } setRequired(""); setMargin(""); setAbove(""); void save({ required: "", margin: "", holding, above: "" }); }}>기준 지우기</button>
         <button className={`btn${changed ? " btn--primary" : ""}`} type="submit" disabled={busy}>{busy ? "저장 중…" : "저장"}</button>
         {changed && <span className="price-meta">저장 안 된 변경이 있습니다</span>}
       </div>

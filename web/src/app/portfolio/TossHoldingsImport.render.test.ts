@@ -28,6 +28,8 @@ function installMiniDom() {
   const listeners = new WeakMap<object, Map<string, Set<EventListener>>>();
   const decorate = <T extends MiniElement>(node: T): T => {
     Object.defineProperty(node, "style", { configurable: true, value: {} });
+    // This XML DOM lacks browser select.options; the Portfolio preview now has an actual select.
+    if (node.nodeType === 1 && node.nodeName.toLowerCase() === "select") Object.defineProperty(node, "options", { configurable: true, get: () => Array.from(node.getElementsByTagName("option")) });
     node.addEventListener = ((type: string, listener: EventListener) => {
       const own = listeners.get(node) || new Map<string, Set<EventListener>>();
       const group = own.get(type) || new Set<EventListener>();

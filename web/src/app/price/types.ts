@@ -105,5 +105,5 @@ export type Projection = {
   reviewNeeded: { reason: string; metric: string; fiscalYear: number; detectedBySnapshotId: string }[];
 };
 
-export type Criteria = { revisionId: number; requiredReturn: string | null; minMarginOfSafety: string | null; holdingYears: number | null; createdAt: string };
+export type Criteria = { revisionId: number; requiredReturn: string | null; minMarginOfSafety: string | null; holdingYears: number | null; allowAboveHistoricalRange?: boolean | null; createdAt: string };
 export type Override = { overrideId: number; instrumentId: string; basedOnSnapshotId: string; growth: string | null; exitPE: string | null; payout: string | null };

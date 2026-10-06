@@ -8,6 +8,7 @@ import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { ExposurePanel } from "./macro/ExposurePanel";
 import { PriceTab, instrumentIdFor } from "./price/PriceTab";
+import { OpportunityComparison, candidateIdFor } from "./decision/DecisionReadiness";
 import { FundamentalsPanel, useFundamentals } from "./watchlist/FundamentalsPanel";
 import { MarketChartFigure } from "./dashboard/MarketChartFigure";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./watchlistEarnings";
 
 type WatchlistOverviewItem = {
+  market?: string;
   item?: string;
   ticker?: string;
   companyName?: string;
@@ -502,6 +504,7 @@ export function WatchlistRoute({ active = true }: { active?: boolean }) {
         </div>
         )}
       />
+      <OpportunityComparison active={active} options={cards.map(card => ({ item: card.item || cardCompanyName(card), label: cardCompanyName(card), instrumentId: card.ticker ? candidateIdFor(card.ticker, card.market) : null }))} onOpen={setWatchlistHash} />
       {addOpen && <div className="watchlist-editor input-panel" id="watchlist-add-panel">
         <div className="input-panel-header">
           <h3>키워드 추가</h3>

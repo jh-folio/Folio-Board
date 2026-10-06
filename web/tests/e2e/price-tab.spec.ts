@@ -463,6 +463,7 @@ async function mockApi(page: Page, options: Options = {}) {
     if (path === '/api/price-snapshots/price-now/projection') return route.fulfill({ json: options.projection ?? projection() });
     if (path === '/api/valuation/criteria' && request.method() === 'GET') return route.fulfill({ json: { criteria: 'criteria' in options ? options.criteria : CRITERIA } });
     if (path === '/api/valuation/criteria') return route.fulfill({ json: { criteria: { ...CRITERIA, revisionId: 2 } } });
+    if (path.startsWith('/api/decision-readiness/')) return route.fulfill({ json: { readiness: { state: 'unknown', message: '기준이나 자료가 없어 준비 상태를 확인할 수 없습니다', scopeCopy: '가격과 내 기준의 확인 범위입니다. 투자 판단이나 안전성을 뜻하지 않습니다.', criteria: {}, blockingReasons: [], warnings: [], snapshotId: 'price-now', criteriaRevisionId: null } } });
     if (path === '/api/valuation/assumptions' && request.method() === 'GET') return route.fulfill({ json: { override: null } });
     if (path === '/api/valuation/assumptions') return route.fulfill({ json: { override: { overrideId: 1 } } });
     return route.fulfill({ status: 404, json: {} });
@@ -556,7 +557,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('0.9 first run, criteria dialog saves exact decimal text, previous result is read-only', async ({ page }) => {
+test('0.9 first run, global settings save exact decimal text, previous result is read-only', async ({ page }) => {
   const writes = await mockApi(page, { empty: true, criteria: null });
   await openPrice(page, 'light');
   const tab = page.locator('[data-price-tab]');
@@ -573,15 +574,18 @@ test('0.9 first run, criteria dialog saves exact decimal text, previous result i
   await expect(tab.getByRole('heading', { level: 3, name: '과거 10년 흐름이 이어진다면, 지금 사서 10년 보유할 때 연평균 6.6%입니다.', exact: true })).toBeVisible();
   await expect(tab.locator('.price-verdict .chip')).toHaveText('내 기준 없음');
   await tab.getByRole('button', { name: '기준 정하기' }).first().click();
-  const dialog = page.getByRole('dialog', { name: '투자 기준' });
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel('원하는 연 수익률 (%)').fill('6.5');
-  await dialog.getByLabel('기본 보유 기간').selectOption('10');
-  await dialog.getByRole('button', { name: '저장' }).click();
+  await expect(page).toHaveURL(/#\/settings\/admin$/);
+  const form = page.locator('.price-criteria-form');
+  await expect(form).toBeVisible();
+  await form.getByLabel('원하는 연 수익률 (%)').fill('6.5');
+  await form.getByLabel('기본 보유 기간').selectOption('10');
+  await form.getByRole('button', { name: '저장', exact: true }).click();
   await expect.poll(() => next.length).toBe(1);
   expect(next[0]).toEqual({ path: '/api/valuation/criteria', body: { requiredReturn: '6.5', minMarginOfSafety: null, holdingYears: 10, expectedRevisionId: null } });
 
   // 이전 계산은 읽기만 한다.
+  await page.goto('/#/watchlist/ABC');
+  await page.getByRole('button', { name: '가격', exact: true }).click();
   await tab.getByRole('button', { name: '열기' }).click();
   const previous = page.getByRole('dialog', { name: '2026-09-01 계산' });
   await expect(previous).toContainText('당시 종가 $90.00');

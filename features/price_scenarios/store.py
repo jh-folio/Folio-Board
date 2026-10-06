@@ -22,7 +22,8 @@ from . import METHOD_VERSION, SPEC_VERSION, SPEC_SHA256
 from .changes import change_reasons, review_rows
 from .decimal_ops import canonical, fingerprint, number
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+UNSPECIFIED = object()
 HOLDING_YEARS = {5, 10}
 DDL = (
     "CREATE TABLE IF NOT EXISTS price_scenario_schema(version INTEGER PRIMARY KEY)",
@@ -42,7 +43,8 @@ DDL = (
         UNIQUE(snapshot_id, reason, metric, fiscal_year, detected_by_snapshot_id))""",
     """CREATE TABLE IF NOT EXISTS valuation_user_criteria(
         revision_id INTEGER PRIMARY KEY, required_return TEXT, min_margin_of_safety TEXT,
-        holding_years INTEGER, created_at TEXT NOT NULL)""",
+        holding_years INTEGER, created_at TEXT NOT NULL,
+        above_historical_range TEXT CHECK(above_historical_range IN ('allow','disallow')))""",
     """CREATE TABLE IF NOT EXISTS valuation_assumption_overrides(
         override_id INTEGER PRIMARY KEY, instrument_id TEXT NOT NULL,
         based_on_snapshot_id TEXT NOT NULL REFERENCES price_snapshots(id),
@@ -116,11 +118,15 @@ class PriceStore:
                     if version == SCHEMA_VERSION:
                         return
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            backup_database(self.path, "before-price-scenarios-v1")
+            backup_database(self.path, "before-price-scenarios-v2")
             with closing(sqlite3.connect(self.path, timeout=30)) as conn, conn:
                 conn.execute("BEGIN IMMEDIATE")
                 for statement in DDL:
                     conn.execute(statement)
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(valuation_user_criteria)")}
+                if "above_historical_range" not in columns:
+                    conn.execute("ALTER TABLE valuation_user_criteria ADD COLUMN above_historical_range TEXT "
+                                 "CHECK(above_historical_range IN ('allow','disallow'))")
                 for table in TABLES:
                     for operation in ("UPDATE", "DELETE"):
                         conn.execute(f"CREATE TRIGGER IF NOT EXISTS {table}_no_{operation.lower()} BEFORE {operation} ON {table} "
@@ -226,12 +232,21 @@ class PriceStore:
             row = (conn.execute("SELECT * FROM valuation_user_criteria WHERE revision_id=?", (revision_id,)).fetchone()
                    if revision_id is not None else
                    conn.execute("SELECT * FROM valuation_user_criteria ORDER BY revision_id DESC LIMIT 1").fetchone())
-            return None if row is None else {"revisionId": row["revision_id"], "requiredReturn": row["required_return"],
-                                              "minMarginOfSafety": row["min_margin_of_safety"],
-                                              "holdingYears": row["holding_years"], "createdAt": row["created_at"]}
+            return self.criteria_row(row)
+
+    @staticmethod
+    def criteria_row(row) -> dict | None:
+        if row is None:
+            return None
+        value = row["above_historical_range"] if "above_historical_range" in row.keys() else None
+        if value not in {None, "allow", "disallow"}:
+            raise PriceStoreError("invalid_criteria_storage")
+        return {"revisionId": row["revision_id"], "requiredReturn": row["required_return"],
+                "minMarginOfSafety": row["min_margin_of_safety"], "holdingYears": row["holding_years"],
+                "allowAboveHistoricalRange": None if value is None else value == "allow", "createdAt": row["created_at"]}
 
     def save_criteria(self, *, required_return=None, min_margin_of_safety=None, holding_years=None,
-                      expected_revision_id: int | None = None) -> dict:
+                      expected_revision_id: int | None = None, allow_above_historical_range=UNSPECIFIED) -> dict:
         """A new revision. Blank means not set (never 0). A stale expected revision is a conflict."""
         required = None if required_return in (None, "") else decimal_text(
             required_return, field="requiredReturn", low=Decimal(-99), high=Decimal(100))
@@ -241,13 +256,20 @@ class PriceStore:
             raise PriceStoreError("invalid_holding_years", "holdingYears")
         if (required is not None or margin is not None) and holding_years is None:
             raise PriceStoreError("holding_years_required", "holdingYears")
+        if allow_above_historical_range is not UNSPECIFIED and allow_above_historical_range is not None and type(allow_above_historical_range) is not bool:
+            raise PriceStoreError("invalid_number", "allowAboveHistoricalRange")
         with self._write() as conn:
             conn.execute("BEGIN IMMEDIATE")
             current = conn.execute("SELECT MAX(revision_id) FROM valuation_user_criteria").fetchone()[0]
             if current != expected_revision_id:
                 raise PriceStoreError("revision_conflict")
-            cursor = conn.execute("INSERT INTO valuation_user_criteria(required_return,min_margin_of_safety,holding_years,created_at) "
-                                  "VALUES(?,?,?,?)", (required, margin, holding_years, _now()))
+            if allow_above_historical_range is UNSPECIFIED:
+                prior = conn.execute("SELECT above_historical_range FROM valuation_user_criteria ORDER BY revision_id DESC LIMIT 1").fetchone()
+                policy = prior[0] if prior else None
+            else:
+                policy = None if allow_above_historical_range is None else "allow" if allow_above_historical_range else "disallow"
+            cursor = conn.execute("INSERT INTO valuation_user_criteria(required_return,min_margin_of_safety,holding_years,created_at,above_historical_range) "
+                                  "VALUES(?,?,?,?,?)", (required, margin, holding_years, _now(), policy))
             revision = cursor.lastrowid
         return self.criteria(revision)
 
