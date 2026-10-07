@@ -35,6 +35,12 @@ export function InvestmentCase({ instrumentId, active, onReason }: { instrumentI
   const heading = useRef<HTMLHeadingElement>(null); const previewHeading = useRef<HTMLHeadingElement>(null);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; ++epoch.current; ++readerEpoch.current; }; }, []);
+  useEffect(() => {
+    if (preview && active) previewHeading.current?.focus();
+  }, [preview, active]);
+  useEffect(() => {
+    if (journal && active && !preview) heading.current?.focus();
+  }, [journal, active, preview]);
 
   const refresh = useCallback(async () => {
     setReaderRefresh(value => value + 1);
@@ -52,7 +58,7 @@ export function InvestmentCase({ instrumentId, active, onReason }: { instrumentI
     const id = ++readerEpoch.current; setJournal(null);
     if (!journalId || !active) return;
     void getJson<JournalView>(`/api/decision-journals/${encodeURIComponent(journalId)}`).then(value => {
-      if (id === readerEpoch.current && value.journal.instrumentId === instrumentId) { setJournal(value); requestAnimationFrame(() => heading.current?.focus()); }
+      if (id === readerEpoch.current && value.journal.instrumentId === instrumentId) setJournal(value);
       else if (id === readerEpoch.current) setError("다른 종목의 기록입니다. 현재 종목의 기록을 선택해 주세요.");
     }).catch(reason => { if (id === readerEpoch.current) setError(errorCopy(reason)); });
   }, [journalId, active, instrumentId, current?.caseRevision, readerRefresh]);
@@ -75,7 +81,6 @@ export function InvestmentCase({ instrumentId, active, onReason }: { instrumentI
       const value = await postJson<Preview>("/api/investment-cases/preview", { instrumentId, expectedCaseRevision: current.caseRevision, ...extra });
       if (!live.current) return;
       setPreview(value); operationId.current = crypto.randomUUID().replace(/-/g, "");
-      requestAnimationFrame(() => previewHeading.current?.focus());
     } catch (reason) { if (live.current) { setError(errorCopy(reason)); await refresh(); } }
     finally { if (live.current) setBusy(false); }
   }

@@ -36276,7 +36276,15 @@ function Cx({ instrumentId: e, active: t, onReason: n }) {
 	let [r, i] = (0, l.useState)(null), [a, o] = (0, l.useState)(null), [s, c] = (0, l.useState)(() => bx().get("journal") || ""), [u, d] = (0, l.useState)(!1), [f, p] = (0, l.useState)(!1), [m, h] = (0, l.useState)(""), [g, _] = (0, l.useState)(""), [v, y] = (0, l.useState)(!1), [b, x] = (0, l.useState)(null), [S, C] = (0, l.useState)("decision"), [w, T] = (0, l.useState)(""), [E, D] = (0, l.useState)(""), [O, k] = (0, l.useState)(""), [A, j] = (0, l.useState)("unknown"), [M, N] = (0, l.useState)(""), [P, F] = (0, l.useState)("considering"), [I, L] = (0, l.useState)(""), [R, z] = (0, l.useState)([]), [B, V] = (0, l.useState)(""), [H, U] = (0, l.useState)(""), [ee, te] = (0, l.useState)(""), [ne, re] = (0, l.useState)(() => bx().get("reviewDate") || ""), [ie, W] = (0, l.useState)([]), [ae, G] = (0, l.useState)([]), [oe, se] = (0, l.useState)(null), [K, ce] = (0, l.useState)(0), le = (0, l.useRef)(0), ue = (0, l.useRef)(0), q = (0, l.useRef)(""), de = (0, l.useRef)(null), fe = (0, l.useRef)(null), pe = (0, l.useRef)(!0);
 	(0, l.useEffect)(() => (pe.current = !0, () => {
 		pe.current = !1, ++le.current, ++ue.current;
-	}), []);
+	}), []), (0, l.useEffect)(() => {
+		b && t && fe.current?.focus();
+	}, [b, t]), (0, l.useEffect)(() => {
+		a && t && !b && de.current?.focus();
+	}, [
+		a,
+		t,
+		b
+	]);
 	let me = (0, l.useCallback)(async () => {
 		ce((e) => e + 1);
 		let t = ++le.current;
@@ -36302,7 +36310,7 @@ function Cx({ instrumentId: e, active: t, onReason: n }) {
 	}, []), (0, l.useEffect)(() => {
 		let n = ++ue.current;
 		o(null), !(!s || !t) && X(`/api/decision-journals/${encodeURIComponent(s)}`).then((t) => {
-			n === ue.current && t.journal.instrumentId === e ? (o(t), requestAnimationFrame(() => de.current?.focus())) : n === ue.current && h("다른 종목의 기록입니다. 현재 종목의 기록을 선택해 주세요.");
+			n === ue.current && t.journal.instrumentId === e ? o(t) : n === ue.current && h("다른 종목의 기록입니다. 현재 종목의 기록을 선택해 주세요.");
 		}).catch((e) => {
 			n === ue.current && h(Uo(e));
 		});
@@ -36335,7 +36343,7 @@ function Cx({ instrumentId: e, active: t, onReason: n }) {
 					...t
 				});
 				if (!pe.current) return;
-				x(n), q.current = crypto.randomUUID().replace(/-/g, ""), requestAnimationFrame(() => fe.current?.focus());
+				x(n), q.current = crypto.randomUUID().replace(/-/g, "");
 			} catch (e) {
 				pe.current && (h(Uo(e)), await me());
 			} finally {

@@ -49,6 +49,7 @@ for (const theme of ['light', 'dark']) {
     expect(previewAxe.violations.map(v => v.id)).toEqual([]);
     await area.getByRole('button', { name: '확인한 내용 저장' }).click();
     await expect(area.getByRole('heading', { name: '당시 기록', exact: true })).toBeVisible();
+    await expect(area.getByRole('heading', { name: '당시 기록', exact: true })).toBeFocused();
     await expect(area).toContainText('수요의 지속성을 더 확인한다.');
     await page.request.post(`${serviceUrl}${prefix}/revise`);
     await page.reload();
@@ -126,6 +127,7 @@ test('0.11 historical reader survives current projection failure', async ({ page
   await expect(page.getByRole('heading', { name: '당시 기록', exact: true })).toBeVisible();
   await expect(page.locator('.case-reader')).toContainText('당시 생각 유지');
   await expect(page.locator('.case-reader').getByRole('button', { name: '이 기록의 보존본문 전체 삭제' })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: '당시 기록', exact: true })).toBeFocused();
 });
 
 test('0.11 explicit refresh rereads original status and later source purge', async ({ page }) => {
