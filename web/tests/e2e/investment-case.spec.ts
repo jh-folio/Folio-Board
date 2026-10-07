@@ -194,6 +194,9 @@ test('0.11 correction links later report and late save respects navigation', asy
   await page.goto('/#/portfolio');
   const completed = page.waitForResponse(response => response.url().endsWith('/api/investment-cases/confirm'));
   release(); expect((await completed).status()).toBe(200);
+  // The response headers precede the component's refresh and final navigation
+  // guard. Await that whole save action before asserting or closing the context.
+  await expect(area).toHaveAttribute('aria-busy', 'false');
   await expect(page).toHaveURL(/#\/portfolio$/);
 });
 
