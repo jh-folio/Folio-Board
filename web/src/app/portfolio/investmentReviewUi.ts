@@ -2,6 +2,8 @@ export type ReviewReason = { code?: string; ticker?: string };
 
 export type ReviewPosition = {
   ticker?: string;
+  market?: string;
+  instrumentId?: string;
   name?: string;
   thesisVerdict?: string;
   thesisPresent?: boolean;

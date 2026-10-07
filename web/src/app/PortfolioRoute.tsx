@@ -14,6 +14,10 @@ import type { PositionRow } from "./portfolio/portfolioTypes";
 
 type Portfolio = { revision: number; positions: PositionDraft[]; cash?: Array<{ currency: string; amount: number }>; updatedAt?: string };
 type Tab = "holdings" | "review" | "targets" | "backtest";
+function hashTab(): Tab {
+  const value = new URLSearchParams((window.location?.hash || "").split("?")[1]).get("tab");
+  return value === "review" || value === "targets" || value === "backtest" ? value : "holdings";
+}
 type HoldingsConflict = { readonly active: boolean };
 
 const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
@@ -42,7 +46,7 @@ export function PortfolioRoute({ active = true }: { active?: boolean }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [positions, setPositions] = useState<PositionDraft[]>([]);
   const [editing, setEditing] = useState(false);
-  const [tab, setTab] = useState<Tab>("holdings");
+  const [tab, setTab] = useState<Tab>(hashTab);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
@@ -58,6 +62,10 @@ export function PortfolioRoute({ active = true }: { active?: boolean }) {
 
   const mutationBusy = saving || importBusy || reloading;
   const holdingsDirty = editing && !sameRows(positions, portfolio?.positions || []);
+  useEffect(() => {
+    const changed = () => { if (window.location.hash.startsWith("#/portfolio") && new URLSearchParams(window.location.hash.split("?")[1]).has("tab") && !holdingsDirty && !presetDirty && !mutationBusy) setTab(hashTab()); };
+    window.addEventListener("hashchange", changed); return () => window.removeEventListener("hashchange", changed);
+  }, [holdingsDirty, presetDirty, mutationBusy]);
 
   function invalidateResolvers() { setResolverEpoch((current) => current + 1); }
 
@@ -146,6 +154,7 @@ export function PortfolioRoute({ active = true }: { active?: boolean }) {
     if (tab === "targets" && presetDirty && !window.confirm("저장하지 않은 프리셋 변경이 있습니다. 탭을 이동하면 변경이 사라집니다. 계속할까요?")) return;
     if (tab === "targets") setPresetDirty(false);
     setTab(next);
+    if (new URLSearchParams((window.location?.hash || "").split("?")[1]).has("tab")) window.location.hash = `#/portfolio?tab=${next}`;
   }
 
   const savedPositions = portfolio?.positions || [];

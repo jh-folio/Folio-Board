@@ -1,3 +1,5 @@
+import { useSourceDelete } from "./investmentCase/SourceDeleteDialog";
+import { sourceDeletePartialNotice } from "./investmentCase/copy";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useContentRevision } from "./useContentRevision";
 import { engineNote, groupMeta, listDate } from "./savedListFormat";
@@ -602,6 +604,7 @@ function PlanReview({
 }
 
 export function DeepResearchRoute() {
+  const sourceDelete = useSourceDelete();
   const contentRevision = useContentRevision("topicReport");
   const [reports, setReports] = useState<TopicReportSummary[]>([]);
   const [selected, setSelected] = useState<TopicReport | null>(null);
@@ -1125,17 +1128,24 @@ export function DeepResearchRoute() {
   };
 
   async function deleteReport(report: TopicReportSummary) {
-    if (!report.id || !window.confirm(`${reportLabel(report)} 보고서를 삭제할까요?`)) return;
+    if (!report.id) return;
     const action = beginReportAction();
     setActionBusy(`delete-${report.id}`);
     invalidateGenerationDiagnostic();
     setError("");
     try {
-      const result = await deleteJson<{ readonly deleted?: boolean }>(
-        `/api/topic-reports/${encodeURIComponent(report.id)}`,
+      const approval = await sourceDelete.requestDelete("topic", report.id, reportLabel(report), action.controller.signal);
+      if (!approval) return;
+      const confirmation = new URLSearchParams(approval as Record<string, string>).toString();
+      const result = await deleteJson<{ readonly deleted?: boolean; outcome?: string; sourceOutcome?: string }>(
+        `/api/topic-reports/${encodeURIComponent(report.id)}${confirmation ? `?${confirmation}` : ""}`,
         {},
         { signal: action.controller.signal },
       );
+      if (result && sourceDeletePartialNotice(result)) {
+        if (isCurrentReportAction(action.id, action.controller)) setStatus(sourceDeletePartialNotice(result));
+        return;
+      }
       if (!result || result.deleted !== true) throw new Error("딥 리서치 삭제 결과를 확인하지 못했습니다.");
       if (!isCurrentReportAction(action.id, action.controller)) return;
       if (selected?.id === report.id) setTopicHash();
@@ -1250,6 +1260,7 @@ export function DeepResearchRoute() {
   if (collectionDetailId && !malformedRoute) {
     return (
       <div className="react-deep-research-route" data-deep-research-route>
+        {sourceDelete.node}
         <SmartCollectionWorkspace
           collectionId={collectionDetailId}
           onBack={() => setTopicHash()}
@@ -1265,6 +1276,7 @@ export function DeepResearchRoute() {
   if (detailId && !selected && !(phase === "recoverable-error" && errorKind === "report")) {
     return (
       <div className="react-deep-research-route" data-deep-research-route>
+        {sourceDelete.node}
         <section className="topicrpt-report-state" data-qa="dr-report-loading" role="status" aria-live="polite" aria-busy="true">
           <p className="section-kicker">DEEP RESEARCH</p>
           <h1 tabIndex={-1}>저장된 리서치를 여는 중입니다</h1>
@@ -1278,6 +1290,7 @@ export function DeepResearchRoute() {
     const notFound = errorReason === "topic_report_not_found" || errorReason === "not_found";
     return (
       <div className="react-deep-research-route" data-deep-research-route>
+        {sourceDelete.node}
         <section
           className="topicrpt-report-state is-error"
           data-qa={notFound ? "dr-report-not-found" : "dr-report-error"}
@@ -1297,6 +1310,7 @@ export function DeepResearchRoute() {
   if (selected && phase === "report") {
     return (
       <div className="react-deep-research-route" data-deep-research-route data-qa="dr-report">
+        {sourceDelete.node}
         {error && <p className="react-dashboard-error" data-qa="dr-error-report">{error}</p>}
         {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
         {(selected.mode === "fallback" || selected.generation?.mode === "rules") && <p className="react-dashboard-warning" data-qa="dr-degraded-rules" role="status">근거 부족을 확인한 규칙 기반 보고서입니다. 자료 공백과 반대 근거를 함께 확인하세요.</p>}
@@ -1347,6 +1361,7 @@ export function DeepResearchRoute() {
   const generationOutcomeUnknown = Boolean(showError && errorKind === "generation" && generationError?.responseLess);
   return (
     <div className="react-deep-research-route" data-deep-research-route>
+        {sourceDelete.node}
       <RouteHero
         eyebrow="Deep Research"
         title="딥 리서치"

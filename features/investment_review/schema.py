@@ -19,6 +19,24 @@ CHANGE_STATES = {"added", "removed", "changed"}
 RISK_KEYS = {"portfolio_concentration", "saved_backtest", "correlation_volatility"}
 RISK_STATUSES = {"available", "unavailable"}
 EXPOSURE_TYPES = {"narrative", "sector", "currency"}
+
+
+def security_fields(value):
+    """Retain only identity already present in this dated snapshot."""
+    key = value.get("instrumentId")
+    market = str(value.get("market") or "").upper()
+    ticker = str(value.get("ticker") or "").upper()
+    if isinstance(key, str) and re.fullmatch(r"(US|KR|JP|EUROPE):[A-Z0-9][A-Z0-9.\-]{0,24}", key):
+        key_market, symbol = key.split(":", 1)
+        if (not market or market == key_market) and symbol.replace(".", "-") == ticker.replace(".", "-"):
+            return {"instrumentId": key, "market": key_market}
+        return {}
+    if market in {"US", "KR", "JP", "EUROPE"}:
+        from features.decision_readiness.portfolio_fit import instrument_for
+        instrument = instrument_for(value)
+        if instrument:
+            return {"instrumentId": instrument, "market": market}
+    return {}
 REASON_CODES = {
     "review_missing", "legacy_input_basis_unknown", "provider_observed_at_unknown",
     "input_changed_during_generation", "input_basis_mismatch", "checkpoint_due",
@@ -614,6 +632,7 @@ def normalize_review(review: dict | None, *, date: str = "") -> dict:
                           "counterEvidence": _counter_evidence(item.get("counterEvidence")),
                           "uncertainties": [_reason(reason) for reason in _items(item.get("uncertainties"), 12)],
                           "dueCheckpoints": due, "quantitativeRiskSignals": signals, "canonicalReferences": refs}
+        position.update(security_fields(item))
         for readiness_key in ("thesisPresent", "latestReviewPresent"):
             if isinstance(item.get(readiness_key), bool):
                 position[readiness_key] = item[readiness_key]
@@ -634,6 +653,7 @@ def normalize_review(review: dict | None, *, date: str = "") -> dict:
         if not ticker or verdict not in THESIS_VERDICTS:
             continue
         row = {"ticker": ticker, "thesisVerdict": verdict}
+        row.update(security_fields(item))
         for readiness_key in ("thesisPresent", "latestReviewPresent"):
             if isinstance(item.get(readiness_key), bool):
                 row[readiness_key] = item[readiness_key]

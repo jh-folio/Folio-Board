@@ -1004,7 +1004,13 @@ def save_analysis_report(report):
     return committed
 
 
-def delete_analysis_report(report_id):
+def delete_analysis_report(report_id, *, confirmation_token=None, operation_id=None):
+    from features.investment_case.deletion import delete_source
+    return delete_source(ANALYSIS_REPORTS_DIR.parent, "company", str(report_id or ""), token=confirmation_token,
+                         operation_id=operation_id, fallback=lambda: _delete_analysis_report_unlinked(report_id))
+
+
+def _delete_analysis_report_unlinked(report_id):
     from features.agent_mode.report_delete import DeleteRequest, execute_report_delete
     from features.common.canonical_reports import (
         CanonicalIdentityError,

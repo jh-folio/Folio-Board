@@ -789,7 +789,13 @@ def get_topic_report(report_id: str) -> dict | None:
         return None
 
 
-def delete_topic_report(report_id: str) -> dict:
+def delete_topic_report(report_id: str, *, confirmation_token=None, operation_id=None) -> dict:
+    from features.investment_case.deletion import delete_source
+    return delete_source(REPORTS_DIR.parent, "topic", report_id, token=confirmation_token,
+                         operation_id=operation_id, fallback=lambda: _delete_topic_report_unlinked(report_id))
+
+
+def _delete_topic_report_unlinked(report_id: str) -> dict:
     from features.agent_mode.report_delete import DeleteRequest, execute_report_delete
     from features.common.canonical_reports import (
         CanonicalIdentityError,

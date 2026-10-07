@@ -777,6 +777,12 @@ def build_structured_review(inputs: Mapping, basis: Mapping) -> dict:
         if authority_available:
             position["thesisPresent"] = bool(thesis)
             position["latestReviewPresent"] = bool(delta)
+        # New snapshots carry the identity captured with these holdings.
+        # Legacy ticker-only reviews are never backfilled on read.
+        from features.decision_readiness.portfolio_fit import instrument_for
+        instrument_id = instrument_for(raw)
+        if instrument_id:
+            position.update(instrumentId=instrument_id, market=instrument_id.split(":", 1)[0])
         positions.append(position)
         counter.extend(list(delta.get("counterEvidence") or [])[:3])
         for link in links:
@@ -825,6 +831,9 @@ def build_structured_review(inputs: Mapping, basis: Mapping) -> dict:
     roster = []
     for row in positions[:100]:
         roster_row = {"ticker": row["ticker"], "thesisVerdict": row["thesisVerdict"]}
+        for identity_key in ("instrumentId", "market"):
+            if identity_key in row:
+                roster_row[identity_key] = row[identity_key]
         for readiness_key in ("thesisPresent", "latestReviewPresent"):
             if isinstance(row.get(readiness_key), bool): roster_row[readiness_key] = row[readiness_key]
         roster.append(roster_row)

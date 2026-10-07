@@ -135,6 +135,7 @@ from features.company_exposure.routes import create_exposure_router
 from features.macro_state.routes import create_state_router
 from features.price_scenarios.routes import create_price_router
 from features.decision_readiness.routes import create_decision_router
+from features.investment_case.routes import create_case_router, call as call_case
 from features.price_scenarios.service import review_marker as price_review_marker, snapshot_for_report
 from features.company_analysis.generation_context import set_price_snapshot_provider
 from features.portfolio.routes import create_portfolio_router
@@ -479,6 +480,7 @@ fastapi_app.include_router(create_exposure_router(DATA_DIR))
 fastapi_app.include_router(create_state_router(DATA_DIR))
 fastapi_app.include_router(create_price_router(DATA_DIR))
 fastapi_app.include_router(create_decision_router(DATA_DIR))
+fastapi_app.include_router(create_case_router(DATA_DIR))
 fastapi_app.include_router(create_market_data_router(DATA_DIR, realtime_hub=TOSS_REALTIME_HUB))
 fastapi_app.include_router(create_portfolio_router(DATA_DIR))
 
@@ -1144,12 +1146,12 @@ def api_run_thesis_delta(ticker: str, body: dict | None = Body(default=None)):
 
 
 @fastapi_app.delete("/api/analysis-reports/{report_id}")
-def api_delete_analysis_report(report_id: str):
+def api_delete_analysis_report(report_id: str, confirmationToken: str | None = None, operationId: str | None = None):
     try:
-        result = delete_analysis_report(report_id)
+        result = call_case(delete_analysis_report, report_id, confirmation_token=confirmationToken, operation_id=operationId)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid company analysis identifier") from exc
-    if not result.get("deleted"):
+    if not result.get("deleted") and not result.get("operationId"):
         raise HTTPException(status_code=404, detail="Analysis report not found")
     return result
 
@@ -2067,12 +2069,12 @@ def api_topic_report_personal_overlay(report_id: str, body: dict | None = Body(d
 
 
 @fastapi_app.delete("/api/topic-reports/{report_id}")
-def api_delete_topic_report(report_id: str):
+def api_delete_topic_report(report_id: str, confirmationToken: str | None = None, operationId: str | None = None):
     try:
-        result = delete_topic_report(report_id)
+        result = call_case(delete_topic_report, report_id, confirmation_token=confirmationToken, operation_id=operationId)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid topic report identifier") from exc
-    if not result.get("deleted"):
+    if not result.get("deleted") and not result.get("operationId"):
         raise HTTPException(status_code=404, detail="Topic report not found")
     return result
 

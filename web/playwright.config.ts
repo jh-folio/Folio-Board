@@ -14,12 +14,18 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },
-  webServer: {
+  webServer: [{
     command: "python -m http.server 4173 --bind 127.0.0.1 --directory ../public",
     port: 4173,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
-  },
+  }, ...(process.env.CASE_TEST_URL ? [] : [{
+    command: "python -m uvicorn features.investment_case.tests.browser_server:app --host 127.0.0.1 --port 18789 --log-level warning",
+    cwd: "..",
+    port: 18789,
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+  }])],
   projects: [
     {
       name: "chromium-desktop",

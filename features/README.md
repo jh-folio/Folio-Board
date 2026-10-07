@@ -11,6 +11,7 @@
 | `company_analysis/` | 기업 분석 탭 | SEC/DART 숫자, 공시 문단, 로컬 자료를 결합한 기업분석 |
 | `price_scenarios/` | 구현됨(0.9) | 가격 탭의 시나리오 수익률 계산·저장·투영, 투자 기준, 기업분석 보고서 연결. [계약](price_scenarios/README.md) |
 | `decision_readiness/` | 워치리스트·Portfolio(0.10) | 전역 내 기준, 가격 자료의 검토 준비, 후보 7항목 비교, 직접 입력한 최종 비중 미리보기. 영구 비교 저장·투자 추천 없음. [계약](decision_readiness/README.md) |
+| `investment_case/` | Watchlist 기록·투자 리뷰 연결(0.11) | 명시 검토 단계와 당시 입력·생각 보존, 원본/보존본 삭제 확인·중단 복구. 개인 가설이며 근거로 재사용하지 않음. [계약](investment_case/README.md) |
 | `topic_report/` | 딥 리서치 탭 | 질문-first 계획 승인, Smart Collection 재사용, 근거 추적 보고서(내부 Topic Report v2 호환) |
 | `smart_collections/` | 딥 리서치 내부 워크스페이스 | 결정적 저장 필터, 상태/reason, 제한된 snapshot 변화와 recovery |
 | `portfolio/` | 포트폴리오 탭 | `보유·평가 | 투자 리뷰 | 프리셋 | 백테스트` 4탭: 보유 포지션, 날짜별 투자 리뷰, 목표 프리셋, 리서치용 백테스트 |

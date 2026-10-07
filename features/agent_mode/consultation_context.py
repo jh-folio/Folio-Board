@@ -257,6 +257,9 @@ def _market_state(data_dir: Path) -> dict:
 
 def _scope_context(data_dir: Path, session: dict) -> dict:
     scope = session.get("scope") or {}
+    if scope.get("kind") in {"investment_case", "decision_journal"}:
+        from features.investment_case.agent_context import context
+        return context(data_dir, scope)
     tickers = [str(ticker).upper() for ticker in scope.get("tickers") or []]
     if scope.get("kind") == "market_memory" and scope.get("intent") == "challenge":
         return _narrative_challenge_context(data_dir, scope)
@@ -323,12 +326,16 @@ def assemble_consultation_context(data_dir: Path, session_id: str, *, current_me
         "canonicalWriteback": False, "proposalIntent": False, "noteActionOnly": True, "consultationIsEvidence": False,
     }
     review_challenge = scope.get("kind") == "investment_review" and scope.get("intent") == "challenge"
+    exact_personal = scope.get("kind") in {"investment_case", "decision_journal"}
+    if exact_personal:
+        rules["personalRecord"] = {"noWriteback": True, "hypothesisIsNotEvidence": True, "savedScopeOnly": True,
+                                   "hindsightMustBeLabeled": True, "requiredBiasControls": ["counterEvidence", "contradictions", "uncertainties"]}
     if scope.get("intent") == "challenge":
         rules["challenge"] = {
             "mustAddress": ["counterEvidence", "contradictions", "uncertainties", "source reliability", "materiality"],
             "noRecommendation": True, "noWriteback": True,
         }
-        if review_challenge:
+        if review_challenge or exact_personal:
             # Unlike Thesis/Narrative challenge, this scope deliberately
             # re-reads one immutable saved review and does not refresh a 90d
             # evidence window. Do not imply that it did.
@@ -345,6 +352,15 @@ def assemble_consultation_context(data_dir: Path, session_id: str, *, current_me
         "rules": rules,
     }
     serialized = json.dumps(pack, ensure_ascii=False, separators=(",", ":"))
+    if exact_personal and len(serialized) > MAX_CONTEXT_CHARS:
+        pack["consultationMemory"]["summary"] = ""
+        pack["recentMessages"] = [{**row, "content": str(row.get("content") or "")[:1000]} for row in pack["recentMessages"][-4:]]
+        serialized = json.dumps(pack, ensure_ascii=False, separators=(",", ":"))
+        if len(serialized) > MAX_CONTEXT_CHARS:
+            original = pack["sourceContext"]
+            pack["sourceContext"] = {k: original[k] for k in ("target", "layer", "reuseAsEvidence", "rules") if k in original}
+            pack["sourceContext"]["dataGaps"] = [{"code": "exact_scope_exceeds_context_budget", "reason": "선택한 기록의 범위가 대화 입력 한도를 넘습니다. 기록 화면에서 확인해 주세요."}]
+            serialized = json.dumps(pack, ensure_ascii=False, separators=(",", ":"))
     if review_challenge and len(serialized) > MAX_CONTEXT_CHARS:
         # The roster/date/revision/coverage are the exact-scope contract.
         # Sacrifice conversational memory and optional detail first; never

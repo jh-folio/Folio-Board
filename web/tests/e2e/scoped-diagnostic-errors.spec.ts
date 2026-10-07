@@ -188,6 +188,7 @@ async function installApi(page: Page, handler: (route: Route, url: URL) => Promi
 }
 
 async function commonApi(route: Route, url: URL): Promise<boolean> {
+  if (url.pathname === "/api/investment-cases/source-delete-preview") { await json(route, { linkedJournalCount: 0 }); return true; }
   if (url.pathname === `/api/diagnostics/runs/${RUN_ID}`) { await json(route, diagnosticDetailFor(diagnosticFeature, RUN_ID)); return true; }
   if (url.pathname === `/api/diagnostics/runs/${RUN_ID_LIST}`) { await json(route, diagnosticDetailFor(diagnosticFeature, RUN_ID_LIST)); return true; }
   if (url.pathname === "/api/settings") { await json(route, settings); return true; }

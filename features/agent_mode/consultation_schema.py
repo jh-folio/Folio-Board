@@ -13,7 +13,7 @@ import re
 SESSION_STATUSES = {"active", "archived"}
 # 주제 없는 일반 대화. 도크에서 그냥 시작한 대화가 여기 들어간다.
 UNSCOPED_KIND = "general"
-SCOPE_KINDS = {UNSCOPED_KIND, "watchlist", "portfolio", "briefing", "company_analysis", "topic_report", "market_memory", "change", "investment_review"}
+SCOPE_KINDS = {UNSCOPED_KIND, "watchlist", "portfolio", "briefing", "company_analysis", "topic_report", "market_memory", "change", "investment_review", "investment_case", "decision_journal"}
 SCOPE_INTENTS = {"", "challenge"}
 NOTE_TYPES = {"company_thesis", "portfolio_decision", "investment_note"}
 MAX_MESSAGES = 500
@@ -52,7 +52,7 @@ def normalize_scope(value: dict | None) -> dict:
         reason_revision_id = ""
     if kind == "investment_review" and _REVIEW_DATE_RE.fullmatch(identifier) is None:
         identifier = ""
-    return {
+    result = {
         "kind": kind,
         "id": identifier,
         "marketScope": clean_text(value.get("marketScope"), 16).lower(),
@@ -63,6 +63,15 @@ def normalize_scope(value: dict | None) -> dict:
         "revision": revision if kind == "investment_review" else 0,
         "reasonRevisionId": reason_revision_id if kind == "watchlist" and intent == "challenge" else "",
     }
+    if kind in {"investment_case", "decision_journal"}:
+        result["id"] = identifier if re.fullmatch(r"[0-9a-f]{64}" if kind == "investment_case" else r"[0-9a-f]{32}", identifier) else ""
+        for field in (("inputFingerprint",) if kind == "investment_case" else ("bodyHash",)):
+            text = clean_text(value.get(field), 65)
+            result[field] = text if re.fullmatch(r"[0-9a-f]{64}", text) else ""
+        if kind == "investment_case":
+            result["caseRevision"] = value.get("caseRevision") if type(value.get("caseRevision")) is int and value["caseRevision"] > 0 else 0
+            result["methodVersion"] = clean_text(value.get("methodVersion"), 60)
+    return result
 
 
 def public_session(value: dict, *, include_messages: bool = True) -> dict:

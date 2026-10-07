@@ -176,3 +176,7 @@ py -3 features\investment_review\tests\test_checkpoint_aggregation.py
 ## 0.8 입력 계보
 
 새 리뷰는 `inputBasis.macroBasisVersion=macro-lineage-1`과 저장 시점의 거시 snapshot ID·inputFingerprint·시장·축·기준일·방법 버전을 보존합니다. 저장/검토 완료 때 현재 입력과 다시 비교하며 CLI staged 저장·재시작 복구도 같은 계보를 검사합니다. 과거 리뷰에는 이 필드를 자동 추가하지 않습니다.
+
+## 0.11 당시 종목 연결
+
+새 리뷰의 종목행과 roster에는 입력에 존재하는 정확한 `instrumentId`와 `market`을 보존합니다. ticker-only 과거 리뷰에 현재 Portfolio의 시장을 소급해서 붙이지 않습니다. 확인 가능한 동일 증권의 행에서 Watchlist `기록`으로 이동하고 같은 리뷰 날짜로 돌아옵니다. Case 보존본에는 해당 종목행과 범위·요약만 담으며 전체 Portfolio 원장을 복사하지 않습니다. [당시 기록 계약](../investment_case/README.md).

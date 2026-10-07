@@ -131,7 +131,7 @@ export type ConsultationMessage = {
 export type ConsultationSession = {
   id: string;
   title: string;
-  scope: { kind: string; id?: string; marketScope?: string; tickers?: string[]; intent?: "challenge"; revision?: number; reasonRevisionId?: string };
+  scope: { kind: string; id?: string; marketScope?: string; tickers?: string[]; intent?: "challenge"; revision?: number; reasonRevisionId?: string; caseRevision?: number; inputFingerprint?: string; methodVersion?: string; bodyHash?: string };
   status: "active" | "archived";
   revision: number;
   messages?: ConsultationMessage[];

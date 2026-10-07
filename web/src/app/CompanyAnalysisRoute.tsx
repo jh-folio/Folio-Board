@@ -1,3 +1,5 @@
+import { useSourceDelete } from "./investmentCase/SourceDeleteDialog";
+import { sourceDeletePartialNotice } from "./investmentCase/copy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useContentRevision } from "./useContentRevision";
 import { engineNote, groupMeta, listDate } from "./savedListFormat";
@@ -221,6 +223,7 @@ function isAnalysisHash() {
 }
 
 export function CompanyAnalysisRoute() {
+  const sourceDelete = useSourceDelete();
   const contentRevision = useContentRevision("companyAnalysis");
   const [reports, setReports] = useState<AnalysisReport[]>([]);
   const [selected, setSelected] = useState<AnalysisReport | null>(null);
@@ -492,13 +495,19 @@ export function CompanyAnalysisRoute() {
 
   async function deleteReport(report: AnalysisReport) {
     if (!report.id) return;
-    if (!window.confirm(`${reportLabel(report)} 보고서를 삭제할까요?`)) return;
     const action = beginReportAction();
     setActionBusy(`delete-${report.id}`);
     invalidateGenerationDiagnostic();
     setError("");
     try {
-      const result = await deleteJson<{ readonly deleted?: boolean }>(`/api/analysis-reports/${encodeURIComponent(report.id)}`, {}, { signal: action.controller.signal });
+      const approval = await sourceDelete.requestDelete("company", report.id, reportLabel(report), action.controller.signal);
+      if (!approval) return;
+      const confirmation = new URLSearchParams(approval as Record<string, string>).toString();
+      const result = await deleteJson<{ readonly deleted?: boolean; outcome?: string; sourceOutcome?: string }>(`/api/analysis-reports/${encodeURIComponent(report.id)}${confirmation ? `?${confirmation}` : ""}`, {}, { signal: action.controller.signal });
+      if (result && sourceDeletePartialNotice(result)) {
+        if (isCurrentReportAction(action.id, action.controller)) { await loadReports(); setStatus(sourceDeletePartialNotice(result)); }
+        return;
+      }
       if (!result || result.deleted !== true) throw new Error("기업 분석 삭제 결과를 확인하지 못했습니다.");
       if (!isCurrentReportAction(action.id, action.controller)) return;
       if (selected?.id === report.id) setAnalysisHash();
@@ -621,6 +630,7 @@ export function CompanyAnalysisRoute() {
   if (selected) {
     return (
       <div className="react-company-analysis-route" data-company-analysis-route>
+        {sourceDelete.node}
         {readErrorMessage && <p className="react-dashboard-error">{readErrorMessage}</p>}
         {error && !readErrorMessage && <p className="react-dashboard-error">{error}</p>}
         {readErrorDiagnostic && <ReportErrorDiagnostic diagnostic={readErrorDiagnostic} />}
@@ -732,6 +742,7 @@ export function CompanyAnalysisRoute() {
 
   return (
     <div className="react-company-analysis-route" data-company-analysis-route>
+        {sourceDelete.node}
       <RouteHero
         eyebrow="Company Analysis"
         title="기업 분석"

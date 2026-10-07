@@ -38,7 +38,7 @@ const DEFAULT_ROUTE: RouteId = "home";
 
 export function parseHashRoute(hash: string): RouteId {
   if (hash.startsWith("#/market-memory/macro")) return "macro";
-  const cleaned = hash.replace(/^#\/?/, "").split("/")[0];
+  const cleaned = hash.replace(/^#\/?/, "").split("?")[0].split("/")[0];
   return ROUTES.some((route) => route.id === cleaned) ? (cleaned as RouteId) : DEFAULT_ROUTE;
 }
 

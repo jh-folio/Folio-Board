@@ -561,3 +561,7 @@ Agent는 선택 ticker를 서버 저장소에서 다시 조회하고 추천 없�
 ### E0 인용의 공개 투영
 
 기업분석 bridge는 private `result_sink`를 호출별로 유지하고 실제 채택된 재시도 결과만 인용 연결에 사용한다. pack에는 private 결과 객체를 넣지 않는다. 최종 Markdown에는 출처 원장과 연결되고 위치가 유효한 링크만 투영한다(`features/common/report_citations.py`). provider 세션 이어쓰기는 여전히 미지원이며, 기존 job/candidate 복구와 구분한다.
+
+### 0.11 개인 기록의 정확한 범위
+
+명시 요청의 `investment_case`는 caseId·caseRevision·inputFingerprint·methodVersion을, `decision_journal`은 journalId·bodyHash를 검증합니다. 원본 또는 당시 본문이 바뀌면 넓은 맥락으로 대체하지 않고 제한된 공백을 반환합니다. 보존 자료 발췌는 전체가 아님을 표시하고 기록 시점과 이후 변경을 구분합니다. 반증·모순·불확실성을 요구하며 초안·반박을 자동 저장하지 않습니다. 개인 기록은 hypothesis, reuseAsEvidence=false입니다. [계약](../investment_case/README.md).

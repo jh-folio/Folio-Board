@@ -6,11 +6,13 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Final, TypedDict
 
 from features.common.markets import PRODUCT_MARKETS
 from features.common.atomic_replace import replace_with_retry
+from features.common.canonical_report_io import artifact_lock, atomic_write, safe_child_path
 
 
 _SAFE_ID: Final = re.compile(r"^[A-Za-z0-9:_-]+$")
@@ -21,12 +23,15 @@ _JOURNAL_STAGES: Final = frozenset({"journaled", "renamed", "deleting", "unlinke
 class _JournalEntry(TypedDict):
     original: str
     temporary: str
+    expectedHash: str | None
+    state: str
 
 
 class _Journal(TypedDict):
     identity: str
     stage: str
     entries: list[_JournalEntry]
+    receiptId: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +42,8 @@ class DeleteRequest:
     target_names: tuple[str, ...]
     refresh: Callable[[], None] | None = None
     fault_stage: str | None = None
+    expected_hashes: dict[str, str] | None = None
+    receipt_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +64,17 @@ class InvalidDeleteRequestError(ValueError):
         return f"invalid report deletion {self.field}"
 
 
+class SourceChangedError(ValueError):
+    """The reviewed source was replaced; never acquire its replacement."""
+
+
+class DeleteRecoveryRequiredError(ValueError):
+    pass
+
+
 def _validated(request: DeleteRequest) -> DeleteRequest:
+    if request.receipt_id is not None and re.fullmatch(r"[a-f0-9]{32}", request.receipt_id) is None:
+        raise InvalidDeleteRequestError(field="receipt")
     if not _SAFE_ID.fullmatch(request.identity):
         raise InvalidDeleteRequestError(field="identity")
     if not request.primary_names or not request.target_names:
@@ -128,9 +145,7 @@ def _journal_path(root: Path, identity: str) -> Path:
 
 
 def _write_journal(path: Path, payload: _Journal) -> None:
-    staging = path.with_suffix(".tmp")
-    staging.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    replace_with_retry(staging, path)
+    atomic_write(path, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
 
 def _parse_journal(path: Path) -> _Journal | None:
@@ -164,24 +179,68 @@ def _parse_journal(path: Path) -> _Journal | None:
             return None
         if not _is_exact_candidate(identity, original):
             return None
-        parsed_entries.append({"original": original, "temporary": temporary})
+        expected = entry.get("expectedHash")
+        state = entry.get("state", "legacy")
+        if expected is not None and (not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None):
+            return None
+        if state not in {"legacy", "journaled", "renamed", "unlinked", "changed", "missing"}:
+            return None
+        parsed_entries.append({"original": original, "temporary": temporary, "expectedHash": expected, "state": state})
     if len({entry["original"] for entry in parsed_entries}) != len(parsed_entries):
         return None
-    return {"identity": identity, "stage": stage, "entries": parsed_entries}
+    receipt = raw.get("receiptId")
+    if receipt is not None and (not isinstance(receipt, str) or re.fullmatch(r"[a-f0-9]{32}", receipt) is None):
+        return None
+    return {"identity": identity, "stage": stage, "entries": parsed_entries, "receiptId": receipt}
 
 
-def _recover_journal(path: Path, journal: _Journal, refresh: Callable[[], None] | None) -> None:
+def _checksum(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _recover_journal(path: Path, journal: _Journal, refresh: Callable[[], None] | None) -> bool:
     root = path.parent
+    unresolved = False
     for entry in journal["entries"]:
-        original = root / entry["original"]
-        temporary = root / entry["temporary"]
-        if original.exists() and not temporary.exists():
-            replace_with_retry(original, temporary)
-        if temporary.exists():
-            temporary.unlink()
+        original = safe_child_path(root, entry["original"])
+        temporary = safe_child_path(root, entry["temporary"])
+        with artifact_lock(original):
+            if temporary.exists():
+                if entry["expectedHash"] and _checksum(temporary) != entry["expectedHash"]:
+                    raise SourceChangedError("deletion_tombstone_changed")
+                entry["state"] = "renamed"
+                _write_journal(path, journal)
+            elif entry["state"] == "journaled" and journal["stage"] == "journaled":
+                if not original.exists():
+                    entry["state"] = "missing"
+                elif not entry["expectedHash"]:
+                    unresolved = True
+                    continue
+                elif _checksum(original) != entry["expectedHash"]:
+                    entry["state"] = "changed"
+                else:
+                    replace_with_retry(original, temporary)
+                    entry["state"] = "renamed"
+                    _write_journal(path, journal)
+            elif entry["state"] == "legacy" and journal["stage"] == "journaled":
+                # An old journal proves no hash or rename boundary. It cannot
+                # authorize acquiring whatever currently occupies the name.
+                unresolved = True
+                continue
+            if temporary.exists():
+                temporary.unlink()
+                entry["state"] = "unlinked"
+            _write_journal(path, journal)
+    if unresolved:
+        return False
     if refresh is not None:
         refresh()
-    path.unlink()
+    if journal.get("receiptId"):
+        journal["stage"] = "refreshed"
+        _write_journal(path, journal)
+    else:
+        path.unlink()
+    return True
 
 
 def recover_report_deletes(
@@ -197,8 +256,8 @@ def recover_report_deletes(
         journal = _parse_journal(path)
         if journal is None:
             continue
-        _recover_journal(path, journal, refresh)
-        recovered.append(journal["identity"])
+        if _recover_journal(path, journal, refresh):
+            recovered.append(journal["identity"])
     for staging in root.glob(f"{_JOURNAL_PREFIX}*.tmp"):
         staging.unlink()
     return tuple(recovered)
@@ -214,23 +273,47 @@ def execute_report_delete(request: DeleteRequest) -> DeleteOutcome:
     request = _validated(request)
     root = request.root
     root.mkdir(parents=True, exist_ok=True)
-    recover_report_deletes(root, refresh=request.refresh)
+    prior = _parse_journal(_journal_path(root, request.identity))
+    recovered = recover_report_deletes(root, refresh=request.refresh)
+    receipt = _parse_journal(_journal_path(root, request.identity))
+    if receipt and receipt.get("receiptId") == request.receipt_id and request.receipt_id and receipt["stage"] == "refreshed":
+        if any(safe_child_path(root, name).exists() for name in request.primary_names):
+            raise SourceChangedError("source_changed")
+        return DeleteOutcome(any(e["state"] == "unlinked" for e in receipt["entries"]), request.identity, tuple(e["original"] for e in receipt["entries"] if e["state"] == "unlinked"))
+    if _journal_path(root, request.identity).exists():
+        raise DeleteRecoveryRequiredError("recovery_requires_confirmation")
+    if prior and request.identity in recovered:
+        if any(safe_child_path(root, name).exists() for name in request.primary_names):
+            raise SourceChangedError("source_changed")
+        return DeleteOutcome(True, request.identity, tuple(e["original"] for e in prior["entries"]))
+    with ExitStack() as locks:
+        for name in sorted(request.target_names):
+            locks.enter_context(artifact_lock(safe_child_path(root, name)))
+        return _execute_locked(request)
+
+
+def _execute_locked(request: DeleteRequest) -> DeleteOutcome:
+    root = request.root
     if not any((root / name).exists() for name in request.primary_names):
         return DeleteOutcome(deleted=False, identity=request.identity, removed_names=())
 
     existing = tuple(name for name in request.target_names if (root / name).exists())
     journal_path = _journal_path(root, request.identity)
     token = journal_path.stem.removeprefix(_JOURNAL_PREFIX)
-    entries = [
-        {"original": name, "temporary": f"{_JOURNAL_PREFIX}{token}.{index}.deleting"}
-        for index, name in enumerate(existing)
-    ]
-    journal: _Journal = {"identity": request.identity, "stage": "journaled", "entries": entries}
+    entries = []
+    for index, name in enumerate(existing):
+        checksum = _checksum(safe_child_path(root, name))
+        if request.expected_hashes is not None and request.expected_hashes.get(name) != checksum:
+            raise SourceChangedError("source_changed")
+        entries.append({"original": name, "temporary": f"{_JOURNAL_PREFIX}{token}.{index}.deleting", "expectedHash": checksum, "state": "journaled"})
+    journal: _Journal = {"identity": request.identity, "stage": "journaled", "entries": entries, "receiptId": request.receipt_id}
     _write_journal(journal_path, journal)
     _fault(request, "journaled")
 
     for index, entry in enumerate(entries):
-        replace_with_retry(root / entry["original"], root / entry["temporary"])
+        replace_with_retry(safe_child_path(root, entry["original"]), safe_child_path(root, entry["temporary"]))
+        entry["state"] = "renamed"
+        _write_journal(journal_path, journal)
         _fault(request, f"renamed:{index}")
     journal["stage"] = "renamed"
     _write_journal(journal_path, journal)
@@ -241,6 +324,8 @@ def execute_report_delete(request: DeleteRequest) -> DeleteOutcome:
     _fault(request, "deleting")
     for index, entry in enumerate(entries):
         (root / entry["temporary"]).unlink()
+        entry["state"] = "unlinked"
+        _write_journal(journal_path, journal)
         _fault(request, f"unlinked:{index}")
     journal["stage"] = "unlinked"
     _write_journal(journal_path, journal)
@@ -251,5 +336,14 @@ def execute_report_delete(request: DeleteRequest) -> DeleteOutcome:
     journal["stage"] = "refreshed"
     _write_journal(journal_path, journal)
     _fault(request, "refreshed")
-    journal_path.unlink()
+    if not request.receipt_id:
+        journal_path.unlink()
     return DeleteOutcome(deleted=True, identity=request.identity, removed_names=existing)
+
+
+def acknowledge_delete_receipt(root: Path, identity: str, receipt_id: str) -> None:
+    """Remove metadata only after its coordinating operation durably owns the outcome."""
+    path = _journal_path(root, identity)
+    journal = _parse_journal(path)
+    if journal and journal.get("receiptId") == receipt_id and journal["stage"] == "refreshed":
+        path.unlink()
