@@ -12,7 +12,7 @@ def request(value):
     if not isinstance(value, dict):
         raise CaseError("invalid_action")
     allowed = {"instrumentId", "expectedCaseRevision", "action", "selection", "excludedSlots", "selectedScenario", "decisionText", "uncertainties",
-               "userReportedAt", "kind", "previousJournalId", "toStage", "targetJournalId", "purgeSlots", "purgePersonal", "correctionSlot"}
+               "userReportedAt", "kind", "previousJournalId", "toStage", "targetJournalId", "purgeSlots", "purgePersonal", "correctionSlot", "ownershipReview"}
     if set(value) - allowed:
         raise CaseError("unexpected_action_field")
     result = dict(value)
@@ -94,4 +94,9 @@ def request(value):
     if scenario is not None and (not isinstance(scenario, dict) or set(scenario) != {"snapshotId", "label", "horizon"} or not isinstance(scenario["snapshotId"], str) or scenario["label"] not in {"base", "conservative", "optimistic"} or type(scenario["horizon"]) is not int or scenario["horizon"] not in {5, 10}):
         raise CaseError("invalid_selected_scenario")
     result["selectedScenario"] = scenario
+    from .ownership_validation import REVIEW_KINDS, validate
+    if result["kind"] in REVIEW_KINDS:
+        result["ownershipReview"] = validate(value.get("ownershipReview"), result["kind"])
+    elif "ownershipReview" in value:
+        raise CaseError("ownership_review_kind_required")
     return result

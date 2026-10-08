@@ -177,7 +177,9 @@ def test_quality_repair_and_investment_review_write_to_temporary_stores():
                 "capturedAt": "2099-12-31T00:00:00+00:00",
             }
             service.REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-            with patch.object(review_v2, "gather_inputs", return_value=review_inputs):
+            # The shared finalizer also reads exact macro/decision lineage.
+            # Keep those reads in the same temporary workspace as generation.
+            with patch.object(review_v2, "gather_inputs", return_value=review_inputs), patch.object(service, "data_dir", return_value=Path(tmp) / "data"):
                 candidate = review_v2.build_candidate(Path(tmp) / "data", service.REVIEW_DIR, "2099-12-31")
                 review_pack = {"artifactId": "2099-12-31", "draftArtifact": candidate}
                 review = service.write_investment_review_from_markdown(review_pack, "## Review")

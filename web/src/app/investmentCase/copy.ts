@@ -5,6 +5,15 @@ export function errorCopy(error: unknown) {
   const code = error instanceof ApiRequestError ? error.code : "";
   const labels: Record<string, string> = {
     inputs_changed: "확인 중 입력이 바뀌었습니다. 현재 자료를 새로 읽고 다시 미리보기를 확인해 주세요.",
+    ownership_review_changed: "이 점검이나 기준 기록이 바뀌었습니다. 자료를 다시 읽고 최신 점검에서 이어 주세요.",
+    ownership_condition_changed: "연결한 조건 판본을 확인할 수 없습니다. 자료를 다시 읽고 정확한 조건을 선택해 주세요.",
+    ownership_condition_unavailable: "당시 조건 본문을 확인할 수 없어 해소로 기록할 수 없습니다. 미해결로 남기거나 현재 자료로 별도 검토해 주세요.",
+    previous_ownership_review_unavailable: "이전 검토본문이 없어 이어 쓸 수 없습니다. 현재 자료로 별도 점검을 남겨 주세요.",
+    ownership_condition_requires_preserved_reason: "선택한 현재 조건을 다시 읽으려면 투자 이유와 조건을 함께 보존해야 합니다.",
+    ownership_scope_required: "검토 완료를 표시하려면 이번에 확인한 범위를 하나 이상 선택해 주세요.",
+    unresolved_ownership_review: "보류·예외·근거 공백이 남아 있습니다. 미해결로 기록해 주세요. 검토 완료 표시는 함께 남길 수 있습니다.",
+    invalid_ownership_refs: "출처 주소 또는 식별자를 확인해 주세요. 주소는 http 또는 https 형식이어야 합니다.",
+    invalid_ownership_time: "날짜와 시각 형식을 확인해 주세요. 정확한 시각에는 시차 정보가 필요합니다.",
     case_revision_changed: "다른 작업에서 기록이 바뀌었습니다. 새로 읽고 다시 확인해 주세요.",
     preview_expired: "미리보기 확인 시간이 지났습니다. 다시 미리보기를 열어 주세요.",
     case_recovery_required: "마무리하지 못한 저장 또는 삭제가 있습니다. 아래 복구 항목을 확인해 주세요.",

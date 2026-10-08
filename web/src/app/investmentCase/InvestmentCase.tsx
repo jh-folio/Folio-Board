@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getJson, postJson } from "../../api";
 import { openScopedThread } from "../agentWorkspace/openScopedThread";
+import { ownershipLink, portfolioReturn } from "./ownershipTypes";
 import { errorCopy, sourceDeletePartialNotice, sourceLink, timeLabel } from "./copy";
 import { PreservedInput, Value } from "./PreservedInput";
 import { kinds, slots, slotLabels, stages, type CaseView, type JournalView, type Operation, type Preview, type Slot } from "./types";
@@ -137,13 +138,14 @@ export function InvestmentCase({ instrumentId, active, onReason }: { instrumentI
   return <section className="case-workspace" data-investment-case data-layer="hypothesis" aria-labelledby="case-heading" aria-busy={busy}>
     <header className="case-head"><div><p className="section-kicker">INVESTMENT CASE</p><h3 id="case-heading" ref={heading} tabIndex={-1}>{selected ? "당시 기록" : "이 종목의 검토와 기록"}</h3></div><span className="chip" data-tone="purple">내 판단 · 근거 아님</span></header>
     <p>지금 보는 자료와 당시 남긴 생각을 함께 읽습니다. 현재 투자 이유는 기존 이유 화면에서 작성합니다.</p>
-    {params().get("returnTo") === "review" && <a className="btn btn--text" href={`#/portfolio?tab=review&date=${encodeURIComponent(params().get("reviewDate") || "")}`}>투자 리뷰로 돌아가기</a>}
+    {portfolioReturn() && <a className="btn btn--text" href={portfolioReturn()!}>투자 리뷰로 돌아가기</a>}
     {error && <p role="alert" className="react-dashboard-error">{error}</p>}{notice && <p role="status">{notice}</p>}
     <div className="case-actions"><button className="btn btn--text" disabled={busy} onClick={() => { setError(""); void refresh(); }}>현재 자료 다시 읽기</button><button className="btn btn--text" onClick={onReason}>현재 투자 이유 열기</button>{(journal || (current && current.caseRevision > 0)) && <button className="btn btn--text" disabled={busy} onClick={() => void askAgent()}>Agent로 약한 전제 검토</button>}</div>
     {current?.pendingOperations.map(op => <section className="surface surface--group case-recovery" key={op.operationId}><h4>마무리가 필요한 {op.status === "deleting" ? "삭제" : "저장"}</h4><p>준비된 당시 내용으로 이어서 처리합니다.</p><div className="case-actions"><button className="btn" disabled={busy} onClick={() => void recover(op)}>작업 복구</button>{op.cancelAllowed && <button className="btn btn--text" disabled={busy} onClick={() => setCancel(op.operationId)}>미완료 저장 취소</button>}</div>{cancel === op.operationId && <><p>이 미완료 기록의 준비 파일을 지우고 저장을 종결합니다. 게시된 기록은 취소하지 않습니다.</p><button className="btn btn--danger" disabled={busy} onClick={() => void recover(op, true)}>미완료 저장 취소 확인</button><button className="btn btn--text" onClick={() => setCancel(null)}>돌아가기</button></>}</section>)}
     {journalId && !selected && <p role="status">{error ? "당시 기록을 표시할 수 없습니다." : "당시 기록을 읽는 중입니다."}<button className="btn btn--text" onClick={() => journalHash()}>기록 목록으로</button></p>}
     {selected && <section className="case-section case-reader"><div className="case-actions"><button className="btn btn--text" onClick={() => { journalHash(); setError(""); }}>기록 목록으로</button><span className="chip">{kinds[selected.kind]}</span></div>
       <dl className="case-meta"><div><dt>실제 기록 시각</dt><dd>{timeLabel(selected.recordedAt)}</dd></div><div><dt>사용자가 보고한 시점</dt><dd>{selected.userReportedAt.value || "알 수 없음"}{selected.userReportedAt.precision === "date" ? " · 날짜까지만" : ""}</dd></div></dl>
+      {["ownership_review", "postmortem"].includes(selected.kind) && <a className="btn" href={ownershipLink(instrumentId.split(":")[1], instrumentId, selected.id, portfolioReturn() || undefined)}>이 기록의 보유 점검·복기 열기</a>}
       <h4>당시 남긴 생각</h4><p className="case-text">{selected.decisionText || (selected.personalPurgedAt ? "개인본문 삭제됨" : "결정 글 없음")}</p><h4>당시 불확실성</h4><p className="case-text">{selected.uncertainties || "작성하지 않음"}</p>
       {selected.previousJournalId && <button className="btn btn--text" onClick={() => journalHash(selected.previousJournalId)}>연결한 이전 기록 열기</button>}
       {selected.selectedScenario && <p>선택 시나리오: {scenarioLabel(selected.selectedScenario.label)} · {selected.selectedScenario.horizon}년</p>}
@@ -168,7 +170,7 @@ export function InvestmentCase({ instrumentId, active, onReason }: { instrumentI
     </>}
     {editing && !selected && current && <form className="surface surface--group case-form" onChangeCapture={invalidPreview} onSubmit={event => { event.preventDefault(); previewJournal(); }}>
       <h4>새 기록</h4><p>작성하지 않은 내용은 그대로 비워 둡니다. 과거에 알고 있었다고 소급해 기록하지 않습니다.</p>
-      <label className="field">기록 종류<select value={kind} onChange={e => setKind(e.target.value)}>{Object.entries(kinds).filter(([key]) => key !== "stage_change").map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label className="field">기록 종류<select value={kind} onChange={e => setKind(e.target.value)}>{Object.entries(kinds).filter(([key]) => !["stage_change", "ownership_review", "postmortem"].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       {kind !== "decision" && <label className="field">연결할 이전 기록<select value={previous} onChange={e => setPrevious(e.target.value)}><option value="">기록을 선택해 주세요</option>{current.journals.map(row => <option key={row.id} value={row.id}>{timeLabel(row.recordedAt)} · {row.preview?.slice(0, 40) || "결정 글 없음"}</option>)}</select></label>}
       {kind === "reentry" && <><p>이전 기록과 연결된 새 검토를 시작합니다. 실제 거래 기록을 만들지는 않습니다.</p><label className="field">새 검토 단계<select value={reentryStage} onChange={e => setReentryStage(e.target.value)}><option value="">현재 단계 유지</option>{Object.entries(stages).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></>}
       <label className="field">결정이나 변화에 대한 생각<textarea value={decision} maxLength={12000} onChange={e => setDecision(e.target.value)} rows={4} /></label>

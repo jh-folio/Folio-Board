@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, HTTPException
 from features.agent_mode.report_delete import DeleteRecoveryRequiredError
 
 from . import CaseError
-from . import service, deletion
+from . import service, deletion, ownership
 
 
 def call(function, *args, **kwargs):
@@ -45,6 +45,14 @@ def create_case_router(data_root):
     @router.get("/api/decision-journals/{journal_id}")
     def journal(journal_id: str):
         return call(service.read_journal, data_root, journal_id)
+
+    @router.get("/api/investment-cases/{instrument_id}/ownership-review")
+    def ownership_view(instrument_id: str, originalJournalId: str | None = None):
+        return call(ownership.view, data_root, instrument_id, originalJournalId)
+
+    @router.get("/api/decision-journals/{journal_id}/ownership-review")
+    def ownership_history(journal_id: str):
+        return call(ownership.historical, data_root, journal_id)
 
     @router.post("/api/investment-cases/preview")
     def preview(body: dict = Body(...)):

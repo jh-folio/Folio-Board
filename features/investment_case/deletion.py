@@ -25,6 +25,10 @@ def tombstone(body, slots, personal, stamp, policy):
         item.pop("requiresExclusion", None)
     if personal:
         body.update(decisionText="", uncertainties="", userReportedAt={"value": None, "precision": "unknown"}, selectedScenario=None, personalPurgedAt=stamp)
+        if body.get("ownershipReview"):
+            review = body["ownershipReview"]
+            body["ownershipReview"] = {key: review.get(key) for key in ("schemaVersion", "methodVersion", "rootReviewJournalId", "originalJournalId", "originalBodyHash", "previousReviewJournalId", "previousReviewBodyHash", "firstSeenAt")}
+            body["ownershipReview"]["purgedAt"] = stamp
     body["purges"].append({"slots": sorted(slots), "personal": personal, "purgedAt": stamp, "policy": policy})
     return body
 

@@ -18158,6 +18158,20 @@ select { min-height: 36px; padding: 0 12px; }
 .case-delete-dialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: var(--sp-5); color: var(--folio-ink); overflow-y: auto; }
 .case-delete-dialog::backdrop { background: var(--price-dialog-scrim); }
 .case-delete-dialog .field { display: grid; gap: var(--sp-2); }
+
+/* Ownership review extends the existing personal-record surfaces. */
+.ownership-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--sp-5); min-width: 0; }
+.ownership-columns > section, .ownership-reason, .ownership-summary { display: grid; align-content: start; gap: var(--sp-3); min-width: 0; }
+.ownership-details { margin-top: var(--sp-3); min-width: 0; }
+.ownership-details > div, .ownership-details > p, .ownership-details > h5 { margin-top: var(--sp-3); }
+.ownership-check { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--touch-min); }
+.ownership-check input { width: 18px; height: 18px; flex: 0 0 18px; }
+.ownership-table { max-width: 100%; overflow-x: auto; }
+.ownership-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-body-sm); }
+.ownership-table caption { text-align: left; padding: var(--sp-2) 0; color: var(--folio-ink-muted); }
+.ownership-table th, .ownership-table td { padding: var(--sp-2); text-align: left; border-bottom: 1px solid var(--folio-border); vertical-align: top; min-width: 100px; }
+.ownership-table th { font-weight: var(--fw-medium); }
+.ownership-workspace h5 { margin: 0; font-size: var(--fs-body); font-weight: var(--fw-bold); }
 @media (max-width: 600px) {
   .case-values > div, .case-meta > div { grid-template-columns: 1fr; gap: var(--sp-1); }
   .case-head { align-items: flex-start; }

@@ -77,6 +77,7 @@ diagnosticOnly thetaC thetaR yearOverYear previousYearOverYear changePercentageP
 overall marketInterpretation directionLabel directionTone marketImpact nextMemoryCheck evidenceSummary whyItMatters
 sourceRef transformVersion selectedPeriod observationMonth
 scoredPassages exposures omittedFragments
+ownershipBasisVersion originalDecisions journalId bodyHash caseId
 """.split())
 
 REPORT_FIELDS = frozenset({"id", "title", "generatedAt", "createdAt", "date", "company", "markdown", "sourceLedger",

@@ -410,3 +410,9 @@ cockpit의 "초기 payload에 외부 iframe 없음" 계약과도 어긋났다.
 Watchlist 상세의 네 번째 `기록` 탭은 현재 입력과 당시 개인 기록을 연결합니다. 기존 기업·가격·이유 탭은 유지하고 query의 instrument/journal/reviewDate로 새로고침·뒤로가기·Portfolio 투자 리뷰 왕복을 지원합니다. 현재 자료 오류와 과거 기록 읽기는 독립적이며, 명시 새로 읽기는 열린 기록의 본문 hash와 원본 상태도 다시 확인합니다. 단계·기록·삭제는 미리보기 뒤 확인합니다. 원본 삭제창의 기본은 연결 보존본문 삭제이며, 취소·다른 화면 이동은 이전 비동기 확인 요청을 무효화합니다. [저장·권위 계약](../investment_case/README.md).
 
 UI 검사는 `npm run test:ui`에서 임시 FastAPI fixture 서버를 자동으로 실행합니다. 테스트 자료는 임시 폴더에만 만들며 운영 app.py와 사용자 설정은 불러오지 않습니다. 별도 fixture 서버는 `CASE_TEST_URL`로 지정할 수 있습니다.
+
+## 보유 점검 화면
+
+Watchlist 상세의 다섯 번째 `보유 점검` 탭은 `OwnershipReview`와 기존 `.case-*` 프리미티브를 재사용합니다. 당시/현재 자료는 펼친 영역에서 두 열(모바일 한 열)로 읽으며 수치 표는 표 안에서만 가로 스크롤합니다. 일반 탭 이동은 다른 종류의 journal query를 제거하고 명시 기록 링크만 journal을 전달합니다.
+
+조건 선택값은 reason revision을 포함합니다. 이유 수정 후 재진입하면 나머지 초안을 보존하고 오래된 조건을 다시 선택하게 합니다. 검토 완료 체크박스와 조건 해소 체크박스는 별개입니다. 미리보기로 focus를 옮기고 폼 닫기는 화면 제목으로 돌립니다. Light/Dark, reduced motion, overflow, loading/empty/error, 실제 저장·복기와 Portfolio 날짜/선택 왕복은 보유 점검 E2E에서 검사합니다. 자세한 저장·권위 계약은 [investment_case](../investment_case/README.md)를 따릅니다.

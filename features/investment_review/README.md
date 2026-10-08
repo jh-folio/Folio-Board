@@ -180,3 +180,9 @@ py -3 features\investment_review\tests\test_checkpoint_aggregation.py
 ## 0.11 당시 종목 연결
 
 새 리뷰의 종목행과 roster에는 입력에 존재하는 정확한 `instrumentId`와 `market`을 보존합니다. ticker-only 과거 리뷰에 현재 Portfolio의 시장을 소급해서 붙이지 않습니다. 확인 가능한 동일 증권의 행에서 Watchlist `기록`으로 이동하고 같은 리뷰 날짜로 돌아옵니다. Case 보존본에는 해당 종목행과 범위·요약만 담으며 전체 Portfolio 원장을 복사하지 않습니다. [당시 기록 계약](../investment_case/README.md).
+
+## 보유 점검 연결
+
+새 생성본에는 정확한 Portfolio 종목별 최초 결정 참조를 `inputBasis.ownershipBasisVersion=original-decisions-1` / `originalDecisions`에 보존하고 입력 지문에 포함합니다. 원본 삭제·정정은 저장/검토 완료의 freshness 검사에도 반영합니다. CLI 입력 준비·저장·중단 복구는 같은 참조를 확인합니다. 과거 리뷰에는 자동 추가하지 않습니다.
+
+종목별 보유 점검 링크는 원래 query의 필터·선택을 보존하면서 화면에 실제 표시한 리뷰 날짜와 `tab=review`를 복귀 링크에 넣습니다. 보유 점검에서의 범위별 완료는 이 전체 리뷰의 완료/기한을 바꾸지 않습니다. [보유 점검 계약](../investment_case/README.md).

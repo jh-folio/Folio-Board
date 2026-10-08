@@ -167,7 +167,7 @@ def _journal(request, captured, *, journal_id="0" * 32, operation_id="0" * 32, e
         snapshot = price.get("snapshot") or {}
         if scenario["snapshotId"] != snapshot.get("snapshotId") or not any(row.get("label") == scenario["label"] and row.get("horizon") == scenario["horizon"] for row in (snapshot.get("results") or {}).get("scenarios", [])):
             raise CaseError("selected_scenario_changed", 409)
-    return {"schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION, "specSha256": SPEC_SHA256,
+    body = {"schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION, "specSha256": SPEC_SHA256,
             "id": journal_id, "caseId": captured["caseId"], "instrumentId": request["instrumentId"], "episodeId": episode_id,
             "operationId": operation_id, "caseRevision": captured["caseRevision"] + 1, "recordedAt": stamp,
             "sourceLayer": "hypothesis", "reuseAsEvidence": False,
@@ -175,6 +175,10 @@ def _journal(request, captured, *, journal_id="0" * 32, operation_id="0" * 32, e
             "previousJournalId": request.get("previousJournalId"), "decisionText": request["decisionText"],
             "uncertainties": request["uncertainties"], "userReportedAt": request["userReportedAt"], "selectedScenario": scenario,
             "inputs": inputs, "inputFingerprint": captured["inputFingerprint"], "purges": []}
+    if request.get("_ownership"):
+        from .ownership import journal_fields
+        body["ownershipReview"] = journal_fields(request["_ownership"], journal_id, stamp)
+    return body
 
 
 def _target(root, conn, journal_id, case_key):
@@ -187,6 +191,9 @@ def _target(root, conn, journal_id, case_key):
 def preview(root, raw_request, *, cache=CACHE):
     request = validation.request(raw_request)
     captured = capture(root, request["instrumentId"], request["selection"])
+    if "ownershipReview" in request:
+        from .ownership import prepare
+        request["_ownership"] = prepare(root, captured, request)
     expected, action = request["expectedCaseRevision"], request["action"]
     if captured["caseRevision"] != expected:
         raise CaseError("case_revision_changed", 409)
@@ -232,11 +239,14 @@ def _metadata(request, captured, journal, operation_id, stamp):
     stage = request.get("toStage") or saved.get("lifecycle") or "researching"
     episode = journal["episodeId"] if journal else saved.get("episode_id") or uuid.uuid4().hex
     result = {"caseId": captured["caseId"], "caseRevision": captured["caseRevision"] + 1, "journalId": journal["id"] if journal else None}
-    return {"instrumentId": request["instrumentId"], "journalId": result["journalId"], "fileHash": byte_hash(canonical(journal)) if journal else None,
+    meta = {"instrumentId": request["instrumentId"], "journalId": result["journalId"], "fileHash": byte_hash(canonical(journal)) if journal else None,
             "stamp": stamp, "episodeId": episode, "previousEpisodeId": saved.get("episode_id") if request["kind"] == "reentry" else None,
             "stage": stage, "fromStage": saved.get("lifecycle"), "sourceRefs": captured["sourceRefs"], "fingerprint": captured["inputFingerprint"],
             "kind": request["kind"] if request["action"] == "journal" else request["action"], "previousJournalId": request.get("previousJournalId"),
             "result": result, "createdAt": saved.get("created_at") or stamp}
+    if (journal or {}).get("ownershipReview"):
+        meta["ownershipLinkage"] = {key: journal["ownershipReview"].get(key) for key in ("rootReviewJournalId", "previousReviewJournalId")}
+    return meta
 
 
 def _commit(root, operation_id, *, fault=None):
@@ -309,6 +319,11 @@ def confirm(root, token, operation_id, *, cache=CACHE, fault=None):
         captured = capture(root, request["instrumentId"], request["selection"], at=proposal["capture"]["checkedAt"])
         if captured["caseRevision"] != request["expectedCaseRevision"] or captured["inputFingerprint"] != proposal["capture"]["inputFingerprint"]:
             raise CaseError("inputs_changed", 409)
+        if "ownershipReview" in request:
+            from .ownership import prepare
+            prepared = prepare(root, captured, request)
+            if prepared != request.get("_ownership"):
+                raise CaseError("ownership_review_changed", 409)
         with database(root) as conn:
             _assert_no_pending(conn, captured["caseId"], captured["sourceRefs"].values())
             if request.get("targetJournalId"):

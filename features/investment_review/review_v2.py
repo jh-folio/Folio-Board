@@ -632,6 +632,9 @@ def attach_macro_lineage(inputs: dict, data_dir: Path, saved_basis: Mapping) -> 
     if saved_basis.get("macroBasisVersion") == "macro-lineage-1":
         from features.macro_state.service import lineage
         inputs["macroSnapshots"] = lineage(data_dir)
+    if saved_basis.get("ownershipBasisVersion") == "original-decisions-1":
+        from features.investment_case.lineage import original_decisions
+        inputs["originalDecisions"] = original_decisions(data_dir, inputs.get("positions") or [])
     return inputs
 
 
@@ -708,6 +711,9 @@ def build_input_basis(inputs: Mapping, *, previous: Mapping | None = None) -> di
     if "macroSnapshots" in inputs:
         basis["macroSnapshots"] = inputs["macroSnapshots"]
         basis["macroBasisVersion"] = "macro-lineage-1"
+    if "originalDecisions" in inputs:
+        basis["ownershipBasisVersion"] = "original-decisions-1"
+        basis["originalDecisions"] = inputs["originalDecisions"]
     required = bool(basis["portfolio"]["revision"] is not None and basis["marketStates"] is not None and basis["theses"] is not None)
     # Quote/FX observation time is unknown; an input basis containing it is
     # necessarily partial, even when every local authority was readable.
@@ -1099,6 +1105,8 @@ def build_candidate(data_dir: Path, review_dir: Path, date: str, *, include_port
     inputs = gather_inputs(data_dir, include_portfolio=include_portfolio, include_watchlist=include_watchlist, include_obsidian=include_obsidian, include_analytics=True)
     from features.macro_state.service import lineage
     inputs["macroSnapshots"] = lineage(data_dir)
+    from features.investment_case.lineage import original_decisions
+    inputs["originalDecisions"] = original_decisions(data_dir, inputs.get("positions") or [])
     basis = build_input_basis(inputs, previous=previous)
     structured = build_structured_review(inputs, basis)
     changes, compare_uncertainties = compare_previous(structured, previous, current_basis=basis)

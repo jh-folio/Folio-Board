@@ -547,6 +547,14 @@ def normalize_review(review: dict | None, *, date: str = "") -> dict:
             for row in raw_basis.get("macroSnapshots", []) if isinstance(row, Mapping)
         ][:8]
     basis["checkpointWatermark"] = _text(raw_basis.get("checkpointWatermark"), 128)
+    if raw_basis.get("ownershipBasisVersion") == "original-decisions-1":
+        basis["ownershipBasisVersion"] = "original-decisions-1"
+        basis["originalDecisions"] = [
+            {**{key: _text(row.get(key), limit) or None for key, limit in (("instrumentId", 80), ("caseId", 64), ("journalId", 32), ("bodyHash", 64), ("recordedAt", 40))},
+             "status": _text(row.get("status"), 24) if row.get("status") in {"available", "purged", "unavailable", "not_recorded"} else "unavailable",
+             "sourceLayer": "hypothesis", "reuseAsEvidence": False}
+            for row in raw_basis.get("originalDecisions", []) if isinstance(row, Mapping)
+        ]
     basis["canonicalReports"] = _basis_reports(raw_basis.get("canonicalReports"))
     # Omission is intentional for previous v2 snapshots: adding this field at
     # read time would change their fingerprint shape and make them stale.

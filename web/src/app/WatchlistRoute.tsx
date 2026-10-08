@@ -6,6 +6,7 @@ import { RouteHero } from "./RouteHero";
 import { ConsultationEntry } from "./watchlist/ConsultationEntry";
 import { ThesisWorkspace } from "./watchlist/ThesisWorkspace";
 import { InvestmentCase } from "./investmentCase/InvestmentCase";
+import { OwnershipReview } from "./investmentCase/OwnershipReview";
 import { EarningsPanel } from "./watchlist/EarningsPanel";
 import { ExposurePanel } from "./macro/ExposurePanel";
 import { PriceTab, instrumentIdFor } from "./price/PriceTab";
@@ -144,14 +145,15 @@ function readWatchlistDetailItem() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-type DetailTab = "company" | "reason" | "price" | "records";
+type DetailTab = "company" | "reason" | "price" | "records" | "ownership";
 function readDetailTab(): DetailTab {
   const value = new URLSearchParams(window.location.hash.split("?")[1]).get("tab");
-  return value === "reason" || value === "price" || value === "records" ? value : "company";
+  return value === "reason" || value === "price" || value === "records" || value === "ownership" ? value : "company";
 }
 function setDetailHashTab(tab: DetailTab) {
   const query = new URLSearchParams(window.location.hash.split("?")[1]);
-  query.set("tab", tab); if (tab !== "records") query.delete("journal");
+  if (query.get("tab") !== tab) query.delete("journal");
+  query.set("tab", tab);
   window.location.hash = `${window.location.hash.split("?")[0]}?${query}`;
 }
 
@@ -381,9 +383,10 @@ export function WatchlistRoute({ active = true }: { active?: boolean }) {
   // 가격 탭은 처음 열 때 읽고(계산·읽기 요청이 종목마다 생기지 않게) 이후에는 마운트해 둔다.
   const [priceOpened, setPriceOpened] = useState(() => readDetailTab() === "price");
   const [recordsOpened, setRecordsOpened] = useState(() => readDetailTab() === "records");
-  const chooseDetailTab = (tab: DetailTab) => { if (tab === "records" || new URLSearchParams(window.location.hash.split("?")[1]).has("tab")) setDetailHashTab(tab); setDetailTab(tab); if (tab === "price") setPriceOpened(true); if (tab === "records") setRecordsOpened(true); };
+  const [ownershipOpened, setOwnershipOpened] = useState(() => readDetailTab() === "ownership");
+  const chooseDetailTab = (tab: DetailTab) => { if (tab === "records" || tab === "ownership" || new URLSearchParams(window.location.hash.split("?")[1]).has("tab")) setDetailHashTab(tab); setDetailTab(tab); if (tab === "price") setPriceOpened(true); if (tab === "records") setRecordsOpened(true); if (tab === "ownership") setOwnershipOpened(true); };
   useEffect(() => {
-    const changed = () => { const tab = readDetailTab(); setDetailTab(tab); if (tab === "price") setPriceOpened(true); if (tab === "records") setRecordsOpened(true); };
+    const changed = () => { const tab = readDetailTab(); setDetailTab(tab); if (tab === "price") setPriceOpened(true); if (tab === "records") setRecordsOpened(true); if (tab === "ownership") setOwnershipOpened(true); };
     window.addEventListener("hashchange", changed); return () => window.removeEventListener("hashchange", changed);
   }, []);
   const [reasonNewsCount, setReasonNewsCount] = useState(0);
@@ -391,6 +394,7 @@ export function WatchlistRoute({ active = true }: { active?: boolean }) {
     setDetailTab(readDetailTab());
     setPriceOpened(readDetailTab() === "price");
     setRecordsOpened(readDetailTab() === "records");
+    setOwnershipOpened(readDetailTab() === "ownership");
     setReasonNewsCount(detailCard?.reasonNewsCount || 0);
     // 종목이 바뀔 때만 초기화한다. 목록 재조회로 카드 객체가 바뀌어도 선택한 탭은 유지한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -446,6 +450,7 @@ export function WatchlistRoute({ active = true }: { active?: boolean }) {
                 </button>
                 <button type="button" aria-pressed={detailTab === "price"} onClick={() => chooseDetailTab("price")}>가격</button>
                 <button type="button" aria-pressed={detailTab === "records"} onClick={() => chooseDetailTab("records")}>기록</button>
+                <button type="button" aria-pressed={detailTab === "ownership"} onClick={() => chooseDetailTab("ownership")}>보유 점검</button>
               </div>
               {/* 내 이유 탭은 숨겨도 마운트해 둔다 — 새 소식 수(탭 점)와 입력 중인 초안을 유지한다. */}
               <div className="watchlist-detail-reason" hidden={detailTab !== "reason"}>
@@ -464,6 +469,9 @@ export function WatchlistRoute({ active = true }: { active?: boolean }) {
               )}
               {recordsOpened && <div hidden={detailTab !== "records"}>
                 {recordInstrument && (!requestedInstrument || requestedInstrument === recordInstrument) ? <InvestmentCase key={recordInstrument} instrumentId={recordInstrument} active={active && detailTab === "records"} onReason={() => chooseDetailTab("reason")} /> : <p>종목과 시장이 요청한 기록과 일치하는지 확인할 수 없습니다. 같은 종목의 상세 화면에서 다시 열어 주세요.</p>}
+              </div>}
+              {ownershipOpened && <div hidden={detailTab !== "ownership"}>
+                {recordInstrument && (!requestedInstrument || requestedInstrument === recordInstrument) ? <OwnershipReview key={recordInstrument} instrumentId={recordInstrument} active={active && detailTab === "ownership"} onReason={() => chooseDetailTab("reason")} /> : <p>종목과 시장이 요청한 점검과 일치하는지 확인할 수 없습니다.</p>}
               </div>}
               {detailTab === "company" && (
               <div className="watchlist-detail-grid">

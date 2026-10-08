@@ -150,6 +150,9 @@ def _review(files, ident, selection):
         body = {key: value.get(key) for key in ("date", "reviewRevision", "generatedAt", "reviewState", "summary", "coverage", "uncertainties", "counterEvidence", "portfolioRisks", "inputBasis", "freshness") if key in value}
         # Historical inputBasis may contain other holdings; retain lineage, not their personal reasons.
         body["inputBasis"] = {key: (value.get("inputBasis") or {}).get(key) for key in ("status", "capturedAt", "fingerprint", "marketData")}
+        if (value.get("inputBasis") or {}).get("ownershipBasisVersion") == "original-decisions-1":
+            body["inputBasis"]["ownershipBasisVersion"] = "original-decisions-1"
+            body["inputBasis"]["originalDecisions"] = [row for row in (value["inputBasis"].get("originalDecisions") or []) if isinstance(row, dict) and row.get("instrumentId") == ident["instrumentId"]]
         body["positionReviews"] = matches
         return slot("review", reference, body, layer="hypothesis")
     return slot("review", ref("investment_review", day, None), None, reason="investment_review_missing", layer="hypothesis")
