@@ -102,6 +102,19 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
+test('0.12 return links reject external targets in ownership and records readers', async ({ page }) => {
+  await setup(page, 'light');
+  for (const value of ['javascript:alert(1)', 'https://example.invalid/', '//example.invalid/']) {
+    const query = new URLSearchParams({ tab: 'ownership', instrument: 'US:ABC', returnHash: value });
+    await page.goto(`/#/watchlist/ABC?${query}`);
+    await expect(page.getByRole('heading', { name: '보유 점검', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: '투자 리뷰로 돌아가기' })).toHaveCount(0);
+    await page.getByRole('link', { name: '기록·미완료 작업 열기' }).click();
+    await expect(page.getByRole('heading', { name: '이 종목의 검토와 기록' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '투자 리뷰로 돌아가기' })).toHaveCount(0);
+  }
+});
+
 test('0.12 missing original empty fields and closed form are not completion', async ({ page }) => {
   const { prefix } = await setup(page, 'light', false);
   const area = page.locator('[data-ownership-review]');

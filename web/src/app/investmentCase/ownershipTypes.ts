@@ -49,9 +49,14 @@ export function portfolioReviewReturn(date?: string) {
   if (date) query.set("date", date);
   return `#/portfolio?${query}`;
 }
-export function portfolioReturn() {
-  const query = new URLSearchParams(window.location.hash.split("?")[1] || "");
+export function portfolioReturn(hash = window.location.hash) {
+  const query = new URLSearchParams(hash.split("?")[1] || "");
   const value = query.get("returnHash");
-  if (value && /^#\/portfolio(?:\?[^#\r\n]*)?$/.test(value)) return value;
+  if (value && /^#\/portfolio(?:\?[^#\r\n]*)?$/.test(value)) {
+    if (value === "#/portfolio") return "#/portfolio";
+    // The route is application-owned. Only encoded query values come from
+    // the caller; never return the caller's URL directly to an href sink.
+    return `#/portfolio?${new URLSearchParams(value.slice("#/portfolio?".length))}`;
+  }
   return query.get("returnTo") === "review" ? `#/portfolio?tab=review&date=${encodeURIComponent(query.get("reviewDate") || "")}` : null;
 }

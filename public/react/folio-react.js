@@ -29008,9 +29008,9 @@ function N_(e) {
 	let t = new URLSearchParams(window.location.hash.split("?")[1] || "");
 	return t.set("tab", "review"), e && t.set("date", e), `#/portfolio?${t}`;
 }
-function P_() {
-	let e = new URLSearchParams(window.location.hash.split("?")[1] || ""), t = e.get("returnHash");
-	return t && /^#\/portfolio(?:\?[^#\r\n]*)?$/.test(t) ? t : e.get("returnTo") === "review" ? `#/portfolio?tab=review&date=${encodeURIComponent(e.get("reviewDate") || "")}` : null;
+function P_(e = window.location.hash) {
+	let t = new URLSearchParams(e.split("?")[1] || ""), n = t.get("returnHash");
+	return n && /^#\/portfolio(?:\?[^#\r\n]*)?$/.test(n) ? n === "#/portfolio" ? "#/portfolio" : `#/portfolio?${new URLSearchParams(n.slice(12))}` : t.get("returnTo") === "review" ? `#/portfolio?tab=review&date=${encodeURIComponent(t.get("reviewDate") || "")}` : null;
 }
 //#endregion
 //#region src/app/portfolio/investmentReviewUi.ts
